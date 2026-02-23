@@ -22,3 +22,7 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+
+# local source materials
+jiguang_site_kit_from_pptx/
+jiguang_site_kit_from_pptx.zip
