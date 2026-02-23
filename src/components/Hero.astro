@@ -1,0 +1,47 @@
+---
+const {
+  title,
+  text,
+  imgSrc,
+  primaryHref = "#contact",
+  primaryLabel = "联系咨询",
+  secondaryHref = "#products",
+  secondaryLabel = "查看产品"
+} = Astro.props;
+---
+
+<section
+  class="bg-slate-950 bg-cover bg-center"
+  style={`background-image: url(${imgSrc}); background-size: cover; background-repeat: no-repeat;`}
+>
+  <div
+    class="grid max-w-screen-xl px-4 py-20 mx-auto lg:gap-8 xl:gap-0 lg:py-28 lg:grid-cols-12 hero-overlay"
+  >
+    <div class="mr-auto place-self-center lg:col-span-7">
+      <h1
+        class="max-w-2xl mb-4 text-4xl font-extrabold tracking-tight leading-tight md:text-5xl xl:text-6xl text-white"
+      >
+        {title}
+      </h1>
+      <h2
+        class="max-w-2xl mb-8 font-light lg:mb-10 md:text-lg lg:text-xl text-slate-100"
+      >
+        {text}
+      </h2>
+      <div class="flex flex-wrap gap-3">
+        <a
+          href={primaryHref}
+          class="inline-flex items-center justify-center rounded-md bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
+        >
+          {primaryLabel}
+        </a>
+        <a
+          href={secondaryHref}
+          class="inline-flex items-center justify-center rounded-md border border-slate-200/50 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-100/10"
+        >
+          {secondaryLabel}
+        </a>
+      </div>
+    </div>
+  </div>
+</section>

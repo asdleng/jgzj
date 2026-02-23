@@ -1,0 +1,114 @@
+---
+import "../styles/global.css";
+import Footer from "../components/Footer.astro";
+import Hero from "../components/Hero.astro";
+import Section from "../components/Section.astro";
+
+const siteUrl = "https://jiguangzhijie.top";
+const siteName = "吉光智界";
+const siteDescription = "吉光智界为企业提供智能化产品研发、数字化转型咨询与落地实施服务。";
+
+const organizationJsonLd = JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: siteName,
+  url: siteUrl,
+  logo: `${siteUrl}/favicon.svg`,
+  email: "contact@jiguangzhijie.top",
+  description: siteDescription
+});
+---
+
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="canonical" href={`${siteUrl}/`} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="generator" content={Astro.generator} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={`${siteName} | 企业智能化与数字化解决方案`} />
+    <meta property="og:url" content={`${siteUrl}/`} />
+    <meta property="og:image" content={`${siteUrl}/img/img_00.jpg`} />
+    <meta
+      name="description"
+      property="og:description"
+      content={siteDescription}
+    />
+    <title>{siteName} | 企业智能化与数字化解决方案</title>
+    <script type="application/ld+json" is:inline set:html={organizationJsonLd} />
+  </head>
+  <body>
+    <header>
+      <nav class="site-nav">
+        <div class="mx-auto flex max-w-screen-xl flex-wrap items-center justify-between gap-4 px-4 py-4">
+          <a href="/" class="text-xl font-extrabold tracking-wide text-white">{siteName}</a>
+          <div class="flex flex-wrap items-center gap-4 text-sm font-medium text-slate-200">
+            <a href="#products" class="hover:text-cyan-300">产品</a>
+            <a href="#cases" class="hover:text-cyan-300">案例</a>
+            <a href="#about" class="hover:text-cyan-300">关于</a>
+            <a href="#contact" class="hover:text-cyan-300">联系</a>
+          </div>
+        </div>
+      </nav>
+      <Hero
+        title="让企业增长与智能化能力同步升级"
+        text="吉光智界专注于企业数字化与智能产品落地，用可衡量的业务结果驱动技术建设。"
+        imgSrc="img/img_00.jpg"
+        primaryHref="#contact"
+        primaryLabel="立即咨询"
+        secondaryHref="#products"
+        secondaryLabel="查看方案"
+      />
+    </header>
+    <main>
+      <Section
+        id="products"
+        title="产品与服务"
+        text="围绕营销增长、客户运营与流程协同，我们提供从需求分析、架构设计到上线运维的一体化服务，帮助团队快速建立可持续迭代的数字化能力。"
+        imagePosition="right"
+        imgSrc="/img/img_01.jpg"
+        imgAlt="吉光智界产品服务"
+      />
+
+      <Section
+        id="cases"
+        title="行业案例"
+        text="我们已为消费、制造与服务行业客户提供智能化升级支持，包括官网与内容中台建设、线索管理流程优化以及数据看板体系搭建，持续提升转化效率与运营质量。"
+        imagePosition="left"
+        imgSrc="img/img_01.jpg"
+        imgAlt="吉光智界行业案例"
+      />
+
+      <Section
+        id="about"
+        title="关于吉光智界"
+        text="吉光智界聚焦企业长期价值，强调“业务目标优先、技术落地可验收”。我们以敏捷协作方式推进项目，确保策略、设计、开发与交付全过程透明可控。"
+        imagePosition="right"
+        imgSrc="img/img_01.jpg"
+        imgAlt="关于吉光智界"
+      />
+
+      <Section
+        id="contact"
+        title="联系我们"
+        text="欢迎通过邮箱 contact@jiguangzhijie.top 与我们沟通合作需求。我们可为你提供官网建设、品牌展示页、增长型落地页以及智能化改造方案。"
+        imagePosition="left"
+        imgSrc="img/img_01.jpg"
+        imgAlt="联系吉光智界"
+      />
+    </main>
+  </body>
+  <Footer
+    title={siteName}
+    address="商务合作请联系：contact@jiguangzhijie.top"
+    text="基于 Astro 构建的企业官网，已配置 GitHub Pages 与自定义域名部署。"
+    email="contact@jiguangzhijie.top"
+  />
+</html>
