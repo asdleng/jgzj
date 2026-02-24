@@ -46,6 +46,28 @@ const visualFeatures = [
   "设备状态、告警信息与任务进度同屏"
 ];
 
+const visualScreens = [
+  {
+    src: "/assets/ui-screen-01.png",
+    alt: "白泽智车端界面总览"
+  },
+  {
+    src: "/assets/ui-screen-02.png",
+    alt: "白泽智车端地图与态势"
+  }
+];
+
+const visualOnsite = [
+  {
+    src: "/assets/ui-robot-01.jpg",
+    alt: "车端可视化界面现场展示图一"
+  },
+  {
+    src: "/assets/ui-robot-02.jpg",
+    alt: "车端可视化界面现场展示图二"
+  }
+];
+
 const voiceHighlights = [
   "自研流式 ASR + 语义理解 + TTS 链路，支持连续对话",
   "支持打断重说与多轮追问，公共场景交互更自然",
@@ -278,12 +300,22 @@ const organizationJsonLd = JSON.stringify({
         <div class="glass-card p-6 md:p-8 reveal" data-reveal>
           <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">车端 AI 可视化界面</p>
           <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">一块屏把地图、态势与服务信息整合到现场</h2>
-          <div class="mb-6 grid gap-4 md:grid-cols-2">
-            <figure class="visual-frame">
-              <img src="/assets/s17_ed097ae2c98e.png" alt="车端地图与空间可视化" class="h-64 w-full object-cover md:h-72" />
+          <div class="mb-6 grid gap-4 lg:grid-cols-12">
+            <figure class="visual-frame lg:col-span-7">
+              <img src={visualScreens[0].src} alt={visualScreens[0].alt} class="h-[420px] w-full object-cover" />
             </figure>
+            <div class="grid gap-4 lg:col-span-5">
+              <figure class="visual-frame">
+                <img src={visualOnsite[0].src} alt={visualOnsite[0].alt} class="h-[202px] w-full object-cover" />
+              </figure>
+              <figure class="visual-frame">
+                <img src={visualOnsite[1].src} alt={visualOnsite[1].alt} class="h-[202px] w-full object-cover" />
+              </figure>
+            </div>
+          </div>
+          <div class="mb-6">
             <figure class="visual-frame">
-              <img src="/assets/s17_20b203c3724b.png" alt="车端导航与状态面板" class="h-64 w-full object-cover md:h-72" />
+              <img src={visualScreens[1].src} alt={visualScreens[1].alt} class="h-[420px] w-full object-cover" />
             </figure>
           </div>
           <ul class="grid gap-3 text-sm text-slate-200 md:grid-cols-2 md:text-base">

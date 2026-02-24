@@ -126,6 +126,16 @@ a {
   box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.15), 0 10px 24px rgba(2, 6, 23, 0.5);
 }
 
+.visual-frame img {
+  display: block;
+  transition: transform 0.55s ease, filter 0.55s ease;
+}
+
+.visual-frame:hover img {
+  transform: scale(1.03);
+  filter: saturate(1.08);
+}
+
 .reveal {
   opacity: 0;
   transform: translateY(26px) scale(0.99);
