@@ -4,23 +4,23 @@ import "../styles/global.css";
 const siteUrl = "https://jiguangzhijie.top";
 const siteName = "深圳吉光智界科技有限公司";
 const siteDescription =
-  "吉光智界聚焦安防巡逻机器人与具身智能技术，围绕行走AI、任务AI、知识AI打造可规模化落地的室外智能服务方案。";
+  "吉光智界专注室外智能服务机器人，提供覆盖行走智能、车端可视化与语音交互的全栈解决方案。";
 
 const painPoints = [
-  "园区安防巡逻仍依赖人工，效率与覆盖稳定性不足",
-  "复杂室外环境下，传统弱智能设备自主行走能力有限",
-  "单功能设备重复采购，用户体验割裂，难以形成数据闭环",
-  "人力紧张与运营成本提升，促使安防巡逻模式升级"
+  "园区巡检与服务仍依赖人工，巡逻覆盖率和一致性不足",
+  "复杂室外环境变化快，设备常见“看得见、走不好、管不全”",
+  "地图、态势、语音、业务系统彼此割裂，协同效率低",
+  "面向公众场景时，交互能力与安全策略需要同时在线"
 ];
 
 const baizeModes = [
   "安防巡逻",
   "异常识别",
   "智能检测",
-  "配送零售",
-  "移动充电",
-  "园区勘察",
-  "应急救援"
+  "园区导览",
+  "移动宣传",
+  "应急提醒",
+  "多任务协同"
 ];
 
 const baizeSpecs = [
@@ -29,78 +29,73 @@ const baizeSpecs = [
   { item: "最大爬坡", value: "20%" },
   { item: "最大车速", value: "30 km/h" },
   { item: "续航里程", value: "80 km" },
-  { item: "充电时间", value: "2.5 h" },
   { item: "作业时间", value: "6-8 h" },
-  { item: "最小转弯半径", value: "1.5 m" },
   { item: "感知范围", value: "100 m / 360°" },
   { item: "感知类型", value: ">30 种" },
   { item: "激光雷达", value: "3 颗（前后环视）" },
   { item: "视觉", value: "4 颗（前后环视）" },
-  { item: "超声波雷达", value: "≥4 颗" },
   { item: "自动驾驶功能", value: "封闭园区自主行驶" },
-  { item: "软件更新", value: "SOTA + FOTA" },
-  { item: "监控分辨率", value: "2160P，5 倍光学变焦" }
+  { item: "软件更新", value: "SOTA + FOTA" }
+];
+
+const visualFeatures = [
+  "公园/园区数字地图、当前位置、路径引导",
+  "热点新闻与园区公告联动展示",
+  "历史事件、巡检轨迹、运行里程可视化",
+  "态势感知看板，辅助现场运营决策",
+  "设备状态、告警信息与任务进度同屏"
+];
+
+const voiceHighlights = [
+  "自研流式 ASR + 语义理解 + TTS 链路，支持连续对话",
+  "支持打断重说与多轮追问，公共场景交互更自然",
+  "覆盖问路导航、天气、热点信息与园区问答",
+  "端到端响应保持在 3 秒级，兼顾速度与稳定性"
 ];
 
 const architecture = [
   {
-    title: "行走 AI（小模型）",
-    text: "面向复杂室外场景，构建感知-建图-定位-预测-决策-规划-控制全流程高适性算法体系。"
+    title: "行走 AI",
+    text: "完成感知、定位、规划与控制闭环，提升复杂路况通过性。"
   },
   {
-    title: "任务 AI（中模型）",
-    text: "基于多模态场景理解闭环，支持巡逻、宣传、配送、应急等任务动态切换。"
+    title: "任务 AI",
+    text: "把巡逻、导览、宣传和提醒等任务进行统一编排与调度。"
   },
   {
-    title: "知识 AI（大模型）",
-    text: "云脑融合具身常识、具身理解与任务知识，形成持续学习与业务可解释能力。"
+    title: "知识 AI",
+    text: "连接业务知识与场景语料，持续提升对话理解和服务质量。"
   }
 ];
 
-const useCases = [
+const cases = [
   {
-    title: "深圳 · 大型场馆",
-    text: "接待引导、零售配送",
-    img: "/assets/s20_eef86ef98eb7.png"
-  },
-  {
-    title: "深圳 · 商业区",
-    text: "精准广告投放、移动宣传",
+    title: "场馆活动服务",
+    text: "在大型场馆提供接待引导与现场信息触达。",
     img: "/assets/s20_3634d8e375c5.jpg"
   },
   {
-    title: "北京 · 产业园",
-    text: "参观引导、安防巡逻",
+    title: "园区巡逻与导览",
+    text: "在人流密集区域执行巡逻和路线引导。",
     img: "/assets/s20_d85bf38d2a8c.jpg"
   },
   {
-    title: "深圳 · 学校",
-    text: "校区介绍、招生宣传、校园服务",
+    title: "夜间公共空间服务",
+    text: "在夜间场景持续输出巡查与服务能力。",
+    img: "/assets/s20_897c068b5bac.jpg"
+  },
+  {
+    title: "校园与商业综合体",
+    text: "结合导览、播报和互动，强化用户体验。",
     img: "/assets/s20_a32837c09c93.png"
   }
 ];
 
 const awards = [
-  "2024 年获得美国 MUSE 国际设计大奖",
-  "2024 年获得金芦苇优秀产品设计奖",
-  "2023 年获得第二届无人车风云榜奖",
-  "2022 年获得第二十四届国际高交会优秀产品奖",
-  "2023 年被百度 Apollo 认证为封闭场景首批战略合作伙伴"
-];
-
-const roadmap = [
-  {
-    year: "2024",
-    info: "SOP 下线，完成第四代产品量产验证"
-  },
-  {
-    year: "2025",
-    info: "营收目标突破 2000 万，扩大重点城市合作"
-  },
-  {
-    year: "2026-2027",
-    info: "营收目标 1-3 亿，落地城市 100 个，硬件平台化"
-  }
+  "获国际设计大奖认可（MUSE）",
+  "获金芦苇优秀产品设计奖",
+  "获无人车行业奖项与产品奖项",
+  "获生态合作伙伴认证（封闭场景）"
 ];
 
 const organizationJsonLd = JSON.stringify({
@@ -109,6 +104,13 @@ const organizationJsonLd = JSON.stringify({
   name: siteName,
   url: siteUrl,
   logo: `${siteUrl}/assets/s19_91432e393d0c.png`,
+  email: "jgauto402@163.com",
+  address: {
+    "@type": "PostalAddress",
+    addressRegion: "广东省",
+    addressLocality: "深圳市坪山区",
+    streetAddress: "新能源汽车产业园区2期"
+  },
   description: siteDescription
 });
 ---
@@ -121,21 +123,25 @@ const organizationJsonLd = JSON.stringify({
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Noto+Sans+SC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
     <meta name="viewport" content="width=device-width" />
     <meta name="generator" content={Astro.generator} />
     <meta name="description" content={siteDescription} />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content={`${siteName} | 安防巡逻机器人`} />
+    <meta property="og:title" content={`${siteName} | 室外智能服务机器人方案`} />
     <meta property="og:url" content={`${siteUrl}/`} />
     <meta property="og:image" content={`${siteUrl}/assets/s03_04142025eb07.jpg`} />
     <meta property="og:description" content={siteDescription} />
-    <title>{siteName} | 安防巡逻机器人与具身智能方案</title>
+    <title>{siteName} | 室外智能服务机器人方案</title>
     <script type="application/ld+json" is:inline set:html={organizationJsonLd} />
   </head>
   <body>
+    <div class="scroll-progress">
+      <span id="scroll-progress"></span>
+    </div>
+
     <nav class="site-nav">
       <div class="mx-auto flex max-w-screen-xl flex-wrap items-center justify-between gap-4 px-4 py-4">
         <a href="/" class="flex items-center gap-2 text-base font-extrabold tracking-wide text-white md:text-lg">
@@ -143,93 +149,98 @@ const organizationJsonLd = JSON.stringify({
           吉光智界
         </a>
         <div class="flex flex-wrap items-center gap-4 text-sm font-medium text-slate-200">
-          <a href="#trends" class="hover:text-cyan-300">趋势与痛点</a>
           <a href="#product" class="hover:text-cyan-300">白泽机器人</a>
-          <a href="#architecture" class="hover:text-cyan-300">3AI 架构</a>
+          <a href="#visual" class="hover:text-cyan-300">可视化界面</a>
+          <a href="#voice" class="hover:text-cyan-300">AI对话</a>
           <a href="#cases" class="hover:text-cyan-300">应用案例</a>
-          <a href="#contact" class="hover:text-cyan-300">联系</a>
+          <a href="#contact" class="hover:text-cyan-300">商务联系</a>
         </div>
       </div>
     </nav>
 
-    <header class="relative overflow-hidden">
+    <header class="hero-shell">
       <img
         src="/assets/s03_04142025eb07.jpg"
         alt="城市空间场景"
-        class="h-[74vh] min-h-[520px] w-full object-cover"
+        class="hero-media"
+        data-parallax
       />
-      <div class="absolute inset-0 bg-gradient-to-r from-slate-950/90 via-slate-900/75 to-slate-950/45"></div>
-      <div class="absolute inset-0 mx-auto flex max-w-screen-xl items-center px-4">
-        <div class="max-w-3xl">
-          <p class="mb-4 inline-flex rounded-full border border-cyan-300/40 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-200">
-            安防巡逻机器人商业计划书 · 2025
+      <div class="hero-overlay"></div>
+      <div class="hero-grid"></div>
+      <div class="relative mx-auto flex max-w-screen-xl px-4 pb-20 pt-24 md:pb-28 md:pt-28">
+        <div class="max-w-3xl" data-reveal class="reveal">
+          <p class="hero-kicker mb-4 inline-flex rounded-full border border-cyan-300/40 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-200">
+            室外智能服务机器人解决方案
           </p>
           <h1 class="mb-5 text-4xl font-extrabold leading-tight text-white md:text-5xl lg:text-6xl">
-            深圳吉光智界科技有限公司
+            「白泽智」AI 服务机器人
           </h1>
           <p class="mb-8 text-base text-slate-100 md:text-lg">
-            以“行走 AI + 任务 AI + 知识 AI”的具身智能架构，打造面向商业街区、产业园区与城市公共空间的智能服务无人车。
+            面向园区、公园、场馆与商业空间，提供“行走智能 + 车端可视化 + 语音交互”一体化能力，提升现场服务效率与运营感知能力。
           </p>
           <div class="flex flex-wrap gap-3">
             <a
-              href="#product"
+              href="#visual"
               class="inline-flex items-center justify-center rounded-md bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
             >
-              查看白泽产品
+              查看可视化界面
             </a>
             <a
-              href="#contact"
+              href="#voice"
               class="inline-flex items-center justify-center rounded-md border border-slate-200/50 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-100/10"
             >
-              商务咨询
+              查看AI对话能力
             </a>
           </div>
         </div>
       </div>
     </header>
 
-    <main class="bg-slate-950 py-16 md:py-20">
+    <div class="status-strip">
+      <div class="status-track">
+        实时地图导航 · 当前位置 · 热点新闻 · 历史事件 · 运行信息 · 态势感知 · AI 对话 · 实时地图导航 · 当前位置 · 热点新闻 · 历史事件 · 运行信息 · 态势感知 · AI 对话
+      </div>
+    </div>
+
+    <main class="grid-bg py-16 md:py-20">
       <section id="trends" class="mx-auto mb-16 grid max-w-screen-xl gap-8 px-4 lg:grid-cols-2">
-        <div class="rounded-2xl bg-slate-900/90 p-6 ring-1 ring-slate-800 md:p-8">
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">行业趋势与痛点</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">第四生活空间正成为机器人落地主战场</h2>
-          <p class="mb-6 text-slate-300">
-            在家、办公、汽车之后，室外公共空间是下一阶段智能机器人高频落地场景。安防巡逻与运营服务融合，正在从“人工密集型”走向“智能协同型”。
-          </p>
+        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
+          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">场景痛点</p>
+          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">公共空间智能服务正在从“单点能力”走向“系统协同”</h2>
           <ul class="space-y-3 text-sm text-slate-200 md:text-base">
             {painPoints.map((item) => (
               <li class="rounded-lg bg-slate-800/70 px-4 py-3 ring-1 ring-slate-700">{item}</li>
             ))}
           </ul>
         </div>
-        <div class="overflow-hidden rounded-2xl bg-slate-900/90 ring-1 ring-slate-800">
-          <img src="/assets/s01_7745e8e57b8d.jpg" alt="室外场景趋势" class="h-full w-full object-cover" />
+        <div class="glass-card overflow-hidden reveal" data-reveal>
+          <img src="/assets/s01_7745e8e57b8d.jpg" alt="室外场景" class="h-full w-full object-cover" />
         </div>
       </section>
 
       <section id="product" class="mx-auto mb-16 max-w-screen-xl px-4">
-        <div class="rounded-2xl bg-slate-900/90 p-6 ring-1 ring-slate-800 md:p-8">
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">产品白泽</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">“白泽”智能服务无人车（已量产销售）</h2>
+        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
+          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">产品能力</p>
+          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">白泽机器人：从巡逻到服务的多任务执行平台</h2>
           <p class="mb-6 text-slate-300">
-            白泽已在商业街区、产业园区、写字楼等多种场景稳定运营，可处理复杂突发情况并保障安全行驶，支持“1+X”多功能模式。
+            白泽已在商业街区、产业园区、写字楼等场景稳定运行，可基于任务策略快速切换服务模式。
           </p>
 
           <div class="mb-8 grid gap-4 md:grid-cols-2">
             <img
               src="/assets/s14_3ec97597596d.png"
-              alt="白泽机器人展示"
+              alt="白泽机器人外观"
               class="h-72 w-full rounded-xl bg-slate-800 object-contain p-4"
             />
             <img
               src="/assets/s13_4a859ae94e04.png"
-              alt="白泽机器人多配色"
+              alt="白泽机器人多形态"
               class="h-72 w-full rounded-xl bg-slate-800 object-contain p-4"
             />
           </div>
 
           <div class="mb-8">
-            <h3 class="mb-3 text-lg font-semibold text-white">1+X 功能模式</h3>
+            <h3 class="mb-3 text-lg font-semibold text-white">任务模式</h3>
             <div class="flex flex-wrap gap-2">
               {baizeModes.map((mode) => (
                 <span class="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-sm text-cyan-100">
@@ -240,7 +251,7 @@ const organizationJsonLd = JSON.stringify({
           </div>
 
           <div>
-            <h3 class="mb-3 text-lg font-semibold text-white">白泽系列性能参数</h3>
+            <h3 class="mb-3 text-lg font-semibold text-white">核心参数</h3>
             <div class="overflow-x-auto rounded-xl ring-1 ring-slate-700">
               <table class="min-w-full border-collapse text-left text-sm text-slate-200">
                 <thead class="bg-slate-800/90">
@@ -263,12 +274,32 @@ const organizationJsonLd = JSON.stringify({
         </div>
       </section>
 
-      <section id="architecture" class="mx-auto mb-16 max-w-screen-xl px-4">
-        <div class="rounded-2xl bg-slate-900/90 p-6 ring-1 ring-slate-800 md:p-8">
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">3AI 架构</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">行走 AI + 任务 AI + 知识 AI</h2>
+      <section id="visual" class="mx-auto mb-16 max-w-screen-xl px-4">
+        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
+          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">车端 AI 可视化界面</p>
+          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">一块屏把地图、态势与服务信息整合到现场</h2>
+          <div class="mb-6 grid gap-4 md:grid-cols-2">
+            <figure class="visual-frame">
+              <img src="/assets/s17_ed097ae2c98e.png" alt="车端地图与空间可视化" class="h-64 w-full object-cover md:h-72" />
+            </figure>
+            <figure class="visual-frame">
+              <img src="/assets/s17_20b203c3724b.png" alt="车端导航与状态面板" class="h-64 w-full object-cover md:h-72" />
+            </figure>
+          </div>
+          <ul class="grid gap-3 text-sm text-slate-200 md:grid-cols-2 md:text-base">
+            {visualFeatures.map((item) => (
+              <li class="rounded-lg bg-slate-800/70 px-4 py-3 ring-1 ring-slate-700">{item}</li>
+            ))}
+          </ul>
+        </div>
+      </section>
+
+      <section id="voice" class="mx-auto mb-16 max-w-screen-xl px-4">
+        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
+          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">AI 对话系统</p>
+          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">自研流式语音中枢，现场交互更快更稳</h2>
           <p class="mb-6 text-slate-300">
-            以三层智能体协同实现数据闭环、功能闭环与模型闭环，支持远程监测、远程驾驶与持续 OTA 升级。
+            基于车端采集与服务端协同的流式语音架构，覆盖识别、理解与播报闭环，在公共场景可提供更自然、更及时的人机交互体验。
           </p>
           <div class="mb-6 grid gap-4 md:grid-cols-3">
             {architecture.map((item) => (
@@ -278,30 +309,20 @@ const organizationJsonLd = JSON.stringify({
               </article>
             ))}
           </div>
-          <div class="grid gap-4 md:grid-cols-2">
-            <img
-              src="/assets/s17_ed097ae2c98e.png"
-              alt="3AI 架构可视化"
-              class="h-64 w-full rounded-xl object-cover"
-            />
-            <img
-              src="/assets/s17_20b203c3724b.png"
-              alt="技术算法示意"
-              class="h-64 w-full rounded-xl object-cover"
-            />
+          <div class="grid gap-3 text-sm text-slate-200 md:grid-cols-2 md:text-base">
+            {voiceHighlights.map((item) => (
+              <div class="rounded-lg bg-slate-800/70 px-4 py-3 ring-1 ring-slate-700">{item}</div>
+            ))}
           </div>
         </div>
       </section>
 
       <section id="cases" class="mx-auto mb-16 max-w-screen-xl px-4">
-        <div class="rounded-2xl bg-slate-900/90 p-6 ring-1 ring-slate-800 md:p-8">
+        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
           <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">应用案例</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">多场景落地，起步阶段已有 100+ 意向客户对接</h2>
-          <p class="mb-6 text-slate-300">
-            已在深圳市民中心、莲花山公园、人才公园等地标空间商业落地，并在北京、杭州、西安等城市销售。
-          </p>
+          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">覆盖场馆、园区、校园与公共空间</h2>
           <div class="grid gap-4 md:grid-cols-2">
-            {useCases.map((item) => (
+            {cases.map((item) => (
               <article class="overflow-hidden rounded-xl bg-slate-800/80 ring-1 ring-slate-700">
                 <img src={item.img} alt={item.title} class="h-56 w-full object-cover" />
                 <div class="p-4">
@@ -315,12 +336,12 @@ const organizationJsonLd = JSON.stringify({
       </section>
 
       <section id="awards" class="mx-auto mb-16 max-w-screen-xl px-4">
-        <div class="rounded-2xl bg-slate-900/90 p-6 ring-1 ring-slate-800 md:p-8">
+        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
           <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">奖项与认可</p>
-          <h2 class="mb-6 text-2xl font-bold text-white md:text-3xl">持续获得行业与国际设计认可</h2>
+          <h2 class="mb-6 text-2xl font-bold text-white md:text-3xl">设计与产品能力持续获得行业认可</h2>
           <div class="mb-6 grid gap-4 md:grid-cols-2">
-            <img src="/assets/s23_b8c996b6704e.png" alt="MUSE 设计大奖证书" class="h-full w-full rounded-xl bg-white object-contain p-2" />
-            <img src="/assets/s23_eb76ebf3a318.png" alt="金芦苇优秀产品设计奖" class="h-full w-full rounded-xl bg-white object-contain p-2" />
+            <img src="/assets/s23_b8c996b6704e.png" alt="国际设计奖项证书" class="h-full w-full rounded-xl bg-white object-contain p-2" />
+            <img src="/assets/s23_eb76ebf3a318.png" alt="产品设计奖项海报" class="h-full w-full rounded-xl bg-white object-contain p-2" />
           </div>
           <ul class="grid gap-3 text-sm text-slate-200 md:grid-cols-2 md:text-base">
             {awards.map((item) => (
@@ -330,39 +351,57 @@ const organizationJsonLd = JSON.stringify({
         </div>
       </section>
 
-      <section id="roadmap" class="mx-auto mb-16 max-w-screen-xl px-4">
-        <div class="rounded-2xl bg-slate-900/90 p-6 ring-1 ring-slate-800 md:p-8">
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">发展规划</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">三年目标：市占率领先，营收 2-3 亿，落地城市 100 个</h2>
-          <div class="grid gap-4 md:grid-cols-3">
-            {roadmap.map((item) => (
-              <article class="rounded-xl bg-slate-800/80 p-5 ring-1 ring-slate-700">
-                <p class="mb-2 text-sm font-semibold text-cyan-300">{item.year}</p>
-                <p class="text-sm text-slate-200 md:text-base">{item.info}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
       <section id="contact" class="mx-auto max-w-screen-xl px-4">
-        <div class="rounded-2xl bg-gradient-to-r from-cyan-500/20 to-slate-900 p-6 ring-1 ring-cyan-300/20 md:p-8">
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-200">联系方式</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">欢迎联系吉光智界商务团队</h2>
+        <div class="rounded-2xl border border-cyan-300/20 bg-gradient-to-r from-cyan-500/15 to-slate-900 p-6 md:p-8 reveal" data-reveal>
+          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-200">商务联系</p>
+          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">欢迎联系吉光智界</h2>
           <p class="mb-4 text-slate-200">
-            电话：400-000-0000（占位）<br />
-            邮箱：business@jiguangzhijie.top（占位）<br />
-            地址：深圳市南山区 XXX（占位）
-          </p>
-          <p class="text-sm text-slate-300">
-            说明：页面文案与图片来自你提供的 `site_sections_auto.md`、`slides_text_raw.md` 和 `images/` 素材包，已按官网栏目整理展示。
+            邮箱：<a href="mailto:jgauto402@163.com" class="font-semibold text-cyan-200 hover:underline">jgauto402@163.com</a><br />
+            电话：暂不公开<br />
+            地址：广东省深圳市坪山区新能源汽车产业园区2期
           </p>
         </div>
       </section>
     </main>
 
     <footer class="border-t border-slate-800 bg-slate-900 p-6 text-center text-sm text-slate-400">
-      © {new Date().getFullYear()} 深圳吉光智界科技有限公司. All Rights Reserved.
+      © 深圳吉光智界科技有限公司. All Rights Reserved.
     </footer>
+
+    <script is:inline>
+      const revealItems = [...document.querySelectorAll("[data-reveal]")];
+      const io = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("is-visible");
+              io.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.14 }
+      );
+
+      revealItems.forEach((el) => io.observe(el));
+
+      const progress = document.getElementById("scroll-progress");
+      const parallax = document.querySelector("[data-parallax]");
+      const onScroll = () => {
+        const doc = document.documentElement;
+        const max = doc.scrollHeight - window.innerHeight;
+        const ratio = max > 0 ? window.scrollY / max : 0;
+
+        if (progress) {
+          progress.style.transform = `scaleX(${Math.min(1, Math.max(0, ratio))})`;
+        }
+
+        if (parallax) {
+          parallax.style.transform = `translate3d(0, ${window.scrollY * 0.12}px, 0)`;
+        }
+      };
+
+      window.addEventListener("scroll", onScroll, { passive: true });
+      onScroll();
+    </script>
   </body>
 </html>
