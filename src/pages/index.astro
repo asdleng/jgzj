@@ -302,20 +302,20 @@ const organizationJsonLd = JSON.stringify({
           <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">一块屏把地图、态势与服务信息整合到现场</h2>
           <div class="mb-6 grid gap-4 lg:grid-cols-12">
             <figure class="visual-frame lg:col-span-7">
-              <img src={visualScreens[0].src} alt={visualScreens[0].alt} class="h-[420px] w-full object-cover" />
+              <img src={visualScreens[0].src} alt={visualScreens[0].alt} class="visual-img visual-img-lg" />
             </figure>
             <div class="grid gap-4 lg:col-span-5">
               <figure class="visual-frame">
-                <img src={visualOnsite[0].src} alt={visualOnsite[0].alt} class="h-[202px] w-full object-cover" />
+                <img src={visualOnsite[0].src} alt={visualOnsite[0].alt} class="visual-img visual-img-sm" />
               </figure>
               <figure class="visual-frame">
-                <img src={visualOnsite[1].src} alt={visualOnsite[1].alt} class="h-[202px] w-full object-cover" />
+                <img src={visualOnsite[1].src} alt={visualOnsite[1].alt} class="visual-img visual-img-sm" />
               </figure>
             </div>
           </div>
           <div class="mb-6">
             <figure class="visual-frame">
-              <img src={visualScreens[1].src} alt={visualScreens[1].alt} class="h-[420px] w-full object-cover" />
+              <img src={visualScreens[1].src} alt={visualScreens[1].alt} class="visual-img visual-img-lg" />
             </figure>
           </div>
           <ul class="grid gap-3 text-sm text-slate-200 md:grid-cols-2 md:text-base">
@@ -356,7 +356,7 @@ const organizationJsonLd = JSON.stringify({
           <div class="grid gap-4 md:grid-cols-2">
             {cases.map((item) => (
               <article class="overflow-hidden rounded-xl bg-slate-800/80 ring-1 ring-slate-700">
-                <img src={item.img} alt={item.title} class="h-56 w-full object-cover" />
+                <img src={item.img} alt={item.title} class="h-56 w-full bg-slate-900 p-2 object-contain" />
                 <div class="p-4">
                   <h3 class="mb-1 text-base font-semibold text-white">{item.title}</h3>
                   <p class="text-sm text-slate-300">{item.text}</p>
@@ -396,6 +396,26 @@ const organizationJsonLd = JSON.stringify({
       </section>
     </main>
 
+    <div class="cloud-chat" id="cloud-chat">
+      <button id="chat-launch" class="cloud-chat-launch" type="button" aria-controls="chat-panel" aria-expanded="false">
+        云端对话
+      </button>
+      <section id="chat-panel" class="cloud-chat-panel" aria-live="polite" hidden>
+        <header class="cloud-chat-head">
+          <div>
+            <p class="cloud-chat-title">云端文本助手</p>
+            <p id="chat-status" class="cloud-chat-status" data-state="idle">就绪</p>
+          </div>
+          <button id="chat-minimize" class="cloud-chat-close" type="button" aria-label="收起对话框">收起</button>
+        </header>
+        <div id="chat-messages" class="cloud-chat-messages"></div>
+        <form id="chat-form" class="cloud-chat-form">
+          <textarea id="chat-input" rows="2" maxlength="500" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+          <button id="chat-send" type="submit">发送</button>
+        </form>
+      </section>
+    </div>
+
     <footer class="border-t border-slate-800 bg-slate-900 p-6 text-center text-sm text-slate-400">
       © 深圳吉光智界科技有限公司. All Rights Reserved.
     </footer>
@@ -434,6 +454,147 @@ const organizationJsonLd = JSON.stringify({
 
       window.addEventListener("scroll", onScroll, { passive: true });
       onScroll();
+
+      const launchBtn = document.getElementById("chat-launch");
+      const panel = document.getElementById("chat-panel");
+      const minimizeBtn = document.getElementById("chat-minimize");
+      const chatForm = document.getElementById("chat-form");
+      const chatInput = document.getElementById("chat-input");
+      const chatMessages = document.getElementById("chat-messages");
+      const chatStatus = document.getElementById("chat-status");
+      const chatSend = document.getElementById("chat-send");
+
+      const SESSION_KEY = "jgzj_chat_session_id_v1";
+      const HISTORY_KEY = "jgzj_chat_history_v1";
+      const MAX_HISTORY = 50;
+      const DIRECT_HTTP_URL = "http://idtrd.kmdns.net:7790/chat";
+      const PROXY_URL = "/api/cloud-chat";
+
+      const sessionId = (() => {
+        const old = localStorage.getItem(SESSION_KEY);
+        if (old) return old;
+        const created = self.crypto?.randomUUID ? self.crypto.randomUUID() : `session-${Date.now()}`;
+        localStorage.setItem(SESSION_KEY, created);
+        return created;
+      })();
+
+      const cloudChatUrl = window.CLOUD_CHAT_URL || (window.location.protocol === "http:" ? DIRECT_HTTP_URL : PROXY_URL);
+
+      function setChatStatus(text, state) {
+        if (!chatStatus) return;
+        chatStatus.textContent = text;
+        chatStatus.dataset.state = state || "idle";
+      }
+
+      function loadHistory() {
+        try {
+          const raw = localStorage.getItem(HISTORY_KEY);
+          if (!raw) return [];
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return [];
+          return parsed.slice(-MAX_HISTORY);
+        } catch {
+          return [];
+        }
+      }
+
+      function saveHistory(items) {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(-MAX_HISTORY)));
+      }
+
+      function appendMessage(role, text) {
+        if (!chatMessages) return;
+        const item = document.createElement("article");
+        item.className = `chat-msg ${role === "user" ? "from-user" : "from-bot"}`;
+        item.textContent = text;
+        chatMessages.appendChild(item);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      const messageHistory = loadHistory();
+      if (messageHistory.length === 0) {
+        const welcome = "你好，我是云端文本助手。你可以直接输入问题开始对话。";
+        messageHistory.push({ role: "bot", text: welcome });
+        saveHistory(messageHistory);
+      }
+      messageHistory.forEach((m) => appendMessage(m.role, m.text));
+
+      function openChat() {
+        if (!panel || !launchBtn) return;
+        panel.hidden = false;
+        launchBtn.setAttribute("aria-expanded", "true");
+        requestAnimationFrame(() => chatInput?.focus());
+      }
+
+      function closeChat() {
+        if (!panel || !launchBtn) return;
+        panel.hidden = true;
+        launchBtn.setAttribute("aria-expanded", "false");
+      }
+
+      launchBtn?.addEventListener("click", openChat);
+      minimizeBtn?.addEventListener("click", closeChat);
+
+      chatForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const text = chatInput?.value.trim();
+        if (!text) return;
+
+        chatInput.value = "";
+        appendMessage("user", text);
+        messageHistory.push({ role: "user", text });
+        saveHistory(messageHistory);
+
+        setChatStatus("发送中...", "loading");
+        if (chatSend) chatSend.disabled = true;
+
+        try {
+          const res = await fetch(cloudChatUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: sessionId,
+              message: text,
+              client_ts: new Date().toISOString()
+            })
+          });
+
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+
+          const data = await res.json();
+          const reply =
+            data?.reply ||
+            data?.text ||
+            data?.message ||
+            data?.data?.reply ||
+            "";
+
+          if (!reply) {
+            throw new Error("云端返回内容为空");
+          }
+
+          appendMessage("bot", reply);
+          messageHistory.push({ role: "bot", text: reply });
+          saveHistory(messageHistory);
+          setChatStatus("已连接", "ok");
+        } catch (err) {
+          const detail = err?.message || "未知错误";
+          const fallback = `对话服务暂不可用：${detail}`;
+          appendMessage("bot", fallback);
+          messageHistory.push({ role: "bot", text: fallback });
+          saveHistory(messageHistory);
+
+          if (window.location.protocol === "https:" && cloudChatUrl === PROXY_URL) {
+            setChatStatus("缺少 /api/cloud-chat 代理", "error");
+          } else {
+            setChatStatus("连接异常", "error");
+          }
+        } finally {
+          if (chatSend) chatSend.disabled = false;
+        }
+      });
     </script>
   </body>
 </html>
