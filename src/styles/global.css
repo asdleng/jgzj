@@ -329,3 +329,26 @@ a {
     transform: translate3d(0, 28px, 0);
   }
 }
+
+/* AUTO-UI-REFINE 2026-03-06 22:01:11 */
+.hero-shell h1,
+.hero-shell .hero-title {
+  letter-spacing: 0.02em;
+  text-shadow: 0 8px 28px rgba(2, 6, 23, 0.45);
+}
+.hero-shell p,
+.hero-shell h2 {
+  color: rgba(226, 232, 240, 0.92);
+}
+.hero-shell a,
+.hero-shell .btn,
+.hero-shell button {
+  transition: transform 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease;
+}
+.hero-shell a:hover,
+.hero-shell .btn:hover,
+.hero-shell button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.35);
+  filter: saturate(1.06);
+}
