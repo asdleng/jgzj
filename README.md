@@ -54,3 +54,6 @@ git push -u origin main
 - 首页内容：`src/pages/index.astro`
 - 部署工作流：`.github/workflows/deploy.yml`
 - 域名绑定：`public/CNAME`
+
+## Backend Deployment Note (2026-03-06 22:15:57)
+- See `docs/backend-deploy.md` for server deployment steps and runtime requirements.

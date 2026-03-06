@@ -1,0 +1,11 @@
+services:
+  web-backend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npm ci --prefix backend && npm run start --prefix backend"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./:/app
+    environment:
+      - NODE_ENV=production
