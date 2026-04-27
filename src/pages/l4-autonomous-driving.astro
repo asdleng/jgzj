@@ -1,0 +1,467 @@
+---
+import SiteLayout from "../components/SiteLayout.astro";
+import { baizeModes, baizeSpecs } from "../data/site-content.js";
+
+const autonomyCards = [
+  {
+    index: "01",
+    title: "感知聚类",
+    subtitle: "多激光雷达与点云融合感知",
+    text:
+      "面向园区低速场景，系统先完成障碍物聚类、目标提取与融合感知，为车辆识别通行空间、静态障碍和动态风险提供基础输入。"
+  },
+  {
+    index: "02",
+    title: "融合定位（ESKF）",
+    subtitle: "多源信息融合，稳定输出车辆位姿",
+    text:
+      "定位链路以 ESKF 融合为核心，结合 IMU、GNSS-RTK、地图匹配与激光里程计能力，在复杂园区环境中持续输出稳定位置、姿态与速度信息。"
+  },
+  {
+    index: "03",
+    title: "决策规划",
+    subtitle: "以混合 A* 为代表的低速路径搜索与行为规划",
+    text:
+      "围绕巡逻、避障、停靠、绕行和任务执行等需求，规划层根据当前位置与周边环境生成可执行路径与动作决策，兼顾安全性与通过性。"
+  },
+  {
+    index: "04",
+    title: "跟踪控制（LQR）",
+    subtitle: "平顺、稳定的轨迹跟踪控制",
+    text:
+      "控制层以 LQR 为核心理解入口，将规划轨迹转化为底盘可执行的控制量，保证车辆在低速自动驾驶过程中具备稳定、平顺和可控的运动表现。"
+  }
+];
+
+const autonomyFlow = [
+  {
+    index: "01",
+    title: "感知聚类",
+    output: "提供周边障碍、通行空间和风险目标判断",
+    vehicleImpact: "为决策规划提供环境理解基础"
+  },
+  {
+    index: "02",
+    title: "融合定位（ESKF）",
+    output: "提供车辆当前位置、姿态和速度状态",
+    vehicleImpact: "同时服务于决策规划和跟踪控制"
+  },
+  {
+    index: "03",
+    title: "决策规划",
+    output: "综合感知与定位结果，生成路径、动作决策和可执行轨迹",
+    vehicleImpact: "把任务目标变成车辆下一步该怎么走"
+  },
+  {
+    index: "04",
+    title: "跟踪控制（LQR）",
+    output: "结合定位状态与规划轨迹，输出转向、速度和制动控制量",
+    vehicleImpact: "直接作用于整车，让车平顺地走、停和避让"
+  }
+];
+
+const vehicleResults = [
+  "沿既定路线稳定行驶",
+  "面对障碍物时减速、绕行或停车",
+  "保持低速状态下的平顺与可控",
+  "支撑巡逻、导览和服务等任务执行"
+];
+---
+
+<SiteLayout
+  title="L4级园区自动驾驶"
+  description="面向园区、公园、街区和场馆等低速复杂场景，展示白泽机器人在感知、融合定位、决策规划和跟踪控制上的自动驾驶能力。"
+  currentPath="/l4-autonomous-driving"
+>
+  <header class="page-hero autonomy-hero">
+    <img
+      src="/assets/hero-l4-autonomy.png"
+      alt="L4级园区自动驾驶场景"
+      class="hero-media"
+      data-parallax
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">PAGE 02 · AUTONOMY</p>
+        <h1 class="page-title">L4级园区自动驾驶</h1>
+        <p class="page-subtitle">
+          面向园区、公园、街区、场馆等低速复杂场景，白泽机器人形成了从环境感知、融合定位，到决策规划与跟踪控制的一体化自动驾驶能力，为巡逻、服务和多任务执行提供稳定底盘。
+        </p>
+        <div class="chip-list autonomy-hero-chips">
+          {baizeModes.map((mode) => (
+            <span class="chip-item">{mode}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">产品载体</p>
+        <h2 class="section-title">白泽机器人是自动驾驶能力的落地平台</h2>
+        <p class="section-copy">
+          自动驾驶能力不是单独的算法堆叠，而是直接服务于园区巡逻、导览、移动宣传、异常提醒和多任务执行的整车平台能力。
+        </p>
+
+        <div class="autonomy-vehicle-grid">
+          <figure class="page-card autonomy-vehicle-card">
+            <img
+              src="/assets/s14_3ec97597596d.png"
+              alt="白泽机器人外观"
+              class="autonomy-vehicle-image"
+              loading="lazy"
+              decoding="async"
+            />
+            <figcaption>整车外观</figcaption>
+          </figure>
+          <figure class="page-card autonomy-vehicle-card">
+            <img
+              src="/assets/s13_4a859ae94e04.png"
+              alt="白泽机器人多形态"
+              class="autonomy-vehicle-image"
+              loading="lazy"
+              decoding="async"
+            />
+            <figcaption>多任务平台形态</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">核心能力</p>
+        <h2 class="section-title">4 个模块形成自动驾驶主链路</h2>
+        <p class="section-copy">
+          这四个模块各自承担不同职责，但它们之间不是简单并列关系，而是前一层提供结果、后一层继续使用，最终把环境理解、路径决策和车辆执行连成一套闭环。
+        </p>
+        <div class="autonomy-card-grid">
+          {autonomyCards.map((item) => (
+            <article class="page-card autonomy-core-card" data-watermark={item.index}>
+              <p class="autonomy-core-index">{item.index}</p>
+              <h3>{item.title}</h3>
+              <p class="autonomy-core-subtitle">{item.subtitle}</p>
+              <p>{item.text}</p>
+            </article>
+          ))}
+        </div>
+
+        <div class="autonomy-flow-shell">
+          <article class="page-card autonomy-flow-node">
+            <p class="autonomy-flow-index">{autonomyFlow[0].index}</p>
+            <h3>{autonomyFlow[0].title}</h3>
+            <p class="autonomy-flow-label">提供内容</p>
+            <p class="autonomy-flow-copy">{autonomyFlow[0].output}</p>
+            <p class="autonomy-flow-label">作用</p>
+            <p class="autonomy-flow-copy">{autonomyFlow[0].vehicleImpact}</p>
+          </article>
+
+          <div class="autonomy-flow-plus" aria-hidden="true">+</div>
+
+          <article class="page-card autonomy-flow-node">
+            <p class="autonomy-flow-index">{autonomyFlow[1].index}</p>
+            <h3>{autonomyFlow[1].title}</h3>
+            <p class="autonomy-flow-label">提供内容</p>
+            <p class="autonomy-flow-copy">{autonomyFlow[1].output}</p>
+            <p class="autonomy-flow-label">作用</p>
+            <p class="autonomy-flow-copy">{autonomyFlow[1].vehicleImpact}</p>
+          </article>
+
+          <div class="autonomy-flow-arrow" aria-hidden="true">→</div>
+
+          <article class="page-card autonomy-flow-node autonomy-flow-node--accent">
+            <p class="autonomy-flow-index">{autonomyFlow[2].index}</p>
+            <h3>{autonomyFlow[2].title}</h3>
+            <p class="autonomy-flow-label">接收内容</p>
+            <p class="autonomy-flow-copy">接收感知与定位结果，完成路径、动作和轨迹生成。</p>
+            <p class="autonomy-flow-label">输出结果</p>
+            <p class="autonomy-flow-copy">{autonomyFlow[2].output}</p>
+          </article>
+
+          <div class="autonomy-flow-arrow" aria-hidden="true">→</div>
+
+          <article class="page-card autonomy-flow-node autonomy-flow-node--accent">
+            <p class="autonomy-flow-index">{autonomyFlow[3].index}</p>
+            <h3>{autonomyFlow[3].title}</h3>
+            <p class="autonomy-flow-label">接收内容</p>
+            <p class="autonomy-flow-copy">接收定位状态与规划轨迹，完成整车运动控制。</p>
+            <p class="autonomy-flow-label">输出结果</p>
+            <p class="autonomy-flow-copy">{autonomyFlow[3].output}</p>
+          </article>
+        </div>
+
+        <div class="autonomy-results-card">
+          <p class="autonomy-results-kicker">最终整车表现</p>
+          <div class="chip-list">
+            {vehicleResults.map((item) => (
+              <span class="chip-item">{item}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">车辆参数</p>
+        <h2 class="section-title">面向园区场景落地的整车指标</h2>
+        <div class="spec-table-wrap">
+          <table class="spec-table">
+            <thead>
+              <tr>
+                <th>参数项</th>
+                <th>参数值</th>
+              </tr>
+            </thead>
+            <tbody>
+              {baizeSpecs.map((row) => (
+                <tr>
+                  <td>{row.item}</td>
+                  <td>{row.value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</SiteLayout>
+
+<style>
+  .autonomy-hero {
+    background:
+      radial-gradient(circle at 78% 22%, rgba(20, 184, 166, 0.18), transparent 24%),
+      radial-gradient(circle at 18% 18%, rgba(56, 189, 248, 0.14), transparent 28%),
+      #020617;
+  }
+
+  .autonomy-hero-chips {
+    margin-top: 24px;
+  }
+
+  .autonomy-vehicle-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 22px;
+  }
+
+  .autonomy-vehicle-card {
+    display: grid;
+    gap: 14px;
+  }
+
+  .autonomy-vehicle-image {
+    width: 100%;
+    height: min(26vw, 300px);
+    border-radius: 16px;
+    background:
+      radial-gradient(circle at 30% 30%, rgba(34, 211, 238, 0.08), transparent 40%),
+      linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(2, 6, 23, 1)),
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><polygon points='40,2 76,22 76,58 40,78 4,58 4,22' fill='none' stroke='%2367e8f9' stroke-opacity='0.07' stroke-width='1'/></svg>");
+    background-size: cover, cover, 80px 80px;
+    object-fit: contain;
+    padding: 16px;
+  }
+
+  .autonomy-vehicle-card figcaption {
+    color: #cbd5e1;
+    font-size: 0.94rem;
+    font-weight: 700;
+  }
+
+  .autonomy-card-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 22px;
+  }
+
+  .autonomy-core-card {
+    position: relative;
+    display: grid;
+    gap: 10px;
+    min-height: 100%;
+    overflow: hidden;
+  }
+
+  .autonomy-core-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(90deg, #67e8f9, #2dd4bf, rgba(103, 232, 249, 0));
+  }
+
+  .autonomy-core-card::after {
+    content: attr(data-watermark);
+    position: absolute;
+    top: -28px;
+    right: -8px;
+    font-family: "Orbitron", "Noto Sans SC", sans-serif;
+    font-size: 9.5rem;
+    font-weight: 800;
+    line-height: 1;
+    color: rgba(34, 211, 238, 0.06);
+    pointer-events: none;
+    user-select: none;
+    letter-spacing: -4px;
+  }
+
+  .autonomy-core-index {
+    margin: 0;
+    font-family: "Orbitron", "Noto Sans SC", sans-serif;
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #93c5fd;
+    position: relative;
+    z-index: 1;
+  }
+
+  .autonomy-core-card h3 {
+    margin: 0;
+    font-size: 1.4rem;
+    color: #fff;
+  }
+
+  .autonomy-core-subtitle {
+    margin: 0;
+    color: #67e8f9;
+    font-size: 0.92rem;
+    font-weight: 700;
+    line-height: 1.6;
+  }
+
+  .autonomy-core-card p:last-child {
+    margin: 0;
+    color: #cbd5e1;
+    line-height: 1.75;
+  }
+
+  .autonomy-flow-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.1fr) auto minmax(0, 1.1fr);
+    gap: 14px;
+    align-items: stretch;
+    margin-top: 22px;
+  }
+
+  .autonomy-flow-node {
+    display: grid;
+    gap: 8px;
+    min-height: 100%;
+  }
+
+  .autonomy-flow-node--accent {
+    border-color: rgba(45, 212, 191, 0.34);
+    box-shadow:
+      inset 0 1px 0 rgba(148, 163, 184, 0.12),
+      0 14px 32px rgba(2, 6, 23, 0.45),
+      0 0 0 1px rgba(45, 212, 191, 0.12);
+  }
+
+  .autonomy-flow-index {
+    margin: 0;
+    font-family: "Orbitron", "Noto Sans SC", sans-serif;
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #93c5fd;
+  }
+
+  .autonomy-flow-node h3 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: #fff;
+  }
+
+  .autonomy-flow-label,
+  .autonomy-results-kicker {
+    margin: 4px 0 0;
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #67e8f9;
+  }
+
+  .autonomy-flow-copy {
+    margin: 0;
+    color: #cbd5e1;
+    line-height: 1.72;
+  }
+
+  .autonomy-flow-arrow {
+    display: grid;
+    place-items: center;
+    font-size: 1.7rem;
+    font-weight: 900;
+    color: #67e8f9;
+    text-shadow: 0 0 12px rgba(34, 211, 238, 0.7);
+    animation: arrow-pulse 1.6s ease-in-out infinite;
+  }
+
+  .autonomy-flow-plus {
+    display: grid;
+    place-items: center;
+    font-size: 1.6rem;
+    font-weight: 900;
+    color: #5eead4;
+    text-shadow: 0 0 10px rgba(94, 234, 212, 0.6);
+    animation: arrow-pulse 1.6s ease-in-out infinite 0.4s;
+  }
+
+  @keyframes arrow-pulse {
+    0%, 100% { opacity: 0.7; transform: translateX(0) scale(1); }
+    50%      { opacity: 1;   transform: translateX(2px) scale(1.1); }
+  }
+
+  .autonomy-results-card {
+    margin-top: 18px;
+    padding: 16px 18px;
+    border-radius: 18px;
+    border: 1px solid rgba(71, 85, 105, 0.62);
+    background: linear-gradient(180deg, rgba(8, 47, 73, 0.22), rgba(2, 6, 23, 0.56));
+  }
+
+  @media (max-width: 780px) {
+    .autonomy-vehicle-grid,
+    .autonomy-card-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .autonomy-vehicle-image {
+      height: min(62vw, 300px);
+    }
+
+    .autonomy-flow-shell {
+      grid-template-columns: 1fr;
+    }
+
+    .autonomy-flow-arrow,
+    .autonomy-flow-plus {
+      min-height: 18px;
+      transform: rotate(90deg);
+    }
+  }
+
+  .autonomy-hero .hero-overlay {
+    background:
+      linear-gradient(100deg, rgba(2, 6, 23, 0.92), rgba(2, 6, 23, 0.55)),
+      radial-gradient(circle at 85% 35%, rgba(56, 189, 248, 0.28), transparent 45%);
+  }
+  .autonomy-hero .page-kicker {
+    border-color: rgba(56, 189, 248, 0.38);
+    background: rgba(56, 189, 248, 0.08);
+    color: #bae6fd;
+  }
+  .autonomy-hero .page-subtitle {
+    border-left-color: #38bdf8;
+  }
+</style>

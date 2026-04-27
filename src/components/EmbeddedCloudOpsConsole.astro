@@ -1,0 +1,259 @@
+<section id="cloud-ops-console" class="cloud-chat-panel embedded-panel cloud-ops-console-panel" aria-live="polite">
+  <header class="cloud-chat-head">
+    <div class="cloud-chat-head-main">
+      <p class="cloud-chat-title">云端智能运维工作台</p>
+      <p id="cloud-ops-status" class="cloud-chat-status" data-state="idle">只读模式</p>
+    </div>
+    <div class="openclaw-head-actions">
+      <button
+        id="cloud-ops-logout"
+        class="cloud-chat-close"
+        type="button"
+        aria-label="切换云端运维账号"
+        hidden
+      >
+        切换账号
+      </button>
+    </div>
+  </header>
+
+  <div id="cloud-ops-shell" class="cloud-ops-shell">
+    <div class="cloud-ops-toolbar">
+      <label class="cloud-ops-toolbar-field" for="cloud-ops-vehicle">
+        <span>当前车辆</span>
+        <select id="cloud-ops-vehicle">
+          <option value="">加载中...</option>
+        </select>
+      </label>
+      <button id="cloud-ops-refresh" class="cloud-ops-toolbar-button" type="button">刷新</button>
+      <p id="cloud-ops-inline-status" class="cloud-ops-inline-status" data-state="idle">待加载</p>
+    </div>
+
+    <section class="cloud-ops-live-panel">
+      <div class="cloud-ops-live-head">
+        <div>
+          <p class="section-kicker">当前车辆实时状态</p>
+          <h3>车端 telemetry 到达后，当前选中车辆会在这里自动刷新</h3>
+        </div>
+      </div>
+      <div id="cloud-ops-live-current" class="cloud-ops-live-current">
+        <p class="cloud-ops-live-empty">等待车端 telemetry...</p>
+      </div>
+    </section>
+
+    <section class="cloud-ops-alerts-panel">
+      <div class="cloud-ops-alerts-head">
+        <div>
+          <p class="section-kicker">全车实时告警</p>
+          <h3>后台持续监控所有在线车辆，异常出现就显示，恢复后自动清除</h3>
+        </div>
+        <p id="cloud-ops-alerts-status" class="cloud-ops-inline-status" data-state="idle">等待遥测</p>
+      </div>
+      <div id="cloud-ops-alerts-list" class="cloud-ops-alerts-list">
+        <p id="cloud-ops-alerts-empty" class="cloud-ops-alerts-empty">当前暂无异常车辆。</p>
+      </div>
+    </section>
+
+    <div id="cloud-ops-summary" class="cloud-ops-summary-shell"></div>
+    <p id="cloud-ops-tool-note" class="cloud-ops-tool-note">当前车端支持的工具会在按钮上自动生效，不支持的按钮会置灰。</p>
+
+    <section class="cloud-ops-audio-panel">
+      <div class="cloud-ops-audio-head">
+        <div>
+          <p class="section-kicker">实时音频</p>
+          <h3>车端音频监听</h3>
+        </div>
+        <p id="cloud-ops-audio-status" class="cloud-ops-inline-status" data-state="idle">待启动</p>
+      </div>
+      <div class="cloud-ops-audio-grid">
+        <button
+          id="cloud-ops-audio-mic"
+          class="cloud-ops-audio-button"
+          type="button"
+          data-audio-tool="audio.uplink.mic"
+          data-requires-tool="audio.uplink.mic"
+          data-access="control"
+        >
+          <strong>听麦</strong>
+          <span>车内麦克风上行音频</span>
+        </button>
+        <button
+          id="cloud-ops-audio-speaker"
+          class="cloud-ops-audio-button"
+          type="button"
+          data-audio-tool="audio.uplink.speaker"
+          data-requires-tool="audio.uplink.speaker"
+          data-access="control"
+        >
+          <strong>听喇叭</strong>
+          <span>整车喇叭最终混音输出</span>
+        </button>
+      </div>
+    </section>
+
+    <div class="cloud-ops-actions-grid">
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="status.key_nodes" data-needs-vehicle="true" data-requires-tool="status.key_nodes" data-timeout-s="35">
+        <strong>关键节点</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="health.autodrive_check" data-needs-vehicle="true" data-requires-tool="health.autodrive_check" data-timeout-s="35">
+        <strong>一键健康检查</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="vehicle_detail" data-needs-vehicle="true">
+        <strong>单车详情</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_list" data-needs-vehicle="true" data-timeout-s="35">
+        <strong>工具列表</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="health.snapshot" data-needs-vehicle="true" data-requires-tool="health.snapshot">
+        <strong>健康快照</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="network.cloud_probe" data-needs-vehicle="true" data-requires-tool="network.cloud_probe" data-timeout-s="30">
+        <strong>云端连通</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="network.master_probe" data-needs-vehicle="true" data-requires-tool="network.master_probe" data-args='{"include_ssh":true}' data-timeout-s="25">
+        <strong>主控探测</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="ros.overview" data-needs-vehicle="true" data-requires-tool="ros.overview">
+        <strong>ROS 总览</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="system.snapshot" data-needs-vehicle="true" data-requires-tool="system.snapshot" data-args='{"include_processes":true}'>
+        <strong>系统快照</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.snapshot" data-needs-vehicle="true" data-requires-tool="vehicle.snapshot" data-args='{"include_topic_samples":true}' data-timeout-s="25">
+        <strong>整车快照</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="status.camera" data-needs-vehicle="true" data-requires-tool="status.camera" data-args='{"include_rate":true,"sample_seconds":1.0}'>
+        <strong>相机状态</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="camera.capture" data-needs-vehicle="true" data-requires-tool="camera.capture" data-args='{"camera_ids":["camera1","camera2","camera3","camera4"],"quality":70,"max_width":640,"include_base64":true}' data-timeout-s="40">
+        <strong>相机抓拍</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="camera.upload_chain" data-needs-vehicle="true" data-requires-tool="camera.upload_chain">
+        <strong>上传链路</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="ai_detection.config" data-needs-vehicle="true" data-requires-tool="ai_detection.config" data-timeout-s="30">
+        <strong>AI检测配置</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="ai_detection.images" data-needs-vehicle="true" data-requires-tool="ai_detection.images" data-args='{"limit":6}' data-timeout-s="35">
+        <strong>AI检测图片</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="map.preview" data-needs-vehicle="true" data-requires-tool="map.preview" data-args='{"image_size":1024,"include_base64":true}' data-timeout-s="40">
+        <strong>地图查看</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="status.localization" data-needs-vehicle="true" data-requires-tool="status.localization">
+        <strong>定位状态</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="status.can" data-needs-vehicle="true" data-requires-tool="status.can">
+        <strong>底盘 CAN</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="status.body_control" data-needs-vehicle="true" data-requires-tool="status.body_control" data-timeout-s="30">
+        <strong>车身状态</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.body_control" data-needs-vehicle="true" data-requires-tool="vehicle.body_control" data-args='{"ad_screen":true,"require_stationary":true}' data-timeout-s="35" data-access="control">
+        <strong>广告屏开</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.body_control" data-needs-vehicle="true" data-requires-tool="vehicle.body_control" data-args='{"ad_screen":false,"require_stationary":true}' data-timeout-s="35" data-access="control">
+        <strong>广告屏关</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.body_control" data-needs-vehicle="true" data-requires-tool="vehicle.body_control" data-args='{"front_lamp":true,"require_stationary":true}' data-timeout-s="35" data-access="control">
+        <strong>前照灯开</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.body_control" data-needs-vehicle="true" data-requires-tool="vehicle.body_control" data-args='{"front_lamp":false,"require_stationary":true}' data-timeout-s="35" data-access="control">
+        <strong>前照灯关</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.body_control" data-needs-vehicle="true" data-requires-tool="vehicle.body_control" data-args='{"mood_lamp":true,"require_stationary":true}' data-timeout-s="35" data-access="control">
+        <strong>氛围灯开</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.body_control" data-needs-vehicle="true" data-requires-tool="vehicle.body_control" data-args='{"mood_lamp":false,"require_stationary":true}' data-timeout-s="35" data-access="control">
+        <strong>氛围灯关</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.body_control" data-needs-vehicle="true" data-requires-tool="vehicle.body_control" data-args='{"steer_lamp":"hazard","require_stationary":true}' data-timeout-s="35" data-access="control">
+        <strong>双闪</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.body_control" data-needs-vehicle="true" data-requires-tool="vehicle.body_control" data-args='{"steer_lamp":"left","require_stationary":true}' data-timeout-s="35" data-access="control">
+        <strong>左转灯</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.body_control" data-needs-vehicle="true" data-requires-tool="vehicle.body_control" data-args='{"steer_lamp":"right","require_stationary":true}' data-timeout-s="35" data-access="control">
+        <strong>右转灯</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.body_control" data-needs-vehicle="true" data-requires-tool="vehicle.body_control" data-args='{"steer_lamp":"off","require_stationary":true}' data-timeout-s="35" data-access="control">
+        <strong>灯光复位</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="vehicle.clear_collision_stop" data-needs-vehicle="true" data-requires-tool="vehicle.clear_collision_stop" data-args='{"stop_patrol_first":true}' data-timeout-s="45" data-access="control">
+        <strong>碰撞停复位</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="status.planning" data-needs-vehicle="true" data-requires-tool="status.planning">
+        <strong>规划状态</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="status.routing" data-needs-vehicle="true" data-requires-tool="status.routing">
+        <strong>Routing 状态</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="status.obstacle_processor" data-needs-vehicle="true" data-requires-tool="status.obstacle_processor">
+        <strong>障碍处理</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="obstacle.preview" data-needs-vehicle="true" data-requires-tool="obstacle.preview" data-args='{"topic":"/fusion/objects","range_m":15,"image_size":768,"save_file":true,"include_base64":true}' data-timeout-s="40">
+        <strong>障碍俯视图</strong>
+      </button>
+      <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="route.list" data-needs-vehicle="true" data-requires-tool="route.list">
+        <strong>路线列表</strong>
+      </button>
+    </div>
+
+    <section class="cloud-ops-chat-stack">
+      <div class="cloud-ops-chat-head">
+        <div>
+          <p class="section-kicker">自然语言运维</p>
+          <h3>结合上方快捷结果继续对车追问</h3>
+        </div>
+        <p id="openclaw-status" class="cloud-chat-status" data-state="idle">默认模型</p>
+      </div>
+      <div id="openclaw-chat-shell" class="openclaw-chat-shell">
+        <div id="openclaw-messages" class="cloud-chat-messages"></div>
+        <form id="openclaw-form" class="cloud-chat-form">
+          <textarea id="openclaw-input" rows="3" maxlength="1200" placeholder="例如：先帮我做一键健康检查；或者：抓拍 4 路相机看看；再比如：结合刚刚的底盘 CAN 和定位结果，判断这台车现在能不能继续巡逻。"></textarea>
+          <button id="openclaw-send" type="submit">发送</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="cloud-ops-result-shell">
+      <div class="cloud-ops-result-head">
+        <div>
+          <p class="section-kicker">快捷运维结果</p>
+          <h3>详细结果放在这里，便于回看和继续追问</h3>
+        </div>
+      </div>
+      <p id="cloud-ops-result-summary" class="cloud-ops-result-summary">先在上面直接自然语言运维，或者点按钮快速插入上下文；详细结果会显示在这里。</p>
+      <div class="cloud-ops-context-head">
+        <p class="cloud-ops-context-title">已插入的运维上下文</p>
+        <button id="cloud-ops-context-clear" class="cloud-ops-context-clear" type="button">清空上下文</button>
+      </div>
+      <div id="cloud-ops-context-list" class="cloud-ops-context-list">
+        <p id="cloud-ops-context-empty" class="cloud-ops-context-empty">还没有插入上下文。点上面的按钮后，结果会作为当前会话的运维上下文参与后续问答。</p>
+      </div>
+      <div id="cloud-ops-result-details" class="cloud-ops-result-details"></div>
+      <div id="cloud-ops-result-media" class="cloud-ops-result-media" hidden></div>
+      <details class="cloud-ops-result-raw">
+        <summary>查看原始 JSON</summary>
+        <pre id="cloud-ops-result-json" class="cloud-ops-result-json">等待执行...</pre>
+      </details>
+    </section>
+  </div>
+
+  <div id="cloud-ops-auth" class="openclaw-auth">
+    <form id="cloud-ops-login-form" class="openclaw-login-form">
+      <p class="openclaw-login-title">登录获取更多控制权限</p>
+      <p class="cloud-ops-permission-tip">未登录时可查看车辆状态和对话内容；登录后可控制车辆并使用自然语言运维。</p>
+      <label class="openclaw-login-field" for="cloud-ops-username">
+        <span>用户名</span>
+        <input id="cloud-ops-username" type="text" maxlength="64" autocomplete="username" placeholder="输入用户名" />
+      </label>
+      <label class="openclaw-login-field" for="cloud-ops-password">
+        <span>密码</span>
+        <input id="cloud-ops-password" type="password" maxlength="128" autocomplete="current-password" placeholder="输入密码" />
+      </label>
+      <p id="cloud-ops-auth-hint" class="openclaw-auth-hint" data-state="idle">未登录可查看状态和对话内容；登录后可获取更多控制权限。</p>
+      <button id="cloud-ops-login" type="submit">登录</button>
+    </form>
+  </div>
+</section>

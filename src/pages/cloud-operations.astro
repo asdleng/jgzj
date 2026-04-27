@@ -1,0 +1,145 @@
+---
+import EmbeddedCloudOpsConsole from "../components/EmbeddedCloudOpsConsole.astro";
+import EmbeddedCloudOpsRuntime from "../components/EmbeddedCloudOpsRuntime.astro";
+import InteractiveScripts from "../components/InteractiveScripts.astro";
+import SiteLayout from "../components/SiteLayout.astro";
+
+const cloudOpsScreens = [
+  {
+    title: "多车总览与统计大屏",
+    src: "/assets/cloud-ops-platform-1.png",
+    alt: "云控平台整体概览",
+    text: "这一页更偏向平台总览与运营统计。能集中查看车辆在线状态、设备总量、历史巡逻里程、巡逻时长和事件总数，并在地图上直观看到多车分布。",
+    bullets: [
+      "地图总览：多车位置、项目分布与在线情况一屏查看。",
+      "统计看板：历史巡逻里程、时长、事件总数等核心运营指标集中呈现。",
+      "设备总控：车辆数量、在线状态和总体运行情况统一管理。"
+    ]
+  },
+  {
+    title: "实时监控与事件上报",
+    src: "/assets/cloud-ops-platform-2.png",
+    alt: "云控平台实时运营监视",
+    text: "这一页核心是实时值守。图里能看到多路视频窗口、地图路线、车辆状态和事件上报区域，适合车在外面跑时做远程监控与异常确认。",
+    bullets: [
+      "视频监控：前后左右多路画面实时查看，方便远程值守。",
+      "状态查询：车辆位置、路线、任务进度、电量和运行状态同步展示。",
+      "事件上报：异常事件、工单信息和现场图片可以快速上送和确认。"
+    ]
+  },
+  {
+    title: "历史回溯与数据查询",
+    src: "/assets/cloud-ops-platform-3.png",
+    alt: "云控平台历史视频与数据查询",
+    text: "这一页更偏向追溯与分析。历史视频、事件记录、任务计划和数据查询集中到一起，适合做问题复盘、项目分析和运营汇总。",
+    bullets: [
+      "视频回溯：按时间、任务和事件快速回看历史视频。",
+      "数据查询：事件记录、任务计划、车辆信息和运行数据支持统一检索。",
+      "分析统计：为项目复盘、运营汇总和数据闭环提供长期沉淀。"
+    ]
+  }
+];
+---
+
+<SiteLayout
+  title="云端智能运维"
+  description="展示云端智能运维页面，包括云控平台、视频监控、历史回溯、状态查询、信息统计和云端运维控制台。"
+  currentPath="/cloud-operations"
+>
+  <header class="page-hero ops-hero">
+    <img
+      src="/assets/hero-cloud-ops.png"
+      alt="云端智能运维场景"
+      class="hero-media"
+      data-parallax
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">PAGE 05 · CLOUD OPS</p>
+        <h1 class="page-title">云端智能运维</h1>
+        <p class="page-subtitle">
+          车在外面跑，平台在云端看。通过大数据云控平台统一承接视频监控、视频回溯、事件上报、状态查询和信息统计，再配合云端运维控制台，把多车项目常用查询直接做成可点击的操作台。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">大数据云控平台</p>
+        <h2 class="section-title">从多车总览，到实时监控、事件上报与历史回溯</h2>
+        <p class="section-copy">
+          平台首页不是简单放几张后台截图，而是把多车项目里最关键的三类页面组织成完整运营闭环：上面先看整体运行，下去盯实时值守，再回到历史视频和数据做复盘与分析。
+        </p>
+        <div class="cloud-ops-gallery">
+          {cloudOpsScreens.map((item, idx) => (
+            <article class="page-card cloud-ops-row">
+              <div class="cloud-ops-row-media">
+                <div class="browser-mock">
+                  <div class="browser-mock-bar">
+                    <span class="browser-mock-dot browser-mock-dot--red"></span>
+                    <span class="browser-mock-dot browser-mock-dot--yellow"></span>
+                    <span class="browser-mock-dot browser-mock-dot--green"></span>
+                    <span class="browser-mock-url">cloud-ops.jiguangzhijie.top</span>
+                  </div>
+                  <img src={item.src} alt={item.alt} class="cloud-ops-shot-image browser-mock-img" loading="lazy" decoding="async" />
+                </div>
+              </div>
+              <div class="cloud-ops-row-copy">
+                <p class="cloud-ops-row-kicker">
+                  <span class="page-badge">{String(idx + 1).padStart(2, "0")}</span>
+                  平台页面
+                </p>
+                <h3>{item.title}</h3>
+                <p>{item.text}</p>
+                <div class="cloud-ops-bullets">
+                  {item.bullets.map((bullet) => (
+                    <div class="cloud-ops-bullet">
+                      <span class="cloud-ops-check" aria-hidden="true">✓</span>
+                      <span>{bullet}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">云端智能运维工作台</p>
+        <h2 class="section-title">选车、点按钮插入上下文，再用自然语言运维</h2>
+        <p class="section-copy">
+          这一块把快捷运维按钮和 OpenClaw 自然语言对话合成了一个工作台。先选车，用上面的按钮快速查健康快照、定位、底盘、规划、路线等结果，把它们插入当前会话上下文；再在同一个对话框里继续追问，让自然语言运维真正可用。
+        </p>
+        <div class="ops-openclaw-shell">
+          <EmbeddedCloudOpsConsole />
+        </div>
+        <EmbeddedCloudOpsRuntime />
+      </div>
+    </section>
+  </main>
+
+  <InteractiveScripts />
+</SiteLayout>
+
+<style>
+  .ops-hero .hero-overlay {
+    background:
+      linear-gradient(100deg, rgba(2, 6, 23, 0.92), rgba(2, 6, 23, 0.55)),
+      radial-gradient(circle at 85% 35%, rgba(167, 139, 250, 0.28), transparent 45%);
+  }
+  .ops-hero .page-kicker {
+    border-color: rgba(167, 139, 250, 0.38);
+    background: rgba(167, 139, 250, 0.08);
+    color: #ddd6fe;
+  }
+  .ops-hero .page-subtitle {
+    border-left-color: #a78bfa;
+  }
+</style>

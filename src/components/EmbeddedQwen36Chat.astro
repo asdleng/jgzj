@@ -1,0 +1,20 @@
+<section id="qwen36-panel" class="cloud-chat-panel embedded-panel qwen36-chat-panel" aria-live="polite">
+  <header class="cloud-chat-head qwen36-chat-head">
+    <div class="cloud-chat-head-main">
+      <p class="cloud-chat-title">Qwen3.6 27B</p>
+      <p id="qwen36-status" class="cloud-chat-status" data-state="idle">连接中</p>
+      <div class="qwen36-chat-controls">
+        <label class="qwen36-thinking-toggle" for="qwen36-thinking">
+          <input id="qwen36-thinking" type="checkbox" checked />
+          <span>thinking</span>
+        </label>
+        <button id="qwen36-reset" class="cloud-chat-close" type="button">清空</button>
+      </div>
+    </div>
+  </header>
+  <div id="qwen36-messages" class="cloud-chat-messages qwen36-chat-messages"></div>
+  <form id="qwen36-form" class="cloud-chat-form qwen36-chat-form">
+    <textarea id="qwen36-input" rows="3" maxlength="2000" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+    <button id="qwen36-send" type="submit">发送</button>
+  </form>
+</section>

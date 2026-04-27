@@ -1,0 +1,95 @@
+<div class="inspection-page-shell">
+  <section id="ai-check-panel" class="cloud-chat-panel ai-check-panel embedded-panel inspection-panel inspection-panel--check" aria-live="polite">
+    <header class="cloud-chat-head">
+      <div class="cloud-chat-head-main">
+        <p class="cloud-chat-title">AI检测</p>
+        <p id="ai-check-status" class="cloud-chat-status" data-state="idle">待上传</p>
+      </div>
+    </header>
+    <div class="ai-check-workbench">
+      <div class="ai-check-preview-shell">
+        <div id="ai-check-preview" class="ai-check-preview" data-empty="true">
+          <p class="ai-check-preview-empty">选择图片后会在这里预览</p>
+        </div>
+      </div>
+      <div class="ai-check-side">
+        <form id="ai-check-form" class="ai-check-form">
+          <label class="ai-check-field" for="ai-check-image">
+            <span>上传图片</span>
+            <input id="ai-check-image" type="file" accept="image/*" />
+          </label>
+          <label class="ai-check-field" for="ai-check-event">
+            <span>事件名称</span>
+            <input id="ai-check-event" type="text" maxlength="80" placeholder="例如：摔倒、打电话、抽烟" />
+          </label>
+          <label class="ai-check-field" for="ai-check-prompt">
+            <span>提示词修改（可选）</span>
+            <textarea
+              id="ai-check-prompt"
+              rows="4"
+              maxlength="600"
+              placeholder="留空则使用默认提示词。也可自定义，支持 {event_name} 占位。"
+            ></textarea>
+          </label>
+          <button id="ai-check-submit" class="ai-check-submit" type="submit">开始检测</button>
+        </form>
+        <section id="ai-check-result" class="ai-check-result" data-state="idle">
+          <p class="ai-check-result-label">检测结果</p>
+          <p id="ai-check-answer" class="ai-check-answer">等待检测</p>
+          <p id="ai-check-detail" class="ai-check-detail">上传一张图片并输入事件名称，返回是或否。</p>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section id="ai-history-panel" class="cloud-chat-panel ai-history-panel embedded-panel inspection-panel inspection-panel--history" aria-live="polite">
+    <header class="cloud-chat-head">
+      <div class="cloud-chat-head-main">
+        <p class="cloud-chat-title">历史AI检测</p>
+        <p id="ai-history-status" class="cloud-chat-status" data-state="idle">待加载</p>
+        <label class="ai-history-filter" for="ai-history-device-filter">
+          <span>车辆地点</span>
+          <select id="ai-history-device-filter" aria-label="按车辆地点筛选历史AI检测">
+            <option value="">全部地点</option>
+          </select>
+        </label>
+      </div>
+      <div class="ai-history-head-actions">
+        <button id="ai-history-refresh" class="cloud-chat-close" type="button" aria-label="刷新历史检测记录">刷新</button>
+      </div>
+    </header>
+    <div class="ai-history-body">
+      <section class="ai-history-list-wrap">
+        <div id="ai-history-list" class="ai-history-list">
+          <p class="ai-history-empty">还没有加载历史记录。</p>
+        </div>
+        <div class="ai-history-pagination">
+          <button id="ai-history-prev" class="cloud-chat-close" type="button">上一页</button>
+          <p id="ai-history-page" class="ai-history-page">第 1 / 1 页</p>
+          <button id="ai-history-next" class="cloud-chat-close" type="button">下一页</button>
+        </div>
+      </section>
+      <section id="ai-history-detail" class="ai-history-detail" data-state="idle">
+        <p class="ai-history-empty">点击左侧记录后，这里会显示原图、事件和判定结果。</p>
+      </section>
+    </div>
+  </section>
+
+  <div id="ai-history-lightbox" class="ai-history-lightbox" hidden>
+    <div class="ai-history-lightbox-backdrop" data-close-history-lightbox></div>
+    <div class="ai-history-lightbox-dialog" role="dialog" aria-modal="true" aria-label="查看AI检测图片">
+      <button id="ai-history-lightbox-close" class="cloud-chat-close ai-history-lightbox-close" type="button">
+        关闭
+      </button>
+      <div class="ai-history-lightbox-body">
+        <img id="ai-history-lightbox-image" alt="AI检测放大图片" />
+        <div class="ai-history-lightbox-meta">
+          <p id="ai-history-lightbox-caption" class="ai-history-lightbox-caption">AI检测图片</p>
+          <a id="ai-history-lightbox-link" class="ai-history-lightbox-link" href="#" target="_blank" rel="noopener noreferrer">
+            新窗口打开原图
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

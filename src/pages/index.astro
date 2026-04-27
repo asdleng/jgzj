@@ -1,600 +1,218 @@
 ---
-import "../styles/global.css";
-
-const siteUrl = "https://jiguangzhijie.top";
-const siteName = "深圳吉光智界科技有限公司";
-const siteDescription =
-  "吉光智界专注室外智能服务机器人，提供覆盖行走智能、车端可视化与语音交互的全栈解决方案。";
-
-const painPoints = [
-  "园区巡检与服务仍依赖人工，巡逻覆盖率和一致性不足",
-  "复杂室外环境变化快，设备常见“看得见、走不好、管不全”",
-  "地图、态势、语音、业务系统彼此割裂，协同效率低",
-  "面向公众场景时，交互能力与安全策略需要同时在线"
-];
-
-const baizeModes = [
-  "安防巡逻",
-  "异常识别",
-  "智能检测",
-  "园区导览",
-  "移动宣传",
-  "应急提醒",
-  "多任务协同"
-];
-
-const baizeSpecs = [
-  { item: "长×宽×高", value: "1900 × 1200 × 1850 mm" },
-  { item: "整车质量", value: "450 kg" },
-  { item: "最大爬坡", value: "20%" },
-  { item: "最大车速", value: "30 km/h" },
-  { item: "续航里程", value: "80 km" },
-  { item: "作业时间", value: "6-8 h" },
-  { item: "感知范围", value: "100 m / 360°" },
-  { item: "感知类型", value: ">30 种" },
-  { item: "激光雷达", value: "3 颗（前后环视）" },
-  { item: "视觉", value: "4 颗（前后环视）" },
-  { item: "自动驾驶功能", value: "封闭园区自主行驶" },
-  { item: "软件更新", value: "SOTA + FOTA" }
-];
-
-const visualFeatures = [
-  "公园/园区数字地图、当前位置、路径引导",
-  "热点新闻与园区公告联动展示",
-  "历史事件、巡检轨迹、运行里程可视化",
-  "态势感知看板，辅助现场运营决策",
-  "设备状态、告警信息与任务进度同屏"
-];
-
-const visualScreens = [
-  {
-    src: "/assets/ui-screen-01.png",
-    alt: "白泽智车端界面总览"
-  },
-  {
-    src: "/assets/ui-screen-02.png",
-    alt: "白泽智车端地图与态势"
-  }
-];
-
-const visualOnsite = [
-  {
-    src: "/assets/ui-robot-01.jpg",
-    alt: "车端可视化界面现场展示图一"
-  },
-  {
-    src: "/assets/ui-robot-02.jpg",
-    alt: "车端可视化界面现场展示图二"
-  }
-];
-
-const voiceHighlights = [
-  "自研流式 ASR + 语义理解 + TTS 链路，支持连续对话",
-  "支持打断重说与多轮追问，公共场景交互更自然",
-  "覆盖问路导航、天气、热点信息与园区问答",
-  "端到端响应保持在 3 秒级，兼顾速度与稳定性"
-];
-
-const architecture = [
-  {
-    title: "行走 AI",
-    text: "完成感知、定位、规划与控制闭环，提升复杂路况通过性。"
-  },
-  {
-    title: "任务 AI",
-    text: "把巡逻、导览、宣传和提醒等任务进行统一编排与调度。"
-  },
-  {
-    title: "知识 AI",
-    text: "连接业务知识与场景语料，持续提升对话理解和服务质量。"
-  }
-];
-
-const cases = [
-  {
-    title: "场馆活动服务",
-    text: "在大型场馆提供接待引导与现场信息触达。",
-    img: "/assets/s20_3634d8e375c5.jpg"
-  },
-  {
-    title: "园区巡逻与导览",
-    text: "在人流密集区域执行巡逻和路线引导。",
-    img: "/assets/s20_d85bf38d2a8c.jpg"
-  },
-  {
-    title: "夜间公共空间服务",
-    text: "在夜间场景持续输出巡查与服务能力。",
-    img: "/assets/s20_897c068b5bac.jpg"
-  },
-  {
-    title: "校园与商业综合体",
-    text: "结合导览、播报和互动，强化用户体验。",
-    img: "/assets/s20_a32837c09c93.png"
-  }
-];
-
-const awards = [
-  "获国际设计大奖认可（MUSE）",
-  "获金芦苇优秀产品设计奖",
-  "获无人车行业奖项与产品奖项",
-  "获生态合作伙伴认证（封闭场景）"
-];
-
-const organizationJsonLd = JSON.stringify({
-  "@context": "https://schema.org",
-  "@type": "Organization",
-  name: siteName,
-  url: siteUrl,
-  logo: `${siteUrl}/assets/s19_91432e393d0c.png`,
-  email: "jgauto402@163.com",
-  address: {
-    "@type": "PostalAddress",
-    addressRegion: "广东省",
-    addressLocality: "深圳市坪山区",
-    streetAddress: "新能源汽车产业园区2期"
-  },
-  description: siteDescription
-});
+import SiteLayout from "../components/SiteLayout.astro";
+import {
+  securityDrivers,
+  securityPainPoints
+} from "../data/site-content.js";
 ---
 
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="canonical" href={`${siteUrl}/`} />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Noto+Sans+SC:wght@400;500;700;800&display=swap"
-      rel="stylesheet"
+<SiteLayout
+  title="安防巡逻行业爆发"
+  description="聚焦安防巡逻行业爆发背景下的场景痛点、增长驱动力与机器人落地方向。"
+  currentPath="/"
+>
+  <header class="page-hero">
+    <img
+      src="/assets/s03_04142025eb07.jpg"
+      alt="安防巡逻行业场景"
+      class="hero-media"
+      data-parallax
     />
-    <meta name="viewport" content="width=device-width" />
-    <meta name="generator" content={Astro.generator} />
-    <meta name="description" content={siteDescription} />
-    <meta property="og:type" content="website" />
-    <meta property="og:title" content={`${siteName} | 室外智能服务机器人方案`} />
-    <meta property="og:url" content={`${siteUrl}/`} />
-    <meta property="og:image" content={`${siteUrl}/assets/s03_04142025eb07.jpg`} />
-    <meta property="og:description" content={siteDescription} />
-    <title>{siteName} | 室外智能服务机器人方案</title>
-    <script type="application/ld+json" is:inline set:html={organizationJsonLd} />
-  </head>
-  <body>
-    <div class="scroll-progress">
-      <span id="scroll-progress"></span>
-    </div>
-
-    <nav class="site-nav">
-      <div class="mx-auto flex max-w-screen-xl flex-wrap items-center justify-between gap-4 px-4 py-4">
-        <a href="/" class="flex items-center gap-2 text-base font-extrabold tracking-wide text-white md:text-lg">
-          <img src="/assets/s19_91432e393d0c.png" alt="吉光智界 logo" class="h-8 w-8 rounded" />
-          吉光智界
-        </a>
-        <div class="flex flex-wrap items-center gap-4 text-sm font-medium text-slate-200">
-          <a href="#product" class="hover:text-cyan-300">白泽机器人</a>
-          <a href="#visual" class="hover:text-cyan-300">可视化界面</a>
-          <a href="#voice" class="hover:text-cyan-300">AI对话</a>
-          <a href="#cases" class="hover:text-cyan-300">应用案例</a>
-          <a href="#contact" class="hover:text-cyan-300">商务联系</a>
-        </div>
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">PAGE 01 · INDUSTRY</p>
+        <h1 class="page-title">安防巡逻行业爆发</h1>
+        <p class="page-subtitle">
+          安防巡逻正在从"人工值守"进入"机器人 + 平台 + AI"的系统升级阶段。对覆盖率、实时响应、可追溯与运营联动的要求同步抬升，推动行业进入真正的爆发窗口。
+        </p>
       </div>
-    </nav>
+    </div>
+  </header>
 
-    <header class="hero-shell">
-      <img
-        src="/assets/s03_04142025eb07.jpg"
-        alt="城市空间场景"
-        class="hero-media"
-        data-parallax
-      />
-      <div class="hero-overlay"></div>
-      <div class="hero-grid"></div>
-      <div class="relative mx-auto flex max-w-screen-xl px-4 pb-20 pt-24 md:pb-28 md:pt-28">
-        <div class="max-w-3xl reveal" data-reveal>
-          <p class="hero-kicker mb-4 inline-flex rounded-full border border-cyan-300/40 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-200">
-            室外智能服务机器人解决方案
-          </p>
-          <h1 class="mb-5 text-4xl font-extrabold leading-tight text-white md:text-5xl lg:text-6xl">
-            「白泽智」AI 服务机器人
-          </h1>
-          <p class="mb-8 text-base text-slate-100 md:text-lg">
-            面向园区、公园、场馆与商业空间，提供“行走智能 + 车端可视化 + 语音交互”一体化能力，提升现场服务效率与运营感知能力。
-          </p>
-          <div class="flex flex-wrap gap-3">
-            <a
-              href="#visual"
-              class="inline-flex items-center justify-center rounded-md bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
-            >
-              查看可视化界面
-            </a>
-            <a
-              href="#voice"
-              class="inline-flex items-center justify-center rounded-md border border-slate-200/50 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-100/10"
-            >
-              查看AI对话能力
-            </a>
+  <main class="page-main grid-bg">
+
+    <!-- 三大核心数字 -->
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">市场规模</p>
+        <h2 class="section-title">行业正站在爆发临界点上</h2>
+        <div class="industry-numbers-grid">
+          <div class="industry-number-card">
+            <p class="industry-number"><span data-count-to="2710">2710</span><span class="industry-number-unit">亿元</span></p>
+            <p class="industry-number-label">2024 年中国安防服务市场</p>
+            <p class="industry-number-sub">人防服务占比 67.34%，年增速超 10%</p>
+          </div>
+          <div class="industry-number-card">
+            <p class="industry-number"><span data-count-to="4050">4050</span><span class="industry-number-unit">亿美元</span></p>
+            <p class="industry-number-label">2023 年全球安防市场规模</p>
+            <p class="industry-number-sub">中国仅占 20%，欧美市场合计超 50%</p>
+          </div>
+          <div class="industry-number-card industry-number-card--accent">
+            <p class="industry-number">~<span data-count-to="1" data-count-decimals="1">1</span><span class="industry-number-unit">万亿</span></p>
+            <p class="industry-number-label">全球安防巡逻机器人整体市场</p>
+            <p class="industry-number-sub">2025–2027 年迎来机器人爆发临界点</p>
           </div>
         </div>
       </div>
-    </header>
+    </section>
 
-    <div class="status-strip">
-      <div class="status-track">
-        实时地图导航 · 当前位置 · 热点新闻 · 历史事件 · 运行信息 · 态势感知 · AI 对话 · 实时地图导航 · 当前位置 · 热点新闻 · 历史事件 · 运行信息 · 态势感知 · AI 对话
-      </div>
-    </div>
-
-    <main class="grid-bg py-16 md:py-20">
-      <section id="trends" class="mx-auto mb-16 grid max-w-screen-xl gap-8 px-4 lg:grid-cols-2">
-        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">场景痛点</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">公共空间智能服务正在从“单点能力”走向“系统协同”</h2>
-          <ul class="space-y-3 text-sm text-slate-200 md:text-base">
-            {painPoints.map((item) => (
-              <li class="rounded-lg bg-slate-800/70 px-4 py-3 ring-1 ring-slate-700">{item}</li>
+    <!-- 行业痛点 -->
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">安防巡逻痛点</p>
+        <h2 class="section-title">为什么传统安防巡逻越来越难支撑现场治理</h2>
+        <div class="page-grid-two">
+          <ul class="stack-list">
+            {securityPainPoints.map((item) => (
+              <li class="page-card">{item}</li>
             ))}
           </ul>
-        </div>
-        <div class="glass-card overflow-hidden reveal" data-reveal>
-          <img src="/assets/s01_7745e8e57b8d.jpg" alt="室外场景" class="h-full w-full object-cover" />
-        </div>
-      </section>
-
-      <section id="product" class="mx-auto mb-16 max-w-screen-xl px-4">
-        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">产品能力</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">白泽机器人：从巡逻到服务的多任务执行平台</h2>
-          <p class="mb-6 text-slate-300">
-            白泽已在商业街区、产业园区、写字楼等场景稳定运行，可基于任务策略快速切换服务模式。
-          </p>
-
-          <div class="mb-8 grid gap-4 md:grid-cols-2">
+          <div class="industry-chart-card page-card">
             <img
-              src="/assets/s14_3ec97597596d.png"
-              alt="白泽机器人外观"
-              class="h-72 w-full rounded-xl bg-slate-800 object-contain p-4"
-            />
-            <img
-              src="/assets/s13_4a859ae94e04.png"
-              alt="白泽机器人多形态"
-              class="h-72 w-full rounded-xl bg-slate-800 object-contain p-4"
+              src="/assets/bp-industry-pain-points.png"
+              alt="安防巡逻行业四大痛点"
+              loading="lazy"
+              decoding="async"
             />
           </div>
+        </div>
+      </div>
+    </section>
 
-          <div class="mb-8">
-            <h3 class="mb-3 text-lg font-semibold text-white">任务模式</h3>
-            <div class="flex flex-wrap gap-2">
-              {baizeModes.map((mode) => (
-                <span class="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-sm text-cyan-100">
-                  {mode}
-                </span>
-              ))}
+    <!-- 爆发驱动力 + 市场图表 -->
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">爆发驱动力</p>
+        <h2 class="section-title">行业从试点期走向规模化的 3 个直接原因</h2>
+        <div class="page-grid-three">
+          {securityDrivers.map((item) => (
+            <article class="page-card">
+              <h3>{item.title}</h3>
+              <p>{item.text}</p>
+            </article>
+          ))}
+        </div>
+
+        <!-- 市场图表：人力成本+消费层级 / 全球市场 -->
+        <div class="industry-charts-row">
+          <figure class="industry-chart-figure">
+            <img
+              src="/assets/bp-industry-market-scale.png"
+              alt="安防市场规模与人机协同消费层级分析"
+              loading="lazy"
+              decoding="async"
+            />
+            <figcaption>人机协同的蓝海市场 · 安防市场规模与城镇居民可支配收入消费层级</figcaption>
+          </figure>
+          <figure class="industry-chart-figure">
+            <img
+              src="/assets/bp-industry-global-market.png"
+              alt="全球安防市场规模与增长趋势"
+              loading="lazy"
+              decoding="async"
+            />
+            <figcaption>全球安防市场 · 中国仍有巨大增长空间，整体市场约 1 万亿人民币</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- 落地案例 -->
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">落地案例</p>
+        <h2 class="section-title">白泽智机器人 · 深圳多场景实地部署</h2>
+        <div class="page-grid-three">
+          <article class="page-card deploy-scene-card">
+            <div class="deploy-scene-img-wrap">
+              <img
+                src="/assets/site-futian-committee-1.jpg"
+                alt="福田区委大院 机器人落地"
+                loading="lazy"
+                decoding="async"
+              />
             </div>
-          </div>
-
-          <div>
-            <h3 class="mb-3 text-lg font-semibold text-white">核心参数</h3>
-            <div class="overflow-x-auto rounded-xl ring-1 ring-slate-700">
-              <table class="min-w-full border-collapse text-left text-sm text-slate-200">
-                <thead class="bg-slate-800/90">
-                  <tr>
-                    <th class="px-4 py-3 font-semibold">参数项</th>
-                    <th class="px-4 py-3 font-semibold">参数值</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {baizeSpecs.map((row) => (
-                    <tr class="border-t border-slate-700">
-                      <td class="px-4 py-3 text-slate-300">{row.item}</td>
-                      <td class="px-4 py-3">{row.value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <h3>福田区委大院</h3>
+            <p>广东省深圳市福民路 123 号，中共福田区委机关大院，政务场景落地部署。</p>
+          </article>
+          <article class="page-card deploy-scene-card">
+            <div class="deploy-scene-img-wrap">
+              <img
+                src="/assets/site-civic-center-1.jpg"
+                alt="市民中心 智慧安防机器人"
+                loading="lazy"
+                decoding="async"
+              />
             </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="visual" class="mx-auto mb-16 max-w-screen-xl px-4">
-        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">车端 AI 可视化界面</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">一块屏把地图、态势与服务信息整合到现场</h2>
-          <div class="mb-6 grid gap-4 lg:grid-cols-12">
-            <figure class="visual-frame lg:col-span-7">
-              <img src={visualScreens[0].src} alt={visualScreens[0].alt} class="visual-img visual-img-lg" />
-            </figure>
-            <div class="grid gap-4 lg:col-span-5">
-              <figure class="visual-frame">
-                <img src={visualOnsite[0].src} alt={visualOnsite[0].alt} class="visual-img visual-img-sm" />
-              </figure>
-              <figure class="visual-frame">
-                <img src={visualOnsite[1].src} alt={visualOnsite[1].alt} class="visual-img visual-img-sm" />
-              </figure>
+            <h3>市民中心</h3>
+            <p>深圳福田区福中三路，市民中心地铁站 C 口，公共服务核心区智慧安防。</p>
+          </article>
+          <article class="page-card deploy-scene-card">
+            <div class="deploy-scene-img-wrap">
+              <img
+                src="/assets/site-window-of-world-1.jpg"
+                alt="世界之窗 景区安防巡逻"
+                loading="lazy"
+                decoding="async"
+              />
             </div>
-          </div>
-          <div class="mb-6">
-            <figure class="visual-frame">
-              <img src={visualScreens[1].src} alt={visualScreens[1].alt} class="visual-img visual-img-lg" />
-            </figure>
-          </div>
-          <ul class="grid gap-3 text-sm text-slate-200 md:grid-cols-2 md:text-base">
-            {visualFeatures.map((item) => (
-              <li class="rounded-lg bg-slate-800/70 px-4 py-3 ring-1 ring-slate-700">{item}</li>
-            ))}
-          </ul>
+            <h3>世界之窗</h3>
+            <p>深圳市南山区深南大道 9037 号，大型旅游景区高人流场景安防巡逻。</p>
+          </article>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section id="voice" class="mx-auto mb-16 max-w-screen-xl px-4">
-        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">AI 对话系统</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">自研流式语音中枢，现场交互更快更稳</h2>
-          <p class="mb-6 text-slate-300">
-            基于车端采集与服务端协同的流式语音架构，覆盖识别、理解与播报闭环，在公共场景可提供更自然、更及时的人机交互体验。
-          </p>
-          <div class="mb-6 grid gap-4 md:grid-cols-3">
-            {architecture.map((item) => (
-              <article class="rounded-xl bg-slate-800/80 p-5 ring-1 ring-slate-700">
-                <h3 class="mb-2 text-lg font-semibold text-white">{item.title}</h3>
-                <p class="text-sm text-slate-300">{item.text}</p>
-              </article>
-            ))}
-          </div>
-          <div class="grid gap-3 text-sm text-slate-200 md:grid-cols-2 md:text-base">
-            {voiceHighlights.map((item) => (
-              <div class="rounded-lg bg-slate-800/70 px-4 py-3 ring-1 ring-slate-700">{item}</div>
-            ))}
-          </div>
-        </div>
-      </section>
+  </main>
 
-      <section id="cases" class="mx-auto mb-16 max-w-screen-xl px-4">
-        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">应用案例</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">覆盖场馆、园区、校园与公共空间</h2>
-          <div class="grid gap-4 md:grid-cols-2">
-            {cases.map((item) => (
-              <article class="overflow-hidden rounded-xl bg-slate-800/80 ring-1 ring-slate-700">
-                <img src={item.img} alt={item.title} class="h-56 w-full bg-slate-900 p-2 object-contain" />
-                <div class="p-4">
-                  <h3 class="mb-1 text-base font-semibold text-white">{item.title}</h3>
-                  <p class="text-sm text-slate-300">{item.text}</p>
-                </div>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
+  <script is:inline>
+  (function () {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-      <section id="awards" class="mx-auto mb-16 max-w-screen-xl px-4">
-        <div class="glass-card p-6 md:p-8 reveal" data-reveal>
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-300">奖项与认可</p>
-          <h2 class="mb-6 text-2xl font-bold text-white md:text-3xl">设计与产品能力持续获得行业认可</h2>
-          <div class="mb-6 grid gap-4 md:grid-cols-2">
-            <img src="/assets/s23_b8c996b6704e.png" alt="国际设计奖项证书" class="h-full w-full rounded-xl bg-white object-contain p-2" />
-            <img src="/assets/s23_eb76ebf3a318.png" alt="产品设计奖项海报" class="h-full w-full rounded-xl bg-white object-contain p-2" />
-          </div>
-          <ul class="grid gap-3 text-sm text-slate-200 md:grid-cols-2 md:text-base">
-            {awards.map((item) => (
-              <li class="rounded-lg bg-slate-800/70 px-4 py-3 ring-1 ring-slate-700">{item}</li>
-            ))}
-          </ul>
-        </div>
-      </section>
+    var DURATION = 1800;
+    function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
 
-      <section id="contact" class="mx-auto max-w-screen-xl px-4">
-        <div class="rounded-2xl border border-cyan-300/20 bg-gradient-to-r from-cyan-500/15 to-slate-900 p-6 md:p-8 reveal" data-reveal>
-          <p class="mb-2 text-sm font-semibold tracking-wide text-cyan-200">商务联系</p>
-          <h2 class="mb-4 text-2xl font-bold text-white md:text-3xl">欢迎联系吉光智界</h2>
-          <p class="mb-4 text-slate-200">
-            邮箱：<a href="mailto:jgauto402@163.com" class="font-semibold text-cyan-200 hover:underline">jgauto402@163.com</a><br />
-            电话：暂不公开<br />
-            地址：广东省深圳市坪山区新能源汽车产业园区2期
-          </p>
-        </div>
-      </section>
-    </main>
+    function animateCount(el) {
+      var target = parseFloat(el.dataset.countTo);
+      var decimals = parseInt(el.dataset.countDecimals || '0', 10);
+      var mult = Math.pow(10, decimals);
+      var targetInt = Math.round(target * mult);
+      var startTime = performance.now();
+      var numEl = el.closest('.industry-number');
 
-    <div class="cloud-chat" id="cloud-chat">
-      <button id="chat-launch" class="cloud-chat-launch" type="button" aria-controls="chat-panel" aria-expanded="false">
-        云端对话
-      </button>
-      <section id="chat-panel" class="cloud-chat-panel" aria-live="polite" hidden>
-        <header class="cloud-chat-head">
-          <div>
-            <p class="cloud-chat-title">云端文本助手</p>
-            <p id="chat-status" class="cloud-chat-status" data-state="idle">就绪</p>
-          </div>
-          <button id="chat-minimize" class="cloud-chat-close" type="button" aria-label="收起对话框">收起</button>
-        </header>
-        <div id="chat-messages" class="cloud-chat-messages"></div>
-        <form id="chat-form" class="cloud-chat-form">
-          <textarea id="chat-input" rows="2" maxlength="500" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
-          <button id="chat-send" type="submit">发送</button>
-        </form>
-      </section>
-    </div>
-
-    <footer class="border-t border-slate-800 bg-slate-900 p-6 text-center text-sm text-slate-400">
-      © 深圳吉光智界科技有限公司. All Rights Reserved.
-    </footer>
-
-    <script is:inline>
-      const revealItems = [...document.querySelectorAll("[data-reveal]")];
-      const io = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((entry) => {
-            if (entry.isIntersecting) {
-              entry.target.classList.add("is-visible");
-              io.unobserve(entry.target);
-            }
-          });
-        },
-        { threshold: 0.14 }
-      );
-
-      revealItems.forEach((el) => io.observe(el));
-
-      const progress = document.getElementById("scroll-progress");
-      const parallax = document.querySelector("[data-parallax]");
-      const onScroll = () => {
-        const doc = document.documentElement;
-        const max = doc.scrollHeight - window.innerHeight;
-        const ratio = max > 0 ? window.scrollY / max : 0;
-
-        if (progress) {
-          progress.style.transform = `scaleX(${Math.min(1, Math.max(0, ratio))})`;
-        }
-
-        if (parallax) {
-          parallax.style.transform = `translate3d(0, ${window.scrollY * 0.12}px, 0)`;
-        }
-      };
-
-      window.addEventListener("scroll", onScroll, { passive: true });
-      onScroll();
-
-      const launchBtn = document.getElementById("chat-launch");
-      const panel = document.getElementById("chat-panel");
-      const minimizeBtn = document.getElementById("chat-minimize");
-      const chatForm = document.getElementById("chat-form");
-      const chatInput = document.getElementById("chat-input");
-      const chatMessages = document.getElementById("chat-messages");
-      const chatStatus = document.getElementById("chat-status");
-      const chatSend = document.getElementById("chat-send");
-
-      const SESSION_KEY = "jgzj_chat_session_id_v1";
-      const HISTORY_KEY = "jgzj_chat_history_v1";
-      const MAX_HISTORY = 50;
-      const DIRECT_HTTP_URL = "http://idtrd.kmdns.net:7790/chat";
-      const PROXY_URL = "/api/cloud-chat";
-
-      const sessionId = (() => {
-        const old = localStorage.getItem(SESSION_KEY);
-        if (old) return old;
-        const created = self.crypto?.randomUUID ? self.crypto.randomUUID() : `session-${Date.now()}`;
-        localStorage.setItem(SESSION_KEY, created);
-        return created;
-      })();
-
-      const cloudChatUrl = window.CLOUD_CHAT_URL || (window.location.protocol === "http:" ? DIRECT_HTTP_URL : PROXY_URL);
-
-      function setChatStatus(text, state) {
-        if (!chatStatus) return;
-        chatStatus.textContent = text;
-        chatStatus.dataset.state = state || "idle";
-      }
-
-      function loadHistory() {
-        try {
-          const raw = localStorage.getItem(HISTORY_KEY);
-          if (!raw) return [];
-          const parsed = JSON.parse(raw);
-          if (!Array.isArray(parsed)) return [];
-          return parsed.slice(-MAX_HISTORY);
-        } catch {
-          return [];
+      function tick(now) {
+        var t = Math.min((now - startTime) / DURATION, 1);
+        var cur = Math.round(easeOut(t) * targetInt);
+        el.textContent = decimals > 0 ? (cur / mult).toFixed(decimals) : String(cur);
+        if (t < 1) {
+          requestAnimationFrame(tick);
+        } else {
+          el.textContent = decimals > 0 ? String(Math.round(target)) : String(target);
+          if (numEl) {
+            numEl.classList.add('count-done');
+            numEl.addEventListener('animationend', function () {
+              numEl.classList.remove('count-done');
+            }, { once: true });
+          }
         }
       }
+      requestAnimationFrame(tick);
+    }
 
-      function saveHistory(items) {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(-MAX_HISTORY)));
-      }
-
-      function appendMessage(role, text) {
-        if (!chatMessages) return;
-        const item = document.createElement("article");
-        item.className = `chat-msg ${role === "user" ? "from-user" : "from-bot"}`;
-        item.textContent = text;
-        chatMessages.appendChild(item);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-      }
-
-      const messageHistory = loadHistory();
-      if (messageHistory.length === 0) {
-        const welcome = "你好，我是云端文本助手。你可以直接输入问题开始对话。";
-        messageHistory.push({ role: "bot", text: welcome });
-        saveHistory(messageHistory);
-      }
-      messageHistory.forEach((m) => appendMessage(m.role, m.text));
-
-      function openChat() {
-        if (!panel || !launchBtn) return;
-        panel.hidden = false;
-        launchBtn.setAttribute("aria-expanded", "true");
-        requestAnimationFrame(() => chatInput?.focus());
-      }
-
-      function closeChat() {
-        if (!panel || !launchBtn) return;
-        panel.hidden = true;
-        launchBtn.setAttribute("aria-expanded", "false");
-      }
-
-      launchBtn?.addEventListener("click", openChat);
-      minimizeBtn?.addEventListener("click", closeChat);
-
-      chatForm?.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const text = chatInput?.value.trim();
-        if (!text) return;
-
-        chatInput.value = "";
-        appendMessage("user", text);
-        messageHistory.push({ role: "user", text });
-        saveHistory(messageHistory);
-
-        setChatStatus("发送中...", "loading");
-        if (chatSend) chatSend.disabled = true;
-
-        try {
-          const res = await fetch(cloudChatUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              session_id: sessionId,
-              message: text,
-              client_ts: new Date().toISOString()
-            })
-          });
-
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
-          }
-
-          const data = await res.json();
-          const reply =
-            data?.reply ||
-            data?.text ||
-            data?.message ||
-            data?.data?.reply ||
-            "";
-
-          if (!reply) {
-            throw new Error("云端返回内容为空");
-          }
-
-          appendMessage("bot", reply);
-          messageHistory.push({ role: "bot", text: reply });
-          saveHistory(messageHistory);
-          setChatStatus("已连接", "ok");
-        } catch (err) {
-          const detail = err?.message || "未知错误";
-          const fallback = `对话服务暂不可用：${detail}`;
-          appendMessage("bot", fallback);
-          messageHistory.push({ role: "bot", text: fallback });
-          saveHistory(messageHistory);
-
-          if (window.location.protocol === "https:" && cloudChatUrl === PROXY_URL) {
-            setChatStatus("缺少 /api/cloud-chat 代理", "error");
-          } else {
-            setChatStatus("连接异常", "error");
-          }
-        } finally {
-          if (chatSend) chatSend.disabled = false;
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          animateCount(entry.target);
+          observer.unobserve(entry.target);
         }
       });
-    </script>
-  </body>
-</html>
+    }, { threshold: 0.4 });
+
+    document.querySelectorAll('[data-count-to]').forEach(function (el) {
+      observer.observe(el);
+    });
+  })();
+  </script>
+</SiteLayout>

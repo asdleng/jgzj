@@ -1,0 +1,42 @@
+<section id="qwen36mm-panel" class="cloud-chat-panel qwen36mm-check-panel embedded-panel inspection-panel inspection-panel--check" aria-live="polite">
+  <header class="cloud-chat-head">
+    <div class="cloud-chat-head-main">
+      <p class="cloud-chat-title">Qwen3.6-27B AI检测</p>
+      <p id="qwen36mm-status" class="cloud-chat-status" data-state="idle">待上传</p>
+    </div>
+  </header>
+  <div class="ai-check-workbench">
+    <div class="ai-check-preview-shell">
+      <div id="qwen36mm-preview" class="ai-check-preview" data-empty="true">
+        <p class="ai-check-preview-empty">选择图片后会在这里预览</p>
+      </div>
+    </div>
+    <div class="ai-check-side">
+      <form id="qwen36mm-form" class="ai-check-form">
+        <label class="ai-check-field" for="qwen36mm-image">
+          <span>上传图片</span>
+          <input id="qwen36mm-image" type="file" accept="image/*" />
+        </label>
+        <label class="ai-check-field" for="qwen36mm-event">
+          <span>事件名称（留空默认"异常事件"）</span>
+          <input id="qwen36mm-event" type="text" maxlength="80" placeholder="例如：摔倒、打电话、抽烟" />
+        </label>
+        <label class="ai-check-field" for="qwen36mm-prompt">
+          <span>提示词（可选，留空自动生成）</span>
+          <textarea
+            id="qwen36mm-prompt"
+            rows="3"
+            maxlength="600"
+            placeholder="留空使用默认提示词。支持 {event_name} 占位。"
+          ></textarea>
+        </label>
+        <button id="qwen36mm-submit" class="ai-check-submit qwen36mm-submit" type="submit">开始检测</button>
+      </form>
+      <section id="qwen36mm-result" class="ai-check-result" data-state="idle">
+        <p class="ai-check-result-label">检测结果</p>
+        <p id="qwen36mm-answer" class="ai-check-answer">等待检测</p>
+        <p id="qwen36mm-detail" class="ai-check-detail">上传图片并输入事件名称，返回是或否。</p>
+      </section>
+    </div>
+  </div>
+</section>

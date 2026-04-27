@@ -1,0 +1,1547 @@
+---
+import SiteLayout from "../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="大规模云端建图"
+  description="上传采图 bag 文件，云端自动生成点云地图、关键帧数据与首帧 GPS 信息，支持大规模园区与场馆的建图任务。"
+  currentPath="/cloud-mapping"
+>
+  <header class="page-hero mapping-hero">
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="mapping-hero-particles" aria-hidden="true">
+      {Array.from({ length: 18 }).map((_, i) => (
+        <span class="mapping-particle" style={`--i:${i}`}></span>
+      ))}
+    </div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">PAGE 07 · CLOUD MAPPING</p>
+        <h1 class="page-title">大规模云端建图</h1>
+        <p class="page-subtitle">
+          上传现场采集的 bag 文件，系统在云端完成点云地图生成、关键帧提取与首帧 GPS 标定，输出可直接用于自动驾驶定位的完整地图数据包。
+        </p>
+        <div class="chip-list mapping-hero-chips">
+          <span class="chip-item">bag 上传</span>
+          <span class="chip-item">点云地图</span>
+          <span class="chip-item">关键帧提取</span>
+          <span class="chip-item">首帧 GPS</span>
+          <span class="chip-item">批量建图</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+
+    <!-- 建设中提示 -->
+    <section class="page-section">
+      <div class="glass-card section-card wip-banner reveal" data-reveal>
+        <div class="wip-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+        </div>
+        <div>
+          <p class="wip-label">UNDER CONSTRUCTION · 建设中</p>
+          <p class="wip-desc">
+            云端建图服务正在建设中。建图程序接入完成后，本页面将支持完整的 bag 上传 → 云端处理 → 地图文件下载全流程。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 功能说明 -->
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">功能说明</p>
+        <h2 class="section-title">上传采图 bag，云端自动生成地图数据</h2>
+        <p class="section-copy">
+          在园区、场馆或街区完成激光雷达采集后，将 ROS bag 文件上传至云端建图平台。系统将自动完成数据解析、点云配准、地图构建与关键帧提取，最终输出用于自动驾驶定位的标准地图数据包。
+        </p>
+        <div class="mapping-feature-grid">
+          <article class="page-card mapping-feature-card" data-watermark="01">
+            <p class="mapping-feature-index">01</p>
+            <h3>上传 bag 文件</h3>
+            <p class="mapping-feature-sub">支持 ROS bag 格式</p>
+            <p>将现场激光雷达采集的 bag 文件上传至云端，系统自动识别传感器类型、坐标系与时间戳对齐。</p>
+          </article>
+          <article class="page-card mapping-feature-card" data-watermark="02">
+            <p class="mapping-feature-index">02</p>
+            <h3>云端建图处理</h3>
+            <p class="mapping-feature-sub">点云配准 · 地图优化</p>
+            <p>调用云端算力执行 LiDAR SLAM 流程，完成点云配准、回环检测与全局优化，生成高精度点云地图。</p>
+          </article>
+          <article class="page-card mapping-feature-card" data-watermark="03">
+            <p class="mapping-feature-index">03</p>
+            <h3>关键帧提取</h3>
+            <p class="mapping-feature-sub">轨迹 · 关键帧数据库</p>
+            <p>从建图轨迹中提取关键帧位姿与局部点云，构建用于实时定位匹配的关键帧数据库。</p>
+          </article>
+          <article class="page-card mapping-feature-card" data-watermark="04">
+            <p class="mapping-feature-index">04</p>
+            <h3>输出地图数据包</h3>
+            <p class="mapping-feature-sub">地图 · 首帧 GPS · 关键帧</p>
+            <p>输出完整地图文件、首帧 GPS 坐标、关键帧数据库，可直接导入定位模块投入自动驾驶使用。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 上传与建图区域 -->
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">云端建图任务</p>
+        <h2 class="section-title">上传 bag 文件，开始建图</h2>
+        <p class="section-copy">
+          选择采集好的 bag 文件并填写任务信息，点击「开始建图」提交至云端处理队列。建图完成后可在任务列表中下载地图数据包。
+        </p>
+
+        <div class="mapping-upload-shell">
+          <div class="mapping-auth-panel">
+            <div class="mapping-auth-copy">
+              <p class="mapping-auth-kicker">访问控制</p>
+              <h3 class="mapping-auth-title">登录后才可上传 bag 并启动建图</h3>
+              <p class="mapping-auth-hint" id="mapping-auth-hint">当前未登录，仅可查看全局建图状态。</p>
+            </div>
+            <form class="mapping-auth-form" id="mapping-auth-form">
+              <input
+                type="text"
+                id="mapping-username"
+                class="mapping-param-input"
+                autocomplete="username"
+                placeholder="用户名"
+                value="jgauto402"
+              />
+              <input
+                type="password"
+                id="mapping-password"
+                class="mapping-param-input"
+                autocomplete="current-password"
+                placeholder="密码"
+                value="jgauto402"
+              />
+              <button type="submit" class="mapping-btn mapping-btn--primary" id="mapping-login-btn">
+                登录
+              </button>
+              <button type="button" class="mapping-btn mapping-btn--ghost" id="mapping-logout-btn" hidden>
+                退出登录
+              </button>
+            </form>
+          </div>
+
+          <div class="mapping-status-card" id="mapping-status-card">
+            <div class="mapping-status-head">
+              <div>
+                <p class="mapping-status-kicker">全局任务状态</p>
+                <h3 class="mapping-status-title" id="mapping-status-title">等待上传</h3>
+              </div>
+              <span class="mapping-status-badge" id="mapping-status-badge">空闲</span>
+            </div>
+            <p class="mapping-status-copy" id="mapping-status-copy">登录后上传 bag，并手动开始建图。</p>
+            <div class="mapping-progress" id="mapping-progress" hidden>
+              <div class="mapping-progress-track">
+                <span class="mapping-progress-fill" id="mapping-progress-fill"></span>
+              </div>
+              <div class="mapping-progress-meta">
+                <span id="mapping-progress-label">0%</span>
+                <span id="mapping-progress-detail">暂无任务</span>
+              </div>
+            </div>
+            <div class="mapping-status-grid">
+              <div class="mapping-status-item">
+                <span class="mapping-status-item-label">当前执行人</span>
+                <strong id="mapping-owner">-</strong>
+              </div>
+              <div class="mapping-status-item">
+                <span class="mapping-status-item-label">服务器 bag</span>
+                <strong id="mapping-server-bag">-</strong>
+              </div>
+              <div class="mapping-status-item">
+                <span class="mapping-status-item-label">结果包</span>
+                <strong id="mapping-zip-info">-</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- 上传区 -->
+          <div class="mapping-dropzone" id="mapping-dropzone">
+            <div class="mapping-dropzone-icon" aria-hidden="true">
+              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="14" width="36" height="26" rx="4"/>
+                <path d="M16 14V10a2 2 0 012-2h12a2 2 0 012 2v4"/>
+                <path d="M24 22v10M20 26l4-4 4 4"/>
+              </svg>
+            </div>
+            <p class="mapping-dropzone-title">拖拽 bag 文件至此，或点击选择文件</p>
+            <p class="mapping-dropzone-hint">支持 .bag 格式 · 单文件最大 10 GB</p>
+            <input
+              type="file"
+              id="bag-file-input"
+              accept=".bag"
+              class="mapping-file-input"
+              aria-label="选择 bag 文件"
+            />
+            <button
+              type="button"
+              class="mapping-select-btn"
+              id="mapping-select-btn"
+            >
+              选择文件
+            </button>
+          </div>
+
+          <!-- 选中文件显示 -->
+          <div class="mapping-file-info" id="mapping-file-info" hidden>
+            <div class="mapping-file-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+            </div>
+            <div class="mapping-file-meta">
+              <p class="mapping-file-name" id="mapping-file-name">—</p>
+              <p class="mapping-file-size" id="mapping-file-size">—</p>
+            </div>
+            <button type="button" class="mapping-file-clear" id="mapping-file-clear" aria-label="移除文件">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- 任务参数 -->
+          <div class="mapping-params-grid">
+            <div class="mapping-param-field">
+              <label class="mapping-param-label" for="task-name">任务名称</label>
+              <input type="text" id="task-name" class="mapping-param-input" placeholder="例：futian-park-20260418" />
+            </div>
+            <div class="mapping-param-field">
+              <label class="mapping-param-label" for="scene-type">场景类型</label>
+              <select id="scene-type" class="mapping-param-input mapping-param-select">
+                <option value="">请选择场景</option>
+                <option value="park">园区 / 公园</option>
+                <option value="campus">校园</option>
+                <option value="mall">商业综合体</option>
+                <option value="venue">场馆 / 展馆</option>
+                <option value="street">开放街区</option>
+                <option value="other">其他</option>
+              </select>
+            </div>
+            <div class="mapping-param-field mapping-param-field--full">
+              <label class="mapping-param-label" for="task-note">备注</label>
+              <input type="text" id="task-note" class="mapping-param-input" placeholder="可选：采集时间、天气、特殊说明等" />
+            </div>
+          </div>
+
+          <p class="mapping-feedback" id="mapping-feedback">当前支持单任务串行建图。其他访客会看到正在执行的用户名与进度。</p>
+
+          <!-- 操作按钮 -->
+          <div class="mapping-actions">
+            <button type="button" class="mapping-btn mapping-btn--secondary" id="mapping-upload-btn" disabled>
+              上传 bag
+            </button>
+            <button type="button" class="mapping-btn mapping-btn--primary" id="mapping-start-btn" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              开始建图
+            </button>
+            <button type="button" class="mapping-btn mapping-btn--ghost" id="mapping-download-btn" disabled>
+              下载 map.zip
+            </button>
+            <button type="button" class="mapping-btn mapping-btn--ghost" id="mapping-clear-bag-btn" disabled>
+              清空 bag
+            </button>
+            <button type="button" class="mapping-btn mapping-btn--ghost" id="mapping-clear-result-btn" disabled>
+              清空 map.zip
+            </button>
+          </div>
+
+          <div class="mapping-wip-note">
+            <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
+            </svg>
+            <span>建图时会调用服务器上的实际脚本。每次启动前会检查并清理本站上一次残留的建图进程，不会去动其他程序。</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 输出说明 -->
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">输出产物</p>
+        <h2 class="section-title">建图完成后可获得的数据文件</h2>
+        <div class="mapping-output-grid">
+          <div class="mapping-output-card">
+            <div class="mapping-output-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>
+              </svg>
+            </div>
+            <h3>点云地图</h3>
+            <p class="mapping-output-format">.pcd / .bin</p>
+            <p>全局高精度点云地图，用于自动驾驶定位的地图匹配基准。</p>
+          </div>
+          <div class="mapping-output-card">
+            <div class="mapping-output-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+              </svg>
+            </div>
+            <h3>关键帧数据库</h3>
+            <p class="mapping-output-format">keyframes/</p>
+            <p>采样后的关键帧位姿与局部点云，支持实时定位快速匹配查询。</p>
+          </div>
+          <div class="mapping-output-card">
+            <div class="mapping-output-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+              </svg>
+            </div>
+            <h3>首帧 GPS</h3>
+            <p class="mapping-output-format">gps_origin.yaml</p>
+            <p>建图起始帧的 GPS 坐标与航向角，用于地图坐标系与 WGS84 坐标系对齐。</p>
+          </div>
+          <div class="mapping-output-card">
+            <div class="mapping-output-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>
+              </svg>
+            </div>
+            <h3>轨迹文件</h3>
+            <p class="mapping-output-format">trajectory.csv</p>
+            <p>建图过程中的完整车辆轨迹，可用于路线规划与采集质量审查。</p>
+          </div>
+          <div class="mapping-output-card">
+            <div class="mapping-output-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+              </svg>
+            </div>
+            <h3>建图报告</h3>
+            <p class="mapping-output-format">report.json</p>
+            <p>包含建图质量评分、覆盖区域统计、异常帧提示与处理时长等元信息。</p>
+          </div>
+          <div class="mapping-output-card mapping-output-card--accent">
+            <div class="mapping-output-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+              </svg>
+            </div>
+            <h3>完整数据包</h3>
+            <p class="mapping-output-format">map_package.zip</p>
+            <p>以上所有文件打包下载，可直接导入定位模块，无需额外格式转换。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</SiteLayout>
+
+<script>
+  const STATUS_URL = "/api/cloud-mapping/status";
+  const LOGIN_URL = "/api/cloud-mapping/login";
+  const LOGOUT_URL = "/api/cloud-mapping/logout";
+  const UPLOAD_URL = "/api/cloud-mapping/upload";
+  const START_URL = "/api/cloud-mapping/start";
+  const CLEAR_BAG_URL = "/api/cloud-mapping/clear-bag";
+  const CLEAR_RESULT_URL = "/api/cloud-mapping/clear-result";
+  const DOWNLOAD_URL = "/api/cloud-mapping/download";
+
+  const input = document.getElementById("bag-file-input") as HTMLInputElement;
+  const dropzone = document.getElementById("mapping-dropzone") as HTMLElement;
+  const fileInfo = document.getElementById("mapping-file-info") as HTMLElement;
+  const fileName = document.getElementById("mapping-file-name") as HTMLElement;
+  const fileSize = document.getElementById("mapping-file-size") as HTMLElement;
+  const selectBtn = document.getElementById("mapping-select-btn") as HTMLButtonElement;
+  const clearBtn = document.getElementById("mapping-file-clear") as HTMLButtonElement;
+  const uploadBtn = document.getElementById("mapping-upload-btn") as HTMLButtonElement;
+  const startBtn = document.getElementById("mapping-start-btn") as HTMLButtonElement;
+  const downloadBtn = document.getElementById("mapping-download-btn") as HTMLButtonElement;
+  const clearBagBtn = document.getElementById("mapping-clear-bag-btn") as HTMLButtonElement;
+  const clearResultBtn = document.getElementById("mapping-clear-result-btn") as HTMLButtonElement;
+  const feedback = document.getElementById("mapping-feedback") as HTMLElement;
+  const authForm = document.getElementById("mapping-auth-form") as HTMLFormElement;
+  const usernameInput = document.getElementById("mapping-username") as HTMLInputElement;
+  const passwordInput = document.getElementById("mapping-password") as HTMLInputElement;
+  const loginBtn = document.getElementById("mapping-login-btn") as HTMLButtonElement;
+  const logoutBtn = document.getElementById("mapping-logout-btn") as HTMLButtonElement;
+  const authHint = document.getElementById("mapping-auth-hint") as HTMLElement;
+  const statusTitle = document.getElementById("mapping-status-title") as HTMLElement;
+  const statusBadge = document.getElementById("mapping-status-badge") as HTMLElement;
+  const statusCopy = document.getElementById("mapping-status-copy") as HTMLElement;
+  const progressWrap = document.getElementById("mapping-progress") as HTMLElement;
+  const progressFill = document.getElementById("mapping-progress-fill") as HTMLElement;
+  const progressLabel = document.getElementById("mapping-progress-label") as HTMLElement;
+  const progressDetail = document.getElementById("mapping-progress-detail") as HTMLElement;
+  const ownerInfo = document.getElementById("mapping-owner") as HTMLElement;
+  const serverBagInfo = document.getElementById("mapping-server-bag") as HTMLElement;
+  const zipInfo = document.getElementById("mapping-zip-info") as HTMLElement;
+  const taskNameInput = document.getElementById("task-name") as HTMLInputElement;
+  const sceneTypeInput = document.getElementById("scene-type") as HTMLSelectElement;
+  const taskNoteInput = document.getElementById("task-note") as HTMLInputElement;
+
+  let selectedFile: File | null = null;
+  let statusData: any = null;
+  let uploadInFlight = false;
+  let actionInFlight = false;
+  let localUploadProgressPct = 0;
+  let localUploadDetail = "临时 bag 正在写入服务器。";
+  function formatSize(bytes: number): string {
+    if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + " GB";
+    if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
+    return (bytes / 1024).toFixed(0) + " KB";
+  }
+
+  function setFeedback(message: string, state = "idle") {
+    feedback.textContent = message;
+    feedback.dataset.state = state;
+  }
+
+  function setProgress(percent: number, detail: string) {
+    const pct = Math.max(0, Math.min(100, Number(percent || 0)));
+    progressWrap.hidden = false;
+    progressFill.style.width = `${pct}%`;
+    progressLabel.textContent = `${pct.toFixed(1)}%`;
+    progressDetail.textContent = detail;
+  }
+
+  function hideProgress() {
+    progressWrap.hidden = true;
+    progressFill.style.width = "0%";
+    progressLabel.textContent = "0%";
+    progressDetail.textContent = "暂无任务";
+  }
+
+  function showFile(file: File) {
+    selectedFile = file;
+    fileName.textContent = file.name;
+    fileSize.textContent = formatSize(file.size);
+    dropzone.hidden = true;
+    fileInfo.hidden = false;
+    refreshActionButtons();
+  }
+
+  function clearLocalFile() {
+    selectedFile = null;
+    input.value = "";
+    dropzone.hidden = false;
+    fileInfo.hidden = true;
+    refreshActionButtons();
+  }
+
+  function isAuthenticated() {
+    return Boolean(statusData?.auth?.authenticated);
+  }
+
+  function isBusy() {
+    return Boolean(statusData?.task?.busy);
+  }
+
+  function canUpload() {
+    return isAuthenticated() && !isBusy() && Boolean(selectedFile);
+  }
+
+  function canStart() {
+    return isAuthenticated() && !isBusy() && Boolean(statusData?.uploaded_bag);
+  }
+
+  function refreshActionButtons() {
+    const disabledByBusy = uploadInFlight || actionInFlight;
+    const allowInteraction = isAuthenticated() && !isBusy() && !disabledByBusy;
+
+    input.disabled = !allowInteraction;
+    selectBtn.disabled = !allowInteraction;
+    dropzone.classList.toggle("is-disabled", !allowInteraction);
+    uploadBtn.disabled = !canUpload() || disabledByBusy;
+    startBtn.disabled = !canStart() || disabledByBusy;
+    downloadBtn.disabled = !isAuthenticated() || !statusData?.result_zip || disabledByBusy;
+    clearBagBtn.disabled =
+      !isAuthenticated() ||
+      isBusy() ||
+      disabledByBusy ||
+      (!statusData?.uploaded_bag && !selectedFile);
+    clearResultBtn.disabled =
+      !isAuthenticated() || isBusy() || disabledByBusy || !statusData?.result_zip;
+    clearBtn.disabled = disabledByBusy;
+  }
+
+  function applyAuthState() {
+    const authenticated = isAuthenticated();
+    usernameInput.disabled = authenticated || uploadInFlight || actionInFlight;
+    passwordInput.disabled = authenticated || uploadInFlight || actionInFlight;
+    loginBtn.hidden = authenticated;
+    loginBtn.disabled = uploadInFlight || actionInFlight;
+    logoutBtn.hidden = !authenticated;
+    logoutBtn.disabled = uploadInFlight || actionInFlight || isBusy();
+
+    if (authenticated) {
+      authHint.textContent = `已登录：${statusData.auth.username}`;
+      authHint.dataset.state = "success";
+    } else {
+      authHint.textContent = "当前未登录，仅可查看全局建图状态。";
+      authHint.dataset.state = "idle";
+    }
+  }
+
+  function applyStatusState() {
+    const phase = statusData?.task?.phase || "idle";
+    const owner = statusData?.task?.active_username || "-";
+    const progress = Number(statusData?.task?.progress_pct || 0);
+    ownerInfo.textContent = owner;
+    serverBagInfo.textContent = statusData?.uploaded_bag
+      ? `${statusData.uploaded_bag.name} · ${formatSize(statusData.uploaded_bag.size_bytes)}`
+      : "-";
+    zipInfo.textContent = statusData?.result_zip
+      ? `${statusData.result_zip.name} · ${formatSize(statusData.result_zip.size_bytes)}`
+      : "-";
+
+    if (phase === "uploading") {
+      const displayProgress = uploadInFlight
+        ? Math.max(progress, localUploadProgressPct)
+        : progress;
+      const displayDetail = uploadInFlight
+        ? localUploadDetail
+        : "临时 bag 正在写入服务器。";
+      statusTitle.textContent = `${owner} 正在上传 bag`;
+      statusBadge.textContent = "上传中";
+      statusBadge.dataset.state = "uploading";
+      statusCopy.textContent = statusData.task.stage_text;
+      setProgress(displayProgress, displayDetail);
+    } else if (phase === "ready") {
+      statusTitle.textContent = "bag 已上传";
+      statusBadge.textContent = "待启动";
+      statusBadge.dataset.state = "ready";
+      statusCopy.textContent = statusData.task.stage_text;
+      setProgress(100, "服务器已收到 bag，等待点击“开始建图”。");
+    } else if (phase === "running") {
+      statusTitle.textContent = `${owner} 正在建图`;
+      statusBadge.textContent = "建图中";
+      statusBadge.dataset.state = "running";
+      statusCopy.textContent = statusData.task.stage_text;
+      setProgress(progress, `${owner} 正在执行建图脚本，请等待。`);
+    } else if (phase === "packaging") {
+      statusTitle.textContent = `${owner} 正在打包结果`;
+      statusBadge.textContent = "打包中";
+      statusBadge.dataset.state = "packaging";
+      statusCopy.textContent = statusData.task.stage_text;
+      setProgress(Math.max(progress, 99), "地图已生成，正在压缩 map.zip。");
+    } else if (phase === "completed") {
+      statusTitle.textContent = "建图完成";
+      statusBadge.textContent = "完成";
+      statusBadge.dataset.state = "completed";
+      statusCopy.textContent = statusData.task.stage_text;
+      setProgress(100, "结果包已准备完成，可直接下载。");
+    } else if (phase === "error") {
+      statusTitle.textContent = "建图失败";
+      statusBadge.textContent = "异常";
+      statusBadge.dataset.state = "error";
+      statusCopy.textContent = statusData?.task?.error_message || "建图失败，请稍后重试。";
+      setProgress(progress, "任务异常结束。");
+    } else {
+      statusTitle.textContent = "等待上传";
+      statusBadge.textContent = "空闲";
+      statusBadge.dataset.state = "idle";
+      statusCopy.textContent = "登录后上传 bag，并手动开始建图。";
+      hideProgress();
+    }
+  }
+
+  async function fetchStatus() {
+    const response = await fetch(STATUS_URL, {
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+    const data = await response.json();
+    statusData = data;
+    applyAuthState();
+    applyStatusState();
+    refreshActionButtons();
+  }
+
+  async function safeRefreshStatus() {
+    try {
+      await fetchStatus();
+    } catch (_error) {
+      setFeedback("无法获取建图状态，请稍后重试。", "error");
+    }
+  }
+
+  async function postJson(url: string, payload: Record<string, unknown> = {}) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      credentials: "same-origin",
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.detail || data?.error || "request_failed");
+    }
+    return data;
+  }
+
+  async function handleLogin(event: Event) {
+    event.preventDefault();
+    if (uploadInFlight || actionInFlight) return;
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value;
+    if (!username || !password) {
+      setFeedback("请输入用户名和密码。", "error");
+      return;
+    }
+    actionInFlight = true;
+    refreshActionButtons();
+    try {
+      await postJson(LOGIN_URL, { username, password });
+      setFeedback("登录成功。", "success");
+      await safeRefreshStatus();
+    } catch (error) {
+      setFeedback("登录失败，请检查用户名或密码。", "error");
+    } finally {
+      actionInFlight = false;
+      refreshActionButtons();
+    }
+  }
+
+  async function handleLogout() {
+    if (uploadInFlight || actionInFlight) return;
+    actionInFlight = true;
+    refreshActionButtons();
+    try {
+      await postJson(LOGOUT_URL);
+      setFeedback("已退出登录。", "idle");
+      await safeRefreshStatus();
+    } catch (_error) {
+      setFeedback("退出登录失败，请稍后重试。", "error");
+    } finally {
+      actionInFlight = false;
+      refreshActionButtons();
+    }
+  }
+
+  async function handleUpload() {
+    if (!selectedFile) {
+      setFeedback("请先选择 bag 文件。", "error");
+      return;
+    }
+    if (!selectedFile.name.toLowerCase().endsWith(".bag")) {
+      setFeedback("仅支持上传 .bag 文件。", "error");
+      return;
+    }
+    if (!isAuthenticated()) {
+      setFeedback("请先登录。", "error");
+      return;
+    }
+    if (isBusy()) {
+      setFeedback(`${statusData?.task?.active_username || "当前用户"} 正在建图，请等待。`, "error");
+      return;
+    }
+
+    uploadInFlight = true;
+    localUploadProgressPct = 0;
+    localUploadDetail = "临时 bag 正在写入服务器。";
+    refreshActionButtons();
+    setFeedback("开始上传 bag。", "idle");
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", UPLOAD_URL, true);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.setRequestHeader("X-File-Name", encodeURIComponent(selectedFile.name));
+    xhr.setRequestHeader("X-File-Size", String(selectedFile.size));
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const pct = Math.max(0, Math.min(100, (event.loaded / event.total) * 100));
+      localUploadProgressPct = pct;
+      localUploadDetail = `本地上传 ${formatSize(event.loaded)} / ${formatSize(event.total)}`;
+      statusTitle.textContent = "正在上传 bag";
+      statusBadge.textContent = "上传中";
+      statusBadge.dataset.state = "uploading";
+      statusCopy.textContent = `正在上传 ${selectedFile?.name || "bag"}。`;
+      setProgress(pct, localUploadDetail);
+    };
+
+    xhr.onload = async () => {
+      uploadInFlight = false;
+      localUploadProgressPct = 0;
+      localUploadDetail = "临时 bag 正在写入服务器。";
+      try {
+        const payload = JSON.parse(xhr.responseText || "{}");
+        if (xhr.status < 200 || xhr.status >= 300) {
+          throw new Error(payload?.error || "bag_upload_failed");
+        }
+        setFeedback("bag 上传完成。", "success");
+        statusData = payload;
+        applyAuthState();
+        applyStatusState();
+        refreshActionButtons();
+      } catch (_error) {
+        setFeedback("bag 上传失败，请稍后重试。", "error");
+      }
+      await safeRefreshStatus();
+      refreshActionButtons();
+    };
+
+    xhr.onerror = async () => {
+      uploadInFlight = false;
+      localUploadProgressPct = 0;
+      localUploadDetail = "临时 bag 正在写入服务器。";
+      setFeedback("bag 上传失败，请检查网络或稍后重试。", "error");
+      await safeRefreshStatus();
+      refreshActionButtons();
+    };
+
+    xhr.send(selectedFile);
+  }
+
+  async function handleStart() {
+    if (!canStart()) {
+      setFeedback("请先上传 bag 后再开始建图。", "error");
+      return;
+    }
+
+    actionInFlight = true;
+    refreshActionButtons();
+    setFeedback("建图任务已提交，正在启动脚本。", "idle");
+    try {
+      statusData = await postJson(START_URL, {
+        task_name: taskNameInput.value.trim(),
+        scene_type: sceneTypeInput.value,
+        task_note: taskNoteInput.value.trim()
+      });
+      applyAuthState();
+      applyStatusState();
+      setFeedback("建图已开始。", "success");
+    } catch (error) {
+      setFeedback("启动建图失败，请稍后重试。", "error");
+    } finally {
+      actionInFlight = false;
+      refreshActionButtons();
+    }
+  }
+
+  async function handleClearBag() {
+    if (selectedFile && !statusData?.uploaded_bag) {
+      clearLocalFile();
+      setFeedback("本地待上传文件已清空。", "idle");
+      return;
+    }
+    if (!isAuthenticated()) {
+      setFeedback("请先登录。", "error");
+      return;
+    }
+    actionInFlight = true;
+    refreshActionButtons();
+    try {
+      statusData = await postJson(CLEAR_BAG_URL);
+      clearLocalFile();
+      applyAuthState();
+      applyStatusState();
+      setFeedback("临时 bag 已清空。", "success");
+    } catch (_error) {
+      setFeedback("清空 bag 失败，请稍后重试。", "error");
+    } finally {
+      actionInFlight = false;
+      refreshActionButtons();
+    }
+  }
+
+  async function handleClearResult() {
+    if (!isAuthenticated()) {
+      setFeedback("请先登录。", "error");
+      return;
+    }
+    actionInFlight = true;
+    refreshActionButtons();
+    try {
+      statusData = await postJson(CLEAR_RESULT_URL);
+      applyAuthState();
+      applyStatusState();
+      setFeedback("临时 map.zip 已清空。", "success");
+    } catch (_error) {
+      setFeedback("清空 map.zip 失败，请稍后重试。", "error");
+    } finally {
+      actionInFlight = false;
+      refreshActionButtons();
+    }
+  }
+
+  function handleDownload() {
+    if (!statusData?.result_zip) {
+      setFeedback("当前没有可下载的 map.zip。", "error");
+      return;
+    }
+    window.location.href = `${DOWNLOAD_URL}?ts=${Date.now()}`;
+  }
+
+  input.addEventListener("change", () => {
+    if (input.files && input.files[0]) {
+      showFile(input.files[0]);
+      setFeedback("已选择 bag 文件，点击“上传 bag”写入服务器。", "idle");
+    }
+  });
+
+  selectBtn.addEventListener("click", () => {
+    if (input.disabled) return;
+    input.click();
+  });
+
+  clearBtn.addEventListener("click", clearLocalFile);
+
+  dropzone.addEventListener("dragover", (e) => {
+    if (dropzone.classList.contains("is-disabled")) return;
+    e.preventDefault();
+    dropzone.classList.add("is-dragover");
+  });
+  dropzone.addEventListener("dragleave", () => dropzone.classList.remove("is-dragover"));
+  dropzone.addEventListener("drop", (e) => {
+    if (dropzone.classList.contains("is-disabled")) return;
+    e.preventDefault();
+    dropzone.classList.remove("is-dragover");
+    const file = e.dataTransfer?.files[0];
+    if (file && file.name.toLowerCase().endsWith(".bag")) {
+      showFile(file);
+      setFeedback("已选择 bag 文件，点击“上传 bag”写入服务器。", "idle");
+    } else {
+      setFeedback("仅支持选择 .bag 文件。", "error");
+    }
+  });
+
+  authForm.addEventListener("submit", handleLogin);
+  logoutBtn.addEventListener("click", handleLogout);
+  uploadBtn.addEventListener("click", handleUpload);
+  startBtn.addEventListener("click", handleStart);
+  downloadBtn.addEventListener("click", handleDownload);
+  clearBagBtn.addEventListener("click", handleClearBag);
+  clearResultBtn.addEventListener("click", handleClearResult);
+
+  safeRefreshStatus();
+  window.setInterval(safeRefreshStatus, 1500);
+</script>
+
+<style>
+  .mapping-hero {
+    background:
+      radial-gradient(circle at 72% 20%, rgba(99, 102, 241, 0.18), transparent 28%),
+      radial-gradient(circle at 18% 70%, rgba(34, 211, 238, 0.12), transparent 26%),
+      radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.06), transparent 60%),
+      #020617;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .mapping-hero-chips {
+    margin-top: 24px;
+  }
+
+  /* Floating particles */
+  .mapping-hero-particles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .mapping-particle {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: rgba(99, 102, 241, 0.55);
+    animation: particle-float calc(6s + var(--i) * 0.7s) ease-in-out infinite;
+    left: calc(var(--i) * 5.8%);
+    top: calc(30% + sin(var(--i)) * 20%);
+  }
+
+  .mapping-particle:nth-child(odd) {
+    background: rgba(34, 211, 238, 0.4);
+    width: 2px;
+    height: 2px;
+  }
+
+  @keyframes particle-float {
+    0%, 100% { transform: translateY(0) scale(1); opacity: 0.4; }
+    50% { transform: translateY(-28px) scale(1.4); opacity: 0.9; }
+  }
+
+  /* WIP banner */
+  .wip-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    border-color: rgba(234, 179, 8, 0.35);
+    background: linear-gradient(135deg, rgba(234, 179, 8, 0.06), rgba(2, 6, 23, 0.7));
+    box-shadow:
+      inset 0 1px 0 rgba(148, 163, 184, 0.1),
+      0 14px 32px rgba(2, 6, 23, 0.45),
+      0 0 0 1px rgba(234, 179, 8, 0.12);
+  }
+
+  .wip-icon {
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    color: #facc15;
+    filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.5));
+  }
+
+  .wip-label {
+    margin: 0 0 8px;
+    font-family: "Orbitron", "Noto Sans SC", sans-serif;
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    color: #facc15;
+  }
+
+  .wip-desc {
+    margin: 0;
+    color: #cbd5e1;
+    line-height: 1.75;
+  }
+
+  /* Feature grid */
+  .mapping-feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 22px;
+  }
+
+  .mapping-feature-card {
+    position: relative;
+    display: grid;
+    gap: 10px;
+    overflow: hidden;
+  }
+
+  .mapping-feature-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(90deg, #818cf8, #67e8f9, rgba(129, 140, 248, 0));
+  }
+
+  .mapping-feature-card::after {
+    content: attr(data-watermark);
+    position: absolute;
+    top: -28px;
+    right: -8px;
+    font-family: "Orbitron", "Noto Sans SC", sans-serif;
+    font-size: 9.5rem;
+    font-weight: 800;
+    line-height: 1;
+    color: rgba(99, 102, 241, 0.06);
+    pointer-events: none;
+    user-select: none;
+    letter-spacing: -4px;
+  }
+
+  .mapping-feature-index {
+    margin: 0;
+    font-family: "Orbitron", "Noto Sans SC", sans-serif;
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #a5b4fc;
+  }
+
+  .mapping-feature-card h3 {
+    margin: 0;
+    font-size: 1.35rem;
+    color: #fff;
+  }
+
+  .mapping-feature-sub {
+    margin: 0;
+    color: #67e8f9;
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+
+  .mapping-feature-card p:last-child {
+    margin: 0;
+    color: #cbd5e1;
+    line-height: 1.75;
+  }
+
+  /* Upload shell */
+  .mapping-upload-shell {
+    margin-top: 24px;
+    display: grid;
+    gap: 18px;
+  }
+
+  .mapping-auth-panel,
+  .mapping-status-card {
+    display: grid;
+    gap: 16px;
+    padding: 20px 22px;
+    border-radius: 18px;
+    border: 1px solid rgba(71, 85, 105, 0.45);
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.72), rgba(2, 6, 23, 0.82));
+  }
+
+  .mapping-auth-panel {
+    grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+    align-items: center;
+  }
+
+  .mapping-auth-kicker,
+  .mapping-status-kicker {
+    margin: 0 0 8px;
+    font-family: "Orbitron", "Noto Sans SC", sans-serif;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #67e8f9;
+  }
+
+  .mapping-auth-title,
+  .mapping-status-title {
+    margin: 0;
+    font-size: 1.2rem;
+    color: #fff;
+  }
+
+  .mapping-auth-hint,
+  .mapping-status-copy {
+    margin: 0;
+    color: #cbd5e1;
+    line-height: 1.7;
+  }
+
+  .mapping-auth-hint[data-state="success"] {
+    color: #5eead4;
+  }
+
+  .mapping-auth-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    align-items: center;
+  }
+
+  .mapping-auth-form .mapping-btn {
+    justify-content: center;
+  }
+
+  .mapping-status-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .mapping-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(71, 85, 105, 0.48);
+    background: rgba(15, 23, 42, 0.72);
+    color: #cbd5e1;
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .mapping-status-badge[data-state="uploading"] {
+    border-color: rgba(45, 212, 191, 0.45);
+    color: #5eead4;
+  }
+
+  .mapping-status-badge[data-state="ready"] {
+    border-color: rgba(96, 165, 250, 0.45);
+    color: #93c5fd;
+  }
+
+  .mapping-status-badge[data-state="running"] {
+    border-color: rgba(99, 102, 241, 0.55);
+    color: #c7d2fe;
+  }
+
+  .mapping-status-badge[data-state="packaging"] {
+    border-color: rgba(250, 204, 21, 0.42);
+    color: #fde68a;
+  }
+
+  .mapping-status-badge[data-state="completed"] {
+    border-color: rgba(34, 197, 94, 0.42);
+    color: #86efac;
+  }
+
+  .mapping-status-badge[data-state="error"] {
+    border-color: rgba(248, 113, 113, 0.42);
+    color: #fca5a5;
+  }
+
+  .mapping-progress {
+    display: grid;
+    gap: 10px;
+  }
+
+  .mapping-progress-track {
+    height: 12px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(30, 41, 59, 0.92);
+    border: 1px solid rgba(71, 85, 105, 0.45);
+  }
+
+  .mapping-progress-fill {
+    display: block;
+    width: 0%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #818cf8, #67e8f9);
+    transition: width 0.2s ease;
+  }
+
+  .mapping-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: #94a3b8;
+    font-size: 0.85rem;
+  }
+
+  .mapping-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .mapping-status-item {
+    display: grid;
+    gap: 6px;
+    padding: 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(71, 85, 105, 0.32);
+    background: rgba(15, 23, 42, 0.48);
+  }
+
+  .mapping-status-item-label {
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    color: #94a3b8;
+  }
+
+  .mapping-status-item strong {
+    color: #e2e8f0;
+    font-size: 0.94rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Dropzone */
+  .mapping-dropzone {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 40px 24px;
+    border-radius: 18px;
+    border: 1.5px dashed rgba(99, 102, 241, 0.45);
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.05), rgba(2, 6, 23, 0.4));
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+
+  .mapping-dropzone.is-dragover {
+    border-color: rgba(99, 102, 241, 0.8);
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.12), rgba(2, 6, 23, 0.4));
+  }
+
+  .mapping-dropzone.is-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    border-style: solid;
+  }
+
+  .mapping-dropzone.is-disabled .mapping-file-input {
+    pointer-events: none;
+  }
+
+  .mapping-dropzone-icon {
+    width: 52px;
+    height: 52px;
+    color: #818cf8;
+    filter: drop-shadow(0 0 10px rgba(129, 140, 248, 0.4));
+  }
+
+  .mapping-dropzone-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #e2e8f0;
+  }
+
+  .mapping-dropzone-hint {
+    margin: 0;
+    font-size: 0.85rem;
+    color: #94a3b8;
+  }
+
+  .mapping-file-input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+
+  .mapping-select-btn {
+    position: relative;
+    z-index: 1;
+    padding: 8px 22px;
+    border-radius: 10px;
+    border: 1px solid rgba(99, 102, 241, 0.5);
+    background: rgba(99, 102, 241, 0.12);
+    color: #a5b4fc;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.18s, border-color 0.18s;
+  }
+
+  .mapping-select-btn:hover {
+    background: rgba(99, 102, 241, 0.22);
+    border-color: rgba(99, 102, 241, 0.75);
+  }
+
+  /* File info */
+  .mapping-file-info {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 20px;
+    border-radius: 14px;
+    border: 1px solid rgba(99, 102, 241, 0.4);
+    background: rgba(99, 102, 241, 0.08);
+  }
+
+  .mapping-file-icon {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    color: #818cf8;
+  }
+
+  .mapping-file-meta {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .mapping-file-name {
+    margin: 0;
+    font-weight: 700;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mapping-file-size {
+    margin: 3px 0 0;
+    font-size: 0.85rem;
+    color: #94a3b8;
+  }
+
+  .mapping-file-clear {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: color 0.18s, border-color 0.18s;
+  }
+
+  .mapping-file-clear:hover {
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.4);
+  }
+
+  /* Params grid */
+  .mapping-params-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .mapping-param-field--full {
+    grid-column: 1 / -1;
+  }
+
+  .mapping-param-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #94a3b8;
+  }
+
+  .mapping-param-input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(71, 85, 105, 0.55);
+    background: rgba(15, 23, 42, 0.6);
+    color: #e2e8f0;
+    font-size: 0.95rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.18s;
+    box-sizing: border-box;
+    appearance: none;
+  }
+
+  .mapping-param-input::placeholder {
+    color: #475569;
+  }
+
+  .mapping-param-input:focus {
+    border-color: rgba(99, 102, 241, 0.6);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  }
+
+  .mapping-param-select {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%2394a3b8'><path d='M4 6l4 4 4-4'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 14px;
+    padding-right: 36px;
+  }
+
+  /* Actions */
+  .mapping-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .mapping-feedback {
+    margin: 0;
+    min-height: 24px;
+    color: #94a3b8;
+    font-size: 0.9rem;
+    line-height: 1.65;
+  }
+
+  .mapping-feedback[data-state="success"] {
+    color: #86efac;
+  }
+
+  .mapping-feedback[data-state="error"] {
+    color: #fca5a5;
+  }
+
+  .mapping-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 24px;
+    border-radius: 12px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    transition: opacity 0.18s, background 0.18s, box-shadow 0.18s;
+  }
+
+  .mapping-btn svg {
+    width: 17px;
+    height: 17px;
+    flex-shrink: 0;
+  }
+
+  .mapping-btn--primary {
+    border: 1px solid rgba(99, 102, 241, 0.55);
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.28), rgba(67, 56, 202, 0.22));
+    color: #c7d2fe;
+    box-shadow: 0 0 18px rgba(99, 102, 241, 0.2);
+  }
+
+  .mapping-btn--primary:not(:disabled):hover {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.44), rgba(67, 56, 202, 0.36));
+    box-shadow: 0 0 28px rgba(99, 102, 241, 0.35);
+  }
+
+  .mapping-btn--secondary {
+    border: 1px solid rgba(45, 212, 191, 0.4);
+    background: rgba(45, 212, 191, 0.08);
+    color: #5eead4;
+  }
+
+  .mapping-btn--secondary:not(:disabled):hover {
+    background: rgba(45, 212, 191, 0.16);
+  }
+
+  .mapping-btn--ghost {
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    background: transparent;
+    color: #94a3b8;
+  }
+
+  .mapping-btn--ghost:hover {
+    background: rgba(71, 85, 105, 0.15);
+    color: #cbd5e1;
+  }
+
+  .mapping-btn:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+  }
+
+  /* WIP note */
+  .mapping-wip-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    background: rgba(234, 179, 8, 0.07);
+    border: 1px solid rgba(234, 179, 8, 0.2);
+    color: #fbbf24;
+    font-size: 0.875rem;
+    line-height: 1.65;
+  }
+
+  .mapping-wip-note svg {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+  }
+
+  /* Output grid */
+  .mapping-output-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 22px;
+  }
+
+  .mapping-output-card {
+    display: grid;
+    gap: 10px;
+    padding: 20px 18px;
+    border-radius: 16px;
+    border: 1px solid rgba(71, 85, 105, 0.45);
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.6), rgba(2, 6, 23, 0.7));
+  }
+
+  .mapping-output-card--accent {
+    border-color: rgba(99, 102, 241, 0.4);
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.08), rgba(2, 6, 23, 0.7));
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.12);
+  }
+
+  .mapping-output-icon {
+    width: 36px;
+    height: 36px;
+    color: #818cf8;
+    filter: drop-shadow(0 0 8px rgba(129, 140, 248, 0.35));
+  }
+
+  .mapping-output-card--accent .mapping-output-icon {
+    color: #67e8f9;
+    filter: drop-shadow(0 0 8px rgba(103, 232, 249, 0.4));
+  }
+
+  .mapping-output-card h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #fff;
+  }
+
+  .mapping-output-format {
+    margin: 0;
+    font-family: "Orbitron", monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: #67e8f9;
+  }
+
+  .mapping-output-card p:last-child {
+    margin: 0;
+    color: #94a3b8;
+    line-height: 1.7;
+    font-size: 0.9rem;
+  }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .mapping-auth-panel,
+    .mapping-status-grid,
+    .mapping-output-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .mapping-auth-panel {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .mapping-auth-form,
+    .mapping-feature-grid,
+    .mapping-params-grid,
+    .mapping-status-grid,
+    .mapping-output-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .mapping-param-field--full {
+      grid-column: 1;
+    }
+
+    .wip-banner {
+      flex-direction: column;
+    }
+
+    .mapping-status-head {
+      flex-direction: column;
+      align-items: stretch;
+    }
+  }
+
+  .mapping-hero .hero-overlay {
+    background:
+      linear-gradient(100deg, rgba(2, 6, 23, 0.92), rgba(2, 6, 23, 0.55)),
+      radial-gradient(circle at 85% 35%, rgba(45, 212, 191, 0.28), transparent 45%);
+  }
+  .mapping-hero .page-kicker {
+    border-color: rgba(45, 212, 191, 0.38);
+    background: rgba(45, 212, 191, 0.08);
+    color: #99f6e4;
+  }
+  .mapping-hero .page-subtitle {
+    border-left-color: #2dd4bf;
+  }
+</style>

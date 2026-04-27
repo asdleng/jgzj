@@ -1,0 +1,286 @@
+---
+import SiteLayout from "../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="分布地图云端统一管理"
+  description="连接车端地图编辑器插件，在云端统一启动、查看和代理车端地图、路线、边界与点云编辑页面。"
+  currentPath="/distributed-map-management"
+>
+  <header class="page-hero distributed-map-hero">
+    <img
+      src="/assets/hero-l4-autonomy.png"
+      alt="分布式地图云端统一管理"
+      class="hero-media"
+      data-parallax
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">PAGE 07 · MAP PLUGIN</p>
+        <h1 class="page-title">分布地图云端统一管理</h1>
+        <p class="page-subtitle">
+          云端不直接复制车端工具，而是通过 auto_ad_ai WebSocket 连接到指定车辆，远程启动车端地图编辑器插件，并把浏览器请求代理到车端本地插件，实现路线、边界、点云与地图状态的统一查看。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+    <section class="page-section map-editor-page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">车端插件桥接</p>
+        <h2 class="section-title">选择车辆后，直接打开车端地图编辑器</h2>
+        <p class="section-copy">
+          页面会先读取云端在线车辆，再通过 <code>map_editor.start</code>、<code>map_editor.status</code> 和 <code>map_editor.http</code> 三类工具把车端插件嵌入当前官网。后续加权限后，保存边界和路径会再做二次确认。
+        </p>
+
+        <div id="map-editor-console" class="map-editor-console">
+          <div class="map-editor-toolbar">
+            <label class="map-editor-field" for="map-editor-vehicle">
+              当前车辆
+              <select id="map-editor-vehicle">
+                <option value="">加载车辆中...</option>
+              </select>
+            </label>
+            <button id="map-editor-refresh" class="map-editor-button" type="button">刷新车辆</button>
+            <button id="map-editor-start" class="map-editor-button map-editor-button--primary" type="button">启动并打开插件</button>
+            <button id="map-editor-status" class="map-editor-button" type="button">检查状态</button>
+            <button id="map-editor-stop" class="map-editor-button map-editor-button--danger" type="button">关闭插件</button>
+            <p id="map-editor-inline-status" class="map-editor-inline-status" data-state="idle">等待选择车辆</p>
+          </div>
+
+          <div class="map-editor-info-grid">
+            <article class="map-editor-info-card">
+              <p class="map-editor-info-label">连接方式</p>
+              <p class="map-editor-info-value">Cloud HTTP → auto_ad_ai WebSocket → 车端本地插件</p>
+            </article>
+            <article class="map-editor-info-card">
+              <p class="map-editor-info-label">车端工具</p>
+              <p class="map-editor-info-value">map_editor.start / status / stop / http</p>
+            </article>
+            <article class="map-editor-info-card">
+              <p class="map-editor-info-label">代理入口</p>
+              <p class="map-editor-info-value">/vehicles/:vehicle_id/map-editor/</p>
+            </article>
+          </div>
+
+          <div id="map-editor-frame-shell" class="map-editor-frame-shell" data-state="empty">
+            <div id="map-editor-placeholder" class="map-editor-placeholder">
+              <p class="map-editor-placeholder-kicker">MAP EDITOR</p>
+              <h3>选择车辆后启动插件</h3>
+              <p>
+                云端会把这里的页面请求转成 <code>map_editor.http</code> 调用，由车端返回 HTML、JS、CSS、路线 API 和点云二进制数据。
+              </p>
+            </div>
+            <iframe
+              id="map-editor-frame"
+              title="车端地图编辑器"
+              class="map-editor-frame"
+              loading="lazy"
+              hidden
+            ></iframe>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script is:inline>
+    (() => {
+      const vehiclesUrl = "/api/cloud-ops/vehicles";
+      const consoleEl = document.getElementById("map-editor-console");
+      if (!consoleEl) return;
+
+      const vehicleSelect = document.getElementById("map-editor-vehicle");
+      const refreshBtn = document.getElementById("map-editor-refresh");
+      const startBtn = document.getElementById("map-editor-start");
+      const statusBtn = document.getElementById("map-editor-status");
+      const stopBtn = document.getElementById("map-editor-stop");
+      const inlineStatus = document.getElementById("map-editor-inline-status");
+      const frameShell = document.getElementById("map-editor-frame-shell");
+      const frame = document.getElementById("map-editor-frame");
+      const placeholder = document.getElementById("map-editor-placeholder");
+
+      const setStatus = (text, state = "idle") => {
+        if (inlineStatus) {
+          inlineStatus.textContent = text;
+          inlineStatus.dataset.state = state;
+        }
+      };
+
+      const setBusy = (busy) => {
+        [refreshBtn, startBtn, statusBtn, stopBtn].forEach((button) => {
+          if (button) button.disabled = busy;
+        });
+      };
+
+      const selectedVehicleId = () => String(vehicleSelect?.value || "").trim();
+
+      const apiJson = async (url, options = {}) => {
+        const response = await fetch(url, {
+          headers: {
+            Accept: "application/json",
+            ...(options.body ? { "Content-Type": "application/json" } : {})
+          },
+          ...options
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.ok === false) {
+          throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+        }
+        return payload;
+      };
+
+      const setFrameVisible = (visible) => {
+        if (!frame || !placeholder || !frameShell) return;
+        frame.hidden = !visible;
+        placeholder.hidden = visible;
+        frameShell.dataset.state = visible ? "active" : "empty";
+      };
+
+      const openFrame = (vehicleId) => {
+        if (!frame || !vehicleId) return;
+        frame.src = `/vehicles/${encodeURIComponent(vehicleId)}/map-editor/`;
+        setFrameVisible(true);
+      };
+
+      const loadVehicles = async () => {
+        setBusy(true);
+        setStatus("加载车辆中...", "loading");
+        try {
+          const payload = await apiJson(vehiclesUrl);
+          const vehicles = Array.isArray(payload.vehicles) ? payload.vehicles : [];
+          const previous = selectedVehicleId();
+          if (vehicleSelect) {
+            vehicleSelect.innerHTML = "";
+            if (!vehicles.length) {
+              const option = document.createElement("option");
+              option.value = "";
+              option.textContent = "暂无在线车辆";
+              vehicleSelect.appendChild(option);
+            } else {
+              vehicles.forEach((vehicle) => {
+                const vehicleId = String(vehicle?.vehicle_id || vehicle?.plate_number || "").trim();
+                if (!vehicleId) return;
+                const option = document.createElement("option");
+                option.value = vehicleId;
+                const host = vehicle?.hostname ? ` · ${vehicle.hostname}` : "";
+                const seen = vehicle?.last_seen || vehicle?.last_seen_at || vehicle?.updated_at || "";
+                option.textContent = `${vehicleId}${host}${seen ? ` · ${seen}` : ""}`;
+                vehicleSelect.appendChild(option);
+              });
+              if (previous && [...vehicleSelect.options].some((item) => item.value === previous)) {
+                vehicleSelect.value = previous;
+              }
+            }
+          }
+          setStatus(vehicles.length ? `已加载 ${vehicles.length} 台在线车辆` : "暂无在线车辆", vehicles.length ? "ok" : "error");
+        } catch (error) {
+          setStatus(`车辆加载失败：${error.message}`, "error");
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const callEditorApi = async (action, options = {}) => {
+        const vehicleId = selectedVehicleId();
+        if (!vehicleId) {
+          throw new Error("请先选择车辆");
+        }
+        return apiJson(`/api/map-editor/${encodeURIComponent(vehicleId)}/${action}`, {
+          method: options.method || "POST",
+          body: options.body ? JSON.stringify(options.body) : undefined
+        });
+      };
+
+      const checkStatus = async () => {
+        const vehicleId = selectedVehicleId();
+        if (!vehicleId) {
+          setStatus("请先选择车辆", "error");
+          return;
+        }
+        setBusy(true);
+        setStatus("检查插件状态...", "loading");
+        try {
+          const payload = await callEditorApi("status", { method: "GET" });
+          const result = payload?.result || payload?.execution?.data?.response?.result || {};
+          const statusText = result?.status || result?.http_probe?.status || result?.running || "已返回";
+          setStatus(`插件状态：${statusText}`, "ok");
+        } catch (error) {
+          setStatus(`状态检查失败：${error.message}`, "error");
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const startEditor = async () => {
+        const vehicleId = selectedVehicleId();
+        if (!vehicleId) {
+          setStatus("请先选择车辆", "error");
+          return;
+        }
+        setBusy(true);
+        setStatus("正在启动车端插件...", "loading");
+        try {
+          await callEditorApi("start");
+          openFrame(vehicleId);
+          setStatus("插件已启动，正在加载车端页面", "ok");
+        } catch (error) {
+          setStatus(`启动失败：${error.message}`, "error");
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const stopEditor = async () => {
+        const vehicleId = selectedVehicleId();
+        if (!vehicleId) {
+          setStatus("请先选择车辆", "error");
+          return;
+        }
+        setBusy(true);
+        setStatus("正在关闭车端插件...", "loading");
+        try {
+          await callEditorApi("stop");
+          if (frame) frame.removeAttribute("src");
+          setFrameVisible(false);
+          setStatus("插件已关闭", "ok");
+        } catch (error) {
+          setStatus(`关闭失败：${error.message}`, "error");
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      refreshBtn?.addEventListener("click", loadVehicles);
+      startBtn?.addEventListener("click", startEditor);
+      statusBtn?.addEventListener("click", checkStatus);
+      stopBtn?.addEventListener("click", stopEditor);
+      vehicleSelect?.addEventListener("change", () => {
+        if (frame) frame.removeAttribute("src");
+        setFrameVisible(false);
+        checkStatus();
+      });
+
+      loadVehicles();
+    })();
+  </script>
+
+<style>
+  .distributed-map-hero .hero-overlay {
+    background:
+      linear-gradient(100deg, rgba(2, 6, 23, 0.92), rgba(2, 6, 23, 0.55)),
+      radial-gradient(circle at 85% 35%, rgba(96, 165, 250, 0.28), transparent 45%);
+  }
+  .distributed-map-hero .page-kicker {
+    border-color: rgba(96, 165, 250, 0.38);
+    background: rgba(96, 165, 250, 0.08);
+    color: #bfdbfe;
+  }
+  .distributed-map-hero .page-subtitle {
+    border-left-color: #60a5fa;
+  }
+</style>
+</SiteLayout>

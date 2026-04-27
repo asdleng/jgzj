@@ -1,0 +1,33 @@
+<section id="openclaw-panel" class="cloud-chat-panel embedded-panel" aria-live="polite">
+  <header class="cloud-chat-head">
+    <div class="cloud-chat-head-main">
+      <p class="cloud-chat-title">OpenClaw 助手</p>
+      <p id="openclaw-status" class="cloud-chat-status" data-state="idle">默认模型</p>
+    </div>
+    <div class="openclaw-head-actions">
+      <button id="openclaw-logout" class="cloud-chat-close" type="button" aria-label="切换 OpenClaw 账号" hidden>切换账号</button>
+    </div>
+  </header>
+  <div id="openclaw-auth" class="openclaw-auth">
+    <form id="openclaw-login-form" class="openclaw-login-form">
+      <p class="openclaw-login-title">登录后可使用 OpenClaw</p>
+      <label class="openclaw-login-field" for="openclaw-username">
+        <span>用户名</span>
+        <input id="openclaw-username" type="text" maxlength="64" autocomplete="username" placeholder="输入用户名" />
+      </label>
+      <label class="openclaw-login-field" for="openclaw-password">
+        <span>密码</span>
+        <input id="openclaw-password" type="password" maxlength="128" autocomplete="current-password" placeholder="输入密码" />
+      </label>
+      <p id="openclaw-auth-hint" class="openclaw-auth-hint" data-state="idle">请输入用户名和密码。</p>
+      <button id="openclaw-login" type="submit">登录</button>
+    </form>
+  </div>
+  <div id="openclaw-chat-shell" class="openclaw-chat-shell" hidden>
+    <div id="openclaw-messages" class="cloud-chat-messages"></div>
+    <form id="openclaw-form" class="cloud-chat-form">
+      <textarea id="openclaw-input" rows="2" maxlength="1000" placeholder="例如：查看 BIT-0019 定位状态、列出路线、查看相机帧率、读取 ROS 总览"></textarea>
+      <button id="openclaw-send" type="submit">发送</button>
+    </form>
+  </div>
+</section>

@@ -1,0 +1,31 @@
+---
+import scriptText from "../scripts/cloud-ops-runtime.js?raw";
+---
+
+<section id="cloud-runtime-console" class="cloud-runtime-panel" aria-live="polite">
+  <div class="cloud-runtime-head">
+    <div class="cloud-runtime-head-copy">
+      <p class="section-kicker">云端链路</p>
+      <h3>关键节点状态</h3>
+    </div>
+    <div class="cloud-runtime-head-actions">
+      <button id="cloud-runtime-refresh" class="cloud-ops-toolbar-button" type="button">刷新</button>
+      <p id="cloud-runtime-status" class="cloud-ops-inline-status" data-state="loading">加载中...</p>
+    </div>
+  </div>
+
+  <div class="cloud-runtime-subhead">
+    <p id="cloud-runtime-auth-tip" class="cloud-ops-permission-tip">未登录可查看状态，登录后可重启。</p>
+    <p id="cloud-runtime-updated-at" class="cloud-runtime-updated-at">最近刷新：-</p>
+  </div>
+
+  <div id="cloud-runtime-summary" class="cloud-runtime-summary">
+    <p class="cloud-runtime-empty">正在汇总站点关键节点...</p>
+  </div>
+
+  <div id="cloud-runtime-groups" class="cloud-runtime-groups">
+    <p class="cloud-runtime-empty">正在加载链路状态...</p>
+  </div>
+</section>
+
+<script is:inline set:html={scriptText}></script>

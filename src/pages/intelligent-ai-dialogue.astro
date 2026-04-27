@@ -1,0 +1,156 @@
+---
+import EmbeddedCloudChat from "../components/EmbeddedCloudChat.astro";
+import InteractiveScripts from "../components/InteractiveScripts.astro";
+import SiteLayout from "../components/SiteLayout.astro";
+import { visualScenes } from "../data/site-content.js";
+---
+
+<SiteLayout
+  title="智能AI对话交互"
+  description="展示 ASR、LLM、TTS 构成的智能 AI 对话交互能力，并保留网页端可直接体验的对话工作台。"
+  currentPath="/intelligent-ai-dialogue"
+>
+  <header class="page-hero dialogue-hero">
+    <img
+      src="/assets/hero-ai-dialogue.png"
+      alt="智能 AI 对话交互场景"
+      class="hero-media"
+      data-parallax
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">PAGE 04 · AI DIALOGUE</p>
+        <h1 class="page-title">智能AI对话交互</h1>
+        <p class="page-subtitle">
+          从车端语音采集到云端理解、生成与播报，形成 ASR、LLM、TTS 一体化交互链路。这里保留网页端可直接体验的智能AI对话工作台，并展示不同地点的车端 UI 页面。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">交互闭环</p>
+        <h2 class="section-title">车端 ASR、云端 LLM、云端 TTS 组成完整智能交互闭环</h2>
+        <p class="section-copy">
+          从车端拾音、语音识别，到云端理解、知识检索、生成式回复，再到语音播报和屏幕反馈，整套链路形成了可持续运行的智能交互闭环。车端负责实时感知与现场交互入口，云端负责理解、生成与统一升级。
+        </p>
+        <div class="dialogue-loop-shell">
+          <article class="page-card dialogue-loop-node">
+            <p class="dialogue-loop-index">01</p>
+            <p class="dialogue-stage-label">车端 ASR</p>
+            <h3>拾音、唤醒与实时字幕</h3>
+            <p class="dialogue-stage-copy">
+              车端先完成语音采集、降噪、唤醒与实时转写，把用户说的话稳定变成字幕和文本输入，为后续理解提供第一手上下文。
+            </p>
+          </article>
+          <div class="dialogue-loop-arrow" aria-hidden="true">→</div>
+          <article class="page-card dialogue-loop-node">
+            <p class="dialogue-loop-index">02</p>
+            <p class="dialogue-stage-label">LLM</p>
+            <h3>语义理解、检索与生成</h3>
+            <p class="dialogue-stage-copy">
+              云端模型结合项目身份、知识库、历史上下文与现场状态做理解、检索、推理和生成，给出真正可执行、可解释的回复。
+            </p>
+          </article>
+          <div class="dialogue-loop-arrow" aria-hidden="true">→</div>
+          <article class="page-card dialogue-loop-node">
+            <p class="dialogue-loop-index">03</p>
+            <p class="dialogue-stage-label">TTS</p>
+            <h3>回复播报与情感发声</h3>
+            <p class="dialogue-stage-copy">
+              生成结果进入语音合成链路，输出清晰可播报的回复内容，用于迎宾、导览、巡逻提醒和服务问答，形成自然的人机交互反馈。
+            </p>
+          </article>
+          <div class="dialogue-loop-arrow" aria-hidden="true">→</div>
+          <article class="page-card dialogue-loop-node dialogue-loop-node--accent">
+            <p class="dialogue-loop-index">04</p>
+            <p class="dialogue-stage-label">车端回显</p>
+            <h3>播报、字幕与 UI 联动</h3>
+            <p class="dialogue-stage-copy">
+              最终结果回到车端，同时驱动语音播报、字幕显示、任务提示与界面状态更新，让用户能听到、看到，也能继续追问。
+            </p>
+          </article>
+        </div>
+        <div class="dialogue-loop-footer">
+          <span class="chip-item">车端实时采集</span>
+          <span class="chip-item">云端统一理解</span>
+          <span class="chip-item">语音播报回传</span>
+          <span class="chip-item">完整交互闭环</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-section">
+      <div class="dialogue-page-shell reveal" data-reveal>
+        <div class="glass-card section-card dialogue-copy-card">
+          <p class="section-kicker">网页体验</p>
+          <h2 class="section-title">网页端直接体验智能AI对话</h2>
+          <p class="section-copy">
+            这里保留与车端同一条核心对话链路的网页入口，支持身份切换、流式回复和项目问答体验。它不是单独演示页，而是直接接入现有服务器上的实际对话服务。
+          </p>
+          <div class="chip-list">
+            <span class="chip-item">多身份切换</span>
+            <span class="chip-item">流式回复</span>
+            <span class="chip-item">项目知识问答</span>
+            <span class="chip-item">端云协同接入</span>
+          </div>
+        </div>
+
+        <div class="dialogue-chat-stack">
+          <div class="dialogue-chat-shell">
+            <EmbeddedCloudChat />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">车端界面</p>
+        <h2 class="section-title">车端 UI 可视化页面交互</h2>
+        <p class="section-copy">
+          车端 UI 不只是一个聊天窗口，而是把现场交互、地图导览和感知信息整合在同一块屏幕里。界面会实时显示 AI 对话字幕与回复内容，同时承载地图定位与导览路线，并叠加态势感知、事件检测、任务执行等关键信息，方便现场人员一眼看懂“机器人在说什么、正走到哪里、周边发生了什么”。
+        </p>
+        <div class="chip-list">
+          <span class="chip-item">AI 对话字幕</span>
+          <span class="chip-item">地图导览</span>
+          <span class="chip-item">态势感知</span>
+          <span class="chip-item">事件检测</span>
+          <span class="chip-item">任务状态联动</span>
+        </div>
+        <div class="scene-grid-wrap">
+          <div class="visual-stack">
+            {visualScenes.map((item) => (
+              <figure class="visual-scene">
+                <img src={item.src} alt={item.alt} class="visual-scene-image" loading="lazy" decoding="async" />
+                <figcaption class="visual-scene-caption">{item.title}</figcaption>
+              </figure>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <InteractiveScripts />
+</SiteLayout>
+
+<style>
+  .dialogue-hero .hero-overlay {
+    background:
+      linear-gradient(100deg, rgba(2, 6, 23, 0.92), rgba(2, 6, 23, 0.55)),
+      radial-gradient(circle at 85% 35%, rgba(52, 211, 153, 0.28), transparent 45%);
+  }
+  .dialogue-hero .page-kicker {
+    border-color: rgba(52, 211, 153, 0.38);
+    background: rgba(52, 211, 153, 0.08);
+    color: #a7f3d0;
+  }
+  .dialogue-hero .page-subtitle {
+    border-left-color: #34d399;
+  }
+</style>
