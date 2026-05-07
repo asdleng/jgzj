@@ -66,6 +66,42 @@ const vehicleResults = [
   "保持低速状态下的平顺与可控",
   "支撑巡逻、导览和服务等任务执行"
 ];
+
+const cloudOpsScreens = [
+  {
+    title: "多车总览与统计大屏",
+    src: "/assets/cloud-ops-platform-1.png",
+    alt: "云控平台整体概览",
+    text: "这一页更偏向平台总览与运营统计。能集中查看车辆在线状态、设备总量、历史巡逻里程、巡逻时长和事件总数，并在地图上直观看到多车分布。",
+    bullets: [
+      "地图总览：多车位置、项目分布与在线情况一屏查看。",
+      "统计看板：历史巡逻里程、时长、事件总数等核心运营指标集中呈现。",
+      "设备总控：车辆数量、在线状态和总体运行情况统一管理。"
+    ]
+  },
+  {
+    title: "实时监控与事件上报",
+    src: "/assets/cloud-ops-platform-2.png",
+    alt: "云控平台实时运营监视",
+    text: "这一页核心是实时值守。图里能看到多路视频窗口、地图路线、车辆状态和事件上报区域，适合车在外面跑时做远程监控与异常确认。",
+    bullets: [
+      "视频监控：前后左右多路画面实时查看，方便远程值守。",
+      "状态查询：车辆位置、路线、任务进度、电量和运行状态同步展示。",
+      "事件上报：异常事件、工单信息和现场图片可以快速上送和确认。"
+    ]
+  },
+  {
+    title: "历史回溯与数据查询",
+    src: "/assets/cloud-ops-platform-3.png",
+    alt: "云控平台历史视频与数据查询",
+    text: "这一页更偏向追溯与分析。历史视频、事件记录、任务计划和数据查询集中到一起，适合做问题复盘、项目分析和运营汇总。",
+    bullets: [
+      "视频回溯：按时间、任务和事件快速回看历史视频。",
+      "数据查询：事件记录、任务计划、车辆信息和运行数据支持统一检索。",
+      "分析统计：为项目复盘、运营汇总和数据闭环提供长期沉淀。"
+    ]
+  }
+];
 ---
 
 <SiteLayout
@@ -128,6 +164,49 @@ const vehicleResults = [
             />
             <figcaption>多任务平台形态</figcaption>
           </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">大数据云控平台</p>
+        <h2 class="section-title">从多车总览，到实时监控、事件上报与历史回溯</h2>
+        <p class="section-copy">
+          这部分作为 L4 自动驾驶车辆的运营支撑能力展示：车在外面跑，平台在云端看。多车总览、实时值守和历史追溯共同形成车辆运行的数据闭环。
+        </p>
+        <div class="cloud-ops-gallery">
+          {cloudOpsScreens.map((item, idx) => (
+            <article class="page-card cloud-ops-row">
+              <div class="cloud-ops-row-media">
+                <div class="browser-mock">
+                  <div class="browser-mock-bar">
+                    <span class="browser-mock-dot browser-mock-dot--red"></span>
+                    <span class="browser-mock-dot browser-mock-dot--yellow"></span>
+                    <span class="browser-mock-dot browser-mock-dot--green"></span>
+                    <span class="browser-mock-url">cloud-ops.jiguangzhijie.top</span>
+                  </div>
+                  <img src={item.src} alt={item.alt} class="cloud-ops-shot-image browser-mock-img" loading="lazy" decoding="async" />
+                </div>
+              </div>
+              <div class="cloud-ops-row-copy">
+                <p class="cloud-ops-row-kicker">
+                  <span class="page-badge">{String(idx + 1).padStart(2, "0")}</span>
+                  平台页面
+                </p>
+                <h3>{item.title}</h3>
+                <p>{item.text}</p>
+                <div class="cloud-ops-bullets">
+                  {item.bullets.map((bullet) => (
+                    <div class="cloud-ops-bullet">
+                      <span class="cloud-ops-check" aria-hidden="true">✓</span>
+                      <span>{bullet}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </article>
+          ))}
         </div>
       </div>
     </section>

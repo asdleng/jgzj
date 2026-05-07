@@ -1,8 +1,8 @@
-<section id="cloud-ops-console" class="cloud-chat-panel embedded-panel cloud-ops-console-panel" aria-live="polite">
+<section id="cloud-ops-console" class="cloud-chat-panel embedded-panel cloud-ops-console-panel" aria-live="polite" data-authenticated="false">
   <header class="cloud-chat-head">
     <div class="cloud-chat-head-main">
       <p class="cloud-chat-title">云端智能运维工作台</p>
-      <p id="cloud-ops-status" class="cloud-chat-status" data-state="idle">只读模式</p>
+      <p id="cloud-ops-status" class="cloud-chat-status" data-state="idle">需登录</p>
     </div>
     <div class="openclaw-head-actions">
       <button
@@ -17,7 +17,7 @@
     </div>
   </header>
 
-  <div id="cloud-ops-shell" class="cloud-ops-shell">
+  <div id="cloud-ops-shell" class="cloud-ops-shell" hidden>
     <div class="cloud-ops-toolbar">
       <label class="cloud-ops-toolbar-field" for="cloud-ops-vehicle">
         <span>当前车辆</span>
@@ -242,8 +242,8 @@
 
   <div id="cloud-ops-auth" class="openclaw-auth">
     <form id="cloud-ops-login-form" class="openclaw-login-form">
-      <p class="openclaw-login-title">登录获取更多控制权限</p>
-      <p class="cloud-ops-permission-tip">未登录时可查看车辆状态和对话内容；登录后可控制车辆并使用自然语言运维。</p>
+      <p class="openclaw-login-title">登录进入云端智能运维</p>
+      <p class="cloud-ops-permission-tip">车辆状态、车端控制、服务器节点状态和重启操作都需要登录后查看与执行。</p>
       <label class="openclaw-login-field" for="cloud-ops-username">
         <span>用户名</span>
         <input id="cloud-ops-username" type="text" maxlength="64" autocomplete="username" placeholder="输入用户名" />
@@ -252,7 +252,7 @@
         <span>密码</span>
         <input id="cloud-ops-password" type="password" maxlength="128" autocomplete="current-password" placeholder="输入密码" />
       </label>
-      <p id="cloud-ops-auth-hint" class="openclaw-auth-hint" data-state="idle">未登录可查看状态和对话内容；登录后可获取更多控制权限。</p>
+      <p id="cloud-ops-auth-hint" class="openclaw-auth-hint" data-state="idle">请先登录，登录后加载车辆和服务器运行态。</p>
       <button id="cloud-ops-login" type="submit">登录</button>
     </form>
   </div>

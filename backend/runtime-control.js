@@ -40,6 +40,10 @@ function formatPortList(localPorts = [], publicPorts = []) {
   return parts.join(' · ');
 }
 
+function formatAutoStartScript(scriptName) {
+  return scriptName ? `/home/admin1/.auto_start/${scriptName}` : '';
+}
+
 async function execCommand(file, args = [], options = {}) {
   try {
     const result = await execFileAsync(file, args, {
@@ -71,14 +75,40 @@ async function probeHttp(url, options = {}) {
       signal: AbortSignal.timeout(options.timeoutMs || 4000)
     });
     const body = await response.text().catch(() => '');
+    const contentType = response.headers.get('content-type') || '';
+    let payload = null;
+    if (contentType.includes('application/json') || /^[\[{]/.test(String(body || '').trim())) {
+      try {
+        payload = JSON.parse(body);
+      } catch (_error) {
+        payload = null;
+      }
+    }
+    const payloadOk =
+      payload && typeof payload === 'object' && typeof payload.ok === 'boolean'
+        ? payload.ok
+        : null;
+    const ok = response.status >= 200 && response.status < 300 && payloadOk !== false;
+    const payloadState =
+      payload && typeof payload === 'object' && typeof payload.state === 'string'
+        ? String(payload.state).trim()
+        : '';
+    const state = payloadState || (ok ? 'ok' : 'error');
+    const payloadSummary =
+      payload && typeof payload === 'object' && payload.summary
+        ? String(payload.summary).trim()
+        : '';
+    const latencyMs = Date.now() - startedAt;
     return {
       label: options.label || url,
       kind: 'http',
       url,
-      ok: response.status >= 200 && response.status < 300,
+      ok,
+      state,
       status_code: response.status,
-      latency_ms: Date.now() - startedAt,
-      summary: `${response.status} · ${Date.now() - startedAt}ms`,
+      latency_ms: latencyMs,
+      summary: payloadSummary ? `${payloadSummary} · ${latencyMs}ms` : `${response.status} · ${latencyMs}ms`,
+      payload,
       body_excerpt: truncateText(body, 240)
     };
   } catch (error) {
@@ -91,6 +121,7 @@ async function probeHttp(url, options = {}) {
       kind: 'http',
       url,
       ok: false,
+      state: 'error',
       status_code: 0,
       latency_ms: Date.now() - startedAt,
       summary: message,
@@ -99,16 +130,19 @@ async function probeHttp(url, options = {}) {
   }
 }
 
-async function readSystemdService(serviceName) {
-  const result = await execCommand('systemctl', [
+async function readSystemdService(serviceName, options = {}) {
+  const args = [
+    ...(options.user ? ['--user'] : []),
     'show',
     serviceName,
     '--property=Id,Description,LoadState,ActiveState,SubState,MainPID,ExecMainStartTimestamp,UnitFileState'
-  ]);
+  ];
+  const result = await execCommand('systemctl', args);
 
   if (!result.ok) {
     return {
       ok: false,
+      type: options.user ? 'systemd-user' : 'systemd',
       service_name: serviceName,
       summary: truncateText(result.stderr || result.stdout || result.error?.message || 'systemctl_show_failed', 300)
     };
@@ -120,6 +154,7 @@ async function readSystemdService(serviceName) {
   const subState = String(raw.SubState || '').trim();
   return {
     ok: activeState === 'active',
+    type: options.user ? 'systemd-user' : 'systemd',
     service_name: String(raw.Id || serviceName).trim() || serviceName,
     description: String(raw.Description || '').trim(),
     load_state: String(raw.LoadState || '').trim(),
@@ -201,153 +236,279 @@ async function readProcessMatch(pattern) {
   };
 }
 
-function buildTargets(rootDir) {
-  const scriptsDir = path.join(rootDir, 'scripts');
+function buildTargets() {
+  const autoStartDir = process.env.AUTO_START_DIR || '/home/admin1/.auto_start';
+  const cloudVoiceRoot = '/home/admin1/CloudVoice/multi_car_asr_demo';
+  const dedicatedTtsHubScript = path.join(cloudVoiceRoot, 'manage_dedicated_tts_hub.sh');
+  const dedicatedTtsPoolScript = path.join(cloudVoiceRoot, 'manage_dedicated_tts_pool.sh');
+  const dedicatedTtsCommonEnv = {
+    DATA_DIR: '/home/admin1/futian_voicehub/uploads',
+    LLM_URL: 'http://127.0.0.1:8041/chat'
+  };
+  const dedicatedTtsWorkers = [
+    { id: 'tts-worker-8804', label: 'TTS worker gpu3', port: '8804', visible: '3' },
+    { id: 'tts-worker-8795', label: 'TTS worker gpu6', port: '8795', visible: '6' },
+    { id: 'tts-worker-8796', label: 'TTS worker gpu4', port: '8796', visible: '4' },
+    { id: 'tts-worker-8805', label: 'TTS worker gpu0', port: '8805', visible: '0' },
+    { id: 'tts-worker-8806', label: 'TTS worker gpu5', port: '8806', visible: '5' }
+  ];
   return [
     {
-      id: 'site-web',
-      label: '官网后端 8888',
-      group: '入口链路',
-      description: '官网页面与站点 API 后端。',
-      local_ports: ['8888'],
-      public_ports: ['7791'],
-      controller: { type: 'tmux', session_name: 'jgzj-site' },
+      id: 'qwen36-tunnels',
+      label: 'Qwen3.6 A100 隧道',
+      group: '模型入口',
+      description: 'A100 文本与多模态 vLLM SSH tunnel，供对话链和图片输入链路使用。',
+      local_ports: ['18000', '18001'],
+      public_ports: [],
+      script: formatAutoStartScript('01_qwen36_tunnels.sh'),
+      controller: { type: 'process', pattern: 'ssh .*jgzj_qwen36_proxy_ed25519 .*127\\.0\\.0\\.1:(18000|18001)' },
       restart: {
         type: 'script',
-        file: path.join(scriptsDir, 'restart-site-detached.sh'),
-        args: [],
-        timeout_ms: 5000,
-        async: true
+        file: path.join(autoStartDir, '01_qwen36_tunnels.sh'),
+        args: ['restart'],
+        timeout_ms: 90000
       },
       checks: [
-        { label: '本地 8888 /healthz', url: 'http://127.0.0.1:8888/healthz', required: true }
+        { label: '18000 Qwen3.6 text /v1/models', url: 'http://127.0.0.1:18000/v1/models', required: true },
+        { label: '18001 Qwen3.6 MM /v1/models', url: 'http://127.0.0.1:18001/v1/models', required: true }
       ]
     },
     {
-      id: 'frpc-public',
-      label: 'FRP 公网转发',
-      group: '入口链路',
-      description: '负责 7790 / 7791 映射到本机服务。',
-      local_ports: [],
-      public_ports: ['7790', '7791'],
-      controller: {
-        type: 'process',
-        pattern: '/home/admin1/frp/frp_0.65.0_linux_amd64/frpc.toml'
-      },
+      id: 'cloudvoice-7790-prod',
+      label: 'CloudVoice 生产对话链',
+      group: '语音对话',
+      description: '公网 7790：生产文本对话、工具/RAG、LLM failover 与 TTS 输出主链路。',
+      local_ports: ['8040', '8041', '8043', '8022', '8050', '8799'],
+      public_ports: ['7790'],
+      script: formatAutoStartScript('02_cloudvoice_7790_prod.sh'),
+      controller: { type: 'process', pattern: 'intent_chat_tts_bridge\\.py .*--port 8050' },
       restart: {
         type: 'script',
-        file: path.join(scriptsDir, 'restart-frpc.sh'),
-        args: [],
-        timeout_ms: 30000
+        file: path.join(autoStartDir, '02_cloudvoice_7790_prod.sh'),
+        args: ['restart'],
+        timeout_ms: 900000
       },
       checks: [
-        { label: '公网 7790 /healthz', url: 'http://idtrd.kmdns.net:7790/healthz', required: false },
+        { label: '8043 failover /healthz', url: 'http://127.0.0.1:8043/healthz', required: true },
+        { label: '8022 intent /healthz', url: 'http://127.0.0.1:8022/healthz', required: true },
+        { label: '8050 bridge /healthz', url: 'http://127.0.0.1:8050/healthz', required: true },
+        {
+          label: '8799 TTS pool /healthz',
+          url: 'http://127.0.0.1:8799/healthz',
+          required: true,
+          restart_target_id: 'tts-pool-8799',
+          restart_target_label: 'TTS pool 8799'
+        },
+        { label: '8041 Qwen3.5 compat /healthz', url: 'http://127.0.0.1:8041/healthz', required: true },
+        { label: '8040 Qwen3.5 fallback /v1/models', url: 'http://127.0.0.1:8040/v1/models', required: false },
+        { label: '18000 Qwen3.6 text /v1/models', url: 'http://127.0.0.1:18000/v1/models', required: false },
+        {
+          label: '8804 TTS worker gpu3',
+          url: 'http://127.0.0.1:8804/healthz',
+          required: false,
+          restart_target_id: 'tts-worker-8804',
+          restart_target_label: 'TTS worker gpu3'
+        },
+        {
+          label: '8795 TTS worker gpu6',
+          url: 'http://127.0.0.1:8795/healthz',
+          required: false,
+          restart_target_id: 'tts-worker-8795',
+          restart_target_label: 'TTS worker gpu6'
+        },
+        {
+          label: '8796 TTS worker gpu4',
+          url: 'http://127.0.0.1:8796/healthz',
+          required: false,
+          restart_target_id: 'tts-worker-8796',
+          restart_target_label: 'TTS worker gpu4'
+        },
+        {
+          label: '8805 TTS worker gpu0',
+          url: 'http://127.0.0.1:8805/healthz',
+          required: false,
+          restart_target_id: 'tts-worker-8805',
+          restart_target_label: 'TTS worker gpu0'
+        },
+        {
+          label: '8806 TTS worker gpu5',
+          url: 'http://127.0.0.1:8806/healthz',
+          required: false,
+          restart_target_id: 'tts-worker-8806',
+          restart_target_label: 'TTS worker gpu5'
+        },
+        { label: '公网 7790 /healthz', url: 'http://idtrd.kmdns.net:7790/healthz', required: false }
+      ]
+    },
+    {
+      id: 'cloudvoice-8051-gray',
+      label: 'CloudVoice 灰度链 8051',
+      group: '语音对话',
+      description: 'Qwen3.6 灰度对话链，用于和生产 8050 链路对比验证。',
+      local_ports: ['8042', '8024', '8051'],
+      public_ports: [],
+      script: formatAutoStartScript('03_cloudvoice_gray_8051.sh'),
+      controller: { type: 'process', pattern: 'intent_chat_tts_bridge\\.py .*--port 8051' },
+      restart: {
+        type: 'script',
+        file: path.join(autoStartDir, '03_cloudvoice_gray_8051.sh'),
+        args: ['restart'],
+        timeout_ms: 180000
+      },
+      checks: [
+        { label: '8042 Qwen3.6 compat /healthz', url: 'http://127.0.0.1:8042/healthz', required: true },
+        { label: '8024 gray intent /healthz', url: 'http://127.0.0.1:8024/healthz', required: true },
+        { label: '8051 gray bridge /healthz', url: 'http://127.0.0.1:8051/healthz', required: true }
+      ]
+    },
+    {
+      id: 'tts-pool-8799',
+      label: 'TTS pool 8799',
+      group: '语音对话',
+      hidden: true,
+      description: '7790 主链使用的 TTS 负载均衡池，可单独重启，不影响 8050/8022/8043。',
+      local_ports: ['8799'],
+      public_ports: [],
+      script: dedicatedTtsPoolScript,
+      controller: { type: 'process', pattern: 'dedicated_tts_pool_lb\\.py .*--port 8799' },
+      restart: {
+        type: 'script',
+        file: dedicatedTtsPoolScript,
+        args: ['restart'],
+        env: {
+          ...dedicatedTtsCommonEnv,
+          TTS_POOL_PORT: '8799'
+        },
+        timeout_ms: 180000
+      },
+      checks: [{ label: '8799 TTS pool /healthz', url: 'http://127.0.0.1:8799/healthz', required: true }]
+    },
+    ...dedicatedTtsWorkers.map((worker) => ({
+      id: worker.id,
+      label: worker.label,
+      group: '语音对话',
+      hidden: true,
+      description: `7790 TTS 单 worker，可单独重启。当前端口 ${worker.port}，CUDA_VISIBLE_DEVICES=${worker.visible}。`,
+      local_ports: [worker.port],
+      public_ports: [],
+      script: dedicatedTtsHubScript,
+      controller: { type: 'process', pattern: `dedicated_tts_hub\\.py .*--port ${worker.port}( |$)` },
+      restart: {
+        type: 'script',
+        file: dedicatedTtsHubScript,
+        args: ['restart'],
+        env: {
+          ...dedicatedTtsCommonEnv,
+          TTS_PORT: worker.port,
+          CUDA_VISIBLE: worker.visible,
+          TTS_DEVICE: 'cuda:0',
+          ASR_DEVICE: 'cuda:0'
+        },
+        timeout_ms: 180000
+      },
+      checks: [{ label: `${worker.port} /healthz`, url: `http://127.0.0.1:${worker.port}/healthz`, required: true }]
+    })),
+    {
+      id: 'qwen-vl-7789',
+      label: 'Qwen3-VL-2B 图片检测',
+      group: '视觉检测',
+      description: '公网 7789：车端图片事件复核 WebSocket，后端为 Qwen3-VL-2B。',
+      local_ports: ['8012', '8794'],
+      public_ports: ['7789'],
+      script: formatAutoStartScript('04_qwen_vl_7789.sh'),
+      controller: { type: 'process', pattern: 'qwen_ws_checker_service\\.py .*--port 8794' },
+      restart: {
+        type: 'script',
+        file: path.join(autoStartDir, '04_qwen_vl_7789.sh'),
+        args: ['restart'],
+        timeout_ms: 600000
+      },
+      checks: [
+        { label: '8012 Qwen-VL /v1/models', url: 'http://127.0.0.1:8012/v1/models', required: true },
+        { label: '8794 checker /healthz', url: 'http://127.0.0.1:8794/healthz', required: true },
+        { label: '公网 7789 /healthz', url: 'http://idtrd.kmdns.net:7789/healthz', required: false }
+      ]
+    },
+    {
+      id: 'cloud-control-7788',
+      label: 'cloud-agent 车端运维',
+      group: '车端运维',
+      description: '公网 7788：车端 WebSocket 接入、车辆状态、工具调用和运维控制。',
+      local_ports: ['8000'],
+      public_ports: ['7788'],
+      script: formatAutoStartScript('05_cloud_control_7788.sh'),
+      controller: { type: 'tmux', session_name: 'cloud-agent' },
+      restart: {
+        type: 'script',
+        file: path.join(autoStartDir, '05_cloud_control_7788.sh'),
+        args: ['restart'],
+        timeout_ms: 90000
+      },
+      checks: [
+        { label: '8000 cloud-agent /healthz', url: 'http://127.0.0.1:8000/healthz', required: true },
+        { label: '公网 7788 /healthz', url: 'http://idtrd.kmdns.net:7788/healthz', required: false }
+      ]
+    },
+    {
+      id: 'jgzj-site-7791',
+      label: 'JGZJ 官网 7791',
+      group: '站点入口',
+      description: '公网 7791：jgzj 官网前后端一体服务。',
+      local_ports: ['8888'],
+      public_ports: ['7791'],
+      script: formatAutoStartScript('06_jgzj_site_7791.sh'),
+      controller: { type: 'tmux', session_name: 'jgzj-site' },
+      restart: {
+        type: 'script',
+        file: path.join(autoStartDir, '06_jgzj_site_7791.sh'),
+        args: ['restart'],
+        timeout_ms: 180000
+      },
+      checks: [
+        { label: '8888 site /healthz', url: 'http://127.0.0.1:8888/healthz', required: true },
         { label: '公网 7791 /healthz', url: 'http://idtrd.kmdns.net:7791/healthz', required: false }
       ]
     },
     {
-      id: 'chat-bridge-8050',
-      label: '对话桥 8050',
-      group: '对话链路',
-      description: '生产文本对话与 TTS 桥接入口。',
-      local_ports: ['8050'],
-      public_ports: ['7790'],
-      controller: { type: 'systemd', service_name: 'jgzj-chat-bridge-8050-qwen35.service' },
+      id: 'openclaw-gateway',
+      label: 'OpenClaw Gateway',
+      group: '自然语言运维',
+      description: '网站内自然语言运维代理网关，依赖 OpenClaw 登录态。',
+      local_ports: ['18789', '18791'],
+      public_ports: [],
+      script: formatAutoStartScript('07_openclaw_gateway.sh'),
+      controller: { type: 'systemd-user', service_name: 'openclaw-gateway.service' },
       restart: {
         type: 'script',
-        file: path.join(scriptsDir, 'switch_jgzj_llm_chain.sh'),
-        args: ['qwen35'],
+        file: path.join(autoStartDir, '07_openclaw_gateway.sh'),
+        args: ['restart'],
+        timeout_ms: 45000
+      },
+      checks: []
+    },
+    {
+      id: 'frp-public-7788-7791',
+      label: 'FRP 公网映射',
+      group: '公网入口',
+      description: '统一维护 7788/7789/7790/7791 到本机服务的 FRP 转发。',
+      local_ports: [],
+      public_ports: ['7788', '7789', '7790', '7791'],
+      script: formatAutoStartScript('08_frp_7788_7791.sh'),
+      controller: {
+        type: 'process',
+        pattern: '/home/admin1/frp/frp_0\\.65\\.0_linux_amd64/frpc.*frpc\\.toml|frpc.*frp_0\\.65\\.0_linux_amd64/frpc\\.toml'
+      },
+      restart: {
+        type: 'script',
+        file: path.join(autoStartDir, '08_frp_7788_7791.sh'),
+        args: ['restart'],
         timeout_ms: 60000
       },
       checks: [
-        { label: '本地 8050 /healthz', url: 'http://127.0.0.1:8050/healthz', required: true }
-      ]
-    },
-    {
-      id: 'intent-8022',
-      label: '意图编排 8022',
-      group: '对话链路',
-      description: '生产意图、RAG 与工具编排服务。',
-      local_ports: ['8022'],
-      public_ports: [],
-      controller: { type: 'systemd', service_name: 'jgzj-intent-v2-8022-failover.service' },
-      restart: {
-        type: 'script',
-        file: path.join(scriptsDir, 'switch_jgzj_intent_llm.sh'),
-        args: ['failover'],
-        timeout_ms: 60000
-      },
-      checks: [
-        { label: '本地 8022 /healthz', url: 'http://127.0.0.1:8022/healthz', required: true }
-      ]
-    },
-    {
-      id: 'llm-failover-8043',
-      label: 'LLM Failover 8043',
-      group: '对话链路',
-      description: 'Qwen3.6 主路与 Qwen3.5 备用切换层。',
-      local_ports: ['8043'],
-      public_ports: [],
-      controller: { type: 'systemd', service_name: 'jgzj-llm-failover-8043.service' },
-      restart: {
-        type: 'systemd',
-        service_name: 'jgzj-llm-failover-8043.service',
-        timeout_ms: 45000
-      },
-      checks: [
-        { label: '本地 8043 /healthz', url: 'http://127.0.0.1:8043/healthz', required: true },
-        { label: '本地 8043 /health/detail', url: 'http://127.0.0.1:8043/health/detail', required: false }
-      ]
-    },
-    {
-      id: 'qwen36-compat-8042',
-      label: 'Qwen3.6 Compat 8042',
-      group: '模型链路',
-      description: 'Qwen3.6 文本兼容层。',
-      local_ports: ['8042'],
-      public_ports: [],
-      controller: { type: 'systemd', service_name: 'jgzj-qwen36-compat-8042.service' },
-      restart: {
-        type: 'systemd',
-        service_name: 'jgzj-qwen36-compat-8042.service',
-        timeout_ms: 45000
-      },
-      checks: [
-        { label: '本地 8042 /healthz', url: 'http://127.0.0.1:8042/healthz', required: true }
-      ]
-    },
-    {
-      id: 'qwen36-text-18000',
-      label: 'Qwen3.6 文本隧道 18000',
-      group: '模型链路',
-      description: 'A100 文本 vLLM SSH tunnel。',
-      local_ports: ['18000'],
-      public_ports: [],
-      controller: { type: 'systemd', service_name: 'jgzj-qwen36-text-tunnel.service' },
-      restart: {
-        type: 'systemd',
-        service_name: 'jgzj-qwen36-text-tunnel.service',
-        timeout_ms: 45000
-      },
-      checks: [
-        { label: '本地 18000 /v1/models', url: 'http://127.0.0.1:18000/v1/models', required: true }
-      ]
-    },
-    {
-      id: 'qwen36-mm-18001',
-      label: 'Qwen3.6 多模态隧道 18001',
-      group: '模型链路',
-      description: 'A100 多模态 vLLM SSH tunnel。',
-      local_ports: ['18001'],
-      public_ports: [],
-      controller: { type: 'systemd', service_name: 'jgzj-qwen36-mm-tunnel.service' },
-      restart: {
-        type: 'systemd',
-        service_name: 'jgzj-qwen36-mm-tunnel.service',
-        timeout_ms: 45000
-      },
-      checks: [
-        { label: '本地 18001 /v1/models', url: 'http://127.0.0.1:18001/v1/models', required: true }
+        { label: '公网 7788 /healthz', url: 'http://idtrd.kmdns.net:7788/healthz', required: false },
+        { label: '公网 7789 /healthz', url: 'http://idtrd.kmdns.net:7789/healthz', required: false },
+        { label: '公网 7790 /healthz', url: 'http://idtrd.kmdns.net:7790/healthz', required: false },
+        { label: '公网 7791 /healthz', url: 'http://idtrd.kmdns.net:7791/healthz', required: false }
       ]
     }
   ];
@@ -360,6 +521,9 @@ async function sampleController(target) {
 
   if (target.controller.type === 'systemd') {
     return readSystemdService(target.controller.service_name);
+  }
+  if (target.controller.type === 'systemd-user') {
+    return readSystemdService(target.controller.service_name, { user: true });
   }
   if (target.controller.type === 'tmux') {
     return readTmuxSession(target.controller.session_name);
@@ -375,6 +539,7 @@ function summarizeTargetState(controller, checks, target) {
   const optionalChecks = checks.filter((item) => !item.required);
   const requiredOk = requiredChecks.every((item) => item.ok);
   const optionalOk = optionalChecks.every((item) => item.ok);
+  const hasWarn = checks.some((item) => item.state === 'warn');
 
   if (!controller.ok) {
     return {
@@ -390,7 +555,7 @@ function summarizeTargetState(controller, checks, target) {
     };
   }
 
-  if (optionalChecks.length && !optionalOk) {
+  if ((optionalChecks.length && !optionalOk) || hasWarn) {
     return {
       state: 'warn',
       status_text: `${target.label} 部分端口异常`
@@ -416,7 +581,9 @@ async function sampleTarget(target) {
     id: target.id,
     label: target.label,
     group: target.group,
+    hidden: Boolean(target.hidden),
     description: target.description,
+    script: target.script || '',
     local_ports: target.local_ports || [],
     public_ports: target.public_ports || [],
     port_text: formatPortList(target.local_ports, target.public_ports),
@@ -437,6 +604,7 @@ async function restartTarget(target, rootDir) {
   if (target.restart.type === 'script') {
     return execCommand('bash', [target.restart.file, ...(target.restart.args || [])], {
       cwd: rootDir,
+      env: target.restart.env ? { ...process.env, ...target.restart.env } : undefined,
       timeoutMs: target.restart.timeout_ms || 60000
     });
   }
@@ -466,6 +634,7 @@ function buildQueuedNode(target) {
     label: target.label,
     group: target.group,
     description: target.description,
+    script: target.script || '',
     local_ports: target.local_ports || [],
     public_ports: target.public_ports || [],
     port_text: formatPortList(target.local_ports, target.public_ports),
@@ -483,14 +652,10 @@ function buildQueuedNode(target) {
 }
 
 function registerRuntimeControlRoutes(app, options = {}) {
-  const rootDir = path.resolve(options.rootDir || path.resolve(__dirname, '..'));
   const requireOpenClawAuth = options.requireOpenClawAuth;
-  const getOpenClawAuthFromRequest =
-    typeof options.getOpenClawAuthFromRequest === 'function'
-      ? options.getOpenClawAuthFromRequest
-      : () => null;
+  const rootDir = path.resolve(options.rootDir || path.join(__dirname, '..'));
   const refreshTtlMs = Number(options.refreshTtlMs || DEFAULT_REFRESH_TTL_MS);
-  const targets = buildTargets(rootDir);
+  const targets = buildTargets();
   const targetMap = new Map(targets.map((item) => [item.id, item]));
   const restartLocks = new Set();
   let cachedSnapshot = { expires_at: 0, data: null };
@@ -513,17 +678,17 @@ function registerRuntimeControlRoutes(app, options = {}) {
     return snapshot;
   }
 
-  app.get('/api/cloud-ops/runtime/status', async (req, res) => {
+  app.get('/api/cloud-ops/runtime/status', requireOpenClawAuth, async (_req, res) => {
     try {
       const snapshot = await sampleAllTargets(false);
       return res.json({
         ...snapshot,
-        authenticated: Boolean(getOpenClawAuthFromRequest(req))
+        authenticated: true
       });
     } catch (error) {
       return res.status(502).json({
         ok: false,
-        authenticated: Boolean(getOpenClawAuthFromRequest(req)),
+        authenticated: true,
         detail: error?.message || 'runtime_status_failed'
       });
     }

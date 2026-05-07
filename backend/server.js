@@ -429,58 +429,6 @@ function requireOpenClawAuth(req, res, next) {
   return next();
 }
 
-const cloudOpsReadOnlyToolNames = new Set([
-  'ai_detection.config',
-  'ai_detection.images',
-  'status.key_nodes',
-  'health.autodrive_check',
-  'health.snapshot',
-  'network.cloud_probe',
-  'network.master_probe',
-  'ros.overview',
-  'ros.topic.list',
-  'ros.topic.sample',
-  'ros.topic.rate',
-  'ros.node.list',
-  'ros.service.list',
-  'ros.diagnostics',
-  'system.snapshot',
-  'vehicle.snapshot',
-  'status.camera',
-  'camera.capture',
-  'camera.upload_chain',
-  'map.preview',
-  'status.localization',
-  'status.can',
-  'status.body_control',
-  'status.planning',
-  'status.routing',
-  'status.obstacle_processor',
-  'obstacle.preview',
-  'status.catalog',
-  'status.control',
-  'status.perception',
-  'route.list',
-  'route.detail',
-  'process.top'
-]);
-
-function isCloudOpsReadOnlyPlan(plan) {
-  if (!plan || typeof plan !== 'object') {
-    return false;
-  }
-
-  if (['list_vehicles', 'vehicle_detail', 'tool_list', 'recent_events'].includes(plan.action)) {
-    return true;
-  }
-
-  if (plan.action !== 'tool_call') {
-    return false;
-  }
-
-  return cloudOpsReadOnlyToolNames.has(String(plan.tool_name || '').trim());
-}
-
 function toArchiveFileUrl(relativePath) {
   if (typeof relativePath !== 'string' || !relativePath.trim()) {
     return null;
@@ -646,13 +594,49 @@ COMMIT;
   await writeArchiveSql(sql);
 }
 
-async function listAiCheckDeviceOptions() {
+function buildAiCheckHistoryClauses(filters = {}, requestAlias = 'r', options = {}) {
+  const includeDevice = options.includeDevice !== false;
+  const includeEvent = options.includeEvent !== false;
+  const clauses = [];
+  const deviceId =
+    typeof filters.device_id === 'string' && filters.device_id.trim()
+      ? filters.device_id.trim()
+      : '';
+  const eventName =
+    typeof filters.event_name === 'string' && filters.event_name.trim()
+      ? filters.event_name.trim()
+      : '';
+
+  if (includeDevice && deviceId) {
+    clauses.push(`${requestAlias}.device_id = ${toSqlTextLiteral(deviceId)}`);
+  }
+
+  if (includeEvent && eventName) {
+    clauses.push(`
+      ${requestAlias}.id IN (
+        SELECT DISTINCT ft.request_row_id
+        FROM tasks ft
+        WHERE ft.event_name = ${toSqlTextLiteral(eventName)}
+      )
+    `.trim());
+  }
+
+  return clauses;
+}
+
+function buildAiCheckHistoryWhere(filters = {}, requestAlias = 'r', options = {}) {
+  const clauses = buildAiCheckHistoryClauses(filters, requestAlias, options);
+  return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+}
+
+async function listAiCheckDeviceOptions(filters = {}) {
+  const whereClause = buildAiCheckHistoryWhere(filters, 'r', { includeDevice: false, includeEvent: true });
   const rows = await runArchiveSql(`
     SELECT
       r.device_id,
       COUNT(*) AS total
     FROM requests r
-    WHERE TRIM(COALESCE(r.device_id, '')) <> ''
+    ${whereClause ? `${whereClause} AND` : 'WHERE'} TRIM(COALESCE(r.device_id, '')) <> ''
     GROUP BY r.device_id
     ORDER BY total DESC, r.device_id COLLATE NOCASE ASC;
   `);
@@ -662,14 +646,36 @@ async function listAiCheckDeviceOptions() {
     .filter(Boolean);
 }
 
+async function listAiCheckEventOptions(filters = {}) {
+  const whereClause = buildAiCheckHistoryWhere(filters, 'r', { includeDevice: true, includeEvent: false });
+  const rows = await runArchiveSql(`
+    SELECT
+      t.event_name,
+      COUNT(DISTINCT r.id) AS total
+    FROM tasks t
+    JOIN requests r ON r.id = t.request_row_id
+    ${whereClause ? `${whereClause} AND` : 'WHERE'} TRIM(COALESCE(t.event_name, '')) <> ''
+    GROUP BY t.event_name
+    ORDER BY total DESC, t.event_name COLLATE NOCASE ASC;
+  `);
+
+  return rows
+    .map((row) => String(row?.event_name || '').trim())
+    .filter(Boolean);
+}
+
 async function listAiCheckHistory(page, pageSize, filters = {}) {
   const offset = (page - 1) * pageSize;
   const deviceId =
     typeof filters.device_id === 'string' && filters.device_id.trim()
       ? filters.device_id.trim()
       : '';
-  const whereClause = deviceId ? `WHERE r.device_id = ${toSqlTextLiteral(deviceId)}` : '';
-  const [countRows, rows] = await Promise.all([
+  const eventName =
+    typeof filters.event_name === 'string' && filters.event_name.trim()
+      ? filters.event_name.trim()
+      : '';
+  const whereClause = buildAiCheckHistoryWhere(filters, 'r');
+  const [countRows, rows, availableDeviceIds, availableEventNames] = await Promise.all([
     runArchiveSql(`SELECT COUNT(*) AS total FROM requests r ${whereClause};`),
     runArchiveSql(`
       SELECT
@@ -706,8 +712,10 @@ async function listAiCheckHistory(page, pageSize, filters = {}) {
       ORDER BY r.id DESC
       LIMIT ${pageSize} OFFSET ${offset};
     `)
+    ,
+    listAiCheckDeviceOptions({ event_name: eventName }),
+    listAiCheckEventOptions({ device_id: deviceId })
   ]);
-  const availableDeviceIds = await listAiCheckDeviceOptions();
 
   const total = countRows?.[0]?.total ?? 0;
   return {
@@ -716,7 +724,9 @@ async function listAiCheckHistory(page, pageSize, filters = {}) {
     total,
     total_pages: total > 0 ? Math.ceil(total / pageSize) : 1,
     selected_device_id: deviceId,
+    selected_event_name: eventName,
     available_device_ids: availableDeviceIds,
+    available_event_names: availableEventNames,
     items: rows.map(normalizeAiCheckRequestRow)
   };
 }
@@ -784,11 +794,12 @@ async function getAiCheckHistoryDetail(requestRowId) {
   return request;
 }
 
-async function readStreamReply(stream, onDelta) {
+async function readStreamReply(stream, onEvent) {
   const reader = stream.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
   let deltaText = '';
+  let reasoningText = '';
   let finalEvent = null;
   let emptyResponse = true;
 
@@ -809,9 +820,14 @@ async function readStreamReply(stream, onDelta) {
         continue;
       }
 
+      if (data.type === 'reasoning_delta' && typeof data.text === 'string') {
+        reasoningText += data.text;
+        onEvent?.({ type: 'reasoning_delta', text: data.text });
+      }
+
       if (data.type === 'delta' && typeof data.text === 'string') {
         deltaText += data.text;
-        onDelta?.(data.text);
+        onEvent?.({ type: 'delta', text: data.text });
       }
 
       if (data.type === 'final') {
@@ -829,6 +845,8 @@ async function readStreamReply(stream, onDelta) {
     const tail = parseSseBlock(buffer);
     if (tail?.type === 'final') {
       finalEvent = tail;
+    } else if (tail?.type === 'reasoning_delta' && typeof tail.text === 'string') {
+      reasoningText += tail.text;
     } else if (tail?.type === 'delta' && typeof tail.text === 'string') {
       deltaText += tail.text;
     }
@@ -845,6 +863,7 @@ async function readStreamReply(stream, onDelta) {
 
   return {
     reply,
+    reasoning: normalizeReply(finalEvent?.reasoning || reasoningText),
     source: finalEvent?.source || 'chat-stream-proxy',
     latency_ms: finalEvent?.latency_ms || null
   };
@@ -1736,6 +1755,14 @@ function pickCloudOpsList(result) {
     }
   }
 
+  if (result.subsystems && typeof result.subsystems === 'object') {
+    return Object.entries(result.subsystems).map(([name, value]) => ({
+      name,
+      subsystem: name,
+      ...(value && typeof value === 'object' ? value : {})
+    }));
+  }
+
   return [];
 }
 
@@ -1916,6 +1943,10 @@ function createCloudOpsHeuristicPlan(message, vehicles = [], options = {}) {
 
   if (/关键节点|节点状态|自动驾驶关键节点|key nodes/.test(lower)) {
     return createToolCallPlan(vehicleId, 'status.key_nodes', {}, 20);
+  }
+
+  if (/音频状态|音频链路|麦克风状态|喇叭状态|audio status/.test(lower)) {
+    return createToolCallPlan(vehicleId, 'status.audio', {}, 20);
   }
 
   if (/一键检查|一键排查|启航前检查|自动驾驶检查|健康检查|autodrive check/.test(lower)) {
@@ -2178,7 +2209,7 @@ async function planCloudOpsAction(message, sessionId, vehicles = [], options = {
     '如果用户想看系统资源、CPU、内存、磁盘、温度，用 tool_call: system.snapshot。',
     '如果用户想看 ROS 总览，用 tool_call: ros.overview。',
     '如果用户想看 ROS 话题列表、节点列表、服务列表、诊断、话题采样、话题频率，用相应 ros.* 工具。',
-    '如果用户想看子系统目录、关键节点、一键健康检查、相机状态、相机抓拍、地图预览、上传链路、AI检测配置、AI检测落盘图片、CAN/底盘、车身状态、车身控制、碰撞停复位、定位、规划、routing、控制、障碍处理、障碍俯视图、感知，分别用 status.catalog、status.key_nodes、health.autodrive_check、status.camera、camera.capture、map.preview、camera.upload_chain、ai_detection.config、ai_detection.images、status.can、status.body_control、vehicle.body_control、vehicle.clear_collision_stop、status.localization、status.planning、status.routing、status.control、status.obstacle_processor、obstacle.preview、status.perception。',
+    '如果用户想看子系统目录、关键节点、音频状态、一键健康检查、相机状态、相机抓拍、地图预览、上传链路、AI检测配置、AI检测落盘图片、CAN/底盘、车身状态、车身控制、碰撞停复位、定位、规划、routing、控制、障碍处理、障碍俯视图、感知，分别用 status.catalog、status.key_nodes、status.audio、health.autodrive_check、status.camera、camera.capture、map.preview、camera.upload_chain、ai_detection.config、ai_detection.images、status.can、status.body_control、vehicle.body_control、vehicle.clear_collision_stop、status.localization、status.planning、status.routing、status.control、status.obstacle_processor、obstacle.preview、status.perception。',
     '如果用户说打开广告屏、关闭广告屏、打开前照灯、关闭前照灯、打开氛围灯、关闭氛围灯、打开双闪、左转灯、右转灯、关闭转向灯，优先用 vehicle.body_control。',
     '如果用户想看巡逻路线、路线详情、启动巡逻、停止巡逻，分别用 route.list、route.detail、route.start_patrol、route.stop_patrol。',
     '如果用户明确说开始巡逻、启动巡逻、执行巡逻，route.start_patrol 默认按正式执行；只有当用户说预演、演练、试运行、不要真跑时，才把 args.dry_run=true。',
@@ -2755,14 +2786,55 @@ function renderCloudOpsFallbackReply(_message, execution) {
         .join('、')}。`;
     }
     if (toolName === 'status.key_nodes' && result && typeof result === 'object') {
-      const nodes = pickCloudOpsList(result);
+      const subsystems = pickCloudOpsList(result);
+      const faulted = Array.isArray(result?.faulted_subsystems) ? result.faulted_subsystems : [];
+      const warnings = Array.isArray(result?.warning_subsystems) ? result.warning_subsystems : [];
+      const nodeGroups = subsystems
+        .map((item) => item?.nodes)
+        .filter((item) => item && typeof item === 'object');
+      const flatNodes = nodeGroups.flatMap((group) =>
+        Array.isArray(group?.nodes) ? group.nodes : Array.isArray(group) ? group : []
+      );
+      const offlineNodes = flatNodes
+        .filter((item) => item?.online === false || item?.ok === false)
+        .map((item) => item?.node || item?.name || item?.id || '')
+        .filter(Boolean);
+      const subsystemNames = subsystems
+        .map((item) => item?.subsystem || item?.name || item?.id || '')
+        .filter(Boolean);
+      return [
+        `${execution?.request?.vehicle_id || '该车辆'} 的关键节点状态已返回。`,
+        result?.health === 'ok'
+          ? '当前关键节点整体正常。'
+          : faulted.length || warnings.length || offlineNodes.length
+            ? '当前关键节点存在告警或异常。'
+            : '',
+        faulted.length ? `故障子系统：${faulted.join('、')}。` : '',
+        warnings.length ? `告警子系统：${warnings.join('、')}。` : '',
+        offlineNodes.length ? `异常节点：${offlineNodes.join('、')}。` : '',
+        subsystemNames.length ? `当前已上报子系统包括：${subsystemNames.slice(0, 8).join('、')}。` : ''
+      ]
+        .filter(Boolean)
+        .join('');
+    }
+    if (toolName === 'status.audio' && result && typeof result === 'object') {
+      const audioSummary = result?.summary || {};
+      const nodeGroups = result?.nodes && typeof result.nodes === 'object' ? result.nodes : {};
+      const nodes = Array.isArray(nodeGroups?.nodes) ? nodeGroups.nodes : [];
       const offlineNodes = nodes
         .filter((item) => item?.online === false || item?.ok === false)
         .map((item) => item?.node || item?.name || item?.id || '')
         .filter(Boolean);
-      return `${execution?.request?.vehicle_id || '该车辆'} 的关键节点状态已返回。${
-        offlineNodes.length ? `当前异常节点有 ${offlineNodes.join('、')}。` : '当前关键节点全部在线。'
-      }`;
+      return [
+        `${execution?.request?.vehicle_id || '该车辆'} 的音频状态已返回。`,
+        result?.health === 'ok' ? '当前音频链路正常。' : result?.health ? `当前音频链路状态 ${result.health}。` : '',
+        Number.isFinite(audioSummary?.sample_rate_hz) || Number.isFinite(audioSummary?.channel_count)
+          ? `采样配置 ${audioSummary?.sample_rate_hz ?? '-'} Hz / ${audioSummary?.channel_count ?? '-'} 声道。`
+          : '',
+        offlineNodes.length ? `异常音频节点：${offlineNodes.join('、')}。` : ''
+      ]
+        .filter(Boolean)
+        .join('');
     }
     if (toolName === 'health.autodrive_check' && result && typeof result === 'object') {
       const healthSummary = result?.summary || result;
@@ -3665,7 +3737,7 @@ app.get('/api/cloud-agent-health', requireOpenClawAuth, async (_req, res) => {
   });
 });
 
-app.get('/api/cloud-ops/vehicles', async (_req, res) => {
+app.get('/api/cloud-ops/vehicles', requireOpenClawAuth, async (_req, res) => {
   try {
     const vehicles = await listCloudAgentVehicles();
     return res.json({
@@ -3680,7 +3752,7 @@ app.get('/api/cloud-ops/vehicles', async (_req, res) => {
   }
 });
 
-app.get('/api/cloud-ops/vehicles/:vehicleId', async (req, res) => {
+app.get('/api/cloud-ops/vehicles/:vehicleId', requireOpenClawAuth, async (req, res) => {
   const vehicleId = String(req.params?.vehicleId || '').trim();
   if (!vehicleId) {
     return res.status(400).json({
@@ -3707,6 +3779,7 @@ app.get('/api/cloud-ops/vehicles/:vehicleId', async (req, res) => {
 
 app.get(
   '/api/cloud-ops/vehicles/:vehicleId/tool-list',
+  requireOpenClawAuth,
   async (req, res) => {
     const vehicleId = String(req.params?.vehicleId || '').trim();
     if (!vehicleId) {
@@ -3736,7 +3809,7 @@ app.get(
   }
 );
 
-app.post('/api/cloud-ops/execute', async (req, res) => {
+app.post('/api/cloud-ops/execute', requireOpenClawAuth, async (req, res) => {
   const vehicles = await listCloudAgentVehicles().catch(() => []);
   const plan = validateCloudOpsPlan(req.body);
 
@@ -3749,16 +3822,6 @@ app.post('/api/cloud-ops/execute', async (req, res) => {
 
   if (!plan.vehicle_id && vehicles.length === 1) {
     plan.vehicle_id = String(vehicles[0]?.vehicle_id || vehicles[0]?.plate_number || '').trim();
-  }
-
-  const auth = getOpenClawAuthFromRequest(req);
-  if (!auth && !isCloudOpsReadOnlyPlan(plan)) {
-    clearOpenClawAuthCookie(res);
-    return res.status(401).json({
-      ok: false,
-      error: 'openclaw_auth_required',
-      detail: 'login_required_for_control'
-    });
   }
 
   const execution = await executeCloudOpsAction(plan, vehicles);
@@ -3974,9 +4037,16 @@ app.get('/api/ai-check-history', async (req, res) => {
     typeof req.query.device_id === 'string' && req.query.device_id.trim()
       ? req.query.device_id.trim()
       : '';
+  const eventName =
+    typeof req.query.event_name === 'string' && req.query.event_name.trim()
+      ? req.query.event_name.trim()
+      : '';
 
   try {
-    const history = await listAiCheckHistory(page, pageSize, { device_id: deviceId });
+    const history = await listAiCheckHistory(page, pageSize, {
+      device_id: deviceId,
+      event_name: eventName
+    });
     return res.json({
       ok: true,
       archive_root: aiCheckArchiveRoot,
@@ -4075,15 +4145,16 @@ app.post('/api/cloud-chat', async (req, res) => {
       res.setHeader('X-Accel-Buffering', 'no');
       res.flushHeaders?.();
 
-      const result = await readStreamReply(upstreamResponse.body, (text) => {
-        if (text) {
-          writeSseEvent(res, { type: 'delta', text });
+      const result = await readStreamReply(upstreamResponse.body, (event) => {
+        if (event?.type && event?.text) {
+          writeSseEvent(res, event);
         }
       });
 
       writeSseEvent(res, {
         type: 'final',
         answer: result.reply,
+        reasoning: result.reasoning,
         source: result.source,
         latency_ms: result.latency_ms
       });
@@ -4321,7 +4392,7 @@ app.post('/api/qwen36-mm-check', async (req, res) => {
         ]
       }
     ],
-    max_tokens: 64,
+    max_tokens: customPrompt ? 512 : 64,
     temperature: 0.1,
     stream: false,
     chat_template_kwargs: { enable_thinking: false }
@@ -4396,9 +4467,8 @@ app.post('/api/qwen36-mm-check', async (req, res) => {
 
 registerCloudMappingRoutes(app);
 registerRuntimeControlRoutes(app, {
-  rootDir: path.resolve(__dirname, '..'),
   requireOpenClawAuth,
-  getOpenClawAuthFromRequest
+  rootDir: path.resolve(__dirname, '..')
 });
 
 app.use(express.static(webRoot));

@@ -2,7 +2,7 @@
   <section id="ai-check-panel" class="cloud-chat-panel ai-check-panel embedded-panel inspection-panel inspection-panel--check" aria-live="polite">
     <header class="cloud-chat-head">
       <div class="cloud-chat-head-main">
-        <p class="cloud-chat-title">AI检测</p>
+        <p class="cloud-chat-title">AI 检测（Qwen3.6-27B 优先）</p>
         <p id="ai-check-status" class="cloud-chat-status" data-state="idle">待上传</p>
       </div>
     </header>
@@ -19,7 +19,7 @@
             <input id="ai-check-image" type="file" accept="image/*" />
           </label>
           <label class="ai-check-field" for="ai-check-event">
-            <span>事件名称</span>
+            <span>事件名称（有自定义提示词时可留空）</span>
             <input id="ai-check-event" type="text" maxlength="80" placeholder="例如：摔倒、打电话、抽烟" />
           </label>
           <label class="ai-check-field" for="ai-check-prompt">
@@ -36,7 +36,7 @@
         <section id="ai-check-result" class="ai-check-result" data-state="idle">
           <p class="ai-check-result-label">检测结果</p>
           <p id="ai-check-answer" class="ai-check-answer">等待检测</p>
-          <p id="ai-check-detail" class="ai-check-detail">上传一张图片并输入事件名称，返回是或否。</p>
+          <p id="ai-check-detail" class="ai-check-detail">上传图片，输入事件名称（有自定义提示词时可留空）。优先使用 Qwen3.6-27B，不可用时自动切换到 Qwen3-VL-2B。</p>
         </section>
       </div>
     </div>
@@ -47,12 +47,20 @@
       <div class="cloud-chat-head-main">
         <p class="cloud-chat-title">历史AI检测</p>
         <p id="ai-history-status" class="cloud-chat-status" data-state="idle">待加载</p>
-        <label class="ai-history-filter" for="ai-history-device-filter">
-          <span>车辆地点</span>
-          <select id="ai-history-device-filter" aria-label="按车辆地点筛选历史AI检测">
-            <option value="">全部地点</option>
-          </select>
-        </label>
+        <div class="ai-history-filters">
+          <label class="ai-history-filter" for="ai-history-device-filter">
+            <span>车辆地点</span>
+            <select id="ai-history-device-filter" aria-label="按车辆地点筛选历史AI检测">
+              <option value="">全部地点</option>
+            </select>
+          </label>
+          <label class="ai-history-filter" for="ai-history-event-filter">
+            <span>事件类型</span>
+            <select id="ai-history-event-filter" aria-label="按事件类型筛选历史AI检测">
+              <option value="">全部事件</option>
+            </select>
+          </label>
+        </div>
       </div>
       <div class="ai-history-head-actions">
         <button id="ai-history-refresh" class="cloud-chat-close" type="button" aria-label="刷新历史检测记录">刷新</button>

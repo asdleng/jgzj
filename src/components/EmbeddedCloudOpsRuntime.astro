@@ -2,11 +2,11 @@
 import scriptText from "../scripts/cloud-ops-runtime.js?raw";
 ---
 
-<section id="cloud-runtime-console" class="cloud-runtime-panel" aria-live="polite">
+<section id="cloud-runtime-console" class="cloud-runtime-panel" aria-live="polite" data-cloud-ops-protected hidden>
   <div class="cloud-runtime-head">
     <div class="cloud-runtime-head-copy">
-      <p class="section-kicker">云端链路</p>
-      <h3>关键节点状态</h3>
+      <p class="section-kicker">服务器运行态</p>
+      <h3>关键服务链路状态</h3>
     </div>
     <div class="cloud-runtime-head-actions">
       <button id="cloud-runtime-refresh" class="cloud-ops-toolbar-button" type="button">刷新</button>
@@ -15,16 +15,16 @@ import scriptText from "../scripts/cloud-ops-runtime.js?raw";
   </div>
 
   <div class="cloud-runtime-subhead">
-    <p id="cloud-runtime-auth-tip" class="cloud-ops-permission-tip">未登录可查看状态，登录后可重启。</p>
+    <p id="cloud-runtime-auth-tip" class="cloud-ops-permission-tip">登录后展示服务器端口链路、节点功能和重启按钮。</p>
     <p id="cloud-runtime-updated-at" class="cloud-runtime-updated-at">最近刷新：-</p>
   </div>
 
   <div id="cloud-runtime-summary" class="cloud-runtime-summary">
-    <p class="cloud-runtime-empty">正在汇总站点关键节点...</p>
+    <p class="cloud-runtime-empty">请先登录云端智能运维账号。</p>
   </div>
 
-  <div id="cloud-runtime-groups" class="cloud-runtime-groups">
-    <p class="cloud-runtime-empty">正在加载链路状态...</p>
+  <div id="cloud-runtime-topology" class="server-port-map-shell" aria-label="服务器节点端口图">
+    <p class="cloud-runtime-empty">登录后根据服务器 runtime 状态生成端口拓扑。</p>
   </div>
 </section>
 

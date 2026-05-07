@@ -1,6 +1,5 @@
 ---
 import EmbeddedAiCheckHistory from "../components/EmbeddedAiCheckHistory.astro";
-import EmbeddedQwen36MmCheck from "../components/EmbeddedQwen36MmCheck.astro";
 import InteractiveScripts from "../components/InteractiveScripts.astro";
 import SiteLayout from "../components/SiteLayout.astro";
 ---
@@ -93,19 +92,6 @@ import SiteLayout from "../components/SiteLayout.astro";
               <tr><td>网络依赖</td><td>断网仍可工作</td><td>需稳定回传</td></tr>
             </tbody>
           </table>
-        </div>
-      </div>
-    </section>
-
-    <section class="page-section reveal" data-reveal>
-      <div class="glass-card section-card">
-        <p class="section-kicker">Qwen3.6-27B 多模态检测</p>
-        <h2 class="section-title">直接用 Qwen3.6-27B 判断图片事件</h2>
-        <p class="section-copy">
-          上传图片，输入事件名称（或留空），模型直接返回 是 / 否。由 A100 上的 Qwen3.6-27B-MM 多模态模型提供推理。
-        </p>
-        <div class="qwen36mm-check-shell">
-          <EmbeddedQwen36MmCheck />
         </div>
       </div>
     </section>

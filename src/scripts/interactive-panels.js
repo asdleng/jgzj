@@ -1,5 +1,6 @@
 (function () {
   const PROXY_URL = "/api/cloud-chat";
+  const CLOUD_CHAT_WS_PATH = "/ws/chat";
   const QWEN36_CHAT_URL = "/api/qwen36-chat";
   const QWEN36_HEALTH_URL = "/api/qwen36-health";
   const OPENCLAW_CHAT_URL = "/api/openclaw-chat";
@@ -18,14 +19,16 @@
   const QWEN_CHECK_PATH = "/ws/qwen/check";
   const OPENCLAW_CHAT_PLACEHOLDER =
     "例如：先帮我做一键健康检查；或者：抓拍 4 路相机看看；再比如：结合刚刚的底盘 CAN 和定位结果，判断这台车现在能不能继续巡逻。";
-  const OPENCLAW_LOCKED_PLACEHOLDER = "登录后可自然语言运维；未登录可先使用上方按钮查看车辆状态。";
+  const OPENCLAW_LOCKED_PLACEHOLDER = "请先登录云端智能运维账号，登录后可自然语言运维。";
 
+  const chatPanel = document.getElementById("chat-panel");
   const chatForm = document.getElementById("chat-form");
   const chatInput = document.getElementById("chat-input");
   const chatMessages = document.getElementById("chat-messages");
   const chatStatus = document.getElementById("chat-status");
   const chatSend = document.getElementById("chat-send");
   const chatThinking = document.getElementById("chat-thinking");
+  const chatVoiceToggle = document.getElementById("chat-voice");
   const identitySelect = document.getElementById("chat-identity");
 
   const qwen36Form = document.getElementById("qwen36-form");
@@ -55,6 +58,7 @@
   const cloudOpsInlineStatus = document.getElementById("cloud-ops-inline-status");
   const cloudOpsAuth = document.getElementById("cloud-ops-auth");
   const cloudOpsShell = document.getElementById("cloud-ops-shell");
+  const cloudOpsProtectedBlocks = Array.from(document.querySelectorAll("[data-cloud-ops-protected]"));
   const cloudOpsLoginForm = document.getElementById("cloud-ops-login-form");
   const cloudOpsUsername = document.getElementById("cloud-ops-username");
   const cloudOpsPassword = document.getElementById("cloud-ops-password");
@@ -110,6 +114,7 @@
   const aiHistoryStatus = document.getElementById("ai-history-status");
   const aiHistoryRefreshBtn = document.getElementById("ai-history-refresh");
   const aiHistoryDeviceFilterSelect = document.getElementById("ai-history-device-filter");
+  const aiHistoryEventFilterSelect = document.getElementById("ai-history-event-filter");
   const aiHistoryList = document.getElementById("ai-history-list");
   const aiHistoryDetail = document.getElementById("ai-history-detail");
   const aiHistoryPrevBtn = document.getElementById("ai-history-prev");
@@ -122,12 +127,27 @@
   const aiHistoryLightboxClose = document.getElementById("ai-history-lightbox-close");
 
   const cloudChatUrl = window.CLOUD_CHAT_URL || PROXY_URL;
+  const cloudChatWsUrl = window.CLOUD_CHAT_WS_URL || getCloudChatWsUrl();
   const qwenCheckWsUrl = window.QWEN_CHECK_WS_URL || getQwenCheckWsUrl();
 
   let vehicleId = DEFAULT_VEHICLE_ID;
   let sessionId = createSessionId(vehicleId);
   let firstTurn = true;
   const messageHistory = [];
+  const CLOUD_CHAT_AUDIO_SAMPLE_RATE = 24000;
+  const CLOUD_CHAT_WS_PING_MS = 20000;
+  const CLOUD_CHAT_VOICE_IDLE_MS = 30000;
+  const CLOUD_CHAT_VOICE_STALL_MS = 30000;
+  let chatVoiceEnabled = false;
+  let chatVoiceSocket = null;
+  let chatVoiceSocketReady = null;
+  let chatVoiceReconnectTimer = 0;
+  let chatVoicePingTimer = 0;
+  let chatVoiceIdleTimer = 0;
+  let chatVoiceStallTimer = 0;
+  let chatVoiceManualClose = false;
+  let chatVoiceActiveTurn = null;
+  let chatVoicePlayback = null;
   let qwen36SessionId = createSessionId("qwen36");
   const qwen36History = [];
 
@@ -185,6 +205,7 @@
   let aiHistoryTotalPages = 1;
   let aiHistorySelectedId = 0;
   let aiHistoryDeviceFilter = "";
+  let aiHistoryEventFilter = "";
   const CLOUD_OPS_TELEMETRY_STALE_S = 120;
   const CLOUD_OPS_BATTERY_WARN_PERCENT = 20;
   const CLOUD_OPS_BATTERY_ERROR_PERCENT = 10;
@@ -205,6 +226,13 @@
     const host = window.location.hostname || "127.0.0.1";
     const port = host === "127.0.0.1" || host === "localhost" ? "8794" : "7789";
     return `${protocol}//${host}:${port}${QWEN_CHECK_PATH}`;
+  }
+
+  function getCloudChatWsUrl() {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.hostname || "127.0.0.1";
+    const port = host === "127.0.0.1" || host === "localhost" ? "8050" : "7790";
+    return `${protocol}//${host}:${port}${CLOUD_CHAT_WS_PATH}`;
   }
 
   function getCloudOpsWsUrl() {
@@ -391,6 +419,62 @@
     setPanelMessageContent(item, text, { streaming });
     item.classList.toggle("is-streaming", Boolean(streaming));
     scrollPanelMessages(container);
+  }
+
+  function createCloudChatBotMessage() {
+    if (!chatMessages) return null;
+
+    const item = document.createElement("article");
+    item.className = "chat-msg from-bot qwen36-message";
+
+    const thinkingBlock = createNode("details", "qwen36-thinking-block");
+    thinkingBlock.open = true;
+    const thinkingSummary = createNode("summary", "", "thinking");
+    const thinkingBody = createNode("pre", "qwen36-thinking-text");
+    thinkingBlock.appendChild(thinkingSummary);
+    thinkingBlock.appendChild(thinkingBody);
+    thinkingBlock.hidden = true;
+
+    const answerBody = createNode("div", "chat-msg-body qwen36-answer");
+    answerBody.textContent = "正在生成...";
+
+    item.appendChild(thinkingBlock);
+    item.appendChild(answerBody);
+    chatMessages.appendChild(item);
+    scrollPanelMessages(chatMessages);
+
+    return {
+      item,
+      thinkingBlock,
+      thinkingBody,
+      answerBody,
+      reasoningText: "",
+      answerText: ""
+    };
+  }
+
+  function updateCloudChatBotMessage(handle, options = {}) {
+    if (!handle) return;
+    const streaming = Boolean(options.streaming);
+
+    if (handle.reasoningText) {
+      handle.thinkingBlock.hidden = false;
+      handle.thinkingBody.textContent = handle.reasoningText;
+    }
+
+    if (streaming) {
+      handle.answerBody.textContent =
+        handle.answerText || (handle.reasoningText ? "等待最终回答..." : "正在生成...");
+    } else if (handle.answerText) {
+      handle.answerBody.innerHTML = renderMarkdownLite(handle.answerText);
+    } else if (handle.reasoningText) {
+      handle.answerBody.textContent = "已生成 thinking，未返回最终回答。";
+    } else {
+      handle.answerBody.textContent = "模型没有返回内容。";
+    }
+
+    handle.item.classList.toggle("is-streaming", streaming);
+    scrollPanelMessages(chatMessages);
   }
 
   function setQwen36Status(text, state = "idle") {
@@ -839,28 +923,37 @@
     return cloudOpsAudioContext;
   }
 
-  function decodeCloudOpsPcmChunk(dataBase64) {
+  function decodePcm16AudioBuffer(bytesLike, sampleRate) {
     if (!cloudOpsAudioContext) {
       throw new Error("audio_context_not_ready");
     }
 
-    const payload = String(dataBase64 || "").replace(/\s+/g, "");
-    const binary = window.atob(payload);
-    const sampleCount = Math.floor(binary.length / 2);
+    const bytes = bytesLike instanceof Uint8Array ? bytesLike : new Uint8Array(bytesLike || 0);
+    const sampleCount = Math.floor(bytes.byteLength / 2);
     if (!sampleCount) {
       throw new Error("audio_chunk_empty");
     }
 
-    const buffer = cloudOpsAudioContext.createBuffer(1, sampleCount, CLOUD_OPS_AUDIO_SAMPLE_RATE);
+    const buffer = cloudOpsAudioContext.createBuffer(1, sampleCount, sampleRate || CLOUD_OPS_AUDIO_SAMPLE_RATE);
     const channelData = buffer.getChannelData(0);
     for (let index = 0, byteOffset = 0; index < sampleCount; index += 1, byteOffset += 2) {
-      let sample = binary.charCodeAt(byteOffset) | (binary.charCodeAt(byteOffset + 1) << 8);
+      let sample = bytes[byteOffset] | (bytes[byteOffset + 1] << 8);
       if (sample >= 0x8000) {
         sample -= 0x10000;
       }
       channelData[index] = sample / 32768;
     }
     return buffer;
+  }
+
+  function decodeCloudOpsPcmChunk(dataBase64) {
+    const payload = String(dataBase64 || "").replace(/\s+/g, "");
+    const binary = window.atob(payload);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return decodePcm16AudioBuffer(bytes, CLOUD_OPS_AUDIO_SAMPLE_RATE);
   }
 
   function scheduleCloudOpsAudioBuffer(stream, audioBuffer) {
@@ -1029,6 +1122,9 @@
   }
 
   function scheduleCloudOpsContextRefresh(delayMs = 1200) {
+    if (!cloudOpsAuthenticated) {
+      return;
+    }
     if (cloudOpsContextReloadTimer) {
       window.clearTimeout(cloudOpsContextReloadTimer);
     }
@@ -1039,6 +1135,9 @@
   }
 
   function applyCloudOpsOpsInit(eventData) {
+    if (!cloudOpsAuthenticated) {
+      return false;
+    }
     const vehicles = Array.isArray(eventData?.vehicles) ? eventData.vehicles : null;
     if (!vehicles) {
       return false;
@@ -1052,6 +1151,9 @@
   }
 
   function applyCloudOpsTelemetryEvent(eventData) {
+    if (!cloudOpsAuthenticated) {
+      return false;
+    }
     let source = null;
     if (eventData?.event === "vehicle.telemetry") {
       source = eventData;
@@ -1086,6 +1188,10 @@
   }
 
   function handleCloudOpsOpsEvent(eventData) {
+    if (!cloudOpsAuthenticated) {
+      return;
+    }
+
     if (applyCloudOpsOpsInit(eventData)) {
       return;
     }
@@ -1125,7 +1231,7 @@
   }
 
   function connectCloudOpsOpsSocket() {
-    if (!cloudOpsConsole || cloudOpsOpsSocket) {
+    if (!cloudOpsConsole || !cloudOpsAuthenticated || cloudOpsOpsSocket) {
       return;
     }
 
@@ -1151,8 +1257,11 @@
     socket.addEventListener("close", () => {
       cloudOpsOpsSocket = null;
       if (cloudOpsAlertsStatus) {
-        cloudOpsAlertsStatus.textContent = "实时通道重连中";
-        cloudOpsAlertsStatus.dataset.state = "loading";
+        cloudOpsAlertsStatus.textContent = cloudOpsAuthenticated ? "实时通道重连中" : "登录后连接";
+        cloudOpsAlertsStatus.dataset.state = cloudOpsAuthenticated ? "loading" : "idle";
+      }
+      if (!cloudOpsAuthenticated) {
+        return;
       }
       if (cloudOpsOpsReconnectTimer) {
         window.clearTimeout(cloudOpsOpsReconnectTimer);
@@ -1174,6 +1283,26 @@
         // Ignore close failures.
       }
     });
+  }
+
+  function disconnectCloudOpsOpsSocket() {
+    if (cloudOpsOpsReconnectTimer) {
+      window.clearTimeout(cloudOpsOpsReconnectTimer);
+      cloudOpsOpsReconnectTimer = 0;
+    }
+    if (cloudOpsOpsSocket) {
+      const socket = cloudOpsOpsSocket;
+      cloudOpsOpsSocket = null;
+      try {
+        socket.close();
+      } catch (_error) {
+        // Ignore close failures.
+      }
+    }
+    if (cloudOpsAlertsStatus) {
+      cloudOpsAlertsStatus.textContent = "登录后连接";
+      cloudOpsAlertsStatus.dataset.state = "idle";
+    }
   }
 
   function setChatStatus(text, state) {
@@ -1229,6 +1358,572 @@
     cloudOpsAudioStatus.dataset.state = state || "idle";
   }
 
+  function setChatInputAvailability(busy) {
+    if (chatSend) {
+      chatSend.disabled = Boolean(busy);
+    }
+    if (chatInput) {
+      chatInput.disabled = Boolean(busy);
+    }
+    if (chatThinking) {
+      chatThinking.disabled = Boolean(busy);
+    }
+    if (identitySelect) {
+      identitySelect.disabled = Boolean(busy);
+    }
+    if (chatVoiceToggle) {
+      chatVoiceToggle.disabled = Boolean(busy && !chatVoiceEnabled);
+    }
+  }
+
+  function setChatReadyStatus() {
+    if (chatVoiceEnabled) {
+      if (chatVoiceSocket?.readyState === WebSocket.OPEN) {
+        setChatStatus("语音已就绪", "ok");
+        return;
+      }
+      if (chatVoiceSocketReady || chatVoiceReconnectTimer) {
+        setChatStatus("语音连接中...", "loading");
+        return;
+      }
+    }
+    setChatStatus("就绪", "idle");
+  }
+
+  function updateChatVoiceToggle() {
+    if (!chatVoiceToggle) {
+      return;
+    }
+    let label = "语音关";
+    let state = "off";
+    if (chatVoiceEnabled) {
+      if (chatVoiceSocket?.readyState === WebSocket.OPEN) {
+        label = "语音开";
+        state = "on";
+      } else {
+        label = "连接中";
+        state = "connecting";
+      }
+    }
+    chatVoiceToggle.textContent = label;
+    chatVoiceToggle.dataset.state = state;
+    chatVoiceToggle.setAttribute("aria-pressed", chatVoiceEnabled ? "true" : "false");
+    chatVoiceToggle.title = chatVoiceEnabled ? "点击关闭流式语音播放" : "开启后会实时播放流式语音";
+  }
+
+  function createChatVoicePlayback(sampleRate = CLOUD_CHAT_AUDIO_SAMPLE_RATE) {
+    return {
+      sampleRate,
+      nextPlayTime: 0,
+      sourceNodes: new Set(),
+      chunkCount: 0,
+      lastChunkAtMs: 0
+    };
+  }
+
+  function releaseChatVoicePlayback(options = {}) {
+    if (!chatVoicePlayback) {
+      return;
+    }
+    if (options.stopPlayback !== false) {
+      stopScheduledAudioPlayback(chatVoicePlayback);
+    }
+    chatVoicePlayback = null;
+  }
+
+  function clearChatVoiceReconnectTimer() {
+    if (!chatVoiceReconnectTimer) {
+      return;
+    }
+    window.clearTimeout(chatVoiceReconnectTimer);
+    chatVoiceReconnectTimer = 0;
+  }
+
+  function clearChatVoiceIdleTimer() {
+    if (!chatVoiceIdleTimer) {
+      return;
+    }
+    window.clearTimeout(chatVoiceIdleTimer);
+    chatVoiceIdleTimer = 0;
+  }
+
+  function clearChatVoiceStallTimer() {
+    if (!chatVoiceStallTimer) {
+      return;
+    }
+    window.clearTimeout(chatVoiceStallTimer);
+    chatVoiceStallTimer = 0;
+  }
+
+  function scheduleChatVoiceIdleTimer() {
+    clearChatVoiceIdleTimer();
+    if (!chatVoiceEnabled || chatVoiceActiveTurn) {
+      return;
+    }
+    chatVoiceIdleTimer = window.setTimeout(() => {
+      chatVoiceIdleTimer = 0;
+      if (!chatVoiceEnabled || chatVoiceActiveTurn) {
+        return;
+      }
+      chatVoiceEnabled = false;
+      disconnectCloudChatVoiceSocket({ manual: true, stopPlayback: true });
+      updateChatVoiceToggle();
+      setChatStatus("语音空闲 30 秒，已退出", "idle");
+    }, CLOUD_CHAT_VOICE_IDLE_MS);
+  }
+
+  function scheduleChatVoiceStallTimer() {
+    clearChatVoiceStallTimer();
+    if (!chatVoiceEnabled || !chatVoiceActiveTurn) {
+      return;
+    }
+    chatVoiceStallTimer = window.setTimeout(() => {
+      chatVoiceStallTimer = 0;
+      cancelCloudChatVoiceTurn("voice_stream_idle_timeout").catch(() => {});
+      chatVoiceEnabled = false;
+      disconnectCloudChatVoiceSocket({ manual: true, stopPlayback: true });
+      updateChatVoiceToggle();
+      setChatInputAvailability(false);
+      setChatStatus("语音流 30 秒无更新，已退出", "error");
+    }, CLOUD_CHAT_VOICE_STALL_MS);
+  }
+
+  function touchChatVoiceIdle() {
+    if (!chatVoiceEnabled) {
+      return;
+    }
+    if (chatVoiceActiveTurn) {
+      clearChatVoiceIdleTimer();
+      return;
+    }
+    scheduleChatVoiceIdleTimer();
+  }
+
+  function touchChatVoiceStreamActivity() {
+    if (!chatVoiceEnabled) {
+      return;
+    }
+    if (chatVoiceActiveTurn) {
+      scheduleChatVoiceStallTimer();
+      return;
+    }
+    scheduleChatVoiceIdleTimer();
+  }
+
+  function stopChatVoicePing() {
+    if (!chatVoicePingTimer) {
+      return;
+    }
+    window.clearInterval(chatVoicePingTimer);
+    chatVoicePingTimer = 0;
+  }
+
+  function startChatVoicePing() {
+    stopChatVoicePing();
+    if (!chatVoiceEnabled || !chatVoiceSocket || chatVoiceSocket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    chatVoicePingTimer = window.setInterval(() => {
+      if (!chatVoiceSocket || chatVoiceSocket.readyState !== WebSocket.OPEN) {
+        stopChatVoicePing();
+        return;
+      }
+      try {
+        chatVoiceSocket.send(JSON.stringify({ type: "ping" }));
+      } catch (_error) {
+        try {
+          chatVoiceSocket.close();
+        } catch (_closeError) {
+          // Ignore close failures after ping errors.
+        }
+      }
+    }, CLOUD_CHAT_WS_PING_MS);
+  }
+
+  function getChatVoiceCurrentTurn(eventData) {
+    const turn = chatVoiceActiveTurn;
+    if (!turn) {
+      return null;
+    }
+    const turnId = String(eventData?.turn_id || "").trim();
+    if (turnId && turn.turnId && turn.turnId !== turnId) {
+      return null;
+    }
+    return turn;
+  }
+
+  function resolveChatVoiceTurn(turn, reply) {
+    if (!turn || turn.settled) {
+      return;
+    }
+    clearChatVoiceStallTimer();
+    turn.settled = true;
+    if (chatVoiceActiveTurn === turn) {
+      chatVoiceActiveTurn = null;
+    }
+    const finalReply = String(reply || turn.finalReply || turn.streamedText || "").trim();
+    if (!finalReply) {
+      turn.reject(new Error("云端返回内容为空"));
+      return;
+    }
+    turn.finalReply = finalReply;
+    turn.botMessage.answerText = finalReply;
+    updateCloudChatBotMessage(turn.botMessage, { streaming: false });
+    touchChatVoiceIdle();
+    turn.resolve(finalReply);
+  }
+
+  function rejectChatVoiceTurn(turn, error, options = {}) {
+    if (!turn || turn.settled) {
+      return;
+    }
+    clearChatVoiceStallTimer();
+    turn.settled = true;
+    if (chatVoiceActiveTurn === turn) {
+      chatVoiceActiveTurn = null;
+    }
+    if (options.stopPlayback !== false) {
+      releaseChatVoicePlayback({ stopPlayback: true });
+    }
+    touchChatVoiceIdle();
+    turn.reject(error instanceof Error ? error : new Error(String(error || "voice_stream_failed")));
+  }
+
+  async function cancelCloudChatVoiceTurn(reason = "cancel_stream") {
+    const turn = chatVoiceActiveTurn;
+    const socket = chatVoiceSocket;
+    if (!turn || !socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    try {
+      socket.send(
+        JSON.stringify({
+          type: "cancel_stream",
+          session_id: sessionId,
+          stream_id: vehicleId,
+          vehicle_id: vehicleId,
+          seq: Number(turn.clientSeq) || undefined,
+          turn_id: String(turn.turnId || ""),
+          reason
+        })
+      );
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  async function handleCloudChatVoiceBinaryChunk(rawData) {
+    const turn = chatVoiceActiveTurn;
+    if (!turn) {
+      return;
+    }
+    const sampleRate = Number(turn.sampleRate) || CLOUD_CHAT_AUDIO_SAMPLE_RATE;
+    if (cloudOpsAudioContext?.state === "suspended") {
+      cloudOpsAudioContext.resume().catch(() => {});
+    }
+    if (!chatVoicePlayback) {
+      chatVoicePlayback = createChatVoicePlayback(sampleRate);
+    } else if (!chatVoicePlayback.chunkCount) {
+      chatVoicePlayback.sampleRate = sampleRate;
+    }
+    const audioBuffer = decodePcm16AudioBuffer(rawData, chatVoicePlayback.sampleRate || sampleRate);
+    scheduleCloudOpsAudioBuffer(chatVoicePlayback, audioBuffer);
+    chatVoicePlayback.chunkCount += 1;
+    chatVoicePlayback.lastChunkAtMs = Date.now();
+    touchChatVoiceStreamActivity();
+  }
+
+  function handleCloudChatVoiceEvent(eventData) {
+    if (!eventData) {
+      return;
+    }
+    if (String(eventData.type || "").trim().toLowerCase() === "pong") {
+      return;
+    }
+
+    const turn = getChatVoiceCurrentTurn(eventData);
+    if (!turn) {
+      return;
+    }
+
+    const eventType = String(eventData.type || "").trim().toLowerCase();
+    touchChatVoiceStreamActivity();
+    if (eventType === "accepted") {
+      turn.turnId = String(eventData.turn_id || turn.turnId || "");
+      setChatStatus("云端已接收，正在生成...", "loading");
+      return;
+    }
+    if (eventType === "search_status") {
+      setChatStatus(String(eventData.text || "正在联网搜索，请稍等。"), "loading");
+      return;
+    }
+    if (eventType === "delta" && typeof eventData.text === "string") {
+      turn.streamedText += eventData.text;
+      turn.botMessage.answerText = turn.streamedText;
+      updateCloudChatBotMessage(turn.botMessage, { streaming: true });
+      setChatStatus("回答生成中...", "loading");
+      return;
+    }
+    if (eventType === "reasoning_delta" && typeof eventData.text === "string") {
+      turn.botMessage.reasoningText += eventData.text;
+      updateCloudChatBotMessage(turn.botMessage, { streaming: true });
+      setChatStatus("thinking 中...", "loading");
+      return;
+    }
+    if (eventType === "llm_final") {
+      const reply = String(turn.streamedText || turn.finalReply || "").trim();
+      const reasoning = String(eventData.reasoning || "").trim();
+      if (reasoning) {
+        turn.botMessage.reasoningText = reasoning;
+      }
+      if (reply) {
+        turn.finalReply = reply;
+        turn.botMessage.answerText = reply;
+        updateCloudChatBotMessage(turn.botMessage, { streaming: false });
+      }
+      setChatStatus("文字已完成，准备播报...", "loading");
+      return;
+    }
+    if (eventType === "tts_start" || eventType === "tts_ws_start") {
+      const sampleRate = Number(eventData.sample_rate);
+      if (Number.isFinite(sampleRate) && sampleRate > 0) {
+        turn.sampleRate = sampleRate;
+        if (!chatVoicePlayback || !chatVoicePlayback.chunkCount) {
+          chatVoicePlayback = createChatVoicePlayback(sampleRate);
+        }
+      }
+      setChatStatus("正在播报...", "loading");
+      return;
+    }
+    if (eventType === "tts_first_chunk") {
+      setChatStatus("正在播报...", "loading");
+      return;
+    }
+    if (eventType === "error") {
+      rejectChatVoiceTurn(
+        turn,
+        new Error(eventData.detail || eventData.error || eventData.message || "voice_stream_error")
+      );
+      return;
+    }
+    if (eventType === "final") {
+      if (eventData.error) {
+        rejectChatVoiceTurn(turn, new Error(String(eventData.error || "voice_stream_failed")));
+        return;
+      }
+      const reply = extractReply(eventData) || turn.finalReply || turn.streamedText;
+      resolveChatVoiceTurn(turn, reply);
+    }
+  }
+
+  async function handleCloudChatVoiceSocketMessage(event) {
+    if (typeof event.data === "string") {
+      let payload = null;
+      try {
+        payload = JSON.parse(String(event.data || ""));
+      } catch (_error) {
+        return;
+      }
+      handleCloudChatVoiceEvent(payload);
+      return;
+    }
+
+    try {
+      const rawData =
+        event.data instanceof ArrayBuffer
+          ? event.data
+          : event.data && typeof event.data.arrayBuffer === "function"
+            ? await event.data.arrayBuffer()
+            : null;
+      if (!rawData) {
+        return;
+      }
+      await handleCloudChatVoiceBinaryChunk(rawData);
+    } catch (error) {
+      if (chatVoiceActiveTurn) {
+        rejectChatVoiceTurn(chatVoiceActiveTurn, error);
+      }
+    }
+  }
+
+  function scheduleCloudChatVoiceReconnect() {
+    if (!chatVoiceEnabled || chatVoiceReconnectTimer) {
+      return;
+    }
+    chatVoiceReconnectTimer = window.setTimeout(() => {
+      chatVoiceReconnectTimer = 0;
+      ensureCloudChatVoiceSocket({ suppressStatus: true }).catch(() => {});
+    }, 3000);
+    updateChatVoiceToggle();
+  }
+
+  function disconnectCloudChatVoiceSocket(options = {}) {
+    chatVoiceManualClose = options.manual !== false;
+    clearChatVoiceReconnectTimer();
+    clearChatVoiceIdleTimer();
+    clearChatVoiceStallTimer();
+    stopChatVoicePing();
+    if (options.stopPlayback !== false) {
+      releaseChatVoicePlayback({ stopPlayback: true });
+    }
+    if (chatVoiceSocket) {
+      try {
+        chatVoiceSocket.close();
+      } catch (_error) {
+        // Ignore close failures.
+      }
+    }
+    chatVoiceSocketReady = null;
+    updateChatVoiceToggle();
+  }
+
+  function ensureCloudChatVoiceSocket(options = {}) {
+    if (chatVoiceSocket?.readyState === WebSocket.OPEN) {
+      return Promise.resolve(chatVoiceSocket);
+    }
+    if (chatVoiceSocketReady) {
+      return chatVoiceSocketReady;
+    }
+
+    clearChatVoiceReconnectTimer();
+    chatVoiceManualClose = false;
+    if (!options.suppressStatus && !chatVoiceActiveTurn) {
+      setChatStatus("语音连接中...", "loading");
+    }
+
+    const socket = new WebSocket(cloudChatWsUrl);
+    socket.binaryType = "arraybuffer";
+    chatVoiceSocket = socket;
+    updateChatVoiceToggle();
+
+    chatVoiceSocketReady = new Promise((resolve, reject) => {
+      let settled = false;
+
+      const rejectOnce = (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        chatVoiceSocketReady = null;
+        reject(error instanceof Error ? error : new Error(String(error || "voice_socket_failed")));
+      };
+
+      socket.addEventListener("open", () => {
+        if (chatVoiceSocket !== socket) {
+          try {
+            socket.close();
+          } catch (_error) {
+            // Ignore close failures for stale sockets.
+          }
+          return;
+        }
+        if (!settled) {
+          settled = true;
+          chatVoiceSocketReady = null;
+          resolve(socket);
+        }
+        startChatVoicePing();
+        updateChatVoiceToggle();
+        if (!chatVoiceActiveTurn) {
+          setChatReadyStatus();
+          scheduleChatVoiceIdleTimer();
+        }
+      });
+
+      socket.addEventListener("message", (event) => {
+        if (chatVoiceSocket !== socket) {
+          return;
+        }
+        handleCloudChatVoiceSocketMessage(event).catch(() => {});
+      });
+
+      socket.addEventListener("error", () => {
+        if (socket.readyState < WebSocket.CLOSING) {
+          try {
+            socket.close();
+          } catch (_error) {
+            // Ignore close failures after socket errors.
+          }
+        }
+      });
+
+      socket.addEventListener("close", () => {
+        const isCurrentSocket = chatVoiceSocket === socket;
+        if (!settled) {
+          rejectOnce(new Error("语音通道连接失败"));
+        }
+        if (!isCurrentSocket) {
+          return;
+        }
+        stopChatVoicePing();
+        chatVoiceSocket = null;
+        chatVoiceSocketReady = null;
+        updateChatVoiceToggle();
+        if (chatVoiceActiveTurn) {
+          rejectChatVoiceTurn(chatVoiceActiveTurn, new Error("语音通道已断开"));
+        }
+        const shouldReconnect = chatVoiceEnabled && !chatVoiceManualClose;
+        chatVoiceManualClose = false;
+        if (shouldReconnect) {
+          if (!chatVoiceActiveTurn) {
+            setChatStatus("语音通道重连中...", "loading");
+          }
+          scheduleCloudChatVoiceReconnect();
+        } else if (!chatVoiceActiveTurn) {
+          setChatReadyStatus();
+        }
+      });
+    });
+
+    return chatVoiceSocketReady;
+  }
+
+  async function runCloudChatVoiceTurn(message, botMessage) {
+    if (chatVoiceActiveTurn) {
+      throw new Error("上一轮语音对话仍在处理");
+    }
+    const socket = await ensureCloudChatVoiceSocket({ suppressStatus: true });
+    releaseChatVoicePlayback({ stopPlayback: true });
+    clearChatVoiceIdleTimer();
+
+    const clientSeq = Date.now() % 1000000000;
+    return new Promise((resolve, reject) => {
+      const turn = {
+        botMessage,
+        message,
+        turnId: "",
+        clientSeq,
+        streamedText: "",
+        finalReply: "",
+        sampleRate: CLOUD_CHAT_AUDIO_SAMPLE_RATE,
+        settled: false,
+        resolve,
+        reject
+      };
+      chatVoiceActiveTurn = turn;
+      scheduleChatVoiceStallTimer();
+      try {
+        socket.send(
+          JSON.stringify({
+            type: "chat",
+            text: message,
+            session_id: sessionId,
+            reset: firstTurn,
+            stream_id: vehicleId,
+            vehicle_id: vehicleId,
+            seq: clientSeq,
+            client_send_ts_ms: Date.now(),
+            enable_thinking: Boolean(chatThinking?.checked)
+          })
+        );
+      } catch (error) {
+        chatVoiceActiveTurn = null;
+        reject(error instanceof Error ? error : new Error(String(error || "voice_send_failed")));
+      }
+    });
+  }
+
   function getWelcomeText() {
     return `你好，我是智能AI对话助手。当前身份：${vehicleId}。你可以直接输入问题开始对话。`;
   }
@@ -1237,7 +1932,7 @@
     const vehicleText = cloudOpsCurrentVehicleId ? `当前车辆：${cloudOpsCurrentVehicleId}。` : "";
     const permissionText = openClawAuthenticated
       ? "你可以直接自然语言运维，也可以先点上面的快捷按钮，把关键节点、一键健康检查、AI检测配置、AI检测图片、相机抓拍、地图查看、车身状态、灯光控制、碰撞停复位、routing 等结果插入当前会话上下文后继续追问。"
-      : "当前为只读模式。你可以先点上面的按钮查看车辆状态；登录后可聊天并获得更多控制权限。";
+      : "当前未登录。请先登录云端智能运维账号，登录后才能查看车辆状态、执行快捷按钮和继续自然语言运维。";
     return `你好，我是 OpenClaw 助手。当前走默认模型：${openClawModelLabel}。${vehicleText}${permissionText}`;
   }
 
@@ -1293,6 +1988,26 @@
     return getCloudOpsAudioStream(channel?.streamId);
   }
 
+  function stopScheduledAudioPlayback(stream) {
+    if (!stream) {
+      return;
+    }
+    for (const source of Array.from(stream.sourceNodes || [])) {
+      try {
+        source.stop(0);
+      } catch (_error) {
+        // Ignore sources that already ended.
+      }
+      try {
+        source.disconnect();
+      } catch (_error) {
+        // Ignore disconnect failures.
+      }
+    }
+    stream.sourceNodes?.clear?.();
+    stream.nextPlayTime = 0;
+  }
+
   function releaseCloudOpsAudioStream(stream, options = {}) {
     if (!stream) {
       return;
@@ -1300,20 +2015,8 @@
 
     stream.pendingChunks?.clear?.();
     if (options.stopPlayback !== false) {
-      for (const source of Array.from(stream.sourceNodes || [])) {
-        try {
-          source.stop(0);
-        } catch (_error) {
-          // Ignore sources that already ended.
-        }
-        try {
-          source.disconnect();
-        } catch (_error) {
-          // Ignore disconnect failures.
-        }
-      }
+      stopScheduledAudioPlayback(stream);
     }
-    stream.sourceNodes?.clear?.();
     cloudOpsAudioStreams.delete(stream.streamId);
   }
 
@@ -2055,6 +2758,7 @@
     const name = String(toolName || "").trim();
     const labels = {
       "status.key_nodes": "关键节点",
+      "status.audio": "音频状态",
       "health.autodrive_check": "一键健康检查",
       "vehicle.snapshot": "整车快照",
       "system.snapshot": "系统快照",
@@ -3004,6 +3708,46 @@
       return items;
     }
 
+    if (toolName === "status.audio" && result && typeof result === "object") {
+      const nodesGroup = result?.nodes && typeof result.nodes === "object" ? result.nodes : {};
+      const nodes = Array.isArray(nodesGroup?.nodes) ? nodesGroup.nodes : [];
+      const offlineNodes = nodes
+        .filter((item) => item?.online === false || item?.ok === false)
+        .map((item) => item?.node || item?.name || item?.id || "")
+        .filter(Boolean);
+      const audioSummary = result?.summary || {};
+      pushCloudOpsDetail(
+        items,
+        "音频链路",
+        result?.health === "ok" ? "正常" : result?.health || "-",
+        result?.health === "ok" ? "ok" : result?.health === "warning" ? "warn" : "idle"
+      );
+      if (Number.isFinite(Number(nodesGroup?.online_count)) || nodes.length) {
+        pushCloudOpsDetail(
+          items,
+          "节点在线",
+          `${Number(nodesGroup?.online_count) || nodes.filter((item) => item?.online !== false && item?.ok !== false).length} / ${
+            nodes.length || Number(nodesGroup?.online_count) || 0
+          }`,
+          offlineNodes.length ? "warn" : "ok"
+        );
+      }
+      if (Number.isFinite(Number(audioSummary?.sample_rate_hz)) || Number.isFinite(Number(audioSummary?.channel_count))) {
+        pushCloudOpsDetail(
+          items,
+          "采样配置",
+          `${audioSummary?.sample_rate_hz ?? "-"} Hz / ${audioSummary?.channel_count ?? "-"} 声道`
+        );
+      }
+      if (offlineNodes.length) {
+        pushCloudOpsDetail(items, "异常节点", offlineNodes.join("、"), "warn");
+      }
+      if (Array.isArray(result?.warnings) && result.warnings.length) {
+        pushCloudOpsDetail(items, "告警", result.warnings.join("、"), "warn");
+      }
+      return items;
+    }
+
     if (toolName === "health.autodrive_check" && result && typeof result === "object") {
       const healthSummary = result?.summary || result;
       const checks = result?.checks || {};
@@ -3899,28 +4643,29 @@
       const needsVehicle = button.dataset.needsVehicle === "true";
       const requiredTool = button.dataset.requiresTool || "";
       const supported = !requiredTool || !hasToolCatalog || availableNames.has(requiredTool);
-      const needsAuth = isCloudOpsControlButton(button);
       button.dataset.supported = supported ? "yes" : "no";
-      button.dataset.accessState = needsAuth ? "control" : "read";
+      button.dataset.accessState = cloudOpsAuthenticated
+        ? (isCloudOpsControlButton(button) ? "control" : "read")
+        : "locked";
       button.disabled =
         cloudOpsBusy ||
+        !cloudOpsAuthenticated ||
         (needsVehicle && !vehicleSelected) ||
-        !supported ||
-        (needsAuth && !cloudOpsAuthenticated);
+        !supported;
       if (!supported && requiredTool) {
         unsupported.push(formatCloudOpsToolName(requiredTool));
       }
     });
 
     if (cloudOpsToolNote) {
-      if (!cloudOpsCurrentVehicleId) {
+      if (!cloudOpsAuthenticated) {
+        cloudOpsToolNote.textContent = "请先登录云端智能运维账号，登录后加载车辆和车端工具列表。";
+      } else if (!cloudOpsCurrentVehicleId) {
         cloudOpsToolNote.textContent = "请先选择在线车辆，再执行上面的运维按钮。";
       } else if (!hasToolCatalog) {
         cloudOpsToolNote.textContent = "当前还没拿到工具列表，已先按默认按钮展示；如果某个动作返回 unknown tool 或超时，再按车端实际能力排查。";
       } else if (unsupported.length) {
         cloudOpsToolNote.textContent = `当前车辆 ${cloudOpsCurrentVehicleId} 已上报 ${cloudOpsAvailableTools.size} 个工具；${unsupported.slice(0, 6).join("、")} 这类按钮现在置灰，表示车端暂不支持。`;
-      } else if (!cloudOpsAuthenticated) {
-        cloudOpsToolNote.textContent = `当前车辆 ${cloudOpsCurrentVehicleId} 的已上报工具数为 ${cloudOpsAvailableTools.size}。未登录可查看状态类按钮；登录获取更多控制权限。`;
       } else {
         cloudOpsToolNote.textContent = `当前车辆 ${cloudOpsCurrentVehicleId} 的已上报工具数为 ${cloudOpsAvailableTools.size}，上方按钮均可直接执行。`;
       }
@@ -3999,6 +4744,25 @@
     if (!cloudOpsShell) return;
     const preserveResult = Boolean(options.preserveResult);
     const silent = Boolean(options.silent);
+
+    if (!cloudOpsAuthenticated) {
+      cloudOpsVehicles = [];
+      cloudOpsAvailableTools = new Set();
+      cloudOpsCurrentVehicleId = "";
+      cloudOpsCurrentDetail = null;
+      resetAllCloudOpsAudioChannels({ stopPlayback: true });
+      renderCloudOpsVehicleOptions();
+      renderCloudOpsSummary();
+      renderCloudOpsLiveState();
+      updateCloudOpsActionAvailability();
+      if (!preserveResult) {
+        renderCloudOpsResult("请先登录云端智能运维账号，登录后加载车辆状态和车端工具。", null, "idle");
+      }
+      if (!silent) {
+        setCloudOpsStatus("需登录", "idle");
+      }
+      return;
+    }
 
     try {
       if (!silent) {
@@ -4099,12 +4863,18 @@
 
   function applyCloudOpsAuthState(authenticated, options = {}) {
     cloudOpsAuthenticated = Boolean(authenticated);
+    if (cloudOpsConsole) {
+      cloudOpsConsole.dataset.authenticated = cloudOpsAuthenticated ? "true" : "false";
+    }
     if (cloudOpsAuth) {
       cloudOpsAuth.hidden = cloudOpsAuthenticated;
     }
     if (cloudOpsShell) {
-      cloudOpsShell.hidden = false;
+      cloudOpsShell.hidden = !cloudOpsAuthenticated;
     }
+    cloudOpsProtectedBlocks.forEach((block) => {
+      block.hidden = !cloudOpsAuthenticated;
+    });
     if (cloudOpsLogoutBtn) {
       cloudOpsLogoutBtn.hidden = !cloudOpsAuthenticated;
     }
@@ -4112,12 +4882,22 @@
     if (cloudOpsAuthenticated) {
       setCloudOpsAuthHint(options.username ? `已登录：${options.username}` : "已登录。", "ok");
       setCloudOpsStatus("加载中...", "loading");
+      connectCloudOpsOpsSocket();
       updateCloudOpsAudioAvailability();
     } else {
+      disconnectCloudOpsOpsSocket();
+      cloudOpsVehicles = [];
+      cloudOpsAvailableTools = new Set();
+      cloudOpsCurrentVehicleId = "";
+      cloudOpsCurrentDetail = null;
       resetAllCloudOpsAudioChannels({ stopPlayback: true });
+      renderCloudOpsVehicleOptions();
+      renderCloudOpsSummary();
+      renderCloudOpsLiveState();
       updateCloudOpsActionAvailability();
-      setCloudOpsStatus("只读模式", "idle");
-      setCloudOpsAuthHint("未登录可查看状态；登录后可获取更多控制权限。", "idle");
+      renderCloudOpsResult("请先登录云端智能运维账号，登录后才能查看车辆状态和执行操作。", null, "idle");
+      setCloudOpsStatus("需登录", "idle");
+      setCloudOpsAuthHint("请先登录，登录后才能查看和控制车辆、服务器节点。", "idle");
     }
 
     window.dispatchEvent(
@@ -4139,7 +4919,6 @@
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.ok) {
         applyCloudOpsAuthState(false);
-        await loadCloudOpsContext();
         applyOpenClawAuthState(false);
         return;
       }
@@ -4149,7 +4928,6 @@
       await loadOpenClawHealth();
     } catch (_error) {
       applyCloudOpsAuthState(false);
-      await loadCloudOpsContext().catch(() => {});
       applyOpenClawAuthState(false);
     }
   }
@@ -4218,7 +4996,6 @@
     applyCloudOpsAuthState(false);
     applyOpenClawAuthState(false);
     clearCloudOpsPinnedContexts();
-    await loadCloudOpsContext({ preserveResult: true, silent: true }).catch(() => {});
     if (cloudOpsPassword) {
       cloudOpsPassword.value = "";
     }
@@ -4391,7 +5168,7 @@
     }
 
     if (!cloudOpsAuthenticated) {
-      setCloudOpsStatus("登录获取更多控制权限", "idle");
+      setCloudOpsStatus("请先登录", "idle");
       focusWithoutScroll(cloudOpsUsername);
       return;
     }
@@ -4445,8 +5222,9 @@
       return;
     }
 
-    if (isCloudOpsControlButton(button) && !cloudOpsAuthenticated) {
-      setCloudOpsStatus("登录获取更多控制权限", "idle");
+    if (!cloudOpsAuthenticated) {
+      setCloudOpsStatus("请先登录", "idle");
+      renderCloudOpsResult("请先登录云端智能运维账号，登录后才能查看和控制车辆。", null, "idle");
       focusWithoutScroll(cloudOpsUsername);
       return;
     }
@@ -4542,7 +5320,8 @@
     createPanelMessage(chatMessages, "bot", welcome);
     sessionId = createSessionId(vehicleId);
     firstTurn = true;
-    setChatStatus("就绪", "idle");
+    releaseChatVoicePlayback({ stopPlayback: true });
+    setChatReadyStatus();
   }
 
   function sortIdentityNames(names) {
@@ -4602,7 +5381,7 @@
     return reply;
   }
 
-  async function readStreamingReply(response, container, messageEl) {
+  async function readStreamingReply(response, botHandle) {
     if (!response.body) {
       throw new Error("云端流式响应不可用");
     }
@@ -4611,20 +5390,28 @@
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
     let streamedText = "";
+    let streamedReasoning = "";
     let finalReply = "";
-    let sawDelta = false;
 
     const handleEvent = (data) => {
       if (!data) return;
+      if (data.type === "reasoning_delta" && typeof data.text === "string") {
+        streamedReasoning += data.text;
+        botHandle.reasoningText = streamedReasoning;
+        updateCloudChatBotMessage(botHandle, { streaming: true });
+        return;
+      }
       if (data.type === "delta" && typeof data.text === "string") {
-        sawDelta = true;
         streamedText += data.text;
-        updatePanelMessage(container, messageEl, streamedText, true);
+        botHandle.answerText = streamedText;
+        updateCloudChatBotMessage(botHandle, { streaming: true });
         return;
       }
       if (data.type === "final") {
+        botHandle.reasoningText = String(data.reasoning || botHandle.reasoningText || "").trim();
         finalReply = extractReply(data) || streamedText;
-        updatePanelMessage(container, messageEl, finalReply, false);
+        botHandle.answerText = finalReply;
+        updateCloudChatBotMessage(botHandle, { streaming: false });
         return;
       }
       if (data.type === "error") {
@@ -4655,21 +5442,20 @@
       throw new Error("云端返回内容为空");
     }
 
-    if (!sawDelta && finalReply) {
-      return animateReply(container, messageEl, reply);
-    }
-
-    updatePanelMessage(container, messageEl, reply, false);
+    botHandle.answerText = reply;
+    updateCloudChatBotMessage(botHandle, { streaming: false });
     return reply;
   }
 
-  async function readJsonReply(response, container, messageEl) {
+  async function readJsonReply(response, botHandle) {
     const data = await response.json();
     const reply = extractReply(data).trim();
     if (!reply) {
       throw new Error("云端返回内容为空");
     }
-    updatePanelMessage(container, messageEl, reply, false);
+    botHandle.reasoningText = String(data.reasoning || "").trim();
+    botHandle.answerText = reply;
+    updateCloudChatBotMessage(botHandle, { streaming: false });
     return reply;
   }
 
@@ -4832,37 +5618,42 @@
       return;
     }
 
-    chatSend.disabled = true;
-    chatInput.disabled = true;
+    setChatInputAvailability(true);
     createPanelMessage(chatMessages, "user", message);
-    const botMessage = createPanelMessage(chatMessages, "bot", "正在生成...");
+    const botMessage = createCloudChatBotMessage();
     setChatStatus("思考中...", "loading");
 
     try {
-      const response = await fetch(cloudChatUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream"
-        },
-        body: JSON.stringify({
-          message,
-          session_id: sessionId,
-          reset: firstTurn,
-          vehicle_id: vehicleId,
-          enable_thinking: Boolean(chatThinking?.checked)
-        })
-      });
+      let reply = "";
+      if (chatVoiceEnabled) {
+        await ensureCloudOpsAudioContext();
+        reply = await runCloudChatVoiceTurn(message, botMessage);
+      } else {
+        const response = await fetch(cloudChatUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream"
+          },
+          body: JSON.stringify({
+            message,
+            session_id: sessionId,
+            reset: firstTurn,
+            vehicle_id: vehicleId,
+            enable_thinking: Boolean(chatThinking?.checked)
+          })
+        });
 
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail || `HTTP ${response.status}`);
+        if (!response.ok) {
+          const detail = await response.text();
+          throw new Error(detail || `HTTP ${response.status}`);
+        }
+
+        const contentType = response.headers.get("content-type") || "";
+        reply = contentType.includes("text/event-stream")
+          ? await readStreamingReply(response, botMessage)
+          : await readJsonReply(response, botMessage);
       }
-
-      const contentType = response.headers.get("content-type") || "";
-      const reply = contentType.includes("text/event-stream")
-        ? await readStreamingReply(response, chatMessages, botMessage)
-        : await readJsonReply(response, chatMessages, botMessage);
 
       messageHistory.push({ role: "user", text: message });
       messageHistory.push({ role: "bot", text: reply });
@@ -4870,12 +5661,45 @@
       chatInput.value = "";
       setChatStatus("已回复", "ok");
     } catch (error) {
-      updatePanelMessage(chatMessages, botMessage, `对话服务暂不可用：${error?.message || "未知错误"}`, false);
+      if (botMessage) {
+        botMessage.answerText = `对话服务暂不可用：${error?.message || "未知错误"}`;
+        updateCloudChatBotMessage(botMessage, { streaming: false });
+      }
       setChatStatus("服务异常", "error");
     } finally {
-      chatSend.disabled = false;
-      chatInput.disabled = false;
+      setChatInputAvailability(false);
       chatInput.focus();
+    }
+  }
+
+  async function handleChatVoiceToggleClick() {
+    if (!chatVoiceToggle) {
+      return;
+    }
+
+    if (chatVoiceEnabled) {
+      await cancelCloudChatVoiceTurn("voice_toggle_off");
+      chatVoiceEnabled = false;
+      disconnectCloudChatVoiceSocket({ manual: true, stopPlayback: true });
+      updateChatVoiceToggle();
+      setChatReadyStatus();
+      return;
+    }
+
+    updateChatVoiceToggle();
+    setChatStatus("语音连接中...", "loading");
+    try {
+      await ensureCloudOpsAudioContext();
+      chatVoiceEnabled = true;
+      updateChatVoiceToggle();
+      await ensureCloudChatVoiceSocket();
+      touchChatVoiceIdle();
+      setChatReadyStatus();
+    } catch (error) {
+      chatVoiceEnabled = false;
+      disconnectCloudChatVoiceSocket({ manual: true, stopPlayback: true });
+      updateChatVoiceToggle();
+      setChatStatus(error?.message || "语音连接失败", "error");
     }
   }
 
@@ -4885,7 +5709,7 @@
     }
     createPanelMessage(openClawMessages, "bot", getOpenClawWelcomeText());
     openClawSessionId = createSessionId("openclaw");
-    setOpenClawStatus(openClawAuthenticated ? openClawModelLabel : "登录获取更多控制权限", "idle");
+    setOpenClawStatus(openClawAuthenticated ? openClawModelLabel : "需登录", "idle");
     updateOpenClawInputAvailability();
   }
 
@@ -4905,7 +5729,7 @@
       setOpenClawAuthHint(options.username ? `已登录：${options.username}` : "已登录。", "ok");
       resetOpenClawConversation();
     } else {
-      setOpenClawAuthHint("登录后可聊天并获取更多控制权限。", "idle");
+      setOpenClawAuthHint("请先登录，登录后可聊天并执行云端运维。", "idle");
       resetOpenClawConversation();
     }
   }
@@ -5031,7 +5855,7 @@
     }
 
     if (!openClawAuthenticated) {
-      setOpenClawStatus("登录获取更多控制权限", "idle");
+      setOpenClawStatus("请先登录", "idle");
       focusWithoutScroll(cloudOpsUsername || openClawUsername);
       return;
     }
@@ -5268,19 +6092,37 @@
     }
   }
 
-  function renderAiHistoryDeviceFilterOptions(values) {
-    if (!aiHistoryDeviceFilterSelect) return;
+  function renderAiHistoryFilterOptions(selectNode, values, selectedValue, allLabel) {
+    if (!selectNode) return "";
 
     const options = [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
-    const nextValue = options.includes(aiHistoryDeviceFilter) ? aiHistoryDeviceFilter : "";
+    const nextValue = options.includes(selectedValue) ? selectedValue : "";
 
-    aiHistoryDeviceFilterSelect.innerHTML = "";
-    aiHistoryDeviceFilterSelect.appendChild(new Option("全部地点", ""));
+    selectNode.innerHTML = "";
+    selectNode.appendChild(new Option(allLabel, ""));
     options.forEach((value) => {
-      aiHistoryDeviceFilterSelect.appendChild(new Option(value, value));
+      selectNode.appendChild(new Option(value, value));
     });
-    aiHistoryDeviceFilterSelect.value = nextValue;
-    aiHistoryDeviceFilter = nextValue;
+    selectNode.value = nextValue;
+    return nextValue;
+  }
+
+  function renderAiHistoryDeviceFilterOptions(values) {
+    aiHistoryDeviceFilter = renderAiHistoryFilterOptions(
+      aiHistoryDeviceFilterSelect,
+      values,
+      aiHistoryDeviceFilter,
+      "全部地点"
+    );
+  }
+
+  function renderAiHistoryEventFilterOptions(values) {
+    aiHistoryEventFilter = renderAiHistoryFilterOptions(
+      aiHistoryEventFilterSelect,
+      values,
+      aiHistoryEventFilter,
+      "全部事件"
+    );
   }
 
   function renderAiHistoryList(items) {
@@ -5520,6 +6362,9 @@
       if (aiHistoryDeviceFilter) {
         url.searchParams.set("device_id", aiHistoryDeviceFilter);
       }
+      if (aiHistoryEventFilter) {
+        url.searchParams.set("event_name", aiHistoryEventFilter);
+      }
 
       const response = await fetch(url, {
         headers: { Accept: "application/json" }
@@ -5536,6 +6381,7 @@
       aiHistoryPageValue = Number(data.page) || 1;
       aiHistoryTotalPages = Math.max(1, Number(data.total_pages) || 1);
       renderAiHistoryDeviceFilterOptions(data.available_device_ids);
+      renderAiHistoryEventFilterOptions(data.available_event_names);
       updateAiHistoryPager();
 
       const items = Array.isArray(data.items) ? data.items : [];
@@ -5665,19 +6511,64 @@
       return;
     }
 
-    if (!eventName) {
-      setAiCheckStatus("缺少事件", "error");
-      setAiCheckResult("无法判断", "请输入事件名称。", "error");
+    if (!eventName && !customPrompt) {
+      setAiCheckStatus("缺少信息", "error");
+      setAiCheckResult("无法判断", "请输入事件名称，或填写自定义提示词。", "error");
       return;
     }
 
     if (aiCheckSubmit) aiCheckSubmit.disabled = true;
-    setAiCheckStatus("检测中...", "loading");
-    setAiCheckResult("检测中", "正在发送图片到模型服务，请稍候。", "loading");
+
+    // Custom prompt: use HTTP endpoint for free-form response (no YES/NO forced wrapping)
+    if (customPrompt) {
+      setAiCheckStatus("检测中（Qwen3.6-27B）...", "loading");
+      setAiCheckResult("检测中", "正在将自定义提示词发送到 Qwen3.6-27B，请稍候。", "loading");
+      try {
+        const imagePayload = await buildImagePayload(file);
+        const promptText = customPrompt.replace(/\{\{\s*event(?:_name)?\s*\}\}|\{event(?:_name)?\}/gi, eventName || "异常事件");
+        const response = await fetch(QWEN36_MM_CHECK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image: imagePayload,
+            event_name: eventName || "异常事件",
+            prompt_text: promptText
+          }),
+          signal: AbortSignal.timeout(120000)
+        });
+        const data = await response.json();
+        if (!data.ok) {
+          throw new Error(data.detail || data.error || "检测失败");
+        }
+        const rawReply = (data.raw_reply || "").trim();
+        const answer = String(data.answer || "").toUpperCase();
+        setAiCheckStatus("检测完成（Qwen3.6-27B）", "ok");
+        if (answer === "YES") {
+          setAiCheckResult("是", rawReply || `事件“${eventName || "异常事件"}”检测结果为 YES。`, "yes");
+        } else if (answer === "NO") {
+          setAiCheckResult("否", rawReply || `事件“${eventName || "异常事件"}”检测结果为 NO。`, "no");
+        } else {
+          setAiCheckResult("回复", rawReply || "模型已返回结果。", "ok");
+        }
+        if (aiHistoryPanel) {
+          loadAiHistoryPageData(1, { selectFirst: true });
+        }
+      } catch (error) {
+        setAiCheckStatus("检测失败", "error");
+        setAiCheckResult("无法判断", `检测失败：${error?.message || "未知错误"}`, "error");
+      } finally {
+        if (aiCheckSubmit) aiCheckSubmit.disabled = false;
+      }
+      return;
+    }
+
+    // No custom prompt: try qwen3.6-27b-mm first via WebSocket, fallback to qwen3-vl-2b
+    setAiCheckStatus("检测中（Qwen3.6-27B）...", "loading");
+    setAiCheckResult("检测中", "正在连接 Qwen3.6-27B 模型服务，请稍候。", "loading");
 
     try {
       const imagePayload = await buildImagePayload(file);
-      const payload = {
+      const basePayload = {
         request_id: `web-${createNonce()}`,
         device_id: "web-ai-check",
         camera_id: "upload-panel",
@@ -5686,34 +6577,37 @@
           {
             task_id: `task-${createNonce()}`,
             event_name: eventName,
-            prompt_text: buildAiCheckPrompt(eventName, customPrompt)
+            prompt_text: buildAiCheckPrompt(eventName, "")
           }
         ]
       };
 
-      const response = await runAiCheckRequest(payload);
+      let response;
+      let usedModel = "Qwen3.6-27B";
+
+      try {
+        response = await runAiCheckRequest({ ...basePayload, model: "qwen3.6-27b-mm" });
+      } catch (_primaryErr) {
+        setAiCheckStatus("Qwen3.6 不可用，切换备用模型...", "loading");
+        usedModel = "Qwen3-VL-2B";
+        response = await runAiCheckRequest({ ...basePayload, request_id: `web-${createNonce()}` });
+      }
+
       const result = Array.isArray(response?.results) ? response.results[0] : null;
       const answer = String(result?.answer || "").toUpperCase();
       const pass = result?.pass;
 
-      let finalText = "无法判断";
-      let detail = "检测服务没有返回有效结果。";
-      let tone = "error";
-
       if (answer === "YES" || pass === true) {
-        finalText = "是";
-        detail = `事件“${eventName}”检测结果为 YES。`;
-        tone = "yes";
+        setAiCheckStatus(`检测完成（${usedModel}）`, "ok");
+        setAiCheckResult("是", `事件“${eventName}”检测结果为 YES。`, "yes");
       } else if (answer === "NO" || pass === false) {
-        finalText = "否";
-        detail = `事件“${eventName}”检测结果为 NO。`;
-        tone = "no";
-      } else if (result?.error) {
-        detail = `检测失败：${result.error}`;
+        setAiCheckStatus(`检测完成（${usedModel}）`, "ok");
+        setAiCheckResult("否", `事件“${eventName}”检测结果为 NO。`, "no");
+      } else {
+        const rawText = result?.raw_text || "";
+        setAiCheckStatus("结果不明", "error");
+        setAiCheckResult("无法判断", rawText ? `模型原始回复：${rawText}` : "检测服务没有返回有效结果。", "error");
       }
-
-      setAiCheckStatus("检测完成", "ok");
-      setAiCheckResult(finalText, detail, tone);
 
       if (aiHistoryPanel) {
         loadAiHistoryPageData(1, { selectFirst: true });
@@ -5742,6 +6636,20 @@
   });
 
   chatForm?.addEventListener("submit", handleCloudChatSubmit);
+  chatVoiceToggle?.addEventListener("click", () => {
+    handleChatVoiceToggleClick().catch((error) => {
+      chatVoiceEnabled = false;
+      disconnectCloudChatVoiceSocket({ manual: true, stopPlayback: true });
+      updateChatVoiceToggle();
+      setChatStatus(error?.message || "语音连接失败", "error");
+    });
+  });
+  chatPanel?.addEventListener("pointerdown", () => {
+    touchChatVoiceIdle();
+  });
+  chatPanel?.addEventListener("keydown", () => {
+    touchChatVoiceIdle();
+  });
   qwen36Input?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -5796,10 +6704,22 @@
     openClawInput?.focus();
   });
   window.addEventListener("pagehide", () => {
+    cancelCloudChatVoiceTurn("pagehide_exit").catch(() => {});
+    disconnectCloudChatVoiceSocket({ manual: true, stopPlayback: true });
     stopAllCloudOpsAudioChannels({
       silent: true,
       useKeepalive: true
     }).catch(() => {});
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden || !chatVoiceEnabled) {
+      return;
+    }
+    cancelCloudChatVoiceTurn("document_hidden_exit").catch(() => {});
+    chatVoiceEnabled = false;
+    disconnectCloudChatVoiceSocket({ manual: true, stopPlayback: true });
+    updateChatVoiceToggle();
+    setChatStatus("页面已切换，语音已退出", "idle");
   });
 
   aiCheckImageInput?.addEventListener("change", () => {
@@ -5840,6 +6760,12 @@
     loadAiHistoryPageData(1, { selectFirst: true });
   });
 
+  aiHistoryEventFilterSelect?.addEventListener("change", () => {
+    aiHistoryEventFilter = aiHistoryEventFilterSelect.value || "";
+    aiHistorySelectedId = 0;
+    loadAiHistoryPageData(1, { selectFirst: true });
+  });
+
   aiHistoryPrevBtn?.addEventListener("click", () => {
     if (aiHistoryPageValue <= 1) return;
     loadAiHistoryPageData(aiHistoryPageValue - 1, { selectFirst: true });
@@ -5865,6 +6791,7 @@
   if (chatMessages) {
     resetConversation();
     loadIdentityOptions();
+    updateChatVoiceToggle();
   }
 
   if (qwen36Messages) {
@@ -5881,7 +6808,6 @@
     applyCloudOpsAuthState(false);
     renderCloudOpsContextList();
     updateCloudOpsAudioAvailability();
-    connectCloudOpsOpsSocket();
     refreshCloudOpsAuthStatus();
   }
 

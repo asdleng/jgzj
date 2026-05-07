@@ -3,16 +3,27 @@
     <div class="cloud-chat-head-main">
       <p class="cloud-chat-title">AI对话体验</p>
       <p id="chat-status" class="cloud-chat-status" data-state="idle">就绪</p>
-      <label class="cloud-chat-identity" for="chat-identity">
-        <span>身份</span>
-        <select id="chat-identity" aria-label="选择身份">
-          <option value="car-web">car-web</option>
-        </select>
-      </label>
-      <label class="qwen36-thinking-toggle" for="chat-thinking">
-        <input id="chat-thinking" type="checkbox" />
-        <span>thinking</span>
-      </label>
+      <div class="cloud-chat-controls">
+        <label class="cloud-chat-identity" for="chat-identity">
+          <span>身份</span>
+          <select id="chat-identity" aria-label="选择身份">
+            <option value="car-web">car-web</option>
+          </select>
+        </label>
+        <label class="qwen36-thinking-toggle" for="chat-thinking">
+          <input id="chat-thinking" type="checkbox" />
+          <span>thinking</span>
+        </label>
+        <button
+          id="chat-voice"
+          class="cloud-chat-audio-toggle"
+          type="button"
+          aria-pressed="false"
+          title="开启后会实时播放流式语音"
+        >
+          语音关
+        </button>
+      </div>
     </div>
   </header>
   <div id="chat-messages" class="cloud-chat-messages"></div>

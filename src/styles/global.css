@@ -2175,6 +2175,10 @@ body::after {
   font-size: 0.9rem;
 }
 
+.inspection-page-shell .ai-history-filters {
+  gap: 12px;
+}
+
 .inspection-page-shell .ai-history-filter select {
   font-size: 0.95rem;
   padding: 8px 10px;
@@ -2420,6 +2424,10 @@ body::after {
   height: auto;
   min-height: 1120px;
   margin-top: 0;
+}
+
+.ops-openclaw-shell > .cloud-chat-panel.cloud-ops-console-panel[data-authenticated="false"] {
+  min-height: 0;
 }
 
 .ops-openclaw-chat-shell > .cloud-chat-panel {
@@ -2693,8 +2701,19 @@ body::after {
   background: rgba(2, 6, 23, 0.46);
 }
 
+.cloud-runtime-check-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 2px;
+}
+
 .cloud-runtime-check.is-ok {
   border-color: rgba(52, 211, 153, 0.3);
+}
+
+.cloud-runtime-check.is-warn {
+  border-color: rgba(251, 191, 36, 0.32);
 }
 
 .cloud-runtime-check.is-bad {
@@ -2711,6 +2730,7 @@ body::after {
   font-weight: 700;
   color: #f8fafc;
   text-align: right;
+  word-break: break-word;
 }
 
 .cloud-runtime-card-actions {
@@ -3694,8 +3714,15 @@ body::after {
   color: #fb7185;
 }
 
-.cloud-chat-identity {
+.cloud-chat-controls {
   margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.cloud-chat-identity {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -3714,6 +3741,34 @@ body::after {
 }
 
 .cloud-chat-identity select:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.cloud-chat-audio-toggle {
+  min-height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  background: rgba(2, 6, 23, 0.58);
+  color: #dbeafe;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.cloud-chat-audio-toggle[data-state="on"] {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: #34d399;
+}
+
+.cloud-chat-audio-toggle[data-state="connecting"] {
+  border-color: rgba(56, 189, 248, 0.45);
+  color: #38bdf8;
+}
+
+.cloud-chat-audio-toggle:disabled {
   opacity: 0.7;
   cursor: not-allowed;
 }
@@ -3975,6 +4030,15 @@ body::after {
   padding: 16px;
 }
 
+.cloud-ops-console-panel[data-authenticated="false"] .openclaw-auth {
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.cloud-ops-console-panel[data-authenticated="false"] .openclaw-login-form {
+  max-width: 560px;
+}
+
 .openclaw-auth[hidden],
 .openclaw-chat-shell[hidden] {
   display: none;
@@ -4149,6 +4213,23 @@ body::after {
   background: rgba(76, 5, 25, 0.82);
 }
 
+.ai-check-result[data-state="ok"] {
+  border-color: rgba(96, 165, 250, 0.45);
+  background: rgba(2, 14, 44, 0.88);
+}
+
+.ai-check-result[data-state="ok"] .ai-check-answer {
+  font-size: 1.4rem;
+  line-height: 1.35;
+}
+
+.ai-check-result[data-state="ok"] .ai-check-detail,
+.ai-check-result[data-state="yes"] .ai-check-detail,
+.ai-check-result[data-state="no"] .ai-check-detail {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .ai-check-result-label {
   margin: 0;
   font-size: 0.75rem;
@@ -4176,8 +4257,15 @@ body::after {
   gap: 8px;
 }
 
-.ai-history-filter {
+.ai-history-filters {
   margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ai-history-filter {
   display: inline-flex;
   align-items: center;
   gap: 8px;
