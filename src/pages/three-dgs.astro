@@ -127,6 +127,16 @@ import SiteLayout from "../components/SiteLayout.astro";
               <button id="three-dgs-pull-image-pose" class="three-dgs-button three-dgs-button--primary" type="button">上传图片数据</button>
             </div>
 
+            <div id="three-dgs-upload-progress" class="three-dgs-upload-progress" hidden>
+              <div class="three-dgs-upload-progress-track">
+                <span id="three-dgs-upload-progress-fill"></span>
+              </div>
+              <div class="three-dgs-upload-progress-meta">
+                <span id="three-dgs-upload-progress-label">0%</span>
+                <span id="three-dgs-upload-progress-detail">等待上传</span>
+              </div>
+            </div>
+
             <div class="three-dgs-upload-grid">
               <div class="three-dgs-dropzone" data-kind="pointcloud">
                 <p class="three-dgs-dropzone-title">云端点云地图</p>
@@ -307,6 +317,10 @@ import SiteLayout from "../components/SiteLayout.astro";
   const viewerOpen = el("three-dgs-open-viewer");
   const captureStreamText = el("three-dgs-capture-stream");
   const captureCameraCounts = el("three-dgs-capture-camera-counts");
+  const uploadProgress = el("three-dgs-upload-progress");
+  const uploadProgressFill = el("three-dgs-upload-progress-fill");
+  const uploadProgressLabel = el("three-dgs-upload-progress-label");
+  const uploadProgressDetail = el("three-dgs-upload-progress-detail");
 
   let statusData = null;
   let pointcloudFile = null;
@@ -472,6 +486,54 @@ import SiteLayout from "../components/SiteLayout.astro";
     feedback.dataset.state = state;
   }
 
+  function setUploadProgress(percent, detail, options = {}) {
+    if (!uploadProgress || !uploadProgressFill || !uploadProgressLabel || !uploadProgressDetail) return;
+    if (options.hidden) {
+      uploadProgress.hidden = true;
+      uploadProgressFill.style.width = "0%";
+      uploadProgressFill.dataset.state = "idle";
+      uploadProgressLabel.textContent = "0%";
+      uploadProgressDetail.textContent = "等待上传";
+      return;
+    }
+    const pct = Number(percent);
+    const hasPct = Number.isFinite(pct);
+    uploadProgress.hidden = false;
+    uploadProgressFill.style.width = hasPct ? `${Math.max(0, Math.min(100, pct))}%` : "35%";
+    uploadProgressFill.dataset.state = options.state || (hasPct ? "active" : "indeterminate");
+    uploadProgressLabel.textContent = hasPct ? `${Math.max(0, Math.min(100, pct)).toFixed(1)}%` : "接收中";
+    uploadProgressDetail.textContent = detail || "正在上传";
+  }
+
+  function renderVehicleUploadProgress(state = {}) {
+    const uploads = state.vehicle_uploads || {};
+    const progress =
+      uploads.image_pose && ["waiting_vehicle", "uploading", "completed", "failed"].includes(uploads.image_pose.status)
+        ? uploads.image_pose
+        : uploads.pointcloud && ["waiting_vehicle", "uploading", "completed", "failed"].includes(uploads.pointcloud.status)
+          ? uploads.pointcloud
+          : null;
+    if (!progress) {
+      if (!busy) setUploadProgress(0, "", { hidden: true });
+      return;
+    }
+    const kindText = progress.kind === "pointcloud" ? "点云地图" : "图像-位姿包";
+    const statusText = {
+      waiting_vehicle: "等待车端打包",
+      uploading: "云端接收中",
+      completed: "上传完成",
+      failed: "上传失败"
+    }[progress.status] || "上传中";
+    const received = formatSize(progress.received_bytes);
+    const total = Number(progress.total_bytes || 0) > 0 ? ` / ${formatSize(progress.total_bytes)}` : "";
+    const detail = progress.error_message
+      ? `${kindText} ${statusText}：${progress.error_message}`
+      : `${kindText} ${statusText} · ${received}${total}`;
+    setUploadProgress(progress.progress_pct, detail, {
+      state: progress.status === "failed" ? "error" : progress.status === "completed" ? "success" : "active"
+    });
+  }
+
   function isAuthed() {
     return Boolean(statusData?.auth?.authenticated);
   }
@@ -531,6 +593,8 @@ import SiteLayout from "../components/SiteLayout.astro";
         ...statusData.state,
         phase: data.phase || statusData.state.phase,
         stage_text: data.stage_text || statusData.state.stage_text,
+        uploads: data.uploads || statusData.state.uploads,
+        vehicle_uploads: data.vehicle_uploads || statusData.state.vehicle_uploads,
         capture: {
           ...(statusData.state.capture || {}),
           ...data.capture
@@ -675,6 +739,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 
     const uploads = state.uploads || {};
     const mapStatus = mapStatusFromState(state);
+    renderVehicleUploadProgress(state);
     pointcloudName.textContent = uploads.pointcloud
       ? `${uploads.pointcloud.name} · ${formatSize(uploads.pointcloud.size_bytes)}`
       : pointcloudFile
@@ -840,24 +905,30 @@ import SiteLayout from "../components/SiteLayout.astro";
       xhr.upload.onprogress = (event) => {
         if (!event.lengthComputable) return;
         const pct = ((event.loaded / event.total) * 100).toFixed(1);
+        setUploadProgress(Number(pct), `${label} · ${formatSize(event.loaded)} / ${formatSize(event.total)}`);
         setFeedback(`${label}：${pct}%`);
       };
       xhr.onload = () => {
         try {
           const data = JSON.parse(xhr.responseText || "{}");
           if (xhr.status < 200 || xhr.status >= 300) {
+            setUploadProgress(0, `${label}失败：${data.detail || data.error || "upload_failed"}`, { state: "error" });
             reject(new Error(data.detail || data.error || "upload_failed"));
             return;
           }
           statusData = data;
           applyStatus();
           connectCaptureStream();
+          setUploadProgress(100, `${label}完成。`, { state: "success" });
           resolve(data);
         } catch (error) {
           reject(error);
         }
       };
-      xhr.onerror = () => reject(new Error("upload_failed"));
+      xhr.onerror = () => {
+        setUploadProgress(0, `${label}失败。`, { state: "error" });
+        reject(new Error("upload_failed"));
+      };
       xhr.send(file);
     });
   }
@@ -1299,6 +1370,68 @@ import SiteLayout from "../components/SiteLayout.astro";
     min-height: 150px;
     align-content: center;
     justify-items: start;
+  }
+
+  .three-dgs-upload-progress {
+    display: grid;
+    gap: 8px;
+    margin: 4px 0 2px;
+  }
+
+  .three-dgs-upload-progress[hidden] {
+    display: none;
+  }
+
+  .three-dgs-upload-progress-track {
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(71, 85, 105, 0.52);
+  }
+
+  .three-dgs-upload-progress-track span {
+    display: block;
+    width: 0%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #38bdf8, #5eead4);
+    transition: width 0.2s ease;
+  }
+
+  .three-dgs-upload-progress-track span[data-state="success"] {
+    background: linear-gradient(90deg, #14b8a6, #5eead4);
+  }
+
+  .three-dgs-upload-progress-track span[data-state="error"] {
+    background: linear-gradient(90deg, #ef4444, #fca5a5);
+  }
+
+  .three-dgs-upload-progress-track span[data-state="indeterminate"] {
+    animation: three-dgs-upload-pulse 1.2s ease-in-out infinite alternate;
+  }
+
+  .three-dgs-upload-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: #94a3b8;
+    font-size: 12px;
+  }
+
+  .three-dgs-upload-progress-meta span:last-child {
+    text-align: right;
+  }
+
+  @keyframes three-dgs-upload-pulse {
+    from {
+      opacity: 0.45;
+      transform: translateX(-10%);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(20%);
+    }
   }
 
   .three-dgs-feedback {
