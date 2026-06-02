@@ -112,6 +112,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const vehicleMapPath = process.env.THREE_DGS_VEHICLE_MAP_PATH || 'map/GlobalMap.pcd';
   const configuredCameraIds = parseList(process.env.THREE_DGS_CAMERA_IDS || 'camera1,camera2,camera3,camera4');
   const fallbackCalibratedCameras = parseList(process.env.THREE_DGS_FALLBACK_CALIBRATED_CAMERAS || 'camera1,camera4');
+  const allowedVehicleIds = parseList(process.env.THREE_DGS_ALLOWED_VEHICLE_IDS || defaultVehicleId);
   const mapDownloadTools = parseList(process.env.THREE_DGS_MAP_DOWNLOAD_TOOLS || '');
   const mapUploadTool = process.env.THREE_DGS_MAP_UPLOAD_TOOL || 'map.pointcloud.upload';
   const publicBaseUrl = String(process.env.THREE_DGS_PUBLIC_BASE_URL || 'http://idtrd.kmdns.net:7791').replace(/\/+$/, '');
@@ -247,6 +248,32 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     }
     req.threeDgsAuth = auth;
     return next();
+  }
+
+  function resolveThreeDgsVehicleId(value, fallback = defaultVehicleId) {
+    const vehicleId = String(value || fallback || '').trim();
+    if (!vehicleId) {
+      const error = new Error('vehicle_id_required');
+      error.status = 400;
+      throw error;
+    }
+    if (allowedVehicleIds.length && !allowedVehicleIds.includes(vehicleId)) {
+      const error = new Error('three_dgs_vehicle_not_enabled');
+      error.status = 400;
+      error.vehicle_id = vehicleId;
+      error.allowed_vehicle_ids = allowedVehicleIds;
+      throw error;
+    }
+    return vehicleId;
+  }
+
+  function vehicleErrorBody(error) {
+    return {
+      ok: false,
+      error: error.message || 'vehicle_id_invalid',
+      vehicle_id: error.vehicle_id || null,
+      allowed_vehicle_ids: error.allowed_vehicle_ids || allowedVehicleIds
+    };
   }
 
   function statusAuthPayload(auth) {
