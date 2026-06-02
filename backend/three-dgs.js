@@ -1501,6 +1501,25 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       }
     });
 
+    await appendToLog(localLogPath, `ensure remote directories ${remoteDatasetPath} and ${remoteRunPath}`);
+    try {
+      await execSsh(`mkdir -p ${remoteQuote(remoteDatasetPath)} ${remoteQuote(remoteRunPath)}`, 15000);
+    } catch (error) {
+      await appendToLog(localLogPath, `remote mkdir failed: ${error?.message || 'unknown error'}`);
+      updateNestedState('train', {
+        phase: 'error',
+        running: false,
+        error_message: error?.message || 'remote_mkdir_failed',
+        completed_at_ms: Date.now()
+      });
+      updateState({
+        phase: 'error',
+        stage_text: 'A100 远端目录创建失败。',
+        error_message: error?.message || 'remote_mkdir_failed'
+      });
+      return;
+    }
+
     const logStream = fs.createWriteStream(localLogPath, { flags: 'a' });
     const rsyncArgs = [
       '-az',
