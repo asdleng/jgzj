@@ -79,6 +79,15 @@ function createInitialState() {
       completed_at_ms: null,
       last_remote_status_check_ms: null,
       error_message: null
+    },
+    viewer: {
+      run_id: null,
+      local_point_cloud_path: null,
+      point_cloud_url: null,
+      size_bytes: null,
+      synced_at_ms: null,
+      source_remote_path: null,
+      error_message: null
     }
   };
 }
@@ -93,6 +102,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const uploadDir = path.join(runtimeRoot, 'uploads');
   const datasetRoot = path.join(runtimeRoot, 'datasets');
   const logDir = path.join(runtimeRoot, 'logs');
+  const resultRoot = path.join(runtimeRoot, 'results');
   const statePath = path.join(runtimeRoot, 'three-dgs-state.json');
   const imagePoseUploadPath = path.join(uploadDir, 'image-pose-upload');
   const pointcloudUploadPath = path.join(uploadDir, 'pointcloud-upload');
@@ -146,7 +156,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       fsp.mkdir(runtimeRoot, { recursive: true }),
       fsp.mkdir(uploadDir, { recursive: true }),
       fsp.mkdir(datasetRoot, { recursive: true }),
-      fsp.mkdir(logDir, { recursive: true })
+      fsp.mkdir(logDir, { recursive: true }),
+      fsp.mkdir(resultRoot, { recursive: true })
     ]);
   }
 
@@ -186,6 +197,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           dataset: { ...createInitialState().dataset, ...(parsed.dataset || {}) },
           prepare: { ...createInitialState().prepare, ...(parsed.prepare || {}) },
           train: { ...createInitialState().train, ...(parsed.train || {}) },
+          viewer: { ...createInitialState().viewer, ...(parsed.viewer || {}) },
           updated_at_ms: Number(parsed.updated_at_ms) || Date.now()
         };
         normalizeStaleTransientState();
@@ -1408,6 +1420,79 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return result.stdout;
   }
 
+  function sanitizeRunId(value) {
+    return String(value || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 120);
+  }
+
+  function currentViewerRun(payload = {}) {
+    const runId = sanitizeRunId(state.train.run_id);
+    const requestedRunId = sanitizeRunId(payload.run_id || runId);
+    const remoteRunPath = state.train.remote_run_path;
+    if (!runId || !remoteRunPath) {
+      throw new Error('three_dgs_train_result_not_available');
+    }
+    if (requestedRunId && requestedRunId !== runId) {
+      throw new Error('three_dgs_run_id_mismatch');
+    }
+    return { runId, remoteRunPath };
+  }
+
+  async function findRemotePointCloud(remoteRunPath) {
+    const output = await execSsh(
+      `find ${remoteQuote(`${remoteRunPath}/point_cloud`)} -path '*/point_cloud.ply' -type f 2>/dev/null | sort -V | tail -n 1`,
+      12000
+    );
+    const remotePointCloud = output.trim().split('\n').filter(Boolean).pop();
+    if (!remotePointCloud) {
+      throw new Error('remote_point_cloud_not_found');
+    }
+    return remotePointCloud;
+  }
+
+  async function syncViewerPointCloud(payload = {}) {
+    const { runId, remoteRunPath } = currentViewerRun(payload);
+    const remotePointCloud = await findRemotePointCloud(remoteRunPath);
+    const localDir = path.join(resultRoot, runId);
+    const localPath = path.join(localDir, 'point_cloud.ply');
+    const partPath = `${localPath}.part`;
+    await fsp.mkdir(localDir, { recursive: true });
+    await fsp.rm(partPath, { force: true });
+    const rsyncArgs = [
+      '-az',
+      '-e',
+      ['ssh', ...sshBaseArgs()].join(' '),
+      `${sshTarget()}:${remotePointCloud}`,
+      partPath
+    ];
+    await execFileAsync('rsync', rsyncArgs, {
+      timeout: Number(process.env.THREE_DGS_RESULT_SYNC_TIMEOUT_MS || 300000),
+      maxBuffer: 2 * 1024 * 1024
+    });
+    await fsp.rename(partPath, localPath);
+    const stat = await safeStat(localPath);
+    const pointCloudUrl = `/api/three-dgs/results/${encodeURIComponent(runId)}/point_cloud.ply?ts=${Math.round(stat?.mtimeMs || Date.now())}`;
+    const viewer = {
+      run_id: runId,
+      local_point_cloud_path: localPath,
+      point_cloud_url: pointCloudUrl,
+      size_bytes: stat?.size || null,
+      synced_at_ms: Date.now(),
+      source_remote_path: remotePointCloud,
+      error_message: null
+    };
+    updateState({
+      phase: state.phase === 'error' && state.train.phase === 'completed' ? 'completed' : state.phase,
+      stage_text: '3DGS 训练结果已同步到网站，可在浏览器中查看。',
+      error_message: null,
+      viewer
+    });
+    return viewer;
+  }
+
   function makeRemoteTrainCommand(remoteDatasetPath, remoteRunPath, trainOptions) {
     const iterations = Number(trainOptions.iterations || 7000);
     const resolution = Number(trainOptions.resolution || 4);
@@ -2000,6 +2085,37 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     } catch (error) {
       return res.status(500).json({ ok: false, error: error.message || 'pointcloud_preview_failed' });
     }
+  });
+
+  app.post('/api/three-dgs/viewer/sync', requireThreeDgsAuth, async (req, res) => {
+    try {
+      const viewer = await syncViewerPointCloud(req.body || {});
+      return res.json(makeStatusResponse(req.threeDgsAuth, { viewer }));
+    } catch (error) {
+      updateNestedState('viewer', {
+        error_message: error.message || 'three_dgs_result_sync_failed'
+      });
+      return res.status(502).json({
+        ok: false,
+        error: error.message || 'three_dgs_result_sync_failed',
+        state
+      });
+    }
+  });
+
+  app.get('/api/three-dgs/results/:runId/point_cloud.ply', requireThreeDgsAuth, async (req, res) => {
+    const runId = sanitizeRunId(req.params.runId);
+    if (!runId) {
+      return res.status(400).type('text/plain').send('run_id_invalid');
+    }
+    const targetPath = path.join(resultRoot, runId, 'point_cloud.ply');
+    const stat = await safeStat(targetPath);
+    if (!stat) {
+      return res.status(404).type('text/plain').send('point_cloud_not_synced');
+    }
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.sendFile(targetPath);
   });
 
   app.post('/api/three-dgs/prepare', requireThreeDgsAuth, async (req, res) => {

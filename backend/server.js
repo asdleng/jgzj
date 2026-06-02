@@ -16,6 +16,10 @@ const execFileAsync = promisify(execFile);
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const webRoot = path.resolve(__dirname, '../dist');
+const superSplatViewerRoot = path.resolve(
+  process.env.THREE_DGS_SUPERSPLAT_VIEWER_ROOT ||
+    path.resolve(__dirname, '../.runtime/three-dgs/supersplat-viewer')
+);
 const vehicleRagDir = path.resolve(
   process.env.VEHICLE_RAG_DIR || '/home/admin1/CloudVoice/multi_car_asr_demo/vehicle_rag'
 );
@@ -5373,6 +5377,13 @@ registerRuntimeControlRoutes(app, {
   rootDir: path.resolve(__dirname, '..')
 });
 
+app.use(
+  '/supersplat-viewer',
+  express.static(superSplatViewerRoot, {
+    index: 'index.html',
+    maxAge: '1h'
+  })
+);
 app.use(express.static(webRoot));
 app.get('*', (_req, res) => {
   res.sendFile(path.join(webRoot, 'index.html'));
