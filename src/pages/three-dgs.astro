@@ -496,7 +496,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   );
 
   fetchStatus().catch((error) => setFeedback(`状态读取失败：${error.message}`, "error"));
-  window.setInterval(() => fetchStatus().catch(() => {}), 2500);
+  window.setInterval(() => fetchStatus().catch(() => {}), 10000);
   window.addEventListener("jgzj:auth-change", () => fetchStatus().catch(() => {}));
 </script>
 

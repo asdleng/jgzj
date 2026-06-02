@@ -55,6 +55,7 @@ function createInitialState() {
       iterations: null,
       started_at_ms: null,
       completed_at_ms: null,
+      last_remote_status_check_ms: null,
       error_message: null
     }
   };
@@ -85,6 +86,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const remoteSourceRoot = process.env.THREE_DGS_REMOTE_SOURCE_ROOT || '/home/sari/3dgs_src/gaussian-splatting';
   const remoteEnvName = process.env.THREE_DGS_REMOTE_ENV_NAME || '3dgs124_exact';
   const defaultVehicleId = process.env.THREE_DGS_DEFAULT_VEHICLE_ID || 'BIT-0041';
+  const remoteStatusPollMs = Number(process.env.THREE_DGS_REMOTE_STATUS_POLL_MS || 30000);
 
   let state = createInitialState();
   let statePersistTimer = null;
@@ -591,7 +593,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
     const runId = makeRunId(state.dataset.scene_name || payload.scene_name || 'scene');
     const localLogPath = path.join(logDir, `train-bootstrap-${runId}.log`);
-    const remoteDatasetPath = `${remoteDatasetRoot}/${runId}`;
+      const remoteDatasetPath = `${remoteDatasetRoot}/${runId}`;
     const remoteRunPath = `${remoteRunRoot}/${runId}`;
     const gpu = String(payload.gpu ?? '3').trim() || '3';
     const iterations = Number(payload.iterations || 7000);
@@ -618,6 +620,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         resolution,
         started_at_ms: Date.now(),
         completed_at_ms: null,
+        last_remote_status_check_ms: null,
         error_message: null
       }
     });
@@ -712,6 +715,13 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     if (!state.train.remote_run_path || !['training', 'syncing'].includes(state.train.phase)) {
       return null;
     }
+    const lastChecked = Number(state.train.last_remote_status_check_ms || 0);
+    if (lastChecked && Date.now() - lastChecked < remoteStatusPollMs) {
+      return state.train.remote_status || null;
+    }
+    updateNestedState('train', {
+      last_remote_status_check_ms: Date.now()
+    });
     try {
       const statusRaw = await execSsh(
         `cat ${remoteQuote(`${state.train.remote_run_path}/status.json`)} 2>/dev/null || true`,
