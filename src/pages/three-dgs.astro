@@ -135,6 +135,29 @@ import SiteLayout from "../components/SiteLayout.astro";
               </div>
             </div>
 
+            <div class="three-dgs-map-grid">
+              <div>
+                <span>车端地图版本</span>
+                <strong id="three-dgs-map-version">-</strong>
+              </div>
+              <div>
+                <span>车端点数</span>
+                <strong id="three-dgs-map-points">-</strong>
+              </div>
+              <div>
+                <span>车端大小</span>
+                <strong id="three-dgs-map-size">-</strong>
+              </div>
+              <div>
+                <span>云端落盘</span>
+                <strong id="three-dgs-map-cloud">-</strong>
+              </div>
+              <div class="three-dgs-map-grid__wide">
+                <span>地图范围</span>
+                <strong id="three-dgs-map-extent">-</strong>
+              </div>
+            </div>
+
             <div class="three-dgs-actions">
               <button id="three-dgs-upload-pointcloud" class="three-dgs-button" type="button" disabled>手动上传点云</button>
               <button id="three-dgs-upload-image-pose" class="three-dgs-button" type="button" disabled>手动上传图像包</button>
@@ -250,6 +273,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   let pointcloudFile = null;
   let imagePoseFile = null;
   let busy = false;
+  let vehicleManuallyChanged = false;
 
   function formatSize(bytes) {
     const value = Number(bytes || 0);
@@ -257,6 +281,45 @@ import SiteLayout from "../components/SiteLayout.astro";
     if (value >= 1048576) return `${(value / 1048576).toFixed(1)} MB`;
     if (value > 0) return `${(value / 1024).toFixed(0)} KB`;
     return "-";
+  }
+
+  function formatCount(value) {
+    const number = Number(value || 0);
+    return number > 0 ? number.toLocaleString("zh-CN") : "-";
+  }
+
+  function currentVehicleId() {
+    return vehicleSelect.value || statusData?.default_vehicle_id || "BIT-0041";
+  }
+
+  function unwrapToolResult(payload) {
+    return payload?.response?.result || payload?.result || payload?.data || payload?.response || null;
+  }
+
+  function mapFileFromInfo(info) {
+    const files = Array.isArray(info?.files) ? info.files : [];
+    return files.find((item) => item?.name === "GlobalMap.pcd" || String(item?.path || "").endsWith("/GlobalMap.pcd")) || null;
+  }
+
+  function formatExtent(extent) {
+    if (!extent) return "-";
+    const values = ["min_x", "max_x", "min_y", "max_y", "min_z", "max_z"].map((key) => Number(extent[key]));
+    if (values.some((value) => !Number.isFinite(value))) return "-";
+    return `X ${values[0].toFixed(1)}~${values[1].toFixed(1)} m / Y ${values[2].toFixed(1)}~${values[3].toFixed(1)} m / Z ${values[4].toFixed(1)}~${values[5].toFixed(1)} m`;
+  }
+
+  function mapStatusFromState(state) {
+    const vehicleData = state?.vehicle_data || {};
+    const meta = unwrapToolResult(vehicleData.map_meta) || {};
+    const info = unwrapToolResult(vehicleData.map_info) || {};
+    const file = mapFileFromInfo(info);
+    return {
+      version: meta.map_version || info.map_version || "-",
+      point_count: meta.point_count || info.point_count || 0,
+      size_bytes: meta.size_bytes || file?.size_bytes || 0,
+      extent: meta.extent || info.extent || null,
+      upload_pending: Boolean(vehicleData.map_upload_pending)
+    };
   }
 
   function setFeedback(text, state = "idle") {
@@ -274,7 +337,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   function isTaskBusy() {
     const state = statusData?.state || {};
-    return ["uploading", "preparing", "training", "updating_map", "pulling_image_pose"].includes(state.phase) || state.prepare?.running || state.train?.running;
+    return ["uploading", "preparing", "training", "updating_map", "pulling_image_pose", "starting_capture"].includes(state.phase) || state.prepare?.running || state.train?.running;
   }
 
   function refreshButtons() {
@@ -294,7 +357,7 @@ import SiteLayout from "../components/SiteLayout.astro";
       "three-dgs-load-train-log"
     ].forEach((id) => {
       const button = el(id);
-      if (button) button.disabled = !allow;
+      if (button) button.disabled = !allow || taskBusy;
     });
     el("three-dgs-upload-pointcloud").disabled = !allow || taskBusy || !pointcloudFile;
     el("three-dgs-upload-image-pose").disabled = !allow || taskBusy || !imagePoseFile;
@@ -306,12 +369,13 @@ import SiteLayout from "../components/SiteLayout.astro";
   function applyVehicles(vehicles) {
     const previous = vehicleSelect.value;
     const preferred = statusData?.default_vehicle_id || "BIT-0041";
+    const allowed = Array.isArray(statusData?.allowed_vehicle_ids) ? statusData.allowed_vehicle_ids : [preferred];
     const items = Array.isArray(vehicles) ? vehicles : [];
     vehicleSelect.innerHTML = "";
     if (!items.length) {
       const option = document.createElement("option");
-      option.value = "";
-      option.textContent = "暂无在线车辆";
+      option.value = preferred;
+      option.textContent = `${preferred} · 等待在线`;
       vehicleSelect.appendChild(option);
       return;
     }
@@ -320,12 +384,23 @@ import SiteLayout from "../components/SiteLayout.astro";
       if (!id) return;
       const option = document.createElement("option");
       option.value = id;
-      option.textContent = `${id}${vehicle.last_seen ? ` · ${vehicle.last_seen}` : ""}`;
+      if (allowed.length && !allowed.includes(id)) {
+        option.disabled = true;
+      }
+      const flags = [];
+      if (allowed.includes(id)) flags.push("3DGS");
+      if (vehicle.last_seen) flags.push(vehicle.last_seen);
+      option.textContent = `${id}${flags.length ? ` · ${flags.join(" · ")}` : ""}`;
       vehicleSelect.appendChild(option);
     });
-    if (previous && [...vehicleSelect.options].some((option) => option.value === previous)) {
+    const options = [...vehicleSelect.options];
+    const preferredOption = options.find((option) => option.value === preferred && !option.disabled);
+    const previousOption = options.find((option) => option.value === previous && !option.disabled);
+    if (preferredOption && (!vehicleManuallyChanged || !previousOption)) {
+      vehicleSelect.value = preferred;
+    } else if (previousOption) {
       vehicleSelect.value = previous;
-    } else if (preferred && [...vehicleSelect.options].some((option) => option.value === preferred)) {
+    } else if (preferredOption) {
       vehicleSelect.value = preferred;
     }
   }
@@ -362,17 +437,29 @@ import SiteLayout from "../components/SiteLayout.astro";
     el("three-dgs-capture-session").textContent = capture.session_id || "-";
     el("three-dgs-capture-frames").textContent = String(capture.saved_frames || 0);
 
-    const uploads = state.uploads || {};
-    pointcloudName.textContent = uploads.pointcloud
-      ? `${uploads.pointcloud.name} · ${formatSize(uploads.pointcloud.size_bytes)}`
-      : pointcloudFile
-        ? `${pointcloudFile.name} · ${formatSize(pointcloudFile.size)}`
-        : "等待更新 map/GlobalMap.pcd";
-    imagePoseName.textContent = uploads.image_pose
-      ? `${uploads.image_pose.name} · ${formatSize(uploads.image_pose.size_bytes)}`
-      : imagePoseFile
-        ? `${imagePoseFile.name} · ${formatSize(imagePoseFile.size)}`
-        : "等待上传当前采集 session";
+      const uploads = state.uploads || {};
+    const mapStatus = mapStatusFromState(state);
+      pointcloudName.textContent = uploads.pointcloud
+        ? `${uploads.pointcloud.name} · ${formatSize(uploads.pointcloud.size_bytes)}`
+        : pointcloudFile
+          ? `${pointcloudFile.name} · ${formatSize(pointcloudFile.size)}`
+          : mapStatus.size_bytes
+          ? `车端已加载 GlobalMap.pcd · ${formatSize(mapStatus.size_bytes)}`
+          : "等待更新 map/GlobalMap.pcd";
+      imagePoseName.textContent = uploads.image_pose
+        ? `${uploads.image_pose.name} · ${formatSize(uploads.image_pose.size_bytes)}`
+        : imagePoseFile
+          ? `${imagePoseFile.name} · ${formatSize(imagePoseFile.size)}`
+          : "等待上传当前采集 session";
+    el("three-dgs-map-version").textContent = mapStatus.version;
+    el("three-dgs-map-points").textContent = formatCount(mapStatus.point_count);
+    el("three-dgs-map-size").textContent = formatSize(mapStatus.size_bytes);
+    el("three-dgs-map-cloud").textContent = uploads.pointcloud
+      ? `已落盘 ${formatSize(uploads.pointcloud.size_bytes)}`
+      : mapStatus.upload_pending
+        ? "等待车端上传"
+        : "未落盘";
+    el("three-dgs-map-extent").textContent = formatExtent(mapStatus.extent);
 
     const dataset = state.dataset || {};
     el("three-dgs-dataset-path").textContent = dataset.path || "-";
@@ -411,12 +498,12 @@ import SiteLayout from "../components/SiteLayout.astro";
     return data;
   }
 
-  function selectedVehiclePayload() {
-    return {
-      vehicle_id: vehicleSelect.value,
-      min_translation_m: Number(el("three-dgs-min-translation").value || 0.5),
-      min_rotation_deg: Number(el("three-dgs-min-rotation").value || 10),
-      min_interval_s: Number(el("three-dgs-min-interval").value || 0.2)
+    function selectedVehiclePayload() {
+      return {
+        vehicle_id: currentVehicleId(),
+        min_translation_m: Number(el("three-dgs-min-translation").value || 0.5),
+        min_rotation_deg: Number(el("three-dgs-min-rotation").value || 10),
+        min_interval_s: Number(el("three-dgs-min-interval").value || 0.2)
     };
   }
 
@@ -464,7 +551,11 @@ import SiteLayout from "../components/SiteLayout.astro";
     try {
       await fn();
       await fetchStatus();
-      setFeedback(`${label}完成。`, "success");
+      if (statusData?.state?.phase === "starting_capture") {
+        setFeedback(`${label}已下发，等待车端返回。`, "success");
+      } else {
+        setFeedback(`${label}完成。`, "success");
+      }
     } catch (error) {
       setFeedback(`${label}失败：${error.message}`, "error");
     } finally {
@@ -516,26 +607,30 @@ import SiteLayout from "../components/SiteLayout.astro";
   }
 
   el("three-dgs-refresh").addEventListener("click", () => runAction("刷新状态", fetchStatus));
+  vehicleSelect.addEventListener("change", () => {
+    vehicleManuallyChanged = true;
+    applyStatus();
+  });
   el("three-dgs-capabilities").addEventListener("click", () =>
-    runAction("读取相机能力", () => postJson(api.capabilities, { vehicle_id: vehicleSelect.value }))
+    runAction("读取相机能力", () => postJson(api.capabilities, { vehicle_id: currentVehicleId() }))
   );
   el("three-dgs-start-capture").addEventListener("click", () =>
     runAction("开始采集", () => postJson(api.startCapture, selectedVehiclePayload()))
   );
   el("three-dgs-capture-status").addEventListener("click", () =>
-    runAction("读取采集状态", () => postJson(api.captureStatus, { vehicle_id: vehicleSelect.value }))
+    runAction("读取采集状态", () => postJson(api.captureStatus, { vehicle_id: currentVehicleId() }))
   );
   el("three-dgs-stop-capture").addEventListener("click", () =>
-    runAction("停止采集", () => postJson(api.stopCapture, { vehicle_id: vehicleSelect.value }))
+    runAction("停止采集", () => postJson(api.stopCapture, { vehicle_id: currentVehicleId() }))
   );
   el("three-dgs-read-manifest").addEventListener("click", () =>
-    runAction("读取清单", () => postJson(api.manifest, { vehicle_id: vehicleSelect.value, include_records: true, max_records: 100 }))
+    runAction("读取清单", () => postJson(api.manifest, { vehicle_id: currentVehicleId(), include_records: true, max_records: 100 }))
   );
   el("three-dgs-update-map").addEventListener("click", () =>
-    runAction("更新地图", () => postJson(api.updateMap, { vehicle_id: vehicleSelect.value }))
+    runAction("更新地图", () => postJson(api.updateMap, { vehicle_id: currentVehicleId() }))
   );
   el("three-dgs-pull-image-pose").addEventListener("click", () =>
-    runAction("上传图片数据", () => postJson(api.pullImagePose, { vehicle_id: vehicleSelect.value }))
+    runAction("上传图片数据", () => postJson(api.pullImagePose, { vehicle_id: currentVehicleId() }))
   );
 
   el("three-dgs-pointcloud-button").addEventListener("click", () => pointcloudInput.click());
@@ -634,9 +729,10 @@ import SiteLayout from "../components/SiteLayout.astro";
     font: 700 0.78rem "Orbitron", "Noto Sans SC", sans-serif;
   }
 
-  .three-dgs-badge[data-state="capturing"],
-  .three-dgs-badge[data-state="preparing"],
-  .three-dgs-badge[data-state="training"] {
+    .three-dgs-badge[data-state="capturing"],
+    .three-dgs-badge[data-state="starting_capture"],
+    .three-dgs-badge[data-state="preparing"],
+    .three-dgs-badge[data-state="training"] {
     color: #67e8f9;
     border-color: rgba(103, 232, 249, 0.38);
   }
@@ -655,7 +751,8 @@ import SiteLayout from "../components/SiteLayout.astro";
   .three-dgs-grid,
   .three-dgs-upload-grid,
   .three-dgs-form-grid,
-  .three-dgs-mini-grid {
+  .three-dgs-mini-grid,
+  .three-dgs-map-grid {
     display: grid;
     gap: 14px;
   }
@@ -754,7 +851,12 @@ import SiteLayout from "../components/SiteLayout.astro";
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .three-dgs-mini-grid div {
+  .three-dgs-map-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .three-dgs-mini-grid div,
+  .three-dgs-map-grid div {
     display: grid;
     gap: 6px;
     min-width: 0;
@@ -763,10 +865,20 @@ import SiteLayout from "../components/SiteLayout.astro";
     background: rgba(2, 6, 23, 0.42);
   }
 
-  .three-dgs-mini-grid strong {
+  .three-dgs-mini-grid strong,
+  .three-dgs-map-grid strong {
     overflow-wrap: anywhere;
     color: #e0f2fe;
     font-size: 0.92rem;
+  }
+
+  .three-dgs-map-grid span {
+    color: #94a3b8;
+    font-size: 0.86rem;
+  }
+
+  .three-dgs-map-grid__wide {
+    grid-column: span 4;
   }
 
   .three-dgs-dropzone {
@@ -802,11 +914,16 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   @media (max-width: 980px) {
     .three-dgs-grid,
-    .three-dgs-upload-grid,
-    .three-dgs-form-grid,
-    .three-dgs-form-grid--train,
-    .three-dgs-mini-grid {
-      grid-template-columns: 1fr;
+      .three-dgs-upload-grid,
+      .three-dgs-form-grid,
+      .three-dgs-form-grid--train,
+      .three-dgs-mini-grid,
+    .three-dgs-map-grid {
+        grid-template-columns: 1fr;
+      }
+
+    .three-dgs-map-grid__wide {
+      grid-column: auto;
     }
 
     .three-dgs-head,

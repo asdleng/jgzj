@@ -115,6 +115,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const allowedVehicleIds = parseList(process.env.THREE_DGS_ALLOWED_VEHICLE_IDS || defaultVehicleId);
   const mapDownloadTools = parseList(process.env.THREE_DGS_MAP_DOWNLOAD_TOOLS || '');
   const mapUploadTool = process.env.THREE_DGS_MAP_UPLOAD_TOOL || 'map.pointcloud.upload';
+  const fallbackMapUploadStagingDir =
+    process.env.THREE_DGS_MAP_UPLOAD_FALLBACK_STAGING_DIR || '/home/nvidia/auto_ad_ai_map_upload';
   const publicBaseUrl = String(process.env.THREE_DGS_PUBLIC_BASE_URL || 'http://idtrd.kmdns.net:7791').replace(/\/+$/, '');
   const vehicleUploadTokenTtlMs = Number(process.env.THREE_DGS_VEHICLE_UPLOAD_TOKEN_TTL_MS || 2 * 60 * 60 * 1000);
 
@@ -122,6 +124,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   let statePersistTimer = null;
   let prepareProcess = null;
   let trainBootstrapProcess = null;
+  let captureStartInFlight = false;
   let uploadInFlight = false;
   const pendingVehicleUploads = new Map();
 
@@ -191,7 +194,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   }
 
   function normalizeStaleTransientState() {
-    if (['uploading', 'updating_map', 'pulling_image_pose'].includes(state.phase)) {
+    if (['uploading', 'updating_map', 'pulling_image_pose', 'starting_capture'].includes(state.phase)) {
       state = {
         ...state,
         phase: state.dataset.prepared ? 'prepared' : 'idle',
@@ -541,6 +544,22 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     };
   }
 
+  async function discoverUpload(basePath, allowedExtensions, fallbackName) {
+    for (const ext of allowedExtensions) {
+      const targetPath = `${basePath}${ext}`;
+      const stat = await safeStat(targetPath);
+      if (stat) {
+        return {
+          name: fallbackName,
+          path: targetPath,
+          size_bytes: stat.size,
+          updated_at_ms: stat.mtimeMs || Date.now()
+        };
+      }
+    }
+    return null;
+  }
+
   async function syncUploadedArtifacts() {
     const imagePoseStat = state.uploads.image_pose?.path ? await safeStat(state.uploads.image_pose.path) : null;
     const pointcloudStat = state.uploads.pointcloud?.path ? await safeStat(state.uploads.pointcloud.path) : null;
@@ -550,6 +569,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     }
     if (state.uploads.pointcloud && !pointcloudStat) {
       uploads.pointcloud = null;
+    }
+    if (!uploads.image_pose) {
+      uploads.image_pose = await discoverUpload(
+        imagePoseUploadPath,
+        ['.zip', '.tar', '.tgz', '.gz', '.json', '.jsonl'],
+        'image_pose_upload'
+      );
+    }
+    if (!uploads.pointcloud) {
+      uploads.pointcloud = await discoverUpload(pointcloudUploadPath, ['.pcd', '.ply'], 'GlobalMap.pcd');
     }
     if (uploads.image_pose !== state.uploads.image_pose || uploads.pointcloud !== state.uploads.pointcloud) {
       updateState({ uploads });
@@ -576,7 +605,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       created_at_ms: Date.now()
     };
     pendingVehicleUploads.set(token, ticket);
-    const uploadUrl = `${publicBaseUrl}/api/three-dgs/vehicle-upload/${kind}/${token}`;
+    const uploadPath =
+      kind === 'pointcloud' ? `/api/three-dgs/pointcloud-upload/${token}` : `/api/three-dgs/vehicle-upload/${kind}/${token}`;
+    const uploadUrl = `${publicBaseUrl}${uploadPath}`;
     return {
       ...ticket,
       upload_url: uploadUrl
@@ -590,6 +621,15 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         pendingVehicleUploads.delete(token);
       }
     }
+  }
+
+  function mapUploadErrorMessage(payload) {
+    return String(payload?.error || payload?.response?.error || payload?.detail || '');
+  }
+
+  function shouldRetryMapUploadWithFallback(payload) {
+    const message = mapUploadErrorMessage(payload);
+    return Boolean(fallbackMapUploadStagingDir && /permission denied/i.test(message) && message.includes('/media/data'));
   }
 
   async function writeVehicleUpload(req, ticket) {
@@ -628,7 +668,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   }
 
   async function updateMapFromVehicle(auth, vehicleId) {
-    if (uploadInFlight || state.prepare.running || state.train.running) {
+    if (captureStartInFlight || uploadInFlight || state.prepare.running || state.train.running) {
       throw new Error('three_dgs_busy');
     }
     updateState({
@@ -639,15 +679,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     });
 
     const mapInfo = await callVehicleTool(vehicleId, 'map.info', {}, 45).catch((error) => ({ error: error.message }));
-    const mapMeta = await callVehicleTool(
-      vehicleId,
-      'map.pointcloud.meta',
-      {
-        target: 'global',
-        path: vehicleMapPath
-      },
-      45
-    );
+    const mapMeta = await callVehicleTool(vehicleId, 'map.pointcloud.meta', { target: 'global' }, 45);
 
     let pointcloudInfo = await writeArtifactToFile(
       mapMeta,
@@ -690,21 +722,32 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         map_upload_pending: true,
         map_upload_expires_at_ms: ticket.expires_at_ms
       });
-      mapUpload = await callVehicleTool(
-        vehicleId,
-        mapUploadTool,
-        {
-          target: 'global',
-          path: vehicleMapPath,
-          map_path: vehicleMapPath,
-          upload_url: ticket.upload_url,
-          method: 'POST',
-          content_type: 'application/octet-stream'
-        },
-        Number(process.env.THREE_DGS_MAP_UPLOAD_TOOL_TIMEOUT_S || 240)
-      ).catch((error) => ({ error: error.message, tool: mapUploadTool }));
+      const requestMapUpload = (extraArgs = {}) =>
+        callVehicleTool(
+          vehicleId,
+          mapUploadTool,
+          {
+            upload_url: ticket.upload_url,
+            method: 'POST',
+            ...extraArgs
+          },
+          Number(process.env.THREE_DGS_MAP_UPLOAD_TOOL_TIMEOUT_S || 240)
+        ).catch((error) => ({ error: error.message, tool: mapUploadTool }));
 
-      const uploadedStat = await safeStat(ticket.target_path);
+      mapUpload = await requestMapUpload();
+      let uploadedStat = await safeStat(ticket.target_path);
+      if (!uploadedStat && shouldRetryMapUploadWithFallback(mapUpload)) {
+        mergeVehicleData({
+          vehicle_id: vehicleId,
+          map_upload_retry_staging_dir: fallbackMapUploadStagingDir
+        });
+        updateState({
+          phase: 'updating_map',
+          stage_text: `车端 /media/data staging 无权限，改用 ${fallbackMapUploadStagingDir} 重试 GlobalMap.pcd 上传。`
+        });
+        mapUpload = await requestMapUpload({ staging_dir: fallbackMapUploadStagingDir });
+        uploadedStat = await safeStat(ticket.target_path);
+      }
       if (uploadedStat) {
         pointcloudInfo = {
           name: 'GlobalMap.pcd',
@@ -725,15 +768,18 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     });
 
     if (!pointcloudInfo) {
+      const mapUploadError =
+        mapUploadErrorMessage(mapUpload) ||
+        (mapUpload?.response && mapUpload.response.ok === false ? 'map_upload_tool_failed' : null);
       updateState({
         phase: state.uploads.image_pose ? 'idle' : 'idle',
-        stage_text: mapUpload?.error
-          ? '已读取车端 GlobalMap.pcd 元信息，但车端大文件上传工具暂未接通。'
+        stage_text: mapUploadError
+          ? '已读取车端 GlobalMap.pcd 元信息，但车端上传 GlobalMap.pcd 失败。'
           : '已向车端下发 GlobalMap.pcd 上传地址，等待车端上传文件。',
-        error_message: mapUpload?.error ? 'map_upload_tool_unavailable' : null
+        error_message: mapUploadError ? mapUploadError : null
       });
-      if (mapUpload?.error) {
-        const error = new Error('map_upload_tool_unavailable');
+      if (mapUploadError) {
+        const error = new Error(mapUploadError);
         error.status = 424;
         throw error;
       }
@@ -753,15 +799,12 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   }
 
   async function pullImagePosePackageFromVehicle(auth, payload = {}) {
-    if (uploadInFlight || state.prepare.running || state.train.running) {
+    if (captureStartInFlight || uploadInFlight || state.prepare.running || state.train.running) {
       throw new Error('three_dgs_busy');
     }
-    const vehicleId = String(payload.vehicle_id || state.capture.vehicle_id || defaultVehicleId).trim();
+    const vehicleId = resolveThreeDgsVehicleId(payload.vehicle_id || state.capture.vehicle_id || defaultVehicleId);
     const rawSessionId = String(payload.session_id || state.capture.session_id || '').trim();
     const sessionId = rawSessionId && !rawSessionId.includes(',') ? rawSessionId : '';
-    if (!vehicleId) {
-      throw new Error('vehicle_id_required');
-    }
 
     updateState({
       phase: 'pulling_image_pose',
@@ -815,9 +858,173 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return packageInfo;
   }
 
+  function buildCaptureStartArgs(payload = {}) {
+    return {
+      pose_topic: '/ndt_pose',
+      min_translation_m: Number(payload.min_translation_m || 0.5),
+      min_rotation_deg: Number(payload.min_rotation_deg || 10),
+      min_interval_s: Number(payload.min_interval_s || 0.2),
+      max_pose_gap_ms: Number(payload.max_pose_gap_ms || 100),
+      duration_s: Number(payload.duration_s || 0),
+      max_frames: Number(payload.max_frames || 0)
+    };
+  }
+
+  async function runCaptureStartTask(auth, vehicleId, baseCaptureArgs) {
+    const starts = [];
+    let capabilities = null;
+    let calibration = null;
+    try {
+      updateState({
+        phase: 'starting_capture',
+        active_username: auth.username,
+        stage_text: `正在读取 ${vehicleId} 3DGS 相机能力。`,
+        error_message: null
+      });
+      capabilities = await getCaptureCapabilities(vehicleId);
+      const enabledCameras = enabledCameraIdsFromCapabilities(capabilities);
+      if (!enabledCameras.length) {
+        throw new Error('three_dgs_no_calibrated_cameras');
+      }
+
+      mergeVehicleData({
+        vehicle_id: vehicleId,
+        configured_cameras: configuredCameraIds,
+        calibrated_cameras: enabledCameras,
+        capabilities
+      });
+
+      calibration = await callVehicleTool(vehicleId, 'vehicle.calibration', { include_lidar_extrinsics: true }, 30).catch((error) => ({
+        error: error.message
+      }));
+
+      for (const camera of enabledCameras) {
+        updateState({
+          phase: 'starting_capture',
+          stage_text: `正在启动 ${vehicleId} ${camera} 3DGS 采集。`
+        });
+        const started = await callVehicleTool(
+          vehicleId,
+          '3dgs.capture.start',
+          {
+            ...baseCaptureArgs,
+            camera
+          },
+          35
+        );
+        starts.push({
+          camera,
+          response: started,
+          session: normalizeSession(started)
+        });
+        updateNestedState('capture', {
+          vehicle_id: vehicleId,
+          active: true,
+          cameras: starts.map((item) => item.camera),
+          last_response: { capabilities, calibration, starts }
+        });
+      }
+
+      const sessionIds = starts
+        .map((item) => item.session?.session_id || item.session?.session?.session_id || null)
+        .filter(Boolean);
+      updateNestedState('capture', {
+        vehicle_id: vehicleId,
+        active: true,
+        session_id: sessionIds.length === 1 ? sessionIds[0] : sessionIds.join(',') || null,
+        session_ids: Object.fromEntries(starts.map((item) => [item.camera, item.session?.session_id || item.session?.session?.session_id || null])),
+        cameras: enabledCameras,
+        saved_frames: 0,
+        last_response: {
+          capabilities,
+          calibration,
+          starts
+        },
+        started_at_ms: Date.now(),
+        stopped_at_ms: null
+      });
+      mergeVehicleData({
+        vehicle_id: vehicleId,
+        calibration,
+        configured_cameras: configuredCameraIds,
+        calibrated_cameras: enabledCameras
+      });
+      updateState({
+        phase: 'capturing',
+        active_username: auth.username,
+        stage_text: `车端 ${enabledCameras.join('、')} 3DGS 采集已启动。`,
+        error_message: null
+      });
+    } catch (error) {
+      for (const item of starts) {
+        await callVehicleTool(
+          vehicleId,
+          '3dgs.capture.stop',
+          {
+            reason: 'rollback_after_partial_start_failed',
+            camera: item.camera
+          },
+          20
+        ).catch(() => null);
+      }
+      updateNestedState('capture', {
+        vehicle_id: vehicleId,
+        active: false,
+        cameras: starts.map((item) => item.camera),
+        last_response: {
+          capabilities,
+          calibration,
+          starts,
+          error: error.message || 'three_dgs_capture_start_failed'
+        },
+        stopped_at_ms: Date.now()
+      });
+      updateState({
+        phase: state.dataset.prepared ? 'prepared' : 'idle',
+        stage_text: '启动车端 3DGS 采集失败。',
+        error_message: error.message || 'three_dgs_capture_start_failed'
+      });
+    } finally {
+      captureStartInFlight = false;
+    }
+  }
+
+  function queueCaptureStart(auth, payload = {}) {
+    if (captureStartInFlight || uploadInFlight || state.prepare.running || state.train.running) {
+      const error = new Error('three_dgs_busy');
+      error.status = 409;
+      throw error;
+    }
+    if (state.capture.active) {
+      const error = new Error('three_dgs_capture_already_active');
+      error.status = 409;
+      throw error;
+    }
+    const vehicleId = resolveThreeDgsVehicleId(payload.vehicle_id);
+    const baseCaptureArgs = buildCaptureStartArgs(payload);
+    captureStartInFlight = true;
+    updateNestedState('capture', {
+      vehicle_id: vehicleId,
+      active: false,
+      cameras: [],
+      last_response: null,
+      started_at_ms: null,
+      stopped_at_ms: null
+    });
+    updateState({
+      phase: 'starting_capture',
+      active_username: auth.username,
+      stage_text: `已下发 ${vehicleId} 3DGS 采集启动任务，等待车端返回。`,
+      error_message: null
+    });
+    setImmediate(() => {
+      void runCaptureStartTask(auth, vehicleId, baseCaptureArgs);
+    });
+  }
+
   async function handleUpload(req, res, kind) {
     await syncUploadedArtifacts();
-    if (uploadInFlight || state.prepare.running || state.train.running) {
+    if (captureStartInFlight || uploadInFlight || state.prepare.running || state.train.running) {
       return res.status(409).json({
         ok: false,
         error: 'three_dgs_busy'
@@ -919,7 +1126,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   }
 
   async function startPrepareTask(auth, payload = {}) {
-    if (prepareProcess || state.prepare.running || state.train.running) {
+    if (captureStartInFlight || prepareProcess || state.prepare.running || state.train.running) {
       throw new Error('three_dgs_busy');
     }
     if (!state.uploads.image_pose?.path || !state.uploads.pointcloud?.path) {
@@ -1319,6 +1526,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       makeStatusResponse(auth, {
         vehicles,
         default_vehicle_id: defaultVehicleId,
+        allowed_vehicle_ids: allowedVehicleIds,
         configured_camera_ids: configuredCameraIds,
         fallback_calibrated_cameras: fallbackCalibratedCameras,
         vehicle_map_path: vehicleMapPath
@@ -1326,9 +1534,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     );
   });
 
-  async function vehicleUploadHandler(req, res) {
+  async function vehicleUploadHandler(req, res, forcedKind = '') {
     cleanupExpiredVehicleUploads();
-    const kind = String(req.params.kind || '').trim();
+    const kind = String(forcedKind || req.params.kind || '').trim();
     const token = String(req.params.token || '').trim();
     const ticket = pendingVehicleUploads.get(token);
     if (!ticket || ticket.kind !== kind) {
@@ -1369,15 +1577,23 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         error: error.message || 'vehicle_upload_failed'
       });
     }
-  }
+    }
 
   app.post('/api/three-dgs/vehicle-upload/:kind/:token', vehicleUploadHandler);
   app.put('/api/three-dgs/vehicle-upload/:kind/:token', vehicleUploadHandler);
+  app.post('/api/three-dgs/pointcloud-upload/:token', (req, res) => {
+    void vehicleUploadHandler(req, res, 'pointcloud');
+  });
+  app.put('/api/three-dgs/pointcloud-upload/:token', (req, res) => {
+    void vehicleUploadHandler(req, res, 'pointcloud');
+  });
 
   app.post('/api/three-dgs/capture/capabilities', requireThreeDgsAuth, async (req, res) => {
-    const vehicleId = String(req.body?.vehicle_id || defaultVehicleId).trim();
-    if (!vehicleId) {
-      return res.status(400).json({ ok: false, error: 'vehicle_id_required' });
+    let vehicleId;
+    try {
+      vehicleId = resolveThreeDgsVehicleId(req.body?.vehicle_id);
+    } catch (error) {
+      return res.status(error.status || 400).json(vehicleErrorBody(error));
     }
     const capabilities = await getCaptureCapabilities(vehicleId);
     mergeVehicleData({
@@ -1389,109 +1605,26 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return res.json(makeStatusResponse(req.threeDgsAuth, { capabilities }));
   });
 
-  app.post('/api/three-dgs/capture/start', requireThreeDgsAuth, async (req, res) => {
-    const vehicleId = String(req.body?.vehicle_id || '').trim();
-    if (!vehicleId) {
-      return res.status(400).json({ ok: false, error: 'vehicle_id_required' });
-    }
+  app.post('/api/three-dgs/capture/start', requireThreeDgsAuth, (req, res) => {
     try {
-      const capabilities = await getCaptureCapabilities(vehicleId);
-      const enabledCameras = enabledCameraIdsFromCapabilities(capabilities);
-      if (!enabledCameras.length) {
-        return res.status(400).json({
-          ok: false,
-          error: 'three_dgs_no_calibrated_cameras',
-          detail: 'no_enabled_camera_from_3dgs_capture_capabilities',
-          capabilities
-        });
-      }
-      const calibration = await callVehicleTool(vehicleId, 'vehicle.calibration', { include_lidar_extrinsics: true }, 30).catch((error) => ({
-        error: error.message
-      }));
-      const baseCaptureArgs = {
-        pose_topic: '/ndt_pose',
-        min_translation_m: Number(req.body?.min_translation_m || 0.5),
-        min_rotation_deg: Number(req.body?.min_rotation_deg || 10),
-        min_interval_s: Number(req.body?.min_interval_s || 0.2),
-        max_pose_gap_ms: Number(req.body?.max_pose_gap_ms || 100),
-        duration_s: Number(req.body?.duration_s || 0),
-        max_frames: Number(req.body?.max_frames || 0)
-      };
-      const starts = [];
-      try {
-        for (const camera of enabledCameras) {
-          const started = await callVehicleTool(
-            vehicleId,
-            '3dgs.capture.start',
-            {
-              ...baseCaptureArgs,
-              camera
-            },
-            35
-          );
-          starts.push({
-            camera,
-            response: started,
-            session: normalizeSession(started)
-          });
-        }
-      } catch (startError) {
-        for (const item of starts) {
-          await callVehicleTool(
-            vehicleId,
-            '3dgs.capture.stop',
-            {
-              reason: 'rollback_after_partial_start_failed',
-              camera: item.camera
-            },
-            20
-          ).catch(() => null);
-        }
-        throw startError;
-      }
-      const sessionIds = starts
-        .map((item) => item.session?.session_id || item.session?.session?.session_id || null)
-        .filter(Boolean);
-      updateNestedState('capture', {
-        vehicle_id: vehicleId,
-        active: true,
-        session_id: sessionIds.length === 1 ? sessionIds[0] : sessionIds.join(',') || null,
-        session_ids: Object.fromEntries(starts.map((item) => [item.camera, item.session?.session_id || item.session?.session?.session_id || null])),
-        cameras: enabledCameras,
-        saved_frames: 0,
-        last_response: {
-          capabilities,
-          calibration,
-          starts
-        },
-        started_at_ms: Date.now(),
-        stopped_at_ms: null
-      });
-      mergeVehicleData({
-        vehicle_id: vehicleId,
-        calibration,
-        configured_cameras: configuredCameraIds,
-        calibrated_cameras: capabilities.cameras.filter((item) => item.enabled).map((item) => item.camera)
-      });
-      updateState({
-        phase: 'capturing',
-        active_username: req.threeDgsAuth.username,
-        stage_text: `车端 ${enabledCameras.join('、')} 3DGS 采集已启动。`
-      });
+      queueCaptureStart(req.threeDgsAuth, req.body || {});
       return res.json(makeStatusResponse(req.threeDgsAuth));
     } catch (error) {
       return res.status(error.status || 502).json({
         ok: false,
-        error: 'three_dgs_capture_start_failed',
-        detail: error.message
+        error: error.message || 'three_dgs_capture_start_failed',
+        detail: error.message,
+        allowed_vehicle_ids: error.allowed_vehicle_ids || allowedVehicleIds
       });
     }
   });
 
   app.post('/api/three-dgs/capture/status', requireThreeDgsAuth, async (req, res) => {
-    const vehicleId = String(req.body?.vehicle_id || state.capture.vehicle_id || '').trim();
-    if (!vehicleId) {
-      return res.status(400).json({ ok: false, error: 'vehicle_id_required' });
+    let vehicleId;
+    try {
+      vehicleId = resolveThreeDgsVehicleId(req.body?.vehicle_id || state.capture.vehicle_id);
+    } catch (error) {
+      return res.status(error.status || 400).json(vehicleErrorBody(error));
     }
     try {
       const cameras = activeCaptureCameras();
@@ -1525,9 +1658,11 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   });
 
   app.post('/api/three-dgs/capture/stop', requireThreeDgsAuth, async (req, res) => {
-    const vehicleId = String(req.body?.vehicle_id || state.capture.vehicle_id || '').trim();
-    if (!vehicleId) {
-      return res.status(400).json({ ok: false, error: 'vehicle_id_required' });
+    let vehicleId;
+    try {
+      vehicleId = resolveThreeDgsVehicleId(req.body?.vehicle_id || state.capture.vehicle_id);
+    } catch (error) {
+      return res.status(error.status || 400).json(vehicleErrorBody(error));
     }
     try {
       const cameras = activeCaptureCameras();
@@ -1575,9 +1710,11 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   });
 
   app.post('/api/three-dgs/capture/manifest', requireThreeDgsAuth, async (req, res) => {
-    const vehicleId = String(req.body?.vehicle_id || state.capture.vehicle_id || '').trim();
-    if (!vehicleId) {
-      return res.status(400).json({ ok: false, error: 'vehicle_id_required' });
+    let vehicleId;
+    try {
+      vehicleId = resolveThreeDgsVehicleId(req.body?.vehicle_id || state.capture.vehicle_id);
+    } catch (error) {
+      return res.status(error.status || 400).json(vehicleErrorBody(error));
     }
     try {
       const cameras = activeCaptureCameras();
@@ -1612,9 +1749,11 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   });
 
   app.post('/api/three-dgs/map/update', requireThreeDgsAuth, async (req, res) => {
-    const vehicleId = String(req.body?.vehicle_id || defaultVehicleId).trim();
-    if (!vehicleId) {
-      return res.status(400).json({ ok: false, error: 'vehicle_id_required' });
+    let vehicleId;
+    try {
+      vehicleId = resolveThreeDgsVehicleId(req.body?.vehicle_id);
+    } catch (error) {
+      return res.status(error.status || 400).json(vehicleErrorBody(error));
     }
     try {
       await updateMapFromVehicle(req.threeDgsAuth, vehicleId);
