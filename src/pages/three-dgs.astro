@@ -104,6 +104,13 @@ import SiteLayout from "../components/SiteLayout.astro";
                 <strong id="three-dgs-capture-frames">0</strong>
               </div>
             </div>
+            <div class="three-dgs-capture-live">
+              <div class="three-dgs-capture-live-head">
+                <span>长连接监控</span>
+                <strong id="three-dgs-capture-stream">未连接</strong>
+              </div>
+              <div id="three-dgs-capture-camera-counts" class="three-dgs-camera-counts">等待采集数据。</div>
+            </div>
           </section>
 
           <section class="three-dgs-panel">
@@ -264,6 +271,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     capabilities: "/api/three-dgs/capture/capabilities",
     startCapture: "/api/three-dgs/capture/start",
     captureStatus: "/api/three-dgs/capture/status",
+    captureStream: "/api/three-dgs/capture/stream",
     stopCapture: "/api/three-dgs/capture/stop",
     manifest: "/api/three-dgs/capture/manifest",
     updateMap: "/api/three-dgs/map/update",
@@ -297,6 +305,8 @@ import SiteLayout from "../components/SiteLayout.astro";
   const viewerFrame = el("three-dgs-viewer-frame");
   const viewerStatus = el("three-dgs-viewer-status");
   const viewerOpen = el("three-dgs-open-viewer");
+  const captureStreamText = el("three-dgs-capture-stream");
+  const captureCameraCounts = el("three-dgs-capture-camera-counts");
 
   let statusData = null;
   let pointcloudFile = null;
@@ -304,6 +314,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   let busy = false;
   let vehicleManuallyChanged = false;
   let pointcloudPreviewKey = "";
+  let captureEventSource = null;
 
   function formatSize(bytes) {
     const value = Number(bytes || 0);
@@ -316,6 +327,11 @@ import SiteLayout from "../components/SiteLayout.astro";
   function formatCount(value) {
     const number = Number(value || 0);
     return number > 0 ? number.toLocaleString("zh-CN") : "-";
+  }
+
+  function formatFrameCount(value) {
+    const number = Number(value || 0);
+    return Number.isFinite(number) ? number.toLocaleString("zh-CN") : "0";
   }
 
   function viewerUrlFor(pointCloudUrl) {
@@ -464,6 +480,94 @@ import SiteLayout from "../components/SiteLayout.astro";
     return Array.isArray(statusData?.auth?.permissions) && statusData.auth.permissions.includes("three-dgs:run");
   }
 
+  function setCaptureStreamState(text, state = "idle") {
+    if (!captureStreamText) return;
+    captureStreamText.textContent = text;
+    captureStreamText.dataset.state = state;
+  }
+
+  function renderCaptureCameraCounts(capture = {}) {
+    if (!captureCameraCounts) return;
+    const statuses = Array.isArray(capture.camera_statuses) ? capture.camera_statuses : [];
+    captureCameraCounts.innerHTML = "";
+    if (!statuses.length) {
+      captureCameraCounts.textContent = capture.monitor_error
+        ? `监控异常：${capture.monitor_error}`
+        : capture.active
+          ? "等待车端返回相机帧数。"
+          : "等待采集数据。";
+      return;
+    }
+    statuses.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "three-dgs-camera-count";
+      row.dataset.state = item.error ? "error" : item.active === true ? "active" : item.active === false ? "idle" : "unknown";
+
+      const camera = document.createElement("span");
+      camera.textContent = item.camera || "-";
+      const count = document.createElement("strong");
+      const stateText = item.error
+        ? `错误：${item.error}`
+        : `${formatFrameCount(item.saved_frames)} 张${item.active === true ? " · 采集中" : item.active === false ? " · 已停止" : ""}`;
+      count.textContent = stateText;
+
+      row.append(camera, count);
+      captureCameraCounts.appendChild(row);
+    });
+  }
+
+  function closeCaptureStream() {
+    if (!captureEventSource) return;
+    captureEventSource.close();
+    captureEventSource = null;
+    setCaptureStreamState("已关闭", "idle");
+  }
+
+  function mergeCaptureStreamPayload(data) {
+    if (!data?.capture || !statusData?.state) return;
+    statusData = {
+      ...statusData,
+      state: {
+        ...statusData.state,
+        phase: data.phase || statusData.state.phase,
+        stage_text: data.stage_text || statusData.state.stage_text,
+        capture: {
+          ...(statusData.state.capture || {}),
+          ...data.capture
+        }
+      }
+    };
+    applyStatus();
+  }
+
+  function connectCaptureStream() {
+    if (!isAuthed() || !hasRunPermission()) {
+      closeCaptureStream();
+      return;
+    }
+    if (captureEventSource || !window.EventSource) {
+      if (!window.EventSource) setCaptureStreamState("浏览器不支持", "error");
+      return;
+    }
+    setCaptureStreamState("连接中", "idle");
+    captureEventSource = new EventSource(api.captureStream, { withCredentials: true });
+    captureEventSource.addEventListener("open", () => {
+      setCaptureStreamState("已连接", "success");
+    });
+    captureEventSource.addEventListener("capture_status", (event) => {
+      try {
+        const data = JSON.parse(event.data || "{}");
+        setCaptureStreamState(data.capture?.active ? "监控中" : "已连接", data.capture?.monitor_error ? "error" : "success");
+        mergeCaptureStreamPayload(data);
+      } catch (_error) {
+        setCaptureStreamState("数据解析失败", "error");
+      }
+    });
+    captureEventSource.onerror = () => {
+      setCaptureStreamState("重连中", "error");
+    };
+  }
+
   function isTaskBusy() {
     const state = statusData?.state || {};
     return ["uploading", "preparing", "training", "updating_map", "pulling_image_pose", "starting_capture"].includes(state.phase) || state.prepare?.running || state.train?.running;
@@ -566,22 +670,23 @@ import SiteLayout from "../components/SiteLayout.astro";
     el("three-dgs-capture-camera").textContent = Array.isArray(capture.cameras) && capture.cameras.length ? capture.cameras.join("、") : "-";
     el("three-dgs-capture-vehicle").textContent = capture.vehicle_id || "-";
     el("three-dgs-capture-session").textContent = capture.session_id || "-";
-    el("three-dgs-capture-frames").textContent = String(capture.saved_frames || 0);
+    el("three-dgs-capture-frames").textContent = formatFrameCount(capture.saved_frames);
+    renderCaptureCameraCounts(capture);
 
-      const uploads = state.uploads || {};
+    const uploads = state.uploads || {};
     const mapStatus = mapStatusFromState(state);
-      pointcloudName.textContent = uploads.pointcloud
-        ? `${uploads.pointcloud.name} · ${formatSize(uploads.pointcloud.size_bytes)}`
-        : pointcloudFile
-          ? `${pointcloudFile.name} · ${formatSize(pointcloudFile.size)}`
-          : mapStatus.size_bytes
+    pointcloudName.textContent = uploads.pointcloud
+      ? `${uploads.pointcloud.name} · ${formatSize(uploads.pointcloud.size_bytes)}`
+      : pointcloudFile
+        ? `${pointcloudFile.name} · ${formatSize(pointcloudFile.size)}`
+        : mapStatus.size_bytes
           ? `车端已加载 GlobalMap.pcd · ${formatSize(mapStatus.size_bytes)}`
           : "等待更新 map/GlobalMap.pcd";
-      imagePoseName.textContent = uploads.image_pose
-        ? `${uploads.image_pose.name} · ${formatSize(uploads.image_pose.size_bytes)}`
-        : imagePoseFile
-          ? `${imagePoseFile.name} · ${formatSize(imagePoseFile.size)}`
-          : "等待上传当前采集 session";
+    imagePoseName.textContent = uploads.image_pose
+      ? `${uploads.image_pose.name} · ${formatSize(uploads.image_pose.size_bytes)}`
+      : imagePoseFile
+        ? `${imagePoseFile.name} · ${formatSize(imagePoseFile.size)}`
+        : "等待上传当前采集 session";
     el("three-dgs-map-version").textContent = mapStatus.version;
     el("three-dgs-map-points").textContent = formatCount(mapStatus.point_count);
     el("three-dgs-map-size").textContent = formatSize(mapStatus.size_bytes);
@@ -633,6 +738,7 @@ import SiteLayout from "../components/SiteLayout.astro";
       el("three-dgs-gpu").value = statusData.default_train_gpu;
     }
     applyStatus();
+    connectCaptureStream();
     refreshBackgroundViews();
   }
 
@@ -649,6 +755,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     }
     statusData = data;
     applyStatus();
+    connectCaptureStream();
     return data;
   }
 
@@ -744,6 +851,7 @@ import SiteLayout from "../components/SiteLayout.astro";
           }
           statusData = data;
           applyStatus();
+          connectCaptureStream();
           resolve(data);
         } catch (error) {
           reject(error);
@@ -829,7 +937,11 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   fetchStatus().catch((error) => setFeedback(`状态读取失败：${error.message}`, "error"));
   window.setInterval(() => fetchStatus().catch(() => {}), 10000);
-  window.addEventListener("jgzj:auth-change", () => fetchStatus().catch(() => {}));
+  window.addEventListener("jgzj:auth-change", () => {
+    closeCaptureStream();
+    fetchStatus().catch(() => {});
+  });
+  window.addEventListener("beforeunload", closeCaptureStream);
 </script>
 
 <style>
@@ -1044,6 +1156,65 @@ import SiteLayout from "../components/SiteLayout.astro";
     overflow-wrap: anywhere;
     color: #e0f2fe;
     font-size: 0.92rem;
+  }
+
+  .three-dgs-capture-live {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.42);
+  }
+
+  .three-dgs-capture-live-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: #94a3b8;
+    font-size: 0.86rem;
+  }
+
+  .three-dgs-capture-live-head strong {
+    color: #e0f2fe;
+  }
+
+  .three-dgs-capture-live-head strong[data-state="success"] {
+    color: #86efac;
+  }
+
+  .three-dgs-capture-live-head strong[data-state="error"] {
+    color: #fca5a5;
+  }
+
+  .three-dgs-camera-counts {
+    display: grid;
+    gap: 8px;
+    color: #cbd5e1;
+    font-size: 0.9rem;
+  }
+
+  .three-dgs-camera-count {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid rgba(71, 85, 105, 0.45);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.48);
+  }
+
+  .three-dgs-camera-count strong {
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+
+  .three-dgs-camera-count[data-state="active"] strong {
+    color: #86efac;
+  }
+
+  .three-dgs-camera-count[data-state="error"] strong {
+    color: #fca5a5;
   }
 
   .three-dgs-map-grid span {
