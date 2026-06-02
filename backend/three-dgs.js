@@ -108,6 +108,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const remoteSourceRoot = process.env.THREE_DGS_REMOTE_SOURCE_ROOT || '/home/sari/3dgs_src/gaussian-splatting';
   const remoteEnvName = process.env.THREE_DGS_REMOTE_ENV_NAME || '3dgs124_exact';
   const defaultVehicleId = process.env.THREE_DGS_DEFAULT_VEHICLE_ID || 'BIT-0041';
+  const defaultTrainGpu = String(process.env.THREE_DGS_DEFAULT_GPU || '3').trim() || '3';
   const remoteStatusPollMs = Number(process.env.THREE_DGS_REMOTE_STATUS_POLL_MS || 30000);
   const vehicleMapPath = process.env.THREE_DGS_VEHICLE_MAP_PATH || 'map/GlobalMap.pcd';
   const configuredCameraIds = parseList(process.env.THREE_DGS_CAMERA_IDS || 'camera1,camera2,camera3,camera4');
@@ -119,6 +120,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     process.env.THREE_DGS_MAP_UPLOAD_FALLBACK_STAGING_DIR || '/home/nvidia/auto_ad_ai_map_upload';
   const publicBaseUrl = String(process.env.THREE_DGS_PUBLIC_BASE_URL || 'http://idtrd.kmdns.net:7791').replace(/\/+$/, '');
   const vehicleUploadTokenTtlMs = Number(process.env.THREE_DGS_VEHICLE_UPLOAD_TOKEN_TTL_MS || 2 * 60 * 60 * 1000);
+  const pointcloudPreviewMaxReadBytes = Number(process.env.THREE_DGS_POINTCLOUD_PREVIEW_MAX_READ_BYTES || 512 * 1024 * 1024);
 
   let state = createInitialState();
   let statePersistTimer = null;
@@ -216,6 +218,148 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   function sanitizeFileName(value, fallback = 'upload.bin') {
     const base = path.basename(String(value || fallback)).replace(/[^\w.\-+\u4e00-\u9fa5]+/g, '_');
     return base.slice(0, 180) || fallback;
+  }
+
+  function parsePcdHeader(buffer) {
+    const headerLimit = Math.min(buffer.length, 1024 * 1024);
+    const headerText = buffer.subarray(0, headerLimit).toString('latin1');
+    const dataMatch = headerText.match(/(?:^|\r?\n)DATA\s+(\S+)\s*\r?\n/i);
+    if (!dataMatch || typeof dataMatch.index !== 'number') {
+      throw new Error('pcd_data_header_not_found');
+    }
+    const headerEnd = dataMatch.index + dataMatch[0].length;
+    const lines = headerText.slice(0, headerEnd).split(/\r?\n/);
+    const header = {
+      fields: [],
+      size: [],
+      type: [],
+      count: [],
+      points: 0,
+      width: 0,
+      height: 1,
+      data: dataMatch[1].toLowerCase(),
+      dataOffset: headerEnd
+    };
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      if (!parts.length) continue;
+      const key = parts[0].toUpperCase();
+      if (key === 'FIELDS') header.fields = parts.slice(1);
+      if (key === 'SIZE') header.size = parts.slice(1).map((item) => Number(item));
+      if (key === 'TYPE') header.type = parts.slice(1);
+      if (key === 'COUNT') header.count = parts.slice(1).map((item) => Number(item));
+      if (key === 'POINTS') header.points = Number(parts[1] || 0);
+      if (key === 'WIDTH') header.width = Number(parts[1] || 0);
+      if (key === 'HEIGHT') header.height = Number(parts[1] || 1);
+    }
+    if (!header.points) {
+      header.points = Math.max(0, header.width * header.height);
+    }
+    if (!header.count.length) {
+      header.count = header.fields.map(() => 1);
+    }
+    return header;
+  }
+
+  function readPcdNumber(buffer, offset, size, type) {
+    if (offset + size > buffer.length) return null;
+    const kind = String(type || 'F').toUpperCase();
+    if (kind === 'F' && size === 4) return buffer.readFloatLE(offset);
+    if (kind === 'F' && size === 8) return buffer.readDoubleLE(offset);
+    if (kind === 'I' && size === 4) return buffer.readInt32LE(offset);
+    if (kind === 'I' && size === 2) return buffer.readInt16LE(offset);
+    if (kind === 'I' && size === 1) return buffer.readInt8(offset);
+    if (kind === 'U' && size === 4) return buffer.readUInt32LE(offset);
+    if (kind === 'U' && size === 2) return buffer.readUInt16LE(offset);
+    if (kind === 'U' && size === 1) return buffer.readUInt8(offset);
+    return null;
+  }
+
+  function summarizePreviewPoints(points) {
+    const extent = {
+      min_x: Infinity,
+      max_x: -Infinity,
+      min_y: Infinity,
+      max_y: -Infinity,
+      min_z: Infinity,
+      max_z: -Infinity
+    };
+    for (const point of points) {
+      extent.min_x = Math.min(extent.min_x, point[0]);
+      extent.max_x = Math.max(extent.max_x, point[0]);
+      extent.min_y = Math.min(extent.min_y, point[1]);
+      extent.max_y = Math.max(extent.max_y, point[1]);
+      extent.min_z = Math.min(extent.min_z, point[2]);
+      extent.max_z = Math.max(extent.max_z, point[2]);
+    }
+    for (const [key, value] of Object.entries(extent)) {
+      if (!Number.isFinite(value)) {
+        extent[key] = 0;
+      }
+    }
+    return extent;
+  }
+
+  function parsePcdPreview(buffer, maxPoints) {
+    const header = parsePcdHeader(buffer);
+    const fields = header.fields.map((field, index) => ({
+      name: field,
+      size: Number(header.size[index] || 4),
+      type: header.type[index] || 'F',
+      count: Number(header.count[index] || 1)
+    }));
+    let offset = 0;
+    for (const field of fields) {
+      field.offset = offset;
+      offset += field.size * field.count;
+    }
+    const pointStep = offset;
+    const xField = fields.find((field) => field.name === 'x');
+    const yField = fields.find((field) => field.name === 'y');
+    const zField = fields.find((field) => field.name === 'z');
+    if (!xField || !yField || !zField) {
+      throw new Error('pcd_missing_xyz');
+    }
+
+    const points = [];
+    const stride = Math.max(1, Math.ceil(header.points / Math.max(1, maxPoints)));
+    if (header.data === 'binary') {
+      for (let pointIndex = 0; pointIndex < header.points; pointIndex += stride) {
+        const base = header.dataOffset + pointIndex * pointStep;
+        const x = readPcdNumber(buffer, base + xField.offset, xField.size, xField.type);
+        const y = readPcdNumber(buffer, base + yField.offset, yField.size, yField.type);
+        const z = readPcdNumber(buffer, base + zField.offset, zField.size, zField.type);
+        if ([x, y, z].every(Number.isFinite)) {
+          points.push([x, y, z]);
+        }
+      }
+    } else if (header.data === 'ascii') {
+      const rows = buffer.subarray(header.dataOffset).toString('utf8').split(/\r?\n/);
+      const xIndex = header.fields.indexOf('x');
+      const yIndex = header.fields.indexOf('y');
+      const zIndex = header.fields.indexOf('z');
+      rows.forEach((row, index) => {
+        if (index % stride !== 0 || !row.trim()) return;
+        const values = row.trim().split(/\s+/);
+        const x = Number(values[xIndex]);
+        const y = Number(values[yIndex]);
+        const z = Number(values[zIndex]);
+        if ([x, y, z].every(Number.isFinite)) {
+          points.push([x, y, z]);
+        }
+      });
+    } else {
+      throw new Error(`unsupported_pcd_data_${header.data}`);
+    }
+    return {
+      format: 'pcd',
+      data: header.data,
+      total_points: header.points,
+      sampled_points: points.length,
+      fields: header.fields,
+      extent: summarizePreviewPoints(points),
+      points
+    };
   }
 
   function sanitizeSceneName(value) {
@@ -1267,7 +1411,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   function makeRemoteTrainCommand(remoteDatasetPath, remoteRunPath, trainOptions) {
     const iterations = Number(trainOptions.iterations || 7000);
     const resolution = Number(trainOptions.resolution || 4);
-    const gpu = String(trainOptions.gpu ?? '3').trim() || '3';
+    const gpu = String(trainOptions.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
     const script = [
       'set -Eeuo pipefail',
       `RUN_DIR=${remoteQuote(remoteRunPath)}`,
@@ -1325,9 +1469,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
     const runId = makeRunId(state.dataset.scene_name || payload.scene_name || 'scene');
     const localLogPath = path.join(logDir, `train-bootstrap-${runId}.log`);
-      const remoteDatasetPath = `${remoteDatasetRoot}/${runId}`;
+    const remoteDatasetPath = `${remoteDatasetRoot}/${runId}`;
     const remoteRunPath = `${remoteRunRoot}/${runId}`;
-    const gpu = String(payload.gpu ?? '3').trim() || '3';
+    const gpu = String(payload.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
     const iterations = Number(payload.iterations || 7000);
     const resolution = Number(payload.resolution || 4);
 
@@ -1527,6 +1671,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         vehicles,
         default_vehicle_id: defaultVehicleId,
         allowed_vehicle_ids: allowedVehicleIds,
+        default_train_gpu: defaultTrainGpu,
         configured_camera_ids: configuredCameraIds,
         fallback_calibrated_cameras: fallbackCalibratedCameras,
         vehicle_map_path: vehicleMapPath
@@ -1800,6 +1945,42 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
   app.post('/api/three-dgs/upload/pointcloud', requireThreeDgsAuth, (req, res) => {
     void handleUpload(req, res, 'pointcloud');
+  });
+
+  app.get('/api/three-dgs/pointcloud/preview', requireThreeDgsAuth, async (req, res) => {
+    try {
+      await syncUploadedArtifacts();
+      const pointcloud = state.uploads.pointcloud;
+      if (!pointcloud?.path) {
+        return res.status(404).json({ ok: false, error: 'pointcloud_not_uploaded' });
+      }
+      const stat = await safeStat(pointcloud.path);
+      if (!stat) {
+        return res.status(404).json({ ok: false, error: 'pointcloud_file_not_found' });
+      }
+      if (stat.size > pointcloudPreviewMaxReadBytes) {
+        return res.status(413).json({
+          ok: false,
+          error: 'pointcloud_too_large_for_preview',
+          size_bytes: stat.size,
+          max_read_bytes: pointcloudPreviewMaxReadBytes
+        });
+      }
+      const maxPoints = Math.max(1000, Math.min(50000, Number(req.query.max_points || 12000)));
+      const buffer = await fsp.readFile(pointcloud.path);
+      const preview = parsePcdPreview(buffer, maxPoints);
+      return res.json({
+        ok: true,
+        file: {
+          name: pointcloud.name,
+          size_bytes: stat.size,
+          updated_at_ms: stat.mtimeMs || pointcloud.updated_at_ms
+        },
+        preview
+      });
+    } catch (error) {
+      return res.status(500).json({ ok: false, error: error.message || 'pointcloud_preview_failed' });
+    }
   });
 
   app.post('/api/three-dgs/prepare', requireThreeDgsAuth, async (req, res) => {

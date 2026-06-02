@@ -46,15 +46,21 @@ def extract_archive(source: Path, work_dir: Path) -> Path:
     extract_dir = work_dir / "image_pose"
     extract_dir.mkdir(parents=True, exist_ok=True)
 
-    if source.suffix.lower() == ".zip":
+    if zipfile.is_zipfile(source):
         with zipfile.ZipFile(source) as archive:
             archive.extractall(extract_dir)
         return extract_dir
 
-    if source.suffix.lower() == ".tar" or suffixes.endswith(".tar.gz") or suffixes.endswith(".tgz"):
-        with tarfile.open(source) as archive:
+    if tarfile.is_tarfile(source):
+        with tarfile.open(source, mode="r:*") as archive:
             archive.extractall(extract_dir)
         return extract_dir
+
+    if source.suffix.lower() == ".zip":
+        raise zipfile.BadZipFile(f"file has .zip suffix but is not a ZIP archive: {source}")
+
+    if source.suffix.lower() == ".tar" or suffixes.endswith(".tar.gz") or suffixes.endswith(".tgz"):
+        raise tarfile.TarError(f"file has tar suffix but is not a TAR archive: {source}")
 
     if source.suffix.lower() in {".json", ".jsonl"}:
         shutil.copy2(source, extract_dir / source.name)
@@ -189,8 +195,9 @@ def find_images_dir(root: Path) -> Path | None:
 
 def record_camera_id(record: dict, manifest: dict) -> str:
     image_obj = record.get("image") if isinstance(record.get("image"), dict) else {}
+    calibration_obj = record.get("camera_calibration") if isinstance(record.get("camera_calibration"), dict) else {}
     raw = first_key(
-        [record, image_obj, manifest],
+        [record, image_obj, calibration_obj, manifest, manifest.get("camera_calibration")],
         ("camera", "camera_id", "camera_name", "sensor", "sensor_id"),
     )
     if isinstance(raw, dict):
@@ -212,14 +219,21 @@ def camera_sources(record: dict, manifest: dict) -> list[object]:
         record.get("camera"),
         record.get("intrinsics"),
         record.get("camera_intrinsics"),
+        record.get("camera_calibration"),
+        nested_get(record, "camera_calibration", "intrinsic"),
         nested_get(record, "image", "camera"),
         manifest,
         manifest.get("camera"),
         manifest.get("intrinsics"),
         manifest.get("camera_intrinsics"),
+        manifest.get("camera_calibration"),
+        nested_get(manifest, "camera_calibration", "intrinsic"),
         nested_get(manifest, "calibration", camera_id),
+        nested_get(manifest, "calibration", camera_id, "intrinsic"),
         nested_get(manifest, "calibration", "cameras", camera_id),
+        nested_get(manifest, "calibration", "cameras", camera_id, "intrinsic"),
         nested_get(manifest, "cameras", camera_id),
+        nested_get(manifest, "cameras", camera_id, "intrinsic"),
     ]
     return sources
 

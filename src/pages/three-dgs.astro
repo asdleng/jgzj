@@ -158,6 +158,14 @@ import SiteLayout from "../components/SiteLayout.astro";
               </div>
             </div>
 
+            <div class="three-dgs-pointcloud-preview">
+              <div class="three-dgs-preview-head">
+                <span>点云地图预览</span>
+                <strong id="three-dgs-pointcloud-preview-status">等待点云落盘</strong>
+              </div>
+              <canvas id="three-dgs-pointcloud-canvas" height="260"></canvas>
+            </div>
+
             <div class="three-dgs-actions">
               <button id="three-dgs-upload-pointcloud" class="three-dgs-button" type="button" disabled>手动上传点云</button>
               <button id="three-dgs-upload-image-pose" class="three-dgs-button" type="button" disabled>手动上传图像包</button>
@@ -248,6 +256,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     pullImagePose: "/api/three-dgs/capture/package",
     uploadPointcloud: "/api/three-dgs/upload/pointcloud",
     uploadImagePose: "/api/three-dgs/upload/image-pose",
+    pointcloudPreview: "/api/three-dgs/pointcloud/preview",
     prepare: "/api/three-dgs/prepare",
     train: "/api/three-dgs/train/start",
     prepareLog: "/api/three-dgs/logs/prepare",
@@ -268,12 +277,15 @@ import SiteLayout from "../components/SiteLayout.astro";
   const imagePoseInput = el("three-dgs-image-pose-input");
   const pointcloudName = el("three-dgs-pointcloud-name");
   const imagePoseName = el("three-dgs-image-pose-name");
+  const pointcloudCanvas = el("three-dgs-pointcloud-canvas");
+  const pointcloudPreviewStatus = el("three-dgs-pointcloud-preview-status");
 
   let statusData = null;
   let pointcloudFile = null;
   let imagePoseFile = null;
   let busy = false;
   let vehicleManuallyChanged = false;
+  let pointcloudPreviewKey = "";
 
   function formatSize(bytes) {
     const value = Number(bytes || 0);
@@ -320,6 +332,101 @@ import SiteLayout from "../components/SiteLayout.astro";
       extent: meta.extent || info.extent || null,
       upload_pending: Boolean(vehicleData.map_upload_pending)
     };
+  }
+
+  function drawPointcloudPreview(preview) {
+    if (!pointcloudCanvas) return;
+    const points = Array.isArray(preview?.points) ? preview.points : [];
+    const rect = pointcloudCanvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(320, Math.floor(rect.width || pointcloudCanvas.clientWidth || 640));
+    const height = Math.max(220, Math.floor(rect.height || 260));
+    pointcloudCanvas.width = Math.floor(width * dpr);
+    pointcloudCanvas.height = Math.floor(height * dpr);
+    const ctx = pointcloudCanvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(0, 0, width, height);
+    if (!points.length) {
+      pointcloudPreviewStatus.textContent = "点云无可预览采样";
+      return;
+    }
+    const extent = preview.extent || {};
+    const minX = Number(extent.min_x);
+    const maxX = Number(extent.max_x);
+    const minY = Number(extent.min_y);
+    const maxY = Number(extent.max_y);
+    const minZ = Number(extent.min_z);
+    const maxZ = Number(extent.max_z);
+    const rangeX = Math.max(0.001, maxX - minX);
+    const rangeY = Math.max(0.001, maxY - minY);
+    const pad = 14;
+    const scale = Math.min((width - pad * 2) / rangeX, (height - pad * 2) / rangeY);
+    const drawW = rangeX * scale;
+    const drawH = rangeY * scale;
+    const offsetX = (width - drawW) / 2;
+    const offsetY = (height - drawH) / 2;
+    ctx.fillStyle = "rgba(103, 232, 249, 0.85)";
+    for (const point of points) {
+      const x = (Number(point[0]) - minX) * scale + offsetX;
+      const y = height - ((Number(point[1]) - minY) * scale + offsetY);
+      const z = Number(point[2]);
+      const zNorm = Number.isFinite(z) && maxZ > minZ ? Math.max(0, Math.min(1, (z - minZ) / (maxZ - minZ))) : 0.5;
+      ctx.fillStyle = `rgba(${Math.round(80 + 120 * zNorm)}, ${Math.round(180 + 45 * zNorm)}, 255, 0.78)`;
+      ctx.fillRect(x, y, 1.6, 1.6);
+    }
+    pointcloudPreviewStatus.textContent = `${formatCount(preview.sampled_points)} / ${formatCount(preview.total_points)} 点采样`;
+  }
+
+  async function loadPointcloudPreview(force = false) {
+    const pointcloud = statusData?.state?.uploads?.pointcloud;
+    if (!pointcloud?.path) {
+      pointcloudPreviewKey = "";
+      if (pointcloudPreviewStatus) pointcloudPreviewStatus.textContent = "等待点云落盘";
+      return;
+    }
+    if (!isAuthed() || !hasRunPermission()) {
+      if (pointcloudPreviewStatus) pointcloudPreviewStatus.textContent = "登录后显示点云预览";
+      return;
+    }
+    const key = `${pointcloud.path}:${pointcloud.size_bytes}:${pointcloud.updated_at_ms}`;
+    if (!force && key === pointcloudPreviewKey) return;
+    pointcloudPreviewKey = key;
+    pointcloudPreviewStatus.textContent = "正在加载点云采样";
+    const response = await fetch(`${api.pointcloudPreview}?max_points=12000`, {
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      pointcloudPreviewStatus.textContent = data.error || "点云预览加载失败";
+      return;
+    }
+    drawPointcloudPreview(data.preview);
+  }
+
+  function activeLogUrl() {
+    const state = statusData?.state || {};
+    const train = state.train || {};
+    if (state.prepare?.running || state.phase === "preparing") return api.prepareLog;
+    if (train.phase === "syncing") return api.trainLocalLog;
+    if (train.phase === "training") return api.trainRemoteLog;
+    if (state.phase === "error" && state.prepare?.completed_at_ms && !state.dataset?.prepared) return api.prepareLog;
+    if (state.phase === "error" && train.error_message) return train.phase === "training" ? api.trainRemoteLog : api.trainLocalLog;
+    return "";
+  }
+
+  async function refreshLiveLog() {
+    const url = activeLogUrl();
+    if (!url || !isAuthed() || !hasRunPermission()) return;
+    await loadLog(url, true);
+  }
+
+  function refreshBackgroundViews() {
+    loadPointcloudPreview().catch(() => {
+      if (pointcloudPreviewStatus) pointcloudPreviewStatus.textContent = "点云预览加载失败";
+    });
+    refreshLiveLog().catch(() => {});
   }
 
   function setFeedback(text, state = "idle") {
@@ -479,7 +586,11 @@ import SiteLayout from "../components/SiteLayout.astro";
     const response = await fetch(STATUS_URL, { credentials: "same-origin", cache: "no-store" });
     statusData = await response.json();
     applyVehicles(statusData.vehicles);
+    if (statusData.default_train_gpu && !el("three-dgs-gpu").dataset.touched) {
+      el("three-dgs-gpu").value = statusData.default_train_gpu;
+    }
     applyStatus();
+    refreshBackgroundViews();
   }
 
   async function postJson(url, payload = {}) {
@@ -498,12 +609,12 @@ import SiteLayout from "../components/SiteLayout.astro";
     return data;
   }
 
-    function selectedVehiclePayload() {
-      return {
-        vehicle_id: currentVehicleId(),
-        min_translation_m: Number(el("three-dgs-min-translation").value || 0.5),
-        min_rotation_deg: Number(el("three-dgs-min-rotation").value || 10),
-        min_interval_s: Number(el("three-dgs-min-interval").value || 0.2)
+  function selectedVehiclePayload() {
+    return {
+      vehicle_id: currentVehicleId(),
+      min_translation_m: Number(el("three-dgs-min-translation").value || 0.5),
+      min_rotation_deg: Number(el("three-dgs-min-rotation").value || 10),
+      min_interval_s: Number(el("three-dgs-min-interval").value || 0.2)
     };
   }
 
@@ -600,8 +711,12 @@ import SiteLayout from "../components/SiteLayout.astro";
     });
   }
 
-  async function loadLog(url) {
+  async function loadLog(url, silent = false) {
     const response = await fetch(`${url}?tail=260`, { credentials: "same-origin", cache: "no-store" });
+    if (!response.ok) {
+      if (!silent) throw new Error("log_load_failed");
+      return;
+    }
     const text = await response.text();
     logNode.textContent = text || "暂无日志。";
   }
@@ -617,6 +732,9 @@ import SiteLayout from "../components/SiteLayout.astro";
   el("three-dgs-start-capture").addEventListener("click", () =>
     runAction("开始采集", () => postJson(api.startCapture, selectedVehiclePayload()))
   );
+  el("three-dgs-gpu").addEventListener("input", () => {
+    el("three-dgs-gpu").dataset.touched = "true";
+  });
   el("three-dgs-capture-status").addEventListener("click", () =>
     runAction("读取采集状态", () => postJson(api.captureStatus, { vehicle_id: currentVehicleId() }))
   );
@@ -879,6 +997,36 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   .three-dgs-map-grid__wide {
     grid-column: span 4;
+  }
+
+  .three-dgs-pointcloud-preview {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.42);
+  }
+
+  .three-dgs-preview-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: #94a3b8;
+    font-size: 0.86rem;
+  }
+
+  .three-dgs-preview-head strong {
+    color: #e0f2fe;
+    text-align: right;
+  }
+
+  .three-dgs-pointcloud-preview canvas {
+    width: 100%;
+    height: 260px;
+    display: block;
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    border-radius: 8px;
+    background: #020617;
   }
 
   .three-dgs-dropzone {
