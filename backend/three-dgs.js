@@ -4,7 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
-const { Readable } = require('stream');
+const { Readable, Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 
 const execFileAsync = promisify(execFile);
@@ -113,12 +113,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const configuredCameraIds = parseList(process.env.THREE_DGS_CAMERA_IDS || 'camera1,camera2,camera3,camera4');
   const fallbackCalibratedCameras = parseList(process.env.THREE_DGS_FALLBACK_CALIBRATED_CAMERAS || 'camera1,camera4');
   const mapDownloadTools = parseList(process.env.THREE_DGS_MAP_DOWNLOAD_TOOLS || '');
+  const mapUploadTool = process.env.THREE_DGS_MAP_UPLOAD_TOOL || 'map.pointcloud.upload';
+  const publicBaseUrl = String(process.env.THREE_DGS_PUBLIC_BASE_URL || 'http://idtrd.kmdns.net:7791').replace(/\/+$/, '');
+  const vehicleUploadTokenTtlMs = Number(process.env.THREE_DGS_VEHICLE_UPLOAD_TOKEN_TTL_MS || 2 * 60 * 60 * 1000);
 
   let state = createInitialState();
   let statePersistTimer = null;
   let prepareProcess = null;
   let trainBootstrapProcess = null;
   let uploadInFlight = false;
+  const pendingVehicleUploads = new Map();
 
   function scheduleStatePersist() {
     if (statePersistTimer) {
@@ -530,6 +534,72 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     await fsp.appendFile(logPath, `[${new Date().toISOString()}] ${line}\n`, 'utf8');
   }
 
+  function createVehicleUploadTicket({ vehicleId, kind, fileName }) {
+    const token = crypto.randomBytes(24).toString('hex');
+    const ext = path.extname(fileName).toLowerCase() || '.pcd';
+    const targetPath = kind === 'pointcloud' ? `${pointcloudUploadPath}${ext}` : `${imagePoseUploadPath}${ext}`;
+    const expiresAtMs = Date.now() + vehicleUploadTokenTtlMs;
+    const ticket = {
+      token,
+      vehicle_id: vehicleId,
+      kind,
+      file_name: fileName,
+      target_path: targetPath,
+      expires_at_ms: expiresAtMs,
+      created_at_ms: Date.now()
+    };
+    pendingVehicleUploads.set(token, ticket);
+    const uploadUrl = `${publicBaseUrl}/api/three-dgs/vehicle-upload/${kind}/${token}`;
+    return {
+      ...ticket,
+      upload_url: uploadUrl
+    };
+  }
+
+  function cleanupExpiredVehicleUploads() {
+    const now = Date.now();
+    for (const [token, ticket] of pendingVehicleUploads.entries()) {
+      if (Number(ticket.expires_at_ms || 0) <= now) {
+        pendingVehicleUploads.delete(token);
+      }
+    }
+  }
+
+  async function writeVehicleUpload(req, ticket) {
+    await ensureRuntimeDirs();
+    const targetPath = ticket.target_path;
+    const partPath = `${targetPath}.part`;
+    await fsp.rm(partPath, { force: true });
+    await fsp.rm(targetPath, { force: true });
+
+    let receivedBytes = 0;
+    const limiter = new Transform({
+      transform(chunk, _encoding, callback) {
+        receivedBytes += chunk.length;
+        if (receivedBytes > uploadMaxBytes) {
+          callback(new Error('vehicle_upload_too_large'));
+          return;
+        }
+        callback(null, chunk);
+      }
+    });
+
+    try {
+      await pipeline(req, limiter, fs.createWriteStream(partPath, { flags: 'w' }));
+      await fsp.rename(partPath, targetPath);
+      const stat = await safeStat(targetPath);
+      return {
+        name: sanitizeFileName(ticket.file_name, path.basename(targetPath)),
+        path: targetPath,
+        size_bytes: stat?.size || receivedBytes,
+        updated_at_ms: stat?.mtimeMs || Date.now()
+      };
+    } catch (error) {
+      await fsp.rm(partPath, { force: true }).catch(() => {});
+      throw error;
+    }
+  }
+
   async function updateMapFromVehicle(auth, vehicleId) {
     if (uploadInFlight || state.prepare.running || state.train.running) {
       throw new Error('three_dgs_busy');
@@ -581,22 +651,66 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       }
     }
 
+    let mapUpload = null;
+    if (!pointcloudInfo) {
+      const ticket = createVehicleUploadTicket({
+        vehicleId,
+        kind: 'pointcloud',
+        fileName: 'GlobalMap.pcd'
+      });
+      mergeVehicleData({
+        vehicle_id: vehicleId,
+        map_upload_pending: true,
+        map_upload_expires_at_ms: ticket.expires_at_ms
+      });
+      mapUpload = await callVehicleTool(
+        vehicleId,
+        mapUploadTool,
+        {
+          target: 'global',
+          path: vehicleMapPath,
+          map_path: vehicleMapPath,
+          upload_url: ticket.upload_url,
+          method: 'POST',
+          content_type: 'application/octet-stream'
+        },
+        Number(process.env.THREE_DGS_MAP_UPLOAD_TOOL_TIMEOUT_S || 240)
+      ).catch((error) => ({ error: error.message, tool: mapUploadTool }));
+
+      const uploadedStat = await safeStat(ticket.target_path);
+      if (uploadedStat) {
+        pointcloudInfo = {
+          name: 'GlobalMap.pcd',
+          path: ticket.target_path,
+          size_bytes: uploadedStat.size,
+          updated_at_ms: uploadedStat.mtimeMs || Date.now()
+        };
+        pendingVehicleUploads.delete(ticket.token);
+      }
+    }
+
     mergeVehicleData({
       vehicle_id: vehicleId,
       map_info: mapInfo,
       map_meta: mapMeta,
+      map_upload: mapUpload,
       last_map_update_ms: Date.now()
     });
 
     if (!pointcloudInfo) {
       updateState({
         phase: state.uploads.image_pose ? 'idle' : 'idle',
-        stage_text: '已读取车端 GlobalMap.pcd 元信息，但车端本次没有返回可落盘的点云文件。',
-        error_message: 'map_file_transfer_unavailable'
+        stage_text: mapUpload?.error
+          ? '已读取车端 GlobalMap.pcd 元信息，但车端大文件上传工具暂未接通。'
+          : '已向车端下发 GlobalMap.pcd 上传地址，等待车端上传文件。',
+        error_message: mapUpload?.error ? 'map_upload_tool_unavailable' : null
       });
-      const error = new Error('map_file_transfer_unavailable');
-      error.status = 424;
-      throw error;
+      if (mapUpload?.error) {
+        const error = new Error('map_upload_tool_unavailable');
+        error.status = 424;
+        throw error;
+      }
+      return null;
     }
 
     updateState({
@@ -1167,6 +1281,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     .catch(() => {});
 
   app.get('/api/three-dgs/status', async (req, res) => {
+    cleanupExpiredVehicleUploads();
     normalizeStaleTransientState();
     await syncUploadedArtifacts();
     await refreshRemoteTrainingStatus();
@@ -1183,6 +1298,54 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       })
     );
   });
+
+  async function vehicleUploadHandler(req, res) {
+    cleanupExpiredVehicleUploads();
+    const kind = String(req.params.kind || '').trim();
+    const token = String(req.params.token || '').trim();
+    const ticket = pendingVehicleUploads.get(token);
+    if (!ticket || ticket.kind !== kind) {
+      return res.status(404).json({ ok: false, error: 'upload_ticket_not_found' });
+    }
+    if (Number(ticket.expires_at_ms || 0) <= Date.now()) {
+      pendingVehicleUploads.delete(token);
+      return res.status(410).json({ ok: false, error: 'upload_ticket_expired' });
+    }
+    const contentLength = Number(req.headers['content-length'] || 0);
+    if (contentLength > uploadMaxBytes) {
+      return res.status(413).json({ ok: false, error: 'vehicle_upload_too_large' });
+    }
+
+    try {
+      const uploadInfo = await writeVehicleUpload(req, ticket);
+      pendingVehicleUploads.delete(token);
+      if (kind === 'pointcloud') {
+        mergeVehicleData({
+          vehicle_id: ticket.vehicle_id,
+          map_upload_pending: false,
+          last_map_upload_ms: Date.now()
+        });
+        updateState({
+          phase: state.dataset.prepared ? 'prepared' : 'idle',
+          stage_text: '车端 GlobalMap.pcd 已上传到云端服务器。',
+          uploads: {
+            ...state.uploads,
+            pointcloud: uploadInfo
+          },
+          error_message: null
+        });
+      }
+      return res.json({ ok: true, kind, file: uploadInfo });
+    } catch (error) {
+      return res.status(error.message === 'vehicle_upload_too_large' ? 413 : 500).json({
+        ok: false,
+        error: error.message || 'vehicle_upload_failed'
+      });
+    }
+  }
+
+  app.post('/api/three-dgs/vehicle-upload/:kind/:token', vehicleUploadHandler);
+  app.put('/api/three-dgs/vehicle-upload/:kind/:token', vehicleUploadHandler);
 
   app.post('/api/three-dgs/capture/capabilities', requireThreeDgsAuth, async (req, res) => {
     const vehicleId = String(req.body?.vehicle_id || defaultVehicleId).trim();
