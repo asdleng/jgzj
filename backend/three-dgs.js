@@ -27,6 +27,7 @@ function createInitialState() {
       vehicle_id: null,
       active: false,
       session_id: null,
+      session_ids: {},
       cameras: [],
       saved_frames: 0,
       last_response: null,
@@ -177,9 +178,22 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           train: { ...createInitialState().train, ...(parsed.train || {}) },
           updated_at_ms: Number(parsed.updated_at_ms) || Date.now()
         };
+        normalizeStaleTransientState();
       }
     } catch (_error) {
       state = createInitialState();
+    }
+  }
+
+  function normalizeStaleTransientState() {
+    if (['uploading', 'updating_map', 'pulling_image_pose'].includes(state.phase)) {
+      state = {
+        ...state,
+        phase: state.dataset.prepared ? 'prepared' : 'idle',
+        stage_text: '等待选择车辆、采集或上传 3DGS 数据。',
+        error_message: null,
+        updated_at_ms: Date.now()
+      };
     }
   }
 
@@ -359,14 +373,6 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     }
   }
 
-  function selectedCameraOrDefault(rawCamera) {
-    const camera = String(rawCamera || '').trim();
-    if (configuredCameraIds.includes(camera)) {
-      return camera;
-    }
-    return fallbackCalibratedCameras[0] || 'camera1';
-  }
-
   function normalizeSession(payload) {
     const result = unwrapToolPayload(payload);
     return (
@@ -377,6 +383,21 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       result ||
       {}
     );
+  }
+
+  function enabledCameraIdsFromCapabilities(capabilities) {
+    return (capabilities?.cameras || []).filter((item) => item?.enabled).map((item) => item.camera).filter(Boolean);
+  }
+
+  function activeCaptureCameras(fallbackCapabilities = null) {
+    if (Array.isArray(state.capture.cameras) && state.capture.cameras.length) {
+      return state.capture.cameras;
+    }
+    const fromCapabilities = enabledCameraIdsFromCapabilities(fallbackCapabilities);
+    if (fromCapabilities.length) {
+      return fromCapabilities;
+    }
+    return fallbackCalibratedCameras;
   }
 
   function findArtifact(source, depth = 0) {
@@ -595,7 +616,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       throw new Error('three_dgs_busy');
     }
     const vehicleId = String(payload.vehicle_id || state.capture.vehicle_id || defaultVehicleId).trim();
-    const sessionId = String(payload.session_id || state.capture.session_id || '').trim();
+    const rawSessionId = String(payload.session_id || state.capture.session_id || '').trim();
+    const sessionId = rawSessionId && !rawSessionId.includes(',') ? rawSessionId : '';
     if (!vehicleId) {
       throw new Error('vehicle_id_required');
     }
@@ -611,16 +633,12 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       include_base64: payload.include_base64 !== false,
       ...(sessionId ? { session_id: sessionId } : {})
     };
-    const camera = String(payload.camera || state.capture.cameras?.[0] || '').trim();
-    if (camera) {
-      packageArgs.camera = camera;
-    }
 
     const packagePayload = await callVehicleTool(vehicleId, '3dgs.capture.package', packageArgs, 120);
     const packageInfo = await writeArtifactToFile(
       packagePayload,
       imagePoseUploadPath,
-      `image_pose_${vehicleId}_${camera || 'camera'}.zip`,
+      `image_pose_${vehicleId}_all_calibrated.zip`,
       ['.zip', '.tar', '.tgz', '.gz', '.json', '.jsonl']
     );
 
@@ -1149,6 +1167,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     .catch(() => {});
 
   app.get('/api/three-dgs/status', async (req, res) => {
+    normalizeStaleTransientState();
     await syncUploadedArtifacts();
     await refreshRemoteTrainingStatus();
     const auth = await getAuth(req);
@@ -1186,22 +1205,20 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       return res.status(400).json({ ok: false, error: 'vehicle_id_required' });
     }
     try {
-      const camera = selectedCameraOrDefault(req.body?.camera);
       const capabilities = await getCaptureCapabilities(vehicleId);
-      const cameraCapability = capabilities.cameras.find((item) => item.camera === camera);
-      if (!cameraCapability?.enabled) {
+      const enabledCameras = enabledCameraIdsFromCapabilities(capabilities);
+      if (!enabledCameras.length) {
         return res.status(400).json({
           ok: false,
-          error: 'three_dgs_camera_not_calibrated',
-          detail: cameraCapability?.reason || 'formal_camera_lidar_calibration_missing',
+          error: 'three_dgs_no_calibrated_cameras',
+          detail: 'no_enabled_camera_from_3dgs_capture_capabilities',
           capabilities
         });
       }
       const calibration = await callVehicleTool(vehicleId, 'vehicle.calibration', { include_lidar_extrinsics: true }, 30).catch((error) => ({
         error: error.message
       }));
-      const captureArgs = {
-        camera,
+      const baseCaptureArgs = {
         pose_topic: '/ndt_pose',
         min_translation_m: Number(req.body?.min_translation_m || 0.5),
         min_rotation_deg: Number(req.body?.min_rotation_deg || 10),
@@ -1210,18 +1227,52 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         duration_s: Number(req.body?.duration_s || 0),
         max_frames: Number(req.body?.max_frames || 0)
       };
-      const started = await callVehicleTool(vehicleId, '3dgs.capture.start', captureArgs, 35);
-      const session = started?.response?.result || started?.response?.data || started?.response || started;
+      const starts = [];
+      try {
+        for (const camera of enabledCameras) {
+          const started = await callVehicleTool(
+            vehicleId,
+            '3dgs.capture.start',
+            {
+              ...baseCaptureArgs,
+              camera
+            },
+            35
+          );
+          starts.push({
+            camera,
+            response: started,
+            session: normalizeSession(started)
+          });
+        }
+      } catch (startError) {
+        for (const item of starts) {
+          await callVehicleTool(
+            vehicleId,
+            '3dgs.capture.stop',
+            {
+              reason: 'rollback_after_partial_start_failed',
+              camera: item.camera
+            },
+            20
+          ).catch(() => null);
+        }
+        throw startError;
+      }
+      const sessionIds = starts
+        .map((item) => item.session?.session_id || item.session?.session?.session_id || null)
+        .filter(Boolean);
       updateNestedState('capture', {
         vehicle_id: vehicleId,
         active: true,
-        session_id: session?.session_id || session?.session?.session_id || null,
-        cameras: [camera],
+        session_id: sessionIds.length === 1 ? sessionIds[0] : sessionIds.join(',') || null,
+        session_ids: Object.fromEntries(starts.map((item) => [item.camera, item.session?.session_id || item.session?.session?.session_id || null])),
+        cameras: enabledCameras,
         saved_frames: 0,
         last_response: {
           capabilities,
           calibration,
-          start: started
+          starts
         },
         started_at_ms: Date.now(),
         stopped_at_ms: null
@@ -1235,7 +1286,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       updateState({
         phase: 'capturing',
         active_username: req.threeDgsAuth.username,
-        stage_text: `车端 ${camera} 3DGS 采集已启动。`
+        stage_text: `车端 ${enabledCameras.join('、')} 3DGS 采集已启动。`
       });
       return res.json(makeStatusResponse(req.threeDgsAuth));
     } catch (error) {
@@ -1253,15 +1304,25 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       return res.status(400).json({ ok: false, error: 'vehicle_id_required' });
     }
     try {
-      const camera = String(req.body?.camera || state.capture.cameras?.[0] || '').trim();
-      const status = await callVehicleTool(vehicleId, '3dgs.capture.status', camera ? { camera } : {}, 25);
-      const session = normalizeSession(status);
+      const cameras = activeCaptureCameras();
+      const statuses = [];
+      for (const camera of cameras) {
+        const status = await callVehicleTool(vehicleId, '3dgs.capture.status', { camera }, 25);
+        statuses.push({
+          camera,
+          response: status,
+          session: normalizeSession(status)
+        });
+      }
+      const savedFrames = statuses.reduce((total, item) => {
+        return total + Number(item.session?.counts?.saved_frames ?? item.session?.saved_frames ?? 0);
+      }, 0);
       updateNestedState('capture', {
         vehicle_id: vehicleId,
-        active: Boolean(session?.active ?? state.capture.active),
-        cameras: camera ? [camera] : state.capture.cameras,
-        saved_frames: Number(session?.counts?.saved_frames ?? state.capture.saved_frames ?? 0),
-        last_response: status
+        active: statuses.some((item) => Boolean(item.session?.active ?? state.capture.active)),
+        cameras,
+        saved_frames: savedFrames || state.capture.saved_frames || 0,
+        last_response: { statuses }
       });
       return res.json(makeStatusResponse(req.threeDgsAuth));
     } catch (error) {
@@ -1279,25 +1340,39 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       return res.status(400).json({ ok: false, error: 'vehicle_id_required' });
     }
     try {
-      const camera = String(req.body?.camera || state.capture.cameras?.[0] || '').trim();
-      const stopped = await callVehicleTool(
-        vehicleId,
-        '3dgs.capture.stop',
-        {
-          reason: 'operator_finished',
-          ...(camera ? { camera } : {})
-        },
-        30
-      );
+      const cameras = activeCaptureCameras();
+      const stops = [];
+      for (const camera of cameras) {
+        try {
+          const stopped = await callVehicleTool(
+            vehicleId,
+            '3dgs.capture.stop',
+            {
+              reason: 'operator_finished',
+              camera
+            },
+            30
+          );
+          stops.push({ camera, response: stopped });
+        } catch (error) {
+          stops.push({ camera, error: error.message || 'stop_failed' });
+        }
+      }
+      if (stops.length && stops.every((item) => item.error)) {
+        const error = new Error(stops.map((item) => `${item.camera}:${item.error}`).join('; '));
+        error.status = 502;
+        throw error;
+      }
       updateNestedState('capture', {
         vehicle_id: vehicleId,
         active: false,
-        last_response: stopped,
+        cameras,
+        last_response: { stops },
         stopped_at_ms: Date.now()
       });
       updateState({
         phase: state.dataset.prepared ? 'prepared' : 'idle',
-        stage_text: `车端 ${camera || ''} 3DGS 采集已停止。`.replace(/\s+/g, ' ').trim()
+        stage_text: `车端 ${cameras.join('、')} 3DGS 采集已停止。`
       });
       return res.json(makeStatusResponse(req.threeDgsAuth));
     } catch (error) {
@@ -1315,20 +1390,26 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       return res.status(400).json({ ok: false, error: 'vehicle_id_required' });
     }
     try {
-      const manifest = await callVehicleTool(
-        vehicleId,
-        '3dgs.capture.manifest',
-        {
-          ...(req.body?.camera ? { camera: String(req.body.camera) } : {}),
-          include_records: Boolean(req.body?.include_records ?? true),
-          max_records: Number(req.body?.max_records || 100)
-        },
-        30
-      );
+      const cameras = activeCaptureCameras();
+      const manifests = [];
+      for (const camera of cameras) {
+        const manifest = await callVehicleTool(
+          vehicleId,
+          '3dgs.capture.manifest',
+          {
+            camera,
+            include_records: Boolean(req.body?.include_records ?? true),
+            max_records: Number(req.body?.max_records || 100)
+          },
+          30
+        );
+        manifests.push({ camera, response: manifest });
+      }
       updateNestedState('capture', {
         vehicle_id: vehicleId,
-        manifest,
-        last_response: manifest
+        manifest: { manifests },
+        cameras,
+        last_response: { manifests }
       });
       return res.json(makeStatusResponse(req.threeDgsAuth));
     } catch (error) {

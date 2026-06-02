@@ -50,7 +50,7 @@ import SiteLayout from "../components/SiteLayout.astro";
                 <p class="section-kicker">车端采集</p>
                 <h3>有外参相机图像与 /ndt_pose 位姿</h3>
               </div>
-              <p id="three-dgs-capture-note" class="three-dgs-note">当前按车端 capabilities 只允许正式标定相机采集。BIT-0041 现阶段是 camera1 和 camera4。</p>
+              <p id="three-dgs-capture-note" class="three-dgs-note">点击开始采集后，车端所有 enabled=true 的正式标定相机会一起工作。BIT-0041 现阶段是 camera1 和 camera4。</p>
             </div>
 
             <div class="three-dgs-form-grid">
@@ -60,13 +60,10 @@ import SiteLayout from "../components/SiteLayout.astro";
                   <option value="">加载中...</option>
                 </select>
               </label>
-              <label class="three-dgs-field">
-                <span>采集相机</span>
-                <select id="three-dgs-camera">
-                  <option value="camera1">camera1</option>
-                  <option value="camera4">camera4</option>
-                </select>
-              </label>
+              <div class="three-dgs-field three-dgs-readonly">
+                <span>将采集相机</span>
+                <strong id="three-dgs-enabled-cameras">camera1、camera4</strong>
+              </div>
               <label class="three-dgs-field">
                 <span>最小平移 m</span>
                 <input id="three-dgs-min-translation" type="number" min="0.05" step="0.05" value="0.5" />
@@ -237,7 +234,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   const el = (id) => document.getElementById(id);
   const vehicleSelect = el("three-dgs-vehicle");
-  const cameraSelect = el("three-dgs-camera");
+  const enabledCamerasText = el("three-dgs-enabled-cameras");
   const statusTitle = el("three-dgs-status-title");
   const statusCopy = el("three-dgs-status-copy");
   const statusBadge = el("three-dgs-status-badge");
@@ -333,8 +330,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     }
   }
 
-  function applyCameras() {
-    const previous = cameraSelect.value;
+  function enabledCameraNames() {
     const vehicleData = statusData?.state?.vehicle_data || {};
     const configured = statusData?.configured_camera_ids || ["camera1", "camera2", "camera3", "camera4"];
     const cachedMatchesVehicle = !vehicleData.vehicle_id || vehicleData.vehicle_id === vehicleSelect.value;
@@ -345,20 +341,7 @@ import SiteLayout from "../components/SiteLayout.astro";
         ? "formal_camera_lidar_calibration_available"
         : "formal_camera_lidar_calibration_missing"
     }));
-    cameraSelect.innerHTML = "";
-    capabilities.forEach((item) => {
-      const option = document.createElement("option");
-      option.value = item.camera;
-      option.disabled = !item.enabled;
-      option.textContent = `${item.camera}${item.enabled ? "" : ` · ${item.reason || "disabled"}`}`;
-      cameraSelect.appendChild(option);
-    });
-    if (previous && [...cameraSelect.options].some((option) => option.value === previous && !option.disabled)) {
-      cameraSelect.value = previous;
-    } else {
-      const firstEnabled = [...cameraSelect.options].find((option) => !option.disabled);
-      if (firstEnabled) cameraSelect.value = firstEnabled.value;
-    }
+    return capabilities.filter((item) => item.enabled).map((item) => item.camera);
   }
 
   function applyStatus() {
@@ -400,7 +383,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     const train = state.train || {};
     el("three-dgs-train-run").textContent = train.run_id || "-";
     el("three-dgs-remote-run").textContent = train.remote_run_path || "-";
-    applyCameras();
+    const enabledNames = enabledCameraNames();
+    enabledCamerasText.textContent = enabledNames.length ? enabledNames.join("、") : "暂无 enabled 相机";
     refreshButtons();
   }
 
@@ -430,7 +414,6 @@ import SiteLayout from "../components/SiteLayout.astro";
   function selectedVehiclePayload() {
     return {
       vehicle_id: vehicleSelect.value,
-      camera: cameraSelect.value,
       min_translation_m: Number(el("three-dgs-min-translation").value || 0.5),
       min_rotation_deg: Number(el("three-dgs-min-rotation").value || 10),
       min_interval_s: Number(el("three-dgs-min-interval").value || 0.2)
@@ -540,19 +523,19 @@ import SiteLayout from "../components/SiteLayout.astro";
     runAction("开始采集", () => postJson(api.startCapture, selectedVehiclePayload()))
   );
   el("three-dgs-capture-status").addEventListener("click", () =>
-    runAction("读取采集状态", () => postJson(api.captureStatus, { vehicle_id: vehicleSelect.value, camera: cameraSelect.value }))
+    runAction("读取采集状态", () => postJson(api.captureStatus, { vehicle_id: vehicleSelect.value }))
   );
   el("three-dgs-stop-capture").addEventListener("click", () =>
-    runAction("停止采集", () => postJson(api.stopCapture, { vehicle_id: vehicleSelect.value, camera: cameraSelect.value }))
+    runAction("停止采集", () => postJson(api.stopCapture, { vehicle_id: vehicleSelect.value }))
   );
   el("three-dgs-read-manifest").addEventListener("click", () =>
-    runAction("读取清单", () => postJson(api.manifest, { vehicle_id: vehicleSelect.value, camera: cameraSelect.value, include_records: true, max_records: 100 }))
+    runAction("读取清单", () => postJson(api.manifest, { vehicle_id: vehicleSelect.value, include_records: true, max_records: 100 }))
   );
   el("three-dgs-update-map").addEventListener("click", () =>
     runAction("更新地图", () => postJson(api.updateMap, { vehicle_id: vehicleSelect.value }))
   );
   el("three-dgs-pull-image-pose").addEventListener("click", () =>
-    runAction("上传图片数据", () => postJson(api.pullImagePose, { vehicle_id: vehicleSelect.value, camera: cameraSelect.value }))
+    runAction("上传图片数据", () => postJson(api.pullImagePose, { vehicle_id: vehicleSelect.value }))
   );
 
   el("three-dgs-pointcloud-button").addEventListener("click", () => pointcloudInput.click());
@@ -704,6 +687,17 @@ import SiteLayout from "../components/SiteLayout.astro";
     border: 1px solid rgba(71, 85, 105, 0.7);
     background: rgba(2, 6, 23, 0.72);
     color: #e2e8f0;
+    padding: 9px 11px;
+  }
+
+  .three-dgs-readonly strong {
+    display: flex;
+    align-items: center;
+    min-height: 42px;
+    border-radius: 8px;
+    border: 1px solid rgba(71, 85, 105, 0.7);
+    background: rgba(2, 6, 23, 0.42);
+    color: #e0f2fe;
     padding: 9px 11px;
   }
 
