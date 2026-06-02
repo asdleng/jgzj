@@ -6,12 +6,13 @@ export const siteDescription =
 export const navigationItems = [
   { href: "/", label: "安防巡逻行业爆发" },
   { href: "/l4-autonomous-driving", label: "L4级园区自动驾驶" },
+  { href: "/cases-awards", label: "案例与奖项" },
   { href: "/edge-cloud-ai-inspection", label: "端云协同AI检测" },
   { href: "/intelligent-ai-dialogue", label: "智能AI对话交互" },
   { href: "/cloud-operations", label: "云端智能运维" },
+  { href: "/vehicle-devops", label: "车辆代码维护" },
   { href: "/cloud-mapping", label: "大规模云端建图" },
-  { href: "/distributed-map-management", label: "分布地图云端统一管理" },
-  { href: "/cases-awards", label: "案例与奖项" }
+  { href: "/distributed-map-management", label: "分布地图云端统一管理" }
 ];
 
 export const contactInfo = {

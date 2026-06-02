@@ -18,7 +18,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     <div class="hero-grid"></div>
     <div class="page-hero-shell">
       <div class="page-hero-copy reveal" data-reveal>
-        <p class="page-kicker">PAGE 07 · MAP PLUGIN</p>
+        <p class="page-kicker">PAGE 09 · MAP PLUGIN</p>
         <h1 class="page-title">分布地图云端统一管理</h1>
         <p class="page-subtitle">
           云端不直接复制车端工具，而是通过 auto_ad_ai WebSocket 连接到指定车辆，远程启动车端地图编辑器插件，并把浏览器请求代理到车端本地插件，实现路线、边界、点云与地图状态的统一查看。
@@ -36,7 +36,7 @@ import SiteLayout from "../components/SiteLayout.astro";
           页面会先读取云端在线车辆，再通过 <code>map_editor.start</code>、<code>map_editor.status</code> 和 <code>map_editor.http</code> 三类工具把车端插件嵌入当前官网。后续加权限后，保存边界和路径会再做二次确认。
         </p>
 
-        <div id="map-editor-console" class="map-editor-console">
+        <div id="map-editor-console" class="map-editor-console" data-requires-permission="vehicle:path:write">
           <div class="map-editor-toolbar">
             <label class="map-editor-field" for="map-editor-vehicle">
               当前车辆

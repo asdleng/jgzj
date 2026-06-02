@@ -1,0 +1,528 @@
+<div class="site-account">
+  <button id="jgzj-auth-open" class="site-account-button" type="button">账号</button>
+  <button id="jgzj-auth-quick-logout" class="site-account-logout" type="button" hidden>退出</button>
+</div>
+
+<div id="jgzj-auth-modal" class="site-auth-modal" hidden>
+  <div class="site-auth-backdrop" data-auth-close></div>
+  <section class="site-auth-dialog" role="dialog" aria-modal="true" aria-label="账号与权限">
+    <header class="site-auth-head">
+      <div>
+        <p class="site-auth-kicker">ACCOUNT</p>
+        <h2>账号与权限</h2>
+      </div>
+      <button id="jgzj-auth-close" class="site-auth-icon-button" type="button" aria-label="关闭">×</button>
+    </header>
+
+    <p id="jgzj-auth-current" class="site-auth-current">正在检查登录状态...</p>
+
+    <div id="jgzj-auth-guest" class="site-auth-grid">
+      <form id="jgzj-login-form" class="site-auth-form">
+        <h3>登录</h3>
+        <label>
+          <span>用户名</span>
+          <input id="jgzj-login-username" type="text" autocomplete="username" maxlength="64" />
+        </label>
+        <label>
+          <span>密码</span>
+          <input id="jgzj-login-password" type="password" autocomplete="current-password" maxlength="128" />
+        </label>
+        <button type="submit">登录</button>
+      </form>
+
+      <form id="jgzj-register-form" class="site-auth-form">
+        <h3>注册新账号</h3>
+        <label>
+          <span>用户名</span>
+          <input id="jgzj-register-username" type="text" autocomplete="username" maxlength="32" placeholder="3-32 位字母数字" />
+        </label>
+        <label>
+          <span>邮箱</span>
+          <input id="jgzj-register-email" type="email" autocomplete="email" maxlength="254" />
+        </label>
+        <label>
+          <span>密码</span>
+          <input id="jgzj-register-password" type="password" autocomplete="new-password" maxlength="128" />
+        </label>
+        <button type="submit">注册并登录</button>
+      </form>
+    </div>
+
+    <div id="jgzj-auth-user" class="site-auth-user" hidden>
+      <form id="jgzj-email-form" class="site-auth-email-form">
+        <div>
+          <p class="site-auth-muted">邮箱验证</p>
+          <p id="jgzj-email-state" class="site-auth-email-state">未验证账号暂不具备任何权限。</p>
+        </div>
+        <label>
+          <span>邮箱</span>
+          <input id="jgzj-email-input" type="email" autocomplete="email" maxlength="254" />
+        </label>
+        <button id="jgzj-email-send" class="site-auth-secondary-button" type="submit">发送验证邮件</button>
+      </form>
+      <div id="jgzj-auth-permissions" class="site-auth-permissions"></div>
+      <button id="jgzj-logout" class="site-auth-secondary-button" type="button">退出登录</button>
+    </div>
+
+    <section id="jgzj-auth-admin" class="site-auth-admin" hidden>
+      <div class="site-auth-admin-head">
+        <div>
+          <p class="site-auth-kicker">ADMIN</p>
+          <h3>账号权限管理</h3>
+        </div>
+        <button id="jgzj-admin-refresh" class="site-auth-secondary-button" type="button">刷新</button>
+      </div>
+      <div class="site-auth-admin-grid">
+        <div id="jgzj-admin-user-list" class="site-auth-user-list"></div>
+        <form id="jgzj-admin-form" class="site-auth-admin-form">
+          <p id="jgzj-admin-selected" class="site-auth-muted">选择一个账号后分配权限。</p>
+          <label class="site-auth-active-row">
+            <input id="jgzj-admin-active" type="checkbox" />
+            <span>账号启用</span>
+          </label>
+          <div id="jgzj-admin-permission-list" class="site-auth-permission-list"></div>
+          <button id="jgzj-admin-save" type="submit" disabled>保存权限</button>
+        </form>
+      </div>
+    </section>
+
+    <p id="jgzj-auth-status" class="site-auth-status" data-state="idle">新注册账号默认只能查看非公开页面，具体互动权限由超级管理员分配。</p>
+  </section>
+</div>
+
+<script is:inline>
+(() => {
+  const endpoints = {
+    me: "/api/auth/me",
+    login: "/api/auth/login",
+    logout: "/api/auth/logout",
+    register: "/api/auth/register",
+    verifyEmail: "/api/auth/request-email-verification",
+    users: "/api/auth/users",
+    permissions: "/api/auth/permissions"
+  };
+
+  const openBtn = document.getElementById("jgzj-auth-open");
+  const modal = document.getElementById("jgzj-auth-modal");
+  const closeBtn = document.getElementById("jgzj-auth-close");
+  const current = document.getElementById("jgzj-auth-current");
+  const guestPane = document.getElementById("jgzj-auth-guest");
+  const userPane = document.getElementById("jgzj-auth-user");
+  const adminPane = document.getElementById("jgzj-auth-admin");
+  const statusNode = document.getElementById("jgzj-auth-status");
+  const permissionsNode = document.getElementById("jgzj-auth-permissions");
+  const loginForm = document.getElementById("jgzj-login-form");
+  const registerForm = document.getElementById("jgzj-register-form");
+  const emailForm = document.getElementById("jgzj-email-form");
+  const emailInput = document.getElementById("jgzj-email-input");
+  const emailState = document.getElementById("jgzj-email-state");
+  const emailSend = document.getElementById("jgzj-email-send");
+  const logoutBtn = document.getElementById("jgzj-logout");
+  const quickLogoutBtn = document.getElementById("jgzj-auth-quick-logout");
+  const adminRefreshBtn = document.getElementById("jgzj-admin-refresh");
+  const adminUserList = document.getElementById("jgzj-admin-user-list");
+  const adminForm = document.getElementById("jgzj-admin-form");
+  const adminSelected = document.getElementById("jgzj-admin-selected");
+  const adminActive = document.getElementById("jgzj-admin-active");
+  const adminPermissionList = document.getElementById("jgzj-admin-permission-list");
+  const adminSave = document.getElementById("jgzj-admin-save");
+
+  let authState = { authenticated: false, user: null, permissions: [] };
+  let allPermissions = [];
+  let adminUsers = [];
+  let selectedUsername = "";
+
+  function setStatus(text, state = "idle") {
+    if (!statusNode) return;
+    statusNode.textContent = text;
+    statusNode.dataset.state = state;
+  }
+
+  function hasPermission(permission) {
+    if (!permission) return true;
+    if (!authState.user?.email_verified) return false;
+    if (authState.user?.super_admin) return true;
+    return (authState.permissions || []).includes(permission);
+  }
+
+  function dispatchAuthChange() {
+    window.dispatchEvent(new CustomEvent("jgzj:auth-change", { detail: authState }));
+  }
+
+  function setModalOpen(open) {
+    if (!modal) return;
+    modal.hidden = !open;
+    document.body.classList.toggle("has-site-auth-modal", open);
+  }
+
+  async function requestJson(url, options = {}) {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        Accept: "application/json",
+        ...(options.headers || {})
+      }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.ok === false) {
+      throw new Error(data?.detail || data?.error || `HTTP ${response.status}`);
+    }
+    return data;
+  }
+
+  function groupedPermissions() {
+    const groups = new Map();
+    allPermissions.forEach((permission) => {
+      const group = permission.group || "其他";
+      if (!groups.has(group)) groups.set(group, []);
+      groups.get(group).push(permission);
+    });
+    return [...groups.entries()];
+  }
+
+  function renderOwnPermissions() {
+    if (!permissionsNode) return;
+    permissionsNode.innerHTML = "";
+    const title = document.createElement("p");
+    title.className = "site-auth-muted";
+    title.textContent = !authState.user?.email_verified
+      ? "邮箱未验证，当前账号暂无有效权限。"
+      : authState.user?.super_admin
+        ? "当前账号是超级管理员，拥有全部权限。"
+        : "当前账号权限";
+    permissionsNode.appendChild(title);
+
+    const effective = new Set(authState.permissions || []);
+    const list = document.createElement("div");
+    list.className = "site-auth-permission-chips";
+    allPermissions.forEach((permission) => {
+      if (!authState.user?.email_verified) return;
+      if (!authState.user?.super_admin && !effective.has(permission.id)) return;
+      const chip = document.createElement("span");
+      chip.textContent = permission.label;
+      list.appendChild(chip);
+    });
+    if (!list.childElementCount) {
+      const empty = document.createElement("p");
+      empty.className = "site-auth-muted";
+      empty.textContent = authState.user?.email_verified
+        ? "暂无互动权限，请联系超级管理员分配。"
+        : "请先完成邮箱验证。";
+      permissionsNode.appendChild(empty);
+      return;
+    }
+    permissionsNode.appendChild(list);
+  }
+
+  function renderAuthState() {
+    const user = authState.user;
+    if (openBtn) {
+      openBtn.textContent = user ? user.username : "账号";
+      openBtn.dataset.authenticated = user ? "true" : "false";
+    }
+    if (quickLogoutBtn) {
+      quickLogoutBtn.hidden = !user;
+    }
+    if (current) {
+      current.textContent = user
+        ? `已登录：${user.username}${user.super_admin ? "（超级管理员）" : ""}${user.email_verified ? "" : "（邮箱未验证）"}`
+        : "未登录。注册后必须完成邮箱验证，互动能力再由超级管理员分配。";
+    }
+    if (guestPane) guestPane.hidden = Boolean(user);
+    if (userPane) userPane.hidden = !user;
+    if (adminPane) adminPane.hidden = !user?.super_admin || !user?.email_verified;
+    renderEmailState();
+    renderOwnPermissions();
+    applyPermissionLocks();
+  }
+
+  function renderEmailState() {
+    const user = authState.user;
+    if (!emailForm || !emailInput || !emailState || !emailSend) return;
+    emailInput.value = user?.email || "";
+    emailInput.disabled = !user;
+    emailSend.disabled = !user;
+    if (!user) {
+      emailState.textContent = "登录后可验证邮箱。";
+      emailState.dataset.state = "idle";
+      return;
+    }
+    if (user.email_verified) {
+      emailState.textContent = `已验证：${user.email}`;
+      emailState.dataset.state = "ok";
+      emailSend.textContent = "更换邮箱并验证";
+      return;
+    }
+    emailState.textContent = user.email
+      ? `未验证：${user.email}。未验证账号暂不具备任何权限。`
+      : "未填写邮箱。未验证账号暂不具备任何权限。";
+    emailState.dataset.state = "error";
+    emailSend.textContent = "发送验证邮件";
+  }
+
+  function applyPermissionLocks() {
+    document.querySelectorAll("[data-requires-permission]").forEach((panel) => {
+      const permission = panel.getAttribute("data-requires-permission") || "";
+      const allowed = hasPermission(permission);
+      panel.dataset.permissionState = allowed ? "allowed" : "locked";
+      panel.querySelectorAll("button, input, select, textarea").forEach((control) => {
+        if (control.closest(".site-auth-dialog")) return;
+        if (!allowed) {
+          if (!control.disabled) {
+            control.dataset.authLockDisabled = "true";
+          }
+          control.disabled = true;
+        } else if (control.dataset.authLockDisabled === "true") {
+          control.disabled = false;
+          delete control.dataset.authLockDisabled;
+        }
+      });
+      let note = panel.querySelector(":scope > .auth-lock-message");
+      if (!allowed) {
+        if (!note) {
+          note = document.createElement("p");
+          note.className = "auth-lock-message";
+          panel.prepend(note);
+        }
+        const label = allPermissions.find((item) => item.id === permission)?.label || permission;
+        note.textContent = authState.user
+          ? authState.user.email_verified
+            ? `当前账号缺少权限：${label}`
+            : `邮箱验证后可申请使用：${label}`
+          : `登录后可使用：${label}`;
+      } else if (note) {
+        note.remove();
+      }
+    });
+  }
+
+  async function refreshMe(options = {}) {
+    try {
+      const [me, permissionPayload] = await Promise.all([
+        requestJson(endpoints.me),
+        allPermissions.length ? Promise.resolve({ permissions: allPermissions }) : requestJson(endpoints.permissions)
+      ]);
+      allPermissions = Array.isArray(permissionPayload.permissions) ? permissionPayload.permissions : [];
+      authState = {
+        authenticated: Boolean(me.authenticated),
+        user: me.user || null,
+        permissions: Array.isArray(me.permissions) ? me.permissions : []
+      };
+      renderAuthState();
+      if (options.dispatch !== false) {
+        dispatchAuthChange();
+      }
+      if (authState.user?.super_admin && authState.user?.email_verified && !adminUsers.length) {
+        loadAdminUsers().catch(() => {});
+      }
+    } catch (_error) {
+      authState = { authenticated: false, user: null, permissions: [] };
+      renderAuthState();
+    }
+  }
+
+  async function handleLogin(event) {
+    event.preventDefault();
+    const username = document.getElementById("jgzj-login-username")?.value.trim() || "";
+    const password = document.getElementById("jgzj-login-password")?.value || "";
+    if (!username || !password) {
+      setStatus("请输入用户名和密码。", "error");
+      return;
+    }
+    setStatus("登录中...", "loading");
+    try {
+      await requestJson(endpoints.login, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      document.getElementById("jgzj-login-password").value = "";
+      await refreshMe();
+      setStatus("登录成功。", "ok");
+    } catch (error) {
+      setStatus(error?.message || "登录失败。", "error");
+    }
+  }
+
+  async function handleRegister(event) {
+    event.preventDefault();
+    const username = document.getElementById("jgzj-register-username")?.value.trim() || "";
+    const email = document.getElementById("jgzj-register-email")?.value.trim() || "";
+    const password = document.getElementById("jgzj-register-password")?.value || "";
+    if (!username || !email || !password) {
+      setStatus("请输入用户名、邮箱和密码。", "error");
+      return;
+    }
+    setStatus("注册中...", "loading");
+    try {
+      await requestJson(endpoints.register, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, email, password })
+      });
+      document.getElementById("jgzj-register-password").value = "";
+      await refreshMe();
+      setStatus("注册成功，已发送邮箱验证。验证完成前账号暂无有效权限。", "ok");
+    } catch (error) {
+      setStatus(error?.message || "注册失败。", "error");
+    }
+  }
+
+  async function handleEmailVerification(event) {
+    event.preventDefault();
+    if (!authState.user) return;
+    const email = emailInput?.value.trim() || "";
+    if (!email) {
+      setStatus("请输入邮箱。", "error");
+      return;
+    }
+    if (emailSend) emailSend.disabled = true;
+    setStatus("正在发送验证邮件...", "loading");
+    try {
+      const data = await requestJson(endpoints.verifyEmail, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      await refreshMe();
+      const mode = data.email_delivery?.mode;
+      setStatus(
+        mode === "outbox"
+          ? "SMTP 未配置，验证链接已写入服务器 outbox。"
+          : "验证邮件已发送，请打开邮箱完成验证。",
+        "ok"
+      );
+    } catch (error) {
+      setStatus(error?.message || "验证邮件发送失败。", "error");
+    } finally {
+      if (emailSend) emailSend.disabled = false;
+    }
+  }
+
+  async function handleLogout() {
+    setStatus("正在退出...", "loading");
+    await requestJson(endpoints.logout, { method: "POST" }).catch(() => {});
+    authState = { authenticated: false, user: null, permissions: [] };
+    adminUsers = [];
+    selectedUsername = "";
+    renderAuthState();
+    dispatchAuthChange();
+    setStatus("已退出登录。", "idle");
+  }
+
+  function renderAdminUsers() {
+    if (!adminUserList) return;
+    adminUserList.innerHTML = "";
+    adminUsers.forEach((user) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "site-auth-user-row";
+      button.dataset.active = user.active ? "true" : "false";
+      button.dataset.selected = user.username === selectedUsername ? "true" : "false";
+      button.textContent = `${user.username}${user.super_admin ? " · 超级管理员" : ""}${user.email_verified ? "" : " · 邮箱未验证"}`;
+      button.addEventListener("click", () => selectAdminUser(user.username));
+      adminUserList.appendChild(button);
+    });
+  }
+
+  function selectAdminUser(username) {
+    selectedUsername = username;
+    const user = adminUsers.find((item) => item.username === username);
+    renderAdminUsers();
+    if (!user || !adminPermissionList || !adminSelected || !adminActive || !adminSave) return;
+    adminSelected.textContent = `正在编辑：${user.username}${user.super_admin ? "（超级管理员不可修改权限）" : ""}`;
+    adminActive.checked = user.active !== false;
+    adminActive.disabled = Boolean(user.super_admin);
+    adminPermissionList.innerHTML = "";
+    const granted = new Set(user.permissions || []);
+    groupedPermissions().forEach(([group, permissions]) => {
+      const groupNode = document.createElement("fieldset");
+      groupNode.className = "site-auth-permission-group";
+      const legend = document.createElement("legend");
+      legend.textContent = group;
+      groupNode.appendChild(legend);
+      permissions.forEach((permission) => {
+        const label = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = permission.id;
+        checkbox.checked = user.super_admin || granted.has(permission.id);
+        checkbox.disabled = Boolean(user.super_admin);
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(permission.label));
+        groupNode.appendChild(label);
+      });
+      adminPermissionList.appendChild(groupNode);
+    });
+    adminSave.disabled = Boolean(user.super_admin);
+  }
+
+  async function loadAdminUsers() {
+    if (!authState.user?.super_admin || !authState.user?.email_verified) return;
+    const data = await requestJson(endpoints.users);
+    adminUsers = Array.isArray(data.users) ? data.users : [];
+    allPermissions = Array.isArray(data.permissions) ? data.permissions : allPermissions;
+    if (!selectedUsername && adminUsers.length) selectedUsername = adminUsers[0].username;
+    renderAdminUsers();
+    if (selectedUsername) selectAdminUser(selectedUsername);
+  }
+
+  async function saveAdminUser(event) {
+    event.preventDefault();
+    const user = adminUsers.find((item) => item.username === selectedUsername);
+    if (!user || user.super_admin) return;
+    const permissions = [...adminPermissionList.querySelectorAll("input[type='checkbox']:checked")].map((input) => input.value);
+    setStatus("正在保存权限...", "loading");
+    try {
+      const data = await requestJson(`${endpoints.users}/${encodeURIComponent(user.username)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          active: Boolean(adminActive.checked),
+          permissions
+        })
+      });
+      adminUsers = adminUsers.map((item) => (item.username === data.user.username ? data.user : item));
+      renderAdminUsers();
+      selectAdminUser(data.user.username);
+      setStatus("权限已保存。", "ok");
+    } catch (error) {
+      setStatus(error?.message || "保存失败。", "error");
+    }
+  }
+
+  openBtn?.addEventListener("click", () => setModalOpen(true));
+  closeBtn?.addEventListener("click", () => setModalOpen(false));
+  modal?.addEventListener("click", (event) => {
+    if (event.target instanceof HTMLElement && event.target.hasAttribute("data-auth-close")) {
+      setModalOpen(false);
+    }
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && modal && !modal.hidden) {
+      setModalOpen(false);
+    }
+  });
+  loginForm?.addEventListener("submit", handleLogin);
+  registerForm?.addEventListener("submit", handleRegister);
+  emailForm?.addEventListener("submit", handleEmailVerification);
+  logoutBtn?.addEventListener("click", handleLogout);
+  quickLogoutBtn?.addEventListener("click", handleLogout);
+  adminRefreshBtn?.addEventListener("click", () => loadAdminUsers().catch((error) => setStatus(error?.message || "加载失败。", "error")));
+  adminForm?.addEventListener("submit", saveAdminUser);
+  window.addEventListener("jgzj:permissions-refresh", () => refreshMe());
+
+  function bootAuthUi() {
+    refreshMe({ dispatch: false }).then(() => {
+      applyPermissionLocks();
+      dispatchAuthChange();
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootAuthUi, { once: true });
+  } else {
+    bootAuthUi();
+  }
+})();
+</script>

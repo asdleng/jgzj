@@ -30,7 +30,8 @@ function createInitialState() {
   };
 }
 
-module.exports = function registerCloudMappingRoutes(app) {
+module.exports = function registerCloudMappingRoutes(app, options = {}) {
+  const authStore = options.authStore || null;
   const runtimeRoot = path.resolve(
     process.env.CLOUD_MAPPING_RUNTIME_ROOT || path.resolve(__dirname, '../.runtime/cloud-mapping')
   );
@@ -312,7 +313,33 @@ module.exports = function registerCloudMappingRoutes(app) {
     );
   }
 
-  function requireCloudMappingAuth(req, res, next) {
+  async function getCloudMappingAuthFromRequest(req) {
+    if (authStore) {
+      const auth = await authStore.getAuthFromRequest(req);
+      if (!auth || !authStore.hasPermission(auth.user, 'mapping:run')) {
+        return null;
+      }
+      return {
+        username: auth.user.username,
+        expires_at_ms: auth.session.expires_at_ms
+      };
+    }
+    return getAuthFromRequest(req);
+  }
+
+  async function requireCloudMappingAuth(req, res, next) {
+    if (authStore) {
+      const auth = await authStore.ensureRequestPermission(req, res, 'mapping:run');
+      if (!auth) {
+        return;
+      }
+      req.cloudMappingAuth = {
+        username: auth.user.username,
+        expires_at_ms: auth.session.expires_at_ms
+      };
+      return next();
+    }
+
     const auth = getAuthFromRequest(req);
     if (!auth) {
       clearAuthCookie(res);
@@ -539,8 +566,34 @@ module.exports = function registerCloudMappingRoutes(app) {
     }
   }
 
-  function makeStatusResponse(req) {
-    const auth = getAuthFromRequest(req);
+  function makeStatusResponse(auth) {
+    if (!auth) {
+      return {
+        ok: true,
+        auth: {
+          authenticated: false,
+          username: null,
+          expires_at_ms: null
+        },
+        task: {
+          phase: 'locked',
+          busy: false,
+          active_username: null,
+          progress_pct: 0,
+          stage_text: '登录后查看建图状态、上传 bag 并启动建图。',
+          task_name: '',
+          scene_type: '',
+          task_note: '',
+          error_message: null,
+          started_at_ms: null,
+          completed_at_ms: null,
+          updated_at_ms: Date.now()
+        },
+        uploaded_bag: null,
+        result_zip: null
+      };
+    }
+
     const busy = ['uploading', 'running', 'packaging'].includes(state.phase);
     return {
       ok: true,
@@ -822,12 +875,42 @@ module.exports = function registerCloudMappingRoutes(app) {
 
   app.get('/api/cloud-mapping/status', async (req, res) => {
     await syncStateWithArtifacts();
-    return res.json(makeStatusResponse(req));
+    const auth = await getCloudMappingAuthFromRequest(req);
+    return res.json(makeStatusResponse(auth));
   });
 
-  app.post('/api/cloud-mapping/login', (req, res) => {
+  app.post('/api/cloud-mapping/login', async (req, res) => {
     const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+    if (authStore) {
+      try {
+        const login = await authStore.login(username, password, {
+          ip: req.ip || req.socket?.remoteAddress || '',
+          user_agent: req.get('user-agent') || ''
+        });
+        if (!authStore.hasPermission(login.user, 'mapping:run')) {
+          return res.status(403).json({
+            ok: false,
+            error: 'cloud_mapping_permission_required',
+            detail: '当前账号没有云端建图权限。'
+          });
+        }
+        authStore.setSessionCookie(res, login.token, login.expires_at_ms - Date.now());
+        return res.json({
+          ok: true,
+          authenticated: true,
+          username: login.user.username,
+          expires_at_ms: login.expires_at_ms
+        });
+      } catch (_error) {
+        authStore.clearSessionCookie(res);
+        return res.status(401).json({
+          ok: false,
+          error: 'cloud_mapping_login_failed'
+        });
+      }
+    }
 
     if (!isLoginValid(username, password)) {
       clearAuthCookie(res);
@@ -847,7 +930,16 @@ module.exports = function registerCloudMappingRoutes(app) {
     });
   });
 
-  app.post('/api/cloud-mapping/logout', (_req, res) => {
+  app.post('/api/cloud-mapping/logout', async (req, res) => {
+    if (authStore) {
+      const auth = await authStore.getAuthFromRequest(req, { touch: false });
+      await authStore.logout(req, auth?.username || null);
+      authStore.clearSessionCookie(res);
+      return res.json({
+        ok: true,
+        authenticated: false
+      });
+    }
     clearAuthCookie(res);
     return res.json({
       ok: true,
@@ -998,7 +1090,7 @@ module.exports = function registerCloudMappingRoutes(app) {
           uploaded_bag_updated_at_ms: bagStat?.mtimeMs || Date.now(),
           error_message: null
         });
-        return res.json(makeStatusResponse(req));
+        return res.json(makeStatusResponse(req.cloudMappingAuth));
       } catch (error) {
         return failUpload(error?.message || 'bag_finalize_failed');
       }
@@ -1037,7 +1129,7 @@ module.exports = function registerCloudMappingRoutes(app) {
     try {
       await startMappingTask(req.cloudMappingAuth, payload);
       await syncStateWithArtifacts();
-      return res.json(makeStatusResponse(req));
+      return res.json(makeStatusResponse(req.cloudMappingAuth));
     } catch (error) {
       await markTaskAsFailed(error?.message || 'cloud_mapping_start_failed');
       return res.status(500).json({
@@ -1074,7 +1166,7 @@ module.exports = function registerCloudMappingRoutes(app) {
       error_message: null
     });
 
-    return res.json(makeStatusResponse(req));
+    return res.json(makeStatusResponse(req.cloudMappingAuth));
   });
 
   app.post('/api/cloud-mapping/clear-result', requireCloudMappingAuth, async (req, res) => {
@@ -1100,7 +1192,7 @@ module.exports = function registerCloudMappingRoutes(app) {
       error_message: null
     });
 
-    return res.json(makeStatusResponse(req));
+    return res.json(makeStatusResponse(req.cloudMappingAuth));
   });
 
   app.get('/api/cloud-mapping/download', requireCloudMappingAuth, async (_req, res) => {

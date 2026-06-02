@@ -10,6 +10,9 @@
   const OPENCLAW_LOGOUT_URL = "/api/openclaw-logout";
   const CLOUD_OPS_VEHICLES_URL = "/api/cloud-ops/vehicles";
   const CLOUD_OPS_EXECUTE_URL = "/api/cloud-ops/execute";
+  const CLOUD_OPS_DEPLOY_CATALOG_URL = "/api/cloud-ops/deploy/catalog";
+  const CLOUD_OPS_DEPLOY_REPO_STATUS_URL = "/api/cloud-ops/deploy/repo-status";
+  const CLOUD_OPS_DEPLOY_COMMITS_URL = "/api/cloud-ops/deploy/commits";
   const CLOUD_OPS_WS_PATH = "/ws/ops";
   const IDENTITIES_URL = "/api/chat-identities";
   const AI_CHECK_HISTORY_URL = "/api/ai-check-history";
@@ -19,6 +22,8 @@
   const QWEN_CHECK_PATH = "/ws/qwen/check";
   const OPENCLAW_CHAT_PLACEHOLDER =
     "例如：先帮我做一键健康检查；或者：抓拍 4 路相机看看；再比如：结合刚刚的底盘 CAN 和定位结果，判断这台车现在能不能继续巡逻。";
+  const OPENCLAW_DEVOPS_PLACEHOLDER =
+    "例如：查看当前车 auto_ad_ai 的仓库状态；或者：结合刚才的编译日志判断失败原因，并给出下一步处理建议。";
   const OPENCLAW_LOCKED_PLACEHOLDER = "请先登录云端智能运维账号，登录后可自然语言运维。";
 
   const chatPanel = document.getElementById("chat-panel");
@@ -75,6 +80,7 @@
   const cloudOpsToolNote = document.getElementById("cloud-ops-tool-note");
   const cloudOpsResultSummary = document.getElementById("cloud-ops-result-summary");
   const cloudOpsResultDetails = document.getElementById("cloud-ops-result-details");
+  const cloudOpsResultLog = document.getElementById("cloud-ops-result-log");
   const cloudOpsResultMedia = document.getElementById("cloud-ops-result-media");
   const cloudOpsResultJson = document.getElementById("cloud-ops-result-json");
   const cloudOpsContextList = document.getElementById("cloud-ops-context-list");
@@ -83,6 +89,25 @@
   const cloudOpsAudioStatus = document.getElementById("cloud-ops-audio-status");
   const cloudOpsAudioMicBtn = document.getElementById("cloud-ops-audio-mic");
   const cloudOpsAudioSpeakerBtn = document.getElementById("cloud-ops-audio-speaker");
+  const cloudOpsDeployRefreshBtn = document.getElementById("cloud-ops-deploy-refresh");
+  const cloudOpsDeployStatus = document.getElementById("cloud-ops-deploy-status");
+  const cloudOpsDeployRepo = document.getElementById("cloud-ops-deploy-repo");
+  const cloudOpsDeployPackage = document.getElementById("cloud-ops-deploy-package");
+  const cloudOpsDeployBranch = document.getElementById("cloud-ops-deploy-branch");
+  const cloudOpsDeployCommit = document.getElementById("cloud-ops-deploy-commit");
+  const cloudOpsDeployDirtyPolicy = document.getElementById("cloud-ops-deploy-dirty-policy");
+  const cloudOpsDeployGitUsername = document.getElementById("cloud-ops-deploy-git-username");
+  const cloudOpsDeployGitPassword = document.getElementById("cloud-ops-deploy-git-password");
+  const cloudOpsDeployJobId = document.getElementById("cloud-ops-deploy-job-id");
+  const cloudOpsDeployTailLines = document.getElementById("cloud-ops-deploy-tail-lines");
+  const cloudOpsDeployLiveStatus = document.getElementById("cloud-ops-deploy-live-status");
+  const cloudOpsDeployLiveLog = document.getElementById("cloud-ops-deploy-live-log");
+  const cloudOpsDeployTailStartBtn = document.getElementById("cloud-ops-deploy-tail-start");
+  const cloudOpsDeployTailStopBtn = document.getElementById("cloud-ops-deploy-tail-stop");
+  const cloudOpsDeployTailClearBtn = document.getElementById("cloud-ops-deploy-tail-clear");
+  const cloudOpsDeployFetch = document.getElementById("cloud-ops-deploy-fetch");
+  const cloudOpsDeployNoDeps = document.getElementById("cloud-ops-deploy-no-deps");
+  const cloudOpsDeployForceCmake = document.getElementById("cloud-ops-deploy-force-cmake");
   const cloudOpsActionButtons = Array.from(
     document.querySelectorAll("[data-cloud-ops-action]")
   );
@@ -161,6 +186,11 @@
   let cloudOpsCurrentDetail = null;
   let cloudOpsAvailableTools = new Set();
   let cloudOpsPinnedContexts = [];
+  let cloudOpsDeployRepositories = [];
+  let cloudOpsDeployRepoStatus = null;
+  let cloudOpsDeployLogTimer = 0;
+  let cloudOpsDeployLogBusy = false;
+  let cloudOpsDeployLogJobId = "";
   let cloudOpsOpsSocket = null;
   let cloudOpsOpsReconnectTimer = 0;
   let cloudOpsContextReloadTimer = 0;
@@ -209,6 +239,7 @@
   const CLOUD_OPS_TELEMETRY_STALE_S = 120;
   const CLOUD_OPS_BATTERY_WARN_PERCENT = 20;
   const CLOUD_OPS_BATTERY_ERROR_PERCENT = 10;
+  const CLOUD_OPS_MASTER_DISK_WARN_PERCENT = 95;
 
   function createNonce() {
     if (self.crypto && typeof self.crypto.randomUUID === "function") {
@@ -1928,11 +1959,19 @@
     return `你好，我是智能AI对话助手。当前身份：${vehicleId}。你可以直接输入问题开始对话。`;
   }
 
+  function isVehicleDevOpsConsole() {
+    return String(cloudOpsConsole?.dataset?.opsMode || "").trim() === "vehicle-devops";
+  }
+
   function getOpenClawWelcomeText() {
     const vehicleText = cloudOpsCurrentVehicleId ? `当前车辆：${cloudOpsCurrentVehicleId}。` : "";
-    const permissionText = openClawAuthenticated
-      ? "你可以直接自然语言运维，也可以先点上面的快捷按钮，把关键节点、一键健康检查、AI检测配置、AI检测图片、相机抓拍、地图查看、车身状态、灯光控制、碰撞停复位、routing 等结果插入当前会话上下文后继续追问。"
-      : "当前未登录。请先登录云端智能运维账号，登录后才能查看车辆状态、执行快捷按钮和继续自然语言运维。";
+    const permissionText = isVehicleDevOpsConsole()
+      ? (openClawAuthenticated
+        ? "你可以直接自然语言维护代码，也可以先在左侧选择 Repo、分支和 Commit，执行仓库状态、更新预览、Git 更新、编译、任务状态和任务日志，再结合结果继续追问。"
+        : "当前未登录。请先登录云端智能运维账号，登录后才能选择车辆、执行代码维护和继续自然语言运维。")
+      : (openClawAuthenticated
+        ? "你可以直接自然语言运维，也可以先点上面的快捷按钮，把关键节点、一键健康检查、AI检测配置、AI检测图片、相机抓拍、地图查看、车身状态、灯光控制、碰撞停复位、routing 等结果插入当前会话上下文后继续追问。"
+        : "当前未登录。请先登录云端智能运维账号，登录后才能查看车辆状态、执行快捷按钮和继续自然语言运维。");
     return `你好，我是 OpenClaw 助手。当前走默认模型：${openClawModelLabel}。${vehicleText}${permissionText}`;
   }
 
@@ -1944,7 +1983,7 @@
     if (openClawInput) {
       openClawInput.disabled = !openClawAuthenticated;
       openClawInput.placeholder = openClawAuthenticated
-        ? OPENCLAW_CHAT_PLACEHOLDER
+        ? (openClawInput.dataset.placeholder || (isVehicleDevOpsConsole() ? OPENCLAW_DEVOPS_PLACEHOLDER : OPENCLAW_CHAT_PLACEHOLDER))
         : OPENCLAW_LOCKED_PLACEHOLDER;
     }
     if (openClawSend) {
@@ -2199,6 +2238,53 @@
     return Number.isFinite(num) ? num : null;
   }
 
+  function parseCloudOpsPercent(value) {
+    if (value === null || value === undefined || value === "" || typeof value === "boolean") {
+      return null;
+    }
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+    const match = String(value).trim().match(/-?\d+(?:\.\d+)?/);
+    if (!match) {
+      return null;
+    }
+    const num = Number(match[0]);
+    return Number.isFinite(num) ? num : null;
+  }
+
+  function firstCloudOpsPercent(...values) {
+    for (const value of values) {
+      const percent = parseCloudOpsPercent(value);
+      if (Number.isFinite(percent)) {
+        return percent;
+      }
+    }
+    return null;
+  }
+
+  function getCloudOpsMasterDiskPercent(vehicle, telemetry) {
+    const snapshot = vehicle?.snapshot || {};
+    const master = snapshot?.master || {};
+    const masterSsh = master?.ssh || {};
+    const masterDisk =
+      masterSsh?.disk_root ||
+      masterSsh?.disk ||
+      master?.disk_root ||
+      master?.disk ||
+      {};
+    return firstCloudOpsPercent(
+      telemetry?.masterDiskPercent,
+      masterDisk?.use_percent,
+      masterDisk?.percent,
+      masterDisk?.usage_percent,
+      masterDisk?.used_percent,
+      master?.disk_percent,
+      master?.disk_usage_percent,
+      vehicle?.master_disk_percent
+    );
+  }
+
   function normalizeCloudOpsTelemetry(rawTelemetry) {
     const source = getCloudOpsTelemetrySource(rawTelemetry);
     const media = source.media && typeof source.media === "object" ? source.media : {};
@@ -2228,6 +2314,14 @@
       mediaLoadAvg1m: toCloudOpsOptionalNumber(media.load_avg_1m),
       masterHost: String(master.host || "").trim(),
       masterCpuPercent: toCloudOpsOptionalNumber(master.cpu_percent),
+      masterDiskPercent: firstCloudOpsPercent(
+        master.disk_percent,
+        master.disk_usage_percent,
+        master.disk_root?.use_percent,
+        master.disk_root?.percent,
+        master.ssh?.disk_root?.use_percent,
+        master.ssh?.disk_root?.percent
+      ),
       masterReachable:
         typeof master.reachable === "boolean" ? master.reachable : null,
       masterRosOk: typeof master.ros_ok === "boolean" ? master.ros_ok : null,
@@ -2369,6 +2463,16 @@
     }
     if (Number.isFinite(telemetry.mediaDiskPercent) && telemetry.mediaDiskPercent >= 90) {
       issues.push({ tone: "warn", text: `Media 磁盘高 ${formatCloudOpsNumber(telemetry.mediaDiskPercent)}%` });
+    }
+    const masterDiskPercent = getCloudOpsMasterDiskPercent(vehicle, telemetry);
+    if (
+      Number.isFinite(masterDiskPercent) &&
+      masterDiskPercent >= CLOUD_OPS_MASTER_DISK_WARN_PERCENT
+    ) {
+      issues.push({
+        tone: "warn",
+        text: `主控硬盘占用高 ${formatCloudOpsNumber(masterDiskPercent)}%`
+      });
     }
     if (keyTopicSummary.badKeys.length) {
       issues.push({
@@ -2754,6 +2858,452 @@
     }
   }
 
+  function getInputValue(node, fallback = "") {
+    return String(node?.value ?? fallback).trim();
+  }
+
+  function getCheckedValue(node) {
+    return Boolean(node?.checked);
+  }
+
+  function setCloudOpsDeployStatus(text, state = "idle") {
+    if (!cloudOpsDeployStatus) {
+      return;
+    }
+    cloudOpsDeployStatus.textContent = text;
+    cloudOpsDeployStatus.dataset.state = state;
+  }
+
+  function setCloudOpsDeployLiveStatus(text, state = "idle") {
+    if (!cloudOpsDeployLiveStatus) {
+      return;
+    }
+    cloudOpsDeployLiveStatus.textContent = text;
+    cloudOpsDeployLiveStatus.dataset.state = state;
+  }
+
+  function putIfPresent(target, key, value) {
+    const normalized = typeof value === "string" ? value.trim() : value;
+    if (normalized === undefined || normalized === null || normalized === "") {
+      return;
+    }
+    target[key] = normalized;
+  }
+
+  function clearSelectOptions(select, placeholder) {
+    if (!select) {
+      return;
+    }
+    select.innerHTML = "";
+    select.appendChild(new Option(placeholder, ""));
+  }
+
+  function getSelectedDeployRepository() {
+    const id = getInputValue(cloudOpsDeployRepo);
+    if (!id) {
+      return null;
+    }
+    return cloudOpsDeployRepositories.find((repo) => repo.id === id) || null;
+  }
+
+  function normalizeDeployBranchName(name) {
+    const value = String(name || "").trim();
+    return value
+      .replace(/^refs\/remotes\//, "")
+      .replace(/^refs\/heads\//, "")
+      .replace(/^origin\//, "");
+  }
+
+  function formatCloudOpsDeployLogLine(line) {
+    if (line === undefined || line === null) {
+      return "";
+    }
+    if (typeof line === "string") {
+      return line;
+    }
+    if (typeof line === "object") {
+      return String(line.text || line.line || line.message || JSON.stringify(line));
+    }
+    return String(line);
+  }
+
+  function getCloudOpsDeployLogText(result) {
+    if (!result || typeof result !== "object") {
+      return "";
+    }
+    if (typeof result.text === "string") {
+      return result.text;
+    }
+    if (Array.isArray(result.lines)) {
+      return result.lines.map(formatCloudOpsDeployLogLine).join("\n");
+    }
+    if (typeof result.stdout === "string" || typeof result.stderr === "string") {
+      return [result.stdout, result.stderr].filter(Boolean).join("\n");
+    }
+    if (typeof result.log === "string") {
+      return result.log;
+    }
+    return "";
+  }
+
+  function countCloudOpsDeployLogLines(result) {
+    if (Array.isArray(result?.lines)) {
+      return result.lines.length;
+    }
+    const text = getCloudOpsDeployLogText(result);
+    if (!text) {
+      return 0;
+    }
+    return text.split(/\r?\n/).filter((line) => line.length > 0).length;
+  }
+
+  function getCloudOpsDeployTailLineCount() {
+    return Math.min(
+      1000,
+      Math.max(20, Number.parseInt(getInputValue(cloudOpsDeployTailLines, "200"), 10) || 200)
+    );
+  }
+
+  function isCloudOpsDeployLogTerminal(result) {
+    const status = String(result?.status || result?.state || "").trim().toLowerCase();
+    if (["done", "success", "succeeded", "completed", "failed", "error", "cancelled", "canceled"].includes(status)) {
+      return true;
+    }
+    const text = getCloudOpsDeployLogText(result);
+    return /===== .* (?:build|git_update|update_and_build).* exit rc=\d+ =====/i.test(text);
+  }
+
+  function resetCloudOpsDeployState() {
+    stopCloudOpsDeployLogTail({ silent: true, reset: true });
+    cloudOpsDeployRepositories = [];
+    cloudOpsDeployRepoStatus = null;
+    clearSelectOptions(cloudOpsDeployRepo, "先刷新仓库列表");
+    clearSelectOptions(cloudOpsDeployPackage, "默认目标");
+    clearSelectOptions(cloudOpsDeployBranch, "选择 Repo 后加载");
+    clearSelectOptions(cloudOpsDeployCommit, "跟随分支 HEAD");
+    if (cloudOpsDeployJobId) {
+      cloudOpsDeployJobId.value = "";
+    }
+    if (cloudOpsDeployLiveLog) {
+      cloudOpsDeployLiveLog.textContent = "等待任务日志...";
+    }
+    cloudOpsDeployLogJobId = "";
+    setCloudOpsDeployLiveStatus("未启动", "idle");
+    setCloudOpsDeployStatus("等待刷新", "idle");
+  }
+
+  function populateCloudOpsDeployTargets(repository) {
+    clearSelectOptions(cloudOpsDeployPackage, "默认目标");
+    const targets = Array.isArray(repository?.targets) ? repository.targets : [];
+    targets.forEach((target) => {
+      const option = new Option(target?.label || target?.name || "未命名目标", target?.name || "");
+      option.dataset.path = target?.path || "";
+      cloudOpsDeployPackage?.appendChild(option);
+    });
+    if (repository?.default_target && cloudOpsDeployPackage) {
+      cloudOpsDeployPackage.value = repository.default_target;
+    }
+  }
+
+  function populateCloudOpsDeployRepositories(repositories) {
+    clearSelectOptions(cloudOpsDeployRepo, repositories.length ? "请选择 Repo" : "当前车辆没有 deploy repo");
+    const nameCounts = new Map();
+    repositories.forEach((repo) => {
+      const name = String(repo?.repo || "").trim();
+      if (name) {
+        nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
+      }
+    });
+    repositories.forEach((repo) => {
+      if (!repo?.id || !repo?.repo) {
+        return;
+      }
+      const duplicated = (nameCounts.get(repo.repo) || 0) > 1;
+      const targetCount = Array.isArray(repo.targets) ? repo.targets.length : 0;
+      const labelParts = [
+        repo.repo,
+        duplicated && repo.location_label ? repo.location_label : "",
+        targetCount ? `${targetCount} 个编译目标` : "无编译目标"
+      ].filter(Boolean);
+      const option = new Option(labelParts.join(" · "), repo.id);
+      option.dataset.controller = repo.controller || "";
+      option.dataset.repo = repo.repo || "";
+      cloudOpsDeployRepo?.appendChild(option);
+    });
+    const preferred =
+      repositories.find((repo) => repo.repo === "auto_ad_ai") ||
+      repositories.find((repo) => repo.build_supported) ||
+      repositories[0];
+    if (preferred && cloudOpsDeployRepo) {
+      cloudOpsDeployRepo.value = preferred.id;
+      populateCloudOpsDeployTargets(preferred);
+    }
+  }
+
+  function populateCloudOpsDeployBranches(branches, currentBranch) {
+    clearSelectOptions(cloudOpsDeployBranch, branches.length ? "选择分支" : "未返回分支");
+    branches.forEach((branch) => {
+      const value = normalizeDeployBranchName(branch?.value || branch?.name);
+      if (!value || value === "HEAD") {
+        return;
+      }
+      const label = branch?.label || branch?.name || value;
+      const detail = [branch?.sha_short, branch?.subject].filter(Boolean).join(" · ");
+      cloudOpsDeployBranch?.appendChild(new Option(detail ? `${label} · ${detail}` : label, value));
+    });
+    const normalizedCurrent = normalizeDeployBranchName(currentBranch);
+    if (
+      normalizedCurrent &&
+      cloudOpsDeployBranch &&
+      Array.from(cloudOpsDeployBranch.options).some((option) => option.value === normalizedCurrent)
+    ) {
+      cloudOpsDeployBranch.value = normalizedCurrent;
+    }
+  }
+
+  function populateCloudOpsDeployCommits(commits, fallbackHead) {
+    clearSelectOptions(cloudOpsDeployCommit, "跟随分支 HEAD");
+    const seen = new Set();
+    (Array.isArray(commits) ? commits : []).forEach((commit) => {
+      const value = String(commit?.sha || commit?.short || "").trim();
+      const shortKey = String(commit?.short || value.slice(0, 8)).trim();
+      if (!value || seen.has(value) || (shortKey && seen.has(shortKey))) {
+        return;
+      }
+      seen.add(value);
+      if (shortKey) {
+        seen.add(shortKey);
+      }
+      const short = commit?.short || value.slice(0, 8);
+      const subject = commit?.subject ? ` · ${commit.subject}` : "";
+      const time = commit?.time ? ` · ${commit.time}` : "";
+      cloudOpsDeployCommit?.appendChild(new Option(`${short}${subject}${time}`, value));
+    });
+    const headSha = String(fallbackHead?.sha || fallbackHead?.short || "").trim();
+    const headShort = String(fallbackHead?.short || headSha.slice(0, 8)).trim();
+    if (headSha && !seen.has(headSha) && (!headShort || !seen.has(headShort))) {
+      cloudOpsDeployCommit?.appendChild(
+        new Option(`${fallbackHead?.short || headSha.slice(0, 8)} · 当前 HEAD`, headSha)
+      );
+    }
+  }
+
+  async function loadCloudOpsDeployCatalog(options = {}) {
+    if (!cloudOpsAuthenticated || !cloudOpsCurrentVehicleId) {
+      setCloudOpsDeployStatus("请先登录并选择车辆", "error");
+      return;
+    }
+    if (cloudOpsAvailableTools.size && !cloudOpsAvailableTools.has("deploy.targets")) {
+      setCloudOpsDeployStatus("当前车辆未上报 deploy 工具", "error");
+      return;
+    }
+    setCloudOpsDeployStatus("加载仓库列表...", "loading");
+    const data = await fetchJsonOrThrow(CLOUD_OPS_DEPLOY_CATALOG_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vehicle_id: cloudOpsCurrentVehicleId,
+        timeout_s: 70
+      })
+    });
+    cloudOpsDeployRepositories = Array.isArray(data?.repositories) ? data.repositories : [];
+    populateCloudOpsDeployRepositories(cloudOpsDeployRepositories);
+    setCloudOpsDeployStatus(
+      cloudOpsDeployRepositories.length ? `已加载 ${cloudOpsDeployRepositories.length} 个 Repo` : "未发现可维护 Repo",
+      cloudOpsDeployRepositories.length ? "ok" : "error"
+    );
+    if (cloudOpsDeployRepositories.length && options.loadRepoStatus !== false) {
+      await loadCloudOpsDeployRepoStatus({ silent: true }).catch((error) => {
+        setCloudOpsDeployStatus(`分支加载失败：${error?.message || "未知错误"}`, "error");
+      });
+    }
+  }
+
+  async function loadCloudOpsDeployRepoStatus(options = {}) {
+    const repository = getSelectedDeployRepository();
+    if (!repository) {
+      setCloudOpsDeployStatus("请先选择 Repo", "error");
+      return null;
+    }
+    if (!options.silent) {
+      setCloudOpsDeployStatus("加载分支...", "loading");
+    }
+    const data = await fetchJsonOrThrow(CLOUD_OPS_DEPLOY_REPO_STATUS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vehicle_id: cloudOpsCurrentVehicleId,
+        controller: repository.controller,
+        repo: repository.repo,
+        fetch: getCheckedValue(cloudOpsDeployFetch),
+        include_branches: true,
+        git_username: getInputValue(cloudOpsDeployGitUsername),
+        git_password: getInputValue(cloudOpsDeployGitPassword),
+        timeout_s: 70
+      })
+    });
+    cloudOpsDeployRepoStatus = data?.result || null;
+    populateCloudOpsDeployBranches(data?.branches || [], cloudOpsDeployRepoStatus?.current_branch);
+    setCloudOpsDeployStatus("分支已加载", "ok");
+    await loadCloudOpsDeployCommits().catch((error) => {
+      setCloudOpsDeployStatus(`Commit 加载失败：${error?.message || "未知错误"}`, "error");
+    });
+    return data;
+  }
+
+  async function loadCloudOpsDeployCommits() {
+    const repository = getSelectedDeployRepository();
+    if (!repository) {
+      return null;
+    }
+    const branch = getInputValue(cloudOpsDeployBranch);
+    if (!branch) {
+      clearSelectOptions(cloudOpsDeployCommit, "跟随分支 HEAD");
+      return null;
+    }
+    setCloudOpsDeployStatus("加载 commit...", "loading");
+    const data = await fetchJsonOrThrow(CLOUD_OPS_DEPLOY_COMMITS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vehicle_id: cloudOpsCurrentVehicleId,
+        controller: repository.controller,
+        repo: repository.repo,
+        branch,
+        git_username: getInputValue(cloudOpsDeployGitUsername),
+        git_password: getInputValue(cloudOpsDeployGitPassword),
+        limit: 50,
+        timeout_s: 70
+      })
+    });
+    populateCloudOpsDeployCommits(data?.commits || [], cloudOpsDeployRepoStatus?.head);
+    setCloudOpsDeployStatus(
+      data?.source === "git" ? "Commit 已加载" : "Commit 使用车端状态回退",
+      data?.source === "git" ? "ok" : "warn"
+    );
+    return data;
+  }
+
+  function readCloudOpsDeployBaseArgs(options = {}) {
+    const repository = getSelectedDeployRepository();
+    if (!repository && options.requireRepo !== false) {
+      focusWithoutScroll(cloudOpsDeployRepo);
+      throw new Error("请先选择 Repo。");
+    }
+    return {
+      controller: repository?.controller || "",
+      repo: repository?.repo || ""
+    };
+  }
+
+  function addCloudOpsDeployTargetFields(args) {
+    putIfPresent(args, "package", getInputValue(cloudOpsDeployPackage));
+    putIfPresent(args, "branch", getInputValue(cloudOpsDeployBranch));
+    putIfPresent(args, "commit", getInputValue(cloudOpsDeployCommit));
+    putIfPresent(args, "dirty_policy", getInputValue(cloudOpsDeployDirtyPolicy, "refuse") || "refuse");
+  }
+
+  function addCloudOpsDeployGitCredentials(args) {
+    const gitUsername = getInputValue(cloudOpsDeployGitUsername);
+    const gitPassword = getInputValue(cloudOpsDeployGitPassword);
+    if (gitUsername) {
+      args.git_username = gitUsername;
+    }
+    if (gitPassword) {
+      args.git_password = gitPassword;
+    }
+  }
+
+  function requireCloudOpsDeployBranch(action) {
+    const branch = getInputValue(cloudOpsDeployBranch);
+    if (!branch) {
+      focusWithoutScroll(cloudOpsDeployBranch);
+      throw new Error(`${action} 需要填写目标分支。`);
+    }
+    return branch;
+  }
+
+  function requireCloudOpsDeployJobId(action) {
+    const jobId = getInputValue(cloudOpsDeployJobId);
+    if (!jobId) {
+      focusWithoutScroll(cloudOpsDeployJobId);
+      throw new Error(`${action} 需要填写 job_id。`);
+    }
+    return jobId;
+  }
+
+  function buildCloudOpsDeployArgs(deployAction) {
+    const action = String(deployAction || "").trim();
+    if (!action || action === "targets") {
+      return {};
+    }
+
+    if (action === "repo_status") {
+      const args = {
+        ...readCloudOpsDeployBaseArgs(),
+        fetch: getCheckedValue(cloudOpsDeployFetch),
+        include_branches: true
+      };
+      addCloudOpsDeployGitCredentials(args);
+      return args;
+    }
+
+    if (action === "plan") {
+      const args = readCloudOpsDeployBaseArgs();
+      addCloudOpsDeployTargetFields(args);
+      addCloudOpsDeployGitCredentials(args);
+      args.no_deps = getCheckedValue(cloudOpsDeployNoDeps);
+      args.force_cmake = getCheckedValue(cloudOpsDeployForceCmake);
+      return args;
+    }
+
+    if (action === "git_update") {
+      requireCloudOpsDeployBranch("Git 更新");
+      const args = readCloudOpsDeployBaseArgs();
+      addCloudOpsDeployTargetFields(args);
+      addCloudOpsDeployGitCredentials(args);
+      return args;
+    }
+
+    if (action === "build") {
+      const args = readCloudOpsDeployBaseArgs();
+      putIfPresent(args, "package", getInputValue(cloudOpsDeployPackage));
+      args.no_deps = getCheckedValue(cloudOpsDeployNoDeps);
+      args.force_cmake = getCheckedValue(cloudOpsDeployForceCmake);
+      return args;
+    }
+
+    if (action === "update_and_build") {
+      requireCloudOpsDeployBranch("更新并编译");
+      const args = readCloudOpsDeployBaseArgs();
+      addCloudOpsDeployTargetFields(args);
+      addCloudOpsDeployGitCredentials(args);
+      args.no_deps = getCheckedValue(cloudOpsDeployNoDeps);
+      args.force_cmake = getCheckedValue(cloudOpsDeployForceCmake);
+      return args;
+    }
+
+    if (action === "status") {
+      return { job_id: requireCloudOpsDeployJobId("任务状态") };
+    }
+
+    if (action === "logs") {
+      return {
+        job_id: requireCloudOpsDeployJobId("任务日志"),
+        tail_lines: Math.min(1000, Math.max(20, Number.parseInt(getInputValue(cloudOpsDeployTailLines, "200"), 10) || 200))
+      };
+    }
+
+    if (action === "cancel") {
+      return {
+        job_id: requireCloudOpsDeployJobId("取消任务"),
+        reason: "operator_cancel"
+      };
+    }
+
+    return {};
+  }
+
   function formatCloudOpsToolName(toolName) {
     const name = String(toolName || "").trim();
     const labels = {
@@ -2764,6 +3314,8 @@
       "system.snapshot": "系统快照",
       "network.cloud_probe": "云端连通",
       "network.master_probe": "主控探测",
+      "controller.reboot_master": "重启主控接口",
+      "controller.reboot_media": "重启 Media 接口",
       "status.camera": "相机状态",
       "camera.capture": "相机抓拍",
       "camera.upload_chain": "上传链路",
@@ -2785,7 +3337,16 @@
       "route.stop_patrol": "停止巡逻",
       "ros.overview": "ROS 总览",
       "audio.uplink.mic": "听麦",
-      "audio.uplink.speaker": "听喇叭"
+      "audio.uplink.speaker": "听喇叭",
+      "deploy.targets": "可维护 Repo",
+      "deploy.repo_status": "仓库状态",
+      "deploy.plan": "更新预览",
+      "deploy.git_update": "启动更新",
+      "deploy.build": "启动编译",
+      "deploy.update_and_build": "更新并编译",
+      "deploy.status": "任务状态",
+      "deploy.logs": "任务日志",
+      "deploy.cancel": "取消任务"
     };
     return labels[name] || name || "该工具";
   }
@@ -2981,6 +3542,21 @@
     renderCloudOpsMediaContainer(cloudOpsResultMedia, payload);
   }
 
+  function renderCloudOpsResultLog(payload) {
+    if (!cloudOpsResultLog) {
+      return;
+    }
+    const execution = getCloudOpsExecutionPayload(payload);
+    const toolName = execution?.request?.tool_name || "";
+    const result = getCloudOpsToolResult(execution);
+    const text = toolName === "deploy.logs" ? getCloudOpsDeployLogText(result) : "";
+    cloudOpsResultLog.hidden = !text;
+    cloudOpsResultLog.textContent = text || "";
+    if (text) {
+      cloudOpsResultLog.scrollTop = cloudOpsResultLog.scrollHeight;
+    }
+  }
+
   function clearCloudOpsPinnedContexts(options = {}) {
     cloudOpsPinnedContexts = [];
     renderCloudOpsContextList();
@@ -3121,6 +3697,11 @@
       if (status === "cleared") return "ok";
       if (status === "noop") return "warn";
       if (status === "error") return "error";
+    }
+    if (toolName === "controller.reboot_master" || toolName === "controller.reboot_media") {
+      if (["error", "failed", "refused", "rejected"].includes(status)) return "error";
+      if (["noop", "pending"].includes(status)) return "warn";
+      return "ok";
     }
     return "ok";
   }
@@ -3422,6 +4003,88 @@
     const result = getCloudOpsToolResult(execution);
     const summary = result?.summary || {};
 
+    if (toolName.startsWith("deploy.") && result && typeof result === "object") {
+      if (toolName === "deploy.targets") {
+        const controllers = Array.isArray(result?.controllers) ? result.controllers : [];
+        const repositories = controllers.flatMap((controller) =>
+          Array.isArray(controller?.repositories) ? controller.repositories : []
+        );
+        const preview = repositories
+          .slice(0, 8)
+          .map((repo) => repo?.repo)
+          .filter(Boolean)
+          .join("、");
+        pushCloudOpsDetail(items, "可维护 Repo", `${repositories.length} 个${preview ? `：${preview}` : ""}`, "ok");
+        return items;
+      }
+
+      if (toolName === "deploy.repo_status" || toolName === "deploy.plan") {
+        pushCloudOpsDetail(items, "Repo", result?.repo || "-", "ok");
+        pushCloudOpsDetail(items, "当前分支", result?.current_branch || result?.branch || "-");
+        pushCloudOpsDetail(
+          items,
+          "HEAD",
+          result?.head?.short
+            ? `${result.head.short}${result.head.subject ? ` · ${result.head.subject}` : ""}`
+            : result?.head?.sha || "-"
+        );
+        pushCloudOpsDetail(items, "本地改动", formatCloudOpsBool(result?.dirty, "有", "无"), result?.dirty ? "warn" : "ok");
+        pushCloudOpsDetail(
+          items,
+          "Ahead / Behind",
+          `${result?.ahead ?? "-"} / ${result?.behind ?? "-"}`
+        );
+        pushCloudOpsDetail(
+          items,
+          "是否最新",
+          formatCloudOpsBool(result?.is_latest, "是", "否"),
+          result?.is_latest === false ? "warn" : "ok"
+        );
+        const packages = Array.isArray(result?.packages) ? result.packages : [];
+        pushCloudOpsDetail(
+          items,
+          "编译目标",
+          packages.map((item) => item?.name).filter(Boolean).slice(0, 6).join("、")
+        );
+        return items;
+      }
+
+      if (
+        toolName === "deploy.git_update" ||
+        toolName === "deploy.build" ||
+        toolName === "deploy.update_and_build"
+      ) {
+        pushCloudOpsDetail(items, "Job ID", result?.job_id || "-", "ok");
+        pushCloudOpsDetail(items, "状态", result?.status || result?.state || "已提交", "ok");
+        pushCloudOpsDetail(items, "Repo", result?.repo || execution?.request?.args?.repo || "-");
+        pushCloudOpsDetail(items, "提示", result?.message || result?.detail || "后台任务已创建，继续用任务状态/任务日志查看。");
+        return items;
+      }
+
+      if (toolName === "deploy.status") {
+        pushCloudOpsDetail(items, "Job ID", result?.job_id || execution?.request?.args?.job_id || "-", "ok");
+        pushCloudOpsDetail(items, "状态", result?.status || result?.state || "-", "ok");
+        pushCloudOpsDetail(items, "步骤", result?.step || result?.step_name || result?.phase || "-");
+        pushCloudOpsDetail(items, "返回码", result?.returncode ?? result?.exit_code);
+        pushCloudOpsDetail(items, "提示", result?.message || result?.error || result?.detail || "-");
+        return items;
+      }
+
+      if (toolName === "deploy.logs") {
+        pushCloudOpsDetail(items, "Job ID", result?.job_id || execution?.request?.args?.job_id || "-", "ok");
+        pushCloudOpsDetail(items, "日志行数", `${countCloudOpsDeployLogLines(result) || result?.tail_lines || "-"}`);
+        pushCloudOpsDetail(items, "状态", result?.status || result?.state || (result?.ok ? "ok" : "-"), result?.ok ? "ok" : "idle");
+        pushCloudOpsDetail(items, "日志文件", result?.log_path || "-");
+        return items;
+      }
+
+      if (toolName === "deploy.cancel") {
+        pushCloudOpsDetail(items, "Job ID", result?.job_id || execution?.request?.args?.job_id || "-", "ok");
+        pushCloudOpsDetail(items, "取消状态", result?.status || result?.state || result?.message || "-", "warn");
+        return items;
+      }
+    }
+
     if (toolName === "health.snapshot" && result && typeof result === "object") {
       pushCloudOpsDetail(items, "车辆", result?.vehicle_id || execution?.request?.vehicle_id || "-", "ok");
       pushCloudOpsDetail(
@@ -3495,6 +4158,30 @@
         "ROS 11311",
         formatCloudOpsBool(result?.tcp_11311?.ok, "正常", "异常"),
         getCloudOpsTone(result?.tcp_11311?.ok)
+      );
+      return items;
+    }
+
+    if (
+      (toolName === "controller.reboot_master" || toolName === "controller.reboot_media") &&
+      result &&
+      typeof result === "object"
+    ) {
+      const isMaster = toolName === "controller.reboot_master";
+      const status = String(getCloudOpsValue(result, ["status", "state"], "-")).trim();
+      const statusTone = ["error", "failed", "refused", "rejected"].includes(status.toLowerCase())
+        ? "error"
+        : ["noop", "pending"].includes(status.toLowerCase())
+          ? "warn"
+          : "ok";
+      pushCloudOpsDetail(items, "重启目标", isMaster ? "主控接口" : "Media 接口", "ok");
+      pushCloudOpsDetail(items, "执行状态", status || "-", statusTone);
+      pushCloudOpsDetail(items, "确认字段", execution?.request?.args?.confirm || "-", "ok");
+      pushCloudOpsDetail(
+        items,
+        "说明",
+        result?.message || result?.detail || result?.error || "请求已发送到车端。",
+        statusTone
       );
       return items;
     }
@@ -4633,6 +5320,41 @@
     });
   }
 
+  function isCloudOpsSensitiveKey(key) {
+    return /password|secret|token|credential|authorization|cookie/i.test(String(key || ""));
+  }
+
+  function redactCloudOpsSensitiveString(value) {
+    return String(value || "").replace(/((?:https?|git):\/\/[^:/\s@]+:)([^@\s]+)(@)/gi, "$1***$3");
+  }
+
+  function sanitizeCloudOpsPayload(value, seen = new WeakSet()) {
+    if (Array.isArray(value)) {
+      return value.map((item) => sanitizeCloudOpsPayload(item, seen));
+    }
+
+    if (value && typeof value === "object") {
+      if (seen.has(value)) {
+        return "[Circular]";
+      }
+      seen.add(value);
+      const output = {};
+      Object.entries(value).forEach(([key, item]) => {
+        output[key] = isCloudOpsSensitiveKey(key)
+          ? (item ? "***" : item)
+          : sanitizeCloudOpsPayload(item, seen);
+      });
+      seen.delete(value);
+      return output;
+    }
+
+    if (typeof value === "string") {
+      return redactCloudOpsSensitiveString(value);
+    }
+
+    return value;
+  }
+
   function updateCloudOpsActionAvailability() {
     const vehicleSelected = Boolean(cloudOpsCurrentVehicleId);
     const availableNames = cloudOpsAvailableTools;
@@ -4671,18 +5393,33 @@
       }
     }
 
+    if (cloudOpsDeployRefreshBtn) {
+      const deploySupported = !hasToolCatalog || availableNames.has("deploy.targets");
+      cloudOpsDeployRefreshBtn.disabled =
+        cloudOpsBusy ||
+        !cloudOpsAuthenticated ||
+        !vehicleSelected ||
+        !deploySupported;
+      cloudOpsDeployRefreshBtn.title = deploySupported
+        ? ""
+        : "当前车辆未上报 deploy.* 工具";
+    }
+
+    updateCloudOpsDeployLogControls();
     updateCloudOpsAudioAvailability();
   }
 
   function renderCloudOpsResult(summary, payload, state = "idle") {
+    const safePayload = sanitizeCloudOpsPayload(payload);
     if (cloudOpsResultSummary) {
       cloudOpsResultSummary.textContent = summary || "暂无结果。";
       cloudOpsResultSummary.dataset.state = state;
     }
-    renderCloudOpsResultDetails(payload);
-    renderCloudOpsResultMedia(payload);
+    renderCloudOpsResultDetails(safePayload);
+    renderCloudOpsResultLog(safePayload);
+    renderCloudOpsResultMedia(safePayload);
     if (cloudOpsResultJson) {
-      cloudOpsResultJson.textContent = JSON.stringify(payload ?? {}, null, 2);
+      cloudOpsResultJson.textContent = JSON.stringify(safePayload ?? {}, null, 2);
     }
   }
 
@@ -4750,6 +5487,7 @@
       cloudOpsAvailableTools = new Set();
       cloudOpsCurrentVehicleId = "";
       cloudOpsCurrentDetail = null;
+      resetCloudOpsDeployState();
       resetAllCloudOpsAudioChannels({ stopPlayback: true });
       renderCloudOpsVehicleOptions();
       renderCloudOpsSummary();
@@ -4778,6 +5516,7 @@
       if (!cloudOpsCurrentVehicleId) {
         cloudOpsAvailableTools = new Set();
         cloudOpsCurrentDetail = null;
+        resetCloudOpsDeployState();
         resetAllCloudOpsAudioChannels({ stopPlayback: true });
         renderCloudOpsSummary();
         renderCloudOpsLiveState();
@@ -4839,6 +5578,7 @@
         cloudOpsAvailableTools = new Set();
         cloudOpsCurrentVehicleId = "";
         cloudOpsCurrentDetail = null;
+        resetCloudOpsDeployState();
         resetAllCloudOpsAudioChannels({ stopPlayback: true });
       }
       renderCloudOpsSummary();
@@ -4867,16 +5607,16 @@
       cloudOpsConsole.dataset.authenticated = cloudOpsAuthenticated ? "true" : "false";
     }
     if (cloudOpsAuth) {
-      cloudOpsAuth.hidden = cloudOpsAuthenticated;
+      cloudOpsAuth.hidden = true;
     }
     if (cloudOpsShell) {
-      cloudOpsShell.hidden = !cloudOpsAuthenticated;
+      cloudOpsShell.hidden = false;
     }
     cloudOpsProtectedBlocks.forEach((block) => {
-      block.hidden = !cloudOpsAuthenticated;
+      block.hidden = false;
     });
     if (cloudOpsLogoutBtn) {
-      cloudOpsLogoutBtn.hidden = !cloudOpsAuthenticated;
+      cloudOpsLogoutBtn.hidden = true;
     }
 
     if (cloudOpsAuthenticated) {
@@ -4895,9 +5635,9 @@
       renderCloudOpsSummary();
       renderCloudOpsLiveState();
       updateCloudOpsActionAvailability();
-      renderCloudOpsResult("请先登录云端智能运维账号，登录后才能查看车辆状态和执行操作。", null, "idle");
+      renderCloudOpsResult("请通过右上角账号入口登录；登录后才能查看车辆状态和执行操作。", null, "idle");
       setCloudOpsStatus("需登录", "idle");
-      setCloudOpsAuthHint("请先登录，登录后才能查看和控制车辆、服务器节点。", "idle");
+      setCloudOpsAuthHint("请通过右上角账号入口登录，登录后才能查看和控制车辆、服务器节点。", "idle");
     }
 
     window.dispatchEvent(
@@ -4908,6 +5648,60 @@
         }
       })
     );
+  }
+
+  async function refreshUnifiedAccountPanels() {
+    await Promise.all([
+      refreshCloudOpsAuthStatus(),
+      refreshOpenClawAuthStatus()
+    ]);
+  }
+
+  function unifiedAuthHasPermission(detail, permission) {
+    const user = detail?.user;
+    if (!user?.email_verified) return false;
+    if (user?.super_admin) return true;
+    return Array.isArray(detail?.permissions) && detail.permissions.includes(permission);
+  }
+
+  function renderAiHistoryLockedForAuth(detail) {
+    if (!aiHistoryPanel) return;
+    aiHistoryPageValue = 1;
+    aiHistoryTotalPages = 1;
+    updateAiHistoryPager();
+    if (aiHistoryList) {
+      aiHistoryList.innerHTML = "";
+      aiHistoryList.appendChild(
+        createNode(
+          "p",
+          "ai-history-empty",
+          detail?.user ? "当前账号暂无历史记录查看权限。" : "登录后加载历史记录。"
+        )
+      );
+    }
+    renderAiHistoryEmpty(
+      detail?.user
+        ? detail.user.email_verified
+          ? "当前账号缺少历史记录查看权限。"
+          : "完成邮箱验证后才能查看历史记录。"
+        : "登录后可以查看历史记录。"
+    );
+    setAiHistoryStatus(detail?.user ? "缺少权限" : "需登录", detail?.user ? "error" : "idle");
+  }
+
+  function refreshAiPanelsForAuth(detail = {}) {
+    if (chatMessages && unifiedAuthHasPermission(detail, "ai:chat")) {
+      loadIdentityOptions().catch(() => {});
+    }
+    if (qwen36Messages && unifiedAuthHasPermission(detail, "ai:chat")) {
+      refreshQwen36Health().catch(() => {});
+    }
+    if (!aiHistoryPanel) return;
+    if (unifiedAuthHasPermission(detail, "ai:history:read")) {
+      loadAiHistoryPageData(1, { selectFirst: true });
+    } else {
+      renderAiHistoryLockedForAuth(detail);
+    }
   }
 
   async function refreshCloudOpsAuthStatus() {
@@ -5160,6 +5954,146 @@
     updateCloudOpsAudioAvailability();
   }
 
+  function updateCloudOpsDeployLogControls() {
+    const hasJobId = Boolean(getInputValue(cloudOpsDeployJobId));
+    const hasVehicle = Boolean(cloudOpsCurrentVehicleId);
+    const hasToolCatalog = cloudOpsAvailableTools.size > 0;
+    const logsSupported = !hasToolCatalog || cloudOpsAvailableTools.has("deploy.logs");
+    const running = Boolean(cloudOpsDeployLogTimer);
+
+    if (cloudOpsDeployTailStartBtn) {
+      cloudOpsDeployTailStartBtn.disabled =
+        running ||
+        cloudOpsDeployLogBusy ||
+        !cloudOpsAuthenticated ||
+        !hasVehicle ||
+        !hasJobId ||
+        !logsSupported;
+      cloudOpsDeployTailStartBtn.title = logsSupported
+        ? ""
+        : "当前车辆未上报 deploy.logs 工具";
+    }
+
+    if (cloudOpsDeployTailStopBtn) {
+      cloudOpsDeployTailStopBtn.disabled = !running;
+    }
+
+    if (cloudOpsDeployTailClearBtn) {
+      cloudOpsDeployTailClearBtn.disabled = cloudOpsDeployLogBusy;
+    }
+  }
+
+  function renderCloudOpsDeployLiveLog(result, options = {}) {
+    const text = getCloudOpsDeployLogText(result);
+    if (cloudOpsDeployLiveLog) {
+      cloudOpsDeployLiveLog.textContent = text || "当前任务还没有日志输出。";
+      if (options.scroll !== false) {
+        cloudOpsDeployLiveLog.scrollTop = cloudOpsDeployLiveLog.scrollHeight;
+      }
+    }
+    const jobId = String(result?.job_id || cloudOpsDeployLogJobId || getInputValue(cloudOpsDeployJobId) || "").trim();
+    const status = String(result?.status || result?.state || "").trim();
+    const lineCount = countCloudOpsDeployLogLines(result);
+    const statusText = [
+      jobId ? `Job ${jobId}` : "",
+      status || "",
+      `${lineCount} 行`
+    ].filter(Boolean).join(" · ");
+    setCloudOpsDeployLiveStatus(statusText || "日志已更新", isCloudOpsDeployLogTerminal(result) ? "ok" : "loading");
+  }
+
+  async function fetchCloudOpsDeployLiveLogs(options = {}) {
+    const jobId = String(options.jobId || getInputValue(cloudOpsDeployJobId)).trim();
+    if (!cloudOpsAuthenticated) {
+      throw new Error("请先登录。");
+    }
+    if (!cloudOpsCurrentVehicleId) {
+      throw new Error("请先选择车辆。");
+    }
+    if (!jobId) {
+      throw new Error("请先填写 Job ID。");
+    }
+    if (cloudOpsDeployLogBusy) {
+      return null;
+    }
+
+    cloudOpsDeployLogBusy = true;
+    updateCloudOpsDeployLogControls();
+    try {
+      const data = await fetchJsonOrThrow(CLOUD_OPS_EXECUTE_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          action: "tool_call",
+          vehicle_id: cloudOpsCurrentVehicleId,
+          tool_name: "deploy.logs",
+          args: {
+            job_id: jobId,
+            tail_lines: getCloudOpsDeployTailLineCount()
+          },
+          timeout_s: 40,
+          request_id: `web-log-${createNonce()}`
+        })
+      });
+      const result = data?.execution?.data?.response?.result || {};
+      renderCloudOpsDeployLiveLog(result);
+      if (options.renderResult) {
+        renderCloudOpsResult(data?.summary || "任务日志已更新。", data, deriveCloudOpsResultState(data));
+      }
+      if (isCloudOpsDeployLogTerminal(result)) {
+        stopCloudOpsDeployLogTail({ finalMessage: "任务日志已完成", state: "ok" });
+      }
+      return data;
+    } finally {
+      cloudOpsDeployLogBusy = false;
+      updateCloudOpsDeployLogControls();
+    }
+  }
+
+  function startCloudOpsDeployLogTail(options = {}) {
+    const jobId = String(options.jobId || getInputValue(cloudOpsDeployJobId)).trim();
+    if (!jobId) {
+      setCloudOpsDeployLiveStatus("请先填写 Job ID", "error");
+      focusWithoutScroll(cloudOpsDeployJobId);
+      return;
+    }
+    if (cloudOpsDeployJobId && cloudOpsDeployJobId.value !== jobId) {
+      cloudOpsDeployJobId.value = jobId;
+    }
+
+    stopCloudOpsDeployLogTail({ silent: true });
+    cloudOpsDeployLogJobId = jobId;
+    setCloudOpsDeployLiveStatus(`正在跟随 ${jobId}`, "loading");
+    updateCloudOpsDeployLogControls();
+
+    cloudOpsDeployLogTimer = window.setInterval(() => {
+      fetchCloudOpsDeployLiveLogs({ jobId }).catch((error) => {
+        setCloudOpsDeployLiveStatus(`日志读取失败：${error?.message || "未知错误"}`, "error");
+      });
+    }, 2000);
+    fetchCloudOpsDeployLiveLogs({ jobId, renderResult: Boolean(options.renderResult) }).catch((error) => {
+      setCloudOpsDeployLiveStatus(`日志读取失败：${error?.message || "未知错误"}`, "error");
+      stopCloudOpsDeployLogTail({ silent: true });
+    });
+    updateCloudOpsDeployLogControls();
+  }
+
+  function stopCloudOpsDeployLogTail(options = {}) {
+    if (cloudOpsDeployLogTimer) {
+      window.clearInterval(cloudOpsDeployLogTimer);
+      cloudOpsDeployLogTimer = 0;
+    }
+    if (options.reset) {
+      cloudOpsDeployLogJobId = "";
+    }
+    if (!options.silent) {
+      setCloudOpsDeployLiveStatus(options.finalMessage || "已停止实时日志", options.state || "idle");
+    }
+    updateCloudOpsDeployLogControls();
+  }
+
   async function handleCloudOpsAudioButtonClick(event) {
     const button = event.currentTarget;
     const channel = getCloudOpsAudioChannelByButton(button);
@@ -5210,7 +6144,9 @@
 
     if (action === "tool_call") {
       plan.tool_name = button.dataset.toolName || "";
-      plan.args = parseJsonDataset(button.dataset.args, {});
+      plan.args = button.dataset.deployAction
+        ? buildCloudOpsDeployArgs(button.dataset.deployAction)
+        : parseJsonDataset(button.dataset.args, {});
     }
 
     return plan;
@@ -5226,6 +6162,11 @@
       setCloudOpsStatus("请先登录", "idle");
       renderCloudOpsResult("请先登录云端智能运维账号，登录后才能查看和控制车辆。", null, "idle");
       focusWithoutScroll(cloudOpsUsername);
+      return;
+    }
+
+    const confirmMessage = String(button.dataset.confirmMessage || "").trim();
+    if (confirmMessage && !window.confirm(confirmMessage)) {
       return;
     }
 
@@ -5260,6 +6201,29 @@
       const resultState = deriveCloudOpsResultState(data);
       renderCloudOpsResult(data?.summary || "执行完成。", data, resultState);
       setCloudOpsStatus(resultState === "warn" ? "执行完成（需关注）" : "执行完成", resultState);
+      if (button.dataset.deployAction) {
+        const deployResult = data?.execution?.data?.response?.result || {};
+        if (deployResult?.job_id && cloudOpsDeployJobId) {
+          cloudOpsDeployJobId.value = deployResult.job_id;
+          updateCloudOpsDeployLogControls();
+          if (
+            button.dataset.deployAction === "git_update" ||
+            button.dataset.deployAction === "build" ||
+            button.dataset.deployAction === "update_and_build"
+          ) {
+            startCloudOpsDeployLogTail({ jobId: deployResult.job_id });
+          }
+        }
+        if (button.dataset.deployAction === "repo_status" && deployResult && typeof deployResult === "object") {
+          cloudOpsDeployRepoStatus = deployResult;
+          populateCloudOpsDeployBranches(deployResult.branches || [], deployResult.current_branch);
+          loadCloudOpsDeployCommits().catch(() => {});
+        }
+        if (button.dataset.deployAction === "logs" && deployResult && typeof deployResult === "object") {
+          renderCloudOpsDeployLiveLog(deployResult);
+          startCloudOpsDeployLogTail({ jobId: deployResult.job_id || getInputValue(cloudOpsDeployJobId) });
+        }
+      }
       const contextItem = pinCloudOpsContext(button, data);
       if (contextItem && workflowMessage) {
         updateCloudOpsWorkflowMessage(workflowMessage, {
@@ -6047,6 +7011,31 @@
     });
   }
 
+  function getAiCheckResponseError(response) {
+    if (!response || typeof response !== "object") {
+      return "检测服务无响应";
+    }
+    if (response.error) {
+      return String(response.error);
+    }
+    const result = Array.isArray(response.results) ? response.results[0] : null;
+    if (result?.error) {
+      return String(result.error);
+    }
+    return "";
+  }
+
+  function resolveAiCheckModelLabel(response, defaultLabel = "Qwen3.6-27B") {
+    const model = String(response?.model || "");
+    if (response?.fallback_used || /qwen3[-.]?vl[-.]?2b/i.test(model)) {
+      return "Qwen3-VL-2B";
+    }
+    if (/qwen3\.6|qwen36|27b-mm/i.test(model)) {
+      return "Qwen3.6-27B";
+    }
+    return defaultLabel;
+  }
+
   function setAiCheckResult(answer, detail, state) {
     if (aiCheckAnswer) {
       aiCheckAnswer.textContent = answer;
@@ -6554,8 +7543,49 @@
           loadAiHistoryPageData(1, { selectFirst: true });
         }
       } catch (error) {
-        setAiCheckStatus("检测失败", "error");
-        setAiCheckResult("无法判断", `检测失败：${error?.message || "未知错误"}`, "error");
+        setAiCheckStatus("Qwen3.6 不可用，切换备用模型...", "loading");
+        try {
+          const imagePayload = await buildImagePayload(file);
+          const promptText = customPrompt.replace(/\{\{\s*event(?:_name)?\s*\}\}|\{event(?:_name)?\}/gi, eventName || "异常事件");
+          const fallbackResponse = await runAiCheckRequest({
+            request_id: `web-${createNonce()}`,
+            device_id: "web-ai-check",
+            camera_id: "upload-panel",
+            image: imagePayload,
+            tasks: [
+              {
+                task_id: `task-${createNonce()}`,
+                event_name: eventName || "异常事件",
+                prompt_text: promptText
+              }
+            ]
+          });
+          const fallbackError = getAiCheckResponseError(fallbackResponse);
+          if (fallbackError) {
+            throw new Error(fallbackError);
+          }
+          const result = Array.isArray(fallbackResponse?.results) ? fallbackResponse.results[0] : null;
+          const answer = String(result?.answer || "").toUpperCase();
+          const rawReply = String(result?.raw_text || "").trim();
+          setAiCheckStatus("检测完成（Qwen3-VL-2B）", "ok");
+          if (answer === "YES" || result?.pass === true) {
+            setAiCheckResult("是", rawReply || `事件“${eventName || "异常事件"}”检测结果为 YES。`, "yes");
+          } else if (answer === "NO" || result?.pass === false) {
+            setAiCheckResult("否", rawReply || `事件“${eventName || "异常事件"}”检测结果为 NO。`, "no");
+          } else {
+            setAiCheckResult("回复", rawReply || "备用模型已返回结果。", "ok");
+          }
+          if (aiHistoryPanel) {
+            loadAiHistoryPageData(1, { selectFirst: true });
+          }
+        } catch (fallbackError) {
+          setAiCheckStatus("检测失败", "error");
+          setAiCheckResult(
+            "无法判断",
+            `检测失败：${error?.message || "Qwen3.6 不可用"}；备用模型失败：${fallbackError?.message || "未知错误"}`,
+            "error"
+          );
+        }
       } finally {
         if (aiCheckSubmit) aiCheckSubmit.disabled = false;
       }
@@ -6587,11 +7617,21 @@
 
       try {
         response = await runAiCheckRequest({ ...basePayload, model: "qwen3.6-27b-mm" });
+        const primaryError = getAiCheckResponseError(response);
+        if (primaryError) {
+          throw new Error(primaryError);
+        }
+        usedModel = resolveAiCheckModelLabel(response, usedModel);
       } catch (_primaryErr) {
         setAiCheckStatus("Qwen3.6 不可用，切换备用模型...", "loading");
         usedModel = "Qwen3-VL-2B";
         response = await runAiCheckRequest({ ...basePayload, request_id: `web-${createNonce()}` });
+        const fallbackError = getAiCheckResponseError(response);
+        if (fallbackError) {
+          throw new Error(fallbackError);
+        }
       }
+      usedModel = resolveAiCheckModelLabel(response, usedModel);
 
       const result = Array.isArray(response?.results) ? response.results[0] : null;
       const answer = String(result?.answer || "").toUpperCase();
@@ -6679,6 +7719,44 @@
   cloudOpsRefreshBtn?.addEventListener("click", () => {
     loadCloudOpsContext();
   });
+  cloudOpsDeployRefreshBtn?.addEventListener("click", () => {
+    loadCloudOpsDeployCatalog().catch((error) => {
+      setCloudOpsDeployStatus(`仓库列表加载失败：${error?.message || "未知错误"}`, "error");
+    });
+  });
+  cloudOpsDeployRepo?.addEventListener("change", () => {
+    const repository = getSelectedDeployRepository();
+    populateCloudOpsDeployTargets(repository);
+    loadCloudOpsDeployRepoStatus().catch((error) => {
+      setCloudOpsDeployStatus(`分支加载失败：${error?.message || "未知错误"}`, "error");
+    });
+  });
+  cloudOpsDeployBranch?.addEventListener("change", () => {
+    loadCloudOpsDeployCommits().catch((error) => {
+      setCloudOpsDeployStatus(`Commit 加载失败：${error?.message || "未知错误"}`, "error");
+    });
+  });
+  cloudOpsDeployFetch?.addEventListener("change", () => {
+    if (!getSelectedDeployRepository()) {
+      return;
+    }
+    loadCloudOpsDeployRepoStatus().catch((error) => {
+      setCloudOpsDeployStatus(`分支加载失败：${error?.message || "未知错误"}`, "error");
+    });
+  });
+  cloudOpsDeployJobId?.addEventListener("input", updateCloudOpsDeployLogControls);
+  cloudOpsDeployTailStartBtn?.addEventListener("click", () => {
+    startCloudOpsDeployLogTail({ renderResult: true });
+  });
+  cloudOpsDeployTailStopBtn?.addEventListener("click", () => {
+    stopCloudOpsDeployLogTail();
+  });
+  cloudOpsDeployTailClearBtn?.addEventListener("click", () => {
+    if (cloudOpsDeployLiveLog) {
+      cloudOpsDeployLiveLog.textContent = "等待任务日志...";
+    }
+    setCloudOpsDeployLiveStatus(cloudOpsDeployLogTimer ? "继续等待日志..." : "未启动", cloudOpsDeployLogTimer ? "loading" : "idle");
+  });
   cloudOpsVehicleSelect?.addEventListener("change", async () => {
     const previousVehicleId = cloudOpsCurrentVehicleId;
     const nextVehicleId = cloudOpsVehicleSelect.value || "";
@@ -6689,6 +7767,7 @@
         silent: true
       }).catch(() => {});
       clearCloudOpsPinnedContexts({ resetConversation: true });
+      resetCloudOpsDeployState();
     }
     cloudOpsCurrentVehicleId = nextVehicleId;
     loadCloudOpsContext();
@@ -6702,6 +7781,10 @@
   cloudOpsContextClear?.addEventListener("click", () => {
     clearCloudOpsPinnedContexts({ resetConversation: false });
     openClawInput?.focus();
+  });
+  window.addEventListener("jgzj:auth-change", (event) => {
+    refreshUnifiedAccountPanels().catch(() => {});
+    refreshAiPanelsForAuth(event?.detail || {});
   });
   window.addEventListener("pagehide", () => {
     cancelCloudChatVoiceTurn("pagehide_exit").catch(() => {});
@@ -6826,6 +7909,6 @@
   if (aiHistoryPanel) {
     setAiHistoryStatus("待加载", "idle");
     updateAiHistoryPager();
-    loadAiHistoryPageData(1, { selectFirst: true });
+    renderAiHistoryLockedForAuth({});
   }
 })();

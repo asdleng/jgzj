@@ -1,5 +1,6 @@
 const path = require('path');
-const { execFile } = require('child_process');
+const fs = require('fs/promises');
+const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 
 const execFileAsync = promisify(execFile);
@@ -42,6 +43,140 @@ function formatPortList(localPorts = [], publicPorts = []) {
 
 function formatAutoStartScript(scriptName) {
   return scriptName ? `/home/admin1/.auto_start/${scriptName}` : '';
+}
+
+function formatDuration(seconds) {
+  const value = Math.max(0, Number.parseInt(String(seconds ?? ''), 10) || 0);
+  const days = Math.floor(value / 86400);
+  const hours = Math.floor((value % 86400) / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  if (days) return `${days}天${hours}小时`;
+  if (hours) return `${hours}小时${minutes}分钟`;
+  return `${minutes}分钟`;
+}
+
+function weatherCodeText(code) {
+  const key = Number.parseInt(String(code ?? ''), 10);
+  const mapping = new Map([
+    [0, '晴'],
+    [1, '大部晴朗'],
+    [2, '多云'],
+    [3, '阴'],
+    [45, '有雾'],
+    [48, '有雾'],
+    [51, '小毛毛雨'],
+    [53, '毛毛雨'],
+    [55, '大毛毛雨'],
+    [56, '冻毛毛雨'],
+    [57, '冻毛毛雨'],
+    [61, '小雨'],
+    [63, '中雨'],
+    [65, '大雨'],
+    [66, '冻雨'],
+    [67, '冻雨'],
+    [71, '小雪'],
+    [73, '中雪'],
+    [75, '大雪'],
+    [77, '雪粒'],
+    [80, '阵雨'],
+    [81, '阵雨'],
+    [82, '强阵雨'],
+    [85, '阵雪'],
+    [86, '强阵雪'],
+    [95, '雷阵雨'],
+    [96, '雷阵雨伴冰雹'],
+    [99, '强雷阵雨伴冰雹']
+  ]);
+  return mapping.get(key) || (Number.isFinite(key) ? `天气码${key}` : '-');
+}
+
+function findWeatherCity(cities, cityName) {
+  const name = String(cityName || '深圳').trim() || '深圳';
+  const fullName = name.endsWith('市') ? name : `${name}市`;
+  return (Array.isArray(cities) ? cities : []).find(
+    (item) => item?.name === name || item?.full_name === fullName
+  );
+}
+
+function dailyValue(daily, index, field) {
+  const values = Array.isArray(daily?.[field]) ? daily[field] : [];
+  return index >= 0 && index < values.length ? values[index] : null;
+}
+
+async function sampleWeatherCacheStatus(options = {}) {
+  const cachePath = path.resolve(
+    options.path || '/home/admin1/CloudVoice/multi_car_asr_demo/ai2_backend/runtime_cache/weather_cn_city_level_7d.json'
+  );
+  const staleThresholdSec = Math.max(
+    600,
+    Number.parseInt(String(options.stale_threshold_sec ?? process.env.WEATHER_CACHE_STALE_S ?? '7200'), 10) || 7200
+  );
+  const cityName = String(options.city || process.env.WEATHER_STATUS_CITY || '深圳').trim() || '深圳';
+
+  let payload;
+  try {
+    payload = JSON.parse(await fs.readFile(cachePath, 'utf8'));
+  } catch (error) {
+    return {
+      kind: 'weather-cache',
+      ok: false,
+      state: 'error',
+      summary: `天气缓存读取失败：${error?.message || 'read_failed'}`,
+      path: cachePath
+    };
+  }
+
+  const generatedAtTs = Number(payload?._generated_at_ts || 0);
+  const ageSec = generatedAtTs > 0 ? Math.max(0, Math.floor(Date.now() / 1000 - generatedAtTs)) : null;
+  const data = payload?.data && typeof payload.data === 'object' ? payload.data : {};
+  const city = findWeatherCity(data.cities, cityName);
+  const current = city?.current || {};
+  const daily = city?.daily || {};
+  const dates = Array.isArray(daily.time) ? daily.time : [];
+  const todayIso = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+  const todayIndex = dates.includes(todayIso) ? dates.indexOf(todayIso) : dates.length ? 0 : -1;
+  const todayPop = dailyValue(daily, todayIndex, 'precipitation_probability_max');
+  const todayMax = dailyValue(daily, todayIndex, 'temperature_2m_max');
+  const todayMin = dailyValue(daily, todayIndex, 'temperature_2m_min');
+  const stale = ageSec === null || ageSec > staleThresholdSec;
+  const currentTemp = Number(current.temperature_2m);
+  const tempText = Number.isFinite(currentTemp) ? `${Math.round(currentTemp)}度` : '-';
+  const popText = Number.isFinite(Number(todayPop)) ? `${Math.round(Number(todayPop))}%` : '-';
+  const rangeText =
+    Number.isFinite(Number(todayMin)) && Number.isFinite(Number(todayMax))
+      ? `${Math.round(Number(todayMin))}-${Math.round(Number(todayMax))}度`
+      : '-';
+
+  return {
+    kind: 'weather-cache',
+    ok: true,
+    state: stale ? 'warn' : 'ok',
+    summary:
+      `缓存 ${payload?._generated_at_iso || '-'}，缓存年龄 ${ageSec === null ? '-' : formatDuration(ageSec)}；` +
+      `${city?.full_name || city?.name || cityName} ${current.time || '-'} ${weatherCodeText(current.weather_code)} ` +
+      `${tempText}，今日 ${rangeText}，降水概率 ${popText}，城市 ${data.city_count ?? '-'}，错误 ${data.error_count ?? '-'}`,
+    path: cachePath,
+    stale,
+    stale_threshold_sec: staleThresholdSec,
+    generated_at_iso: payload?._generated_at_iso || '',
+    age_sec: ageSec,
+    source: data.source || '',
+    city: {
+      name: city?.full_name || city?.name || cityName,
+      current_time: current.time || '',
+      weather_text: weatherCodeText(current.weather_code),
+      temperature_2m: current.temperature_2m,
+      precipitation: current.precipitation,
+      today_pop: todayPop,
+      today_min: todayMin,
+      today_max: todayMax
+    }
+  };
 }
 
 async function execCommand(file, args = [], options = {}) {
@@ -274,6 +409,60 @@ function buildTargets() {
       ]
     },
     {
+      id: 'a100-qwen36-llm-8000',
+      label: 'A100 Qwen3.6 LLM GPU0',
+      group: 'A100 远端业务',
+      description: '远端 A100 GPU0 上的 Qwen3.6-27B 文本 vLLM，真实服务端口 8000，经本机 18000 隧道访问。',
+      local_ports: ['18000'],
+      public_ports: [],
+      script: formatAutoStartScript('09_a100_qwen36_llm_8000.sh'),
+      restart: {
+        type: 'script',
+        file: path.join(autoStartDir, '09_a100_qwen36_llm_8000.sh'),
+        args: ['restart'],
+        timeout_ms: 600000
+      },
+      checks: [
+        { label: 'A100 8000 via 18000 /v1/models', url: 'http://127.0.0.1:18000/v1/models', required: true }
+      ]
+    },
+    {
+      id: 'a100-qwen36-vlm-8001',
+      label: 'A100 Qwen3.6 VLM GPU1',
+      group: 'A100 远端业务',
+      description: '远端 A100 GPU1 上的 Qwen3.6-27B-MM 多模态 vLLM，真实服务端口 8001，经本机 18001 隧道访问。',
+      local_ports: ['18001'],
+      public_ports: [],
+      script: formatAutoStartScript('10_a100_qwen36_vlm_8001.sh'),
+      restart: {
+        type: 'script',
+        file: path.join(autoStartDir, '10_a100_qwen36_vlm_8001.sh'),
+        args: ['restart'],
+        timeout_ms: 600000
+      },
+      checks: [
+        { label: 'A100 8001 via 18001 /v1/models', url: 'http://127.0.0.1:18001/v1/models', required: true }
+      ]
+    },
+    {
+      id: 'a100-tts-pool-8909',
+      label: 'A100 TTS Pool GPU2',
+      group: 'A100 远端业务',
+      description: '远端 A100 GPU2 上的 5 路 CosyVoice TTS 池，真实 LB 端口 8909，经本机 18109 隧道访问。',
+      local_ports: ['18109'],
+      public_ports: [],
+      script: formatAutoStartScript('11_a100_tts_pool_8909.sh'),
+      restart: {
+        type: 'script',
+        file: path.join(autoStartDir, '11_a100_tts_pool_8909.sh'),
+        args: ['restart'],
+        timeout_ms: 600000
+      },
+      checks: [
+        { label: 'A100 8909 via 18109 /healthz', url: 'http://127.0.0.1:18109/healthz', required: true }
+      ]
+    },
+    {
       id: 'cloudvoice-7790-prod',
       label: 'CloudVoice 生产对话链',
       group: '语音对话',
@@ -359,6 +548,34 @@ function buildTargets() {
         { label: '8042 Qwen3.6 compat /healthz', url: 'http://127.0.0.1:8042/healthz', required: true },
         { label: '8024 gray intent /healthz', url: 'http://127.0.0.1:8024/healthz', required: true },
         { label: '8051 gray bridge /healthz', url: 'http://127.0.0.1:8051/healthz', required: true }
+      ]
+    },
+    {
+      id: 'weather-cache-updater',
+      label: '天气缓存更新器',
+      group: '语音对话',
+      description: '天气问答使用的全国城市 7 天缓存；重点监控深圳缓存时间、当前天气和更新器进程。',
+      action_label: '更新',
+      action_busy_label: '更新中...',
+      local_ports: [],
+      public_ports: [],
+      script: path.join(cloudVoiceRoot, 'manage_tool_cache_updater.sh'),
+      controller: { type: 'process', pattern: `${cloudVoiceRoot}/tool_cache_updater\\.py` },
+      restart: {
+        type: 'script',
+        file: path.join(cloudVoiceRoot, 'manage_tool_cache_updater.sh'),
+        args: ['update'],
+        timeout_ms: 300000
+      },
+      checks: [
+        {
+          label: '深圳天气缓存',
+          type: 'weather-cache',
+          path: path.join(cloudVoiceRoot, 'ai2_backend/runtime_cache/weather_cn_city_level_7d.json'),
+          city: '深圳',
+          stale_threshold_sec: 7200,
+          required: true
+        }
       ]
     },
     {
@@ -457,12 +674,11 @@ function buildTargets() {
       local_ports: ['8888'],
       public_ports: ['7791'],
       script: formatAutoStartScript('06_jgzj_site_7791.sh'),
-      controller: { type: 'tmux', session_name: 'jgzj-site' },
+      controller: { type: 'systemd', service_name: 'jgzj-site.service' },
       restart: {
-        type: 'script',
-        file: path.join(autoStartDir, '06_jgzj_site_7791.sh'),
-        args: ['restart'],
-        timeout_ms: 180000
+        type: 'systemd',
+        service_name: 'jgzj-site.service',
+        timeout_ms: 45000
       },
       checks: [
         { label: '8888 site /healthz', url: 'http://127.0.0.1:8888/healthz', required: true },
@@ -573,7 +789,9 @@ async function sampleTarget(target) {
   const checks = await Promise.all(
     (target.checks || []).map(async (item) => ({
       ...item,
-      ...(await probeHttp(item.url, { label: item.label }))
+      ...(item.type === 'weather-cache'
+        ? await sampleWeatherCacheStatus(item)
+        : await probeHttp(item.url, { label: item.label }))
     }))
   );
   const summary = summarizeTargetState(controller, checks, target);
@@ -584,6 +802,8 @@ async function sampleTarget(target) {
     hidden: Boolean(target.hidden),
     description: target.description,
     script: target.script || '',
+    action_label: target.action_label || '重启',
+    action_busy_label: target.action_busy_label || '',
     local_ports: target.local_ports || [],
     public_ports: target.public_ports || [],
     port_text: formatPortList(target.local_ports, target.public_ports),
@@ -602,6 +822,32 @@ async function restartTarget(target, rootDir) {
   }
 
   if (target.restart.type === 'script') {
+    if (target.restart.async) {
+      const logFile =
+        target.restart.log_file ||
+        path.join(rootDir, '.logs', `runtime-restart-${target.id}.log`);
+      const scriptArgs = [target.restart.file, ...(target.restart.args || [])]
+        .map((item) => `'${String(item).replace(/'/g, "'\\''")}'`)
+        .join(' ');
+      const command = [
+        `mkdir -p '${path.dirname(logFile).replace(/'/g, "'\\''")}'`,
+        `cd '${rootDir.replace(/'/g, "'\\''")}'`,
+        `nohup bash -lc "sleep ${Number(target.restart.delay_s || 0.5)}; bash ${scriptArgs}" >> '${logFile.replace(/'/g, "'\\''")}' 2>&1 < /dev/null &`
+      ].join(' && ');
+      const child = spawn('bash', ['-lc', command], {
+        cwd: rootDir,
+        env: target.restart.env ? { ...process.env, ...target.restart.env } : process.env,
+        detached: true,
+        stdio: 'ignore'
+      });
+      child.unref();
+      return {
+        ok: true,
+        stdout: `queued async restart: ${target.restart.file}\nlog: ${logFile}`,
+        stderr: ''
+      };
+    }
+
     return execCommand('bash', [target.restart.file, ...(target.restart.args || [])], {
       cwd: rootDir,
       env: target.restart.env ? { ...process.env, ...target.restart.env } : undefined,
@@ -635,6 +881,8 @@ function buildQueuedNode(target) {
     group: target.group,
     description: target.description,
     script: target.script || '',
+    action_label: target.action_label || '重启',
+    action_busy_label: target.action_busy_label || '',
     local_ports: target.local_ports || [],
     public_ports: target.public_ports || [],
     port_text: formatPortList(target.local_ports, target.public_ports),
@@ -645,7 +893,7 @@ function buildQueuedNode(target) {
     },
     checks: [],
     state: 'warn',
-    status_text: `${target.label} 已发起重启，等待恢复`,
+    status_text: `${target.label} 已发起${target.action_label || '重启'}，等待恢复`,
     restart_required_auth: true,
     updated_at: new Date().toISOString()
   };
@@ -653,6 +901,7 @@ function buildQueuedNode(target) {
 
 function registerRuntimeControlRoutes(app, options = {}) {
   const requireOpenClawAuth = options.requireOpenClawAuth;
+  const requirePermission = options.requirePermission;
   const rootDir = path.resolve(options.rootDir || path.join(__dirname, '..'));
   const refreshTtlMs = Number(options.refreshTtlMs || DEFAULT_REFRESH_TTL_MS);
   const targets = buildTargets();
@@ -678,7 +927,10 @@ function registerRuntimeControlRoutes(app, options = {}) {
     return snapshot;
   }
 
-  app.get('/api/cloud-ops/runtime/status', requireOpenClawAuth, async (_req, res) => {
+  app.get(
+    '/api/cloud-ops/runtime/status',
+    requirePermission ? requirePermission('runtime:read') : requireOpenClawAuth,
+    async (_req, res) => {
     try {
       const snapshot = await sampleAllTargets(false);
       return res.json({
@@ -692,9 +944,13 @@ function registerRuntimeControlRoutes(app, options = {}) {
         detail: error?.message || 'runtime_status_failed'
       });
     }
-  });
+    }
+  );
 
-  app.post('/api/cloud-ops/runtime/restart', requireOpenClawAuth, async (req, res) => {
+  app.post(
+    '/api/cloud-ops/runtime/restart',
+    requirePermission ? requirePermission('runtime:restart') : requireOpenClawAuth,
+    async (req, res) => {
     const targetId = String(req.body?.target_id || '').trim();
     if (!targetId || !targetMap.has(targetId)) {
       return res.status(400).json({
@@ -729,9 +985,9 @@ function registerRuntimeControlRoutes(app, options = {}) {
         target_id: targetId,
         summary: commandResult.ok
           ? queued
-            ? `${target.label} 已发起重启，页面会自动刷新。`
-            : `${target.label} 已执行重启。`
-          : `${target.label} 重启失败。`,
+            ? `${target.label} 已发起${target.action_label || '重启'}，页面会自动刷新。`
+            : `${target.label} 已执行${target.action_label || '重启'}。`
+          : `${target.label} ${target.action_label || '重启'}失败。`,
         node,
         stdout: truncateText(commandResult.stdout, 4000),
         stderr: truncateText(commandResult.stderr, 4000)
@@ -751,7 +1007,8 @@ function registerRuntimeControlRoutes(app, options = {}) {
     } finally {
       restartLocks.delete(targetId);
     }
-  });
+    }
+  );
 }
 
 module.exports = registerRuntimeControlRoutes;

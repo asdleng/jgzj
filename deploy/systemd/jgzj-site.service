@@ -1,0 +1,22 @@
+[Unit]
+Description=JGZJ website backend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=admin1
+Group=admin1
+WorkingDirectory=/home/admin1/jgzj
+EnvironmentFile=/home/admin1/jgzj/.runtime/jgzj-site.env
+Environment=NODE_ENV=production
+Environment=PATH=/home/admin1/jgzj/.runtime/node-v20.20.1-linux-x64/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/admin1/jgzj/.runtime/node-v20.20.1-linux-x64/bin/node /home/admin1/jgzj/backend/server.js
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGTERM
+SyslogIdentifier=jgzj-site
+
+[Install]
+WantedBy=multi-user.target

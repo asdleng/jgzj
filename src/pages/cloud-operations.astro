@@ -21,7 +21,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     <div class="hero-grid"></div>
     <div class="page-hero-shell">
       <div class="page-hero-copy reveal" data-reveal>
-        <p class="page-kicker">PAGE 05 · CLOUD OPS</p>
+        <p class="page-kicker">PAGE 06 · CLOUD OPS</p>
         <h1 class="page-title">云端智能运维</h1>
         <p class="page-subtitle">
           面向实际服务器和多车现场的登录运维工作台。车辆状态、车端工具调用、自然语言运维、服务器节点状态和重启操作统一放在这一页，未登录时不开放查看和控制能力。
@@ -34,9 +34,9 @@ import SiteLayout from "../components/SiteLayout.astro";
     <section class="page-section">
       <div class="glass-card section-card">
         <p class="section-kicker">云端智能运维工作台</p>
-        <h2 class="section-title">先登录，再进入车辆与服务器运维</h2>
+        <h2 class="section-title">车辆与服务器运维统一在全局账号下授权</h2>
         <p class="section-copy">
-          未登录时这里只显示登录框；登录后才显示车辆列表、车端工具、自然语言运维、服务器端口拓扑和重启面板。
+          未登录时互动工作台会保持可见但处于锁定虚化状态；登录并具备权限后才会加载车辆列表、车端工具、自然语言运维、服务器端口拓扑和重启面板。
         </p>
         <div class="ops-openclaw-shell">
           <EmbeddedCloudOpsConsole />
@@ -44,12 +44,12 @@ import SiteLayout from "../components/SiteLayout.astro";
       </div>
     </section>
 
-    <section class="page-section" data-cloud-ops-protected hidden>
+    <section class="page-section" data-cloud-ops-protected>
       <div class="glass-card section-card">
         <p class="section-kicker">服务器端运维</p>
         <h2 class="section-title">架构图直接承载端口、节点和重启操作</h2>
         <p class="section-copy">
-          这块必须登录后才会显示。架构图只保留节点功能、端口、链路方向、运行状态和重启按钮，不展示探活延迟和冗余检查明细。
+          架构图只保留节点功能、端口、链路方向、运行状态和重启按钮，不展示探活延迟和冗余检查明细。未授权时面板保持虚化锁定。
         </p>
         <EmbeddedCloudOpsRuntime />
       </div>

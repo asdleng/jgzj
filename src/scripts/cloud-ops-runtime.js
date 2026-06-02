@@ -114,10 +114,12 @@
   }
 
   function createRestartButton(node) {
+    const label = node?.action_label || "重启";
+    const busyLabel = node?.action_busy_label || `${label}中...`;
     const button = createNode(
       "button",
       "server-port-restart",
-      busyTargetId === node?.id ? "重启中..." : "重启"
+      busyTargetId === node?.id ? busyLabel : label
     );
     button.type = "button";
     button.disabled = Boolean(busyTargetId) || !authenticated || !node?.id;

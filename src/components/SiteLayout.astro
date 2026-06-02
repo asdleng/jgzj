@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import AccountAuth from "./AccountAuth.astro";
 import { contactInfo, navigationItems, siteDescription, siteName, siteUrl } from "../data/site-content.js";
 
 const {
@@ -60,6 +61,7 @@ const fullTitle = `${title} | ${siteName}`;
             </a>
           ))}
         </div>
+        <AccountAuth />
       </div>
     </nav>
 

@@ -1,0 +1,48 @@
+---
+import EmbeddedVehicleDevOpsConsole from "../components/EmbeddedVehicleDevOpsConsole.astro";
+import InteractiveScripts from "../components/InteractiveScripts.astro";
+import SiteLayout from "../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="车辆代码维护"
+  description="面向无人车辆的集中代码维护页面，支持按车辆选择 Repo、分支和 Commit，执行 Git 更新、编译、任务日志查看和自然语言追问。"
+  currentPath="/vehicle-devops"
+>
+  <header class="page-hero ops-hero vehicle-devops-hero">
+    <img
+      src="/assets/hero-cloud-ops.png"
+      alt="车辆代码维护工作台"
+      class="hero-media"
+      data-parallax
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">PAGE 07 · CODE MAINTENANCE</p>
+        <h1 class="page-title">车辆代码维护</h1>
+        <p class="page-subtitle">
+          独立于控车操作的代码维护入口。按车辆选择车端 Repo、编译目标、分支和 Commit，执行更新、编译、任务状态与实时日志查看，并在同一屏用自然语言继续分析。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+    <section class="page-section vehicle-devops-section">
+      <div class="glass-card section-card vehicle-devops-card">
+        <p class="section-kicker">车辆代码维护工作台</p>
+        <h2 class="section-title">代码更新、编译、日志和 OpenClaw 追问放在同一屏</h2>
+        <p class="section-copy">
+          这里不放车身、相机、路线等控车按钮，只保留代码维护相关工具。执行结果会自动进入右侧对话上下文，方便继续让 OpenClaw 判断失败原因或给出下一步处理。
+        </p>
+        <div class="ops-openclaw-shell vehicle-devops-openclaw-shell">
+          <EmbeddedVehicleDevOpsConsole />
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <InteractiveScripts />
+</SiteLayout>

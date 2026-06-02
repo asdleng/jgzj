@@ -1,10 +1,13 @@
 const fs = require('fs/promises');
+const fsSync = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const express = require('express');
+const { createAuthStore } = require('./auth-store');
+const { createMailer } = require('./mailer');
 const registerCloudMappingRoutes = require('./cloud-mapping');
 const registerRuntimeControlRoutes = require('./runtime-control');
 
@@ -23,6 +26,10 @@ const aiCheckArchiveDbPath = path.join(
   process.env.AI_CHECK_ARCHIVE_DB_NAME || 'qwen_ws_checker.sqlite3'
 );
 const aiCheckArchiveDbUri = `file:${aiCheckArchiveDbPath}?mode=ro&immutable=1`;
+const sqlite3Bin = resolveExecutable(
+  process.env.SQLITE3_BIN || process.env.AI_CHECK_SQLITE_BIN,
+  ['/usr/bin/sqlite3', '/usr/local/bin/sqlite3', '/home/admin1/miniconda3/bin/sqlite3']
+);
 const defaultVehicleId = process.env.DEFAULT_VEHICLE_ID || 'car-web';
 const upstreamBaseUrl = process.env.UPSTREAM_CHAT_BASE_URL || 'http://127.0.0.1:8050';
 const upstreamStreamUrl = new URL(
@@ -98,7 +105,19 @@ const cloudAgentAnswerSessionSuffix =
 const cloudOpsRouteCatalogCacheTtlMs = Number(
   process.env.CLOUD_OPS_ROUTE_CATALOG_CACHE_TTL_MS || 15000
 );
+const cloudOpsDeployGitCacheDir = path.resolve(
+  process.env.CLOUD_OPS_DEPLOY_GIT_CACHE_DIR || '/tmp/jgzj-deploy-git-cache'
+);
 const cloudOpsRouteCatalogCache = new Map();
+const projectRoot = path.resolve(__dirname, '..');
+const authStore = createAuthStore({
+  rootDir: projectRoot,
+  storePath: process.env.JGZJ_AUTH_STORE_PATH || undefined,
+  cookieName: process.env.JGZJ_AUTH_COOKIE_NAME || 'jgzj_session',
+  sessionTtlMs: Number(process.env.JGZJ_AUTH_TTL_MS || 7 * 24 * 60 * 60 * 1000),
+  secureCookie: String(process.env.JGZJ_AUTH_COOKIE_SECURE || '').toLowerCase() === 'true'
+});
+const mailer = createMailer({ rootDir: projectRoot });
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '16mb' }));
@@ -207,6 +226,21 @@ function parseJsonField(value, fallback = null) {
   } catch (_error) {
     return fallback;
   }
+}
+
+function resolveExecutable(configured, candidates = []) {
+  const requested = String(configured || '').trim();
+  const options = requested ? [requested, ...candidates] : candidates;
+  for (const candidate of options) {
+    if (!candidate) continue;
+    try {
+      fsSync.accessSync(candidate, fsSync.constants.X_OK);
+      return candidate;
+    } catch (_error) {
+      // Try the next known location.
+    }
+  }
+  return requested || 'sqlite3';
 }
 
 function extractJsonObject(text) {
@@ -416,17 +450,7 @@ function clearOpenClawAuthCookie(res) {
 }
 
 function requireOpenClawAuth(req, res, next) {
-  const auth = getOpenClawAuthFromRequest(req);
-  if (!auth) {
-    clearOpenClawAuthCookie(res);
-    return res.status(401).json({
-      ok: false,
-      error: 'openclaw_auth_required'
-    });
-  }
-
-  req.openClawAuth = auth;
-  return next();
+  return authStore.requirePermission('vehicle:read')(req, res, next);
 }
 
 function toArchiveFileUrl(relativePath) {
@@ -537,14 +561,14 @@ async function readArchiveJson(relativePath) {
 }
 
 async function runArchiveSql(sql) {
-  const { stdout } = await execFileAsync('sqlite3', ['-json', aiCheckArchiveDbUri, sql], {
+  const { stdout } = await execFileAsync(sqlite3Bin, ['-json', aiCheckArchiveDbUri, sql], {
     maxBuffer: 8 * 1024 * 1024
   });
   return parseJsonField(stdout, []);
 }
 
 async function writeArchiveSql(sql) {
-  await execFileAsync('sqlite3', [aiCheckArchiveDbPath, sql], {
+  await execFileAsync(sqlite3Bin, [aiCheckArchiveDbPath, sql], {
     maxBuffer: 1024 * 1024
   });
 }
@@ -1084,6 +1108,382 @@ async function listCloudAgentVehicles() {
   const result = await fetchCloudAgentJson('/api/vehicles');
   const vehicles = Array.isArray(result?.data?.vehicles) ? result.data.vehicles : [];
   return vehicles;
+}
+
+function normalizeDeployBranchName(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^refs\/remotes\//, '')
+    .replace(/^refs\/heads\//, '')
+    .replace(/^origin\//, '');
+}
+
+function normalizeDeployRepoPath(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function formatDeployRepoLocation(repoPath) {
+  const normalizedPath = normalizeDeployRepoPath(repoPath);
+  if (!normalizedPath) {
+    return '';
+  }
+  const modulesMarker = '/modules/';
+  const markerIndex = normalizedPath.lastIndexOf(modulesMarker);
+  if (markerIndex >= 0) {
+    return normalizedPath.slice(markerIndex + modulesMarker.length);
+  }
+  return normalizedPath.split('/').filter(Boolean).slice(-2).join('/');
+}
+
+function mergeDeployTargets(existingTargets = [], incomingTargets = []) {
+  const byName = new Map();
+  [...existingTargets, ...incomingTargets].forEach((target) => {
+    const name = String(target?.name || '').trim();
+    const pathValue = String(target?.path || '').trim();
+    const key = `${name}::${pathValue}`;
+    if (!name || byName.has(key)) {
+      return;
+    }
+    byName.set(key, {
+      name,
+      path: pathValue,
+      label:
+        pathValue && pathValue !== '.'
+          ? `${name || '未命名'} · ${pathValue}`
+          : String(name || '未命名')
+    });
+  });
+  return Array.from(byName.values());
+}
+
+function normalizeDeployRepositories(targetsResult) {
+  const controllers = Array.isArray(targetsResult?.controllers) ? targetsResult.controllers : [];
+  const byRepoPath = new Map();
+  controllers.forEach((controller) => {
+    const controllerName = String(controller?.controller || '').trim();
+    const items = Array.isArray(controller?.repositories) ? controller.repositories : [];
+    items.forEach((repo) => {
+      const repoName = String(repo?.repo || '').trim();
+      if (!controllerName || !repoName) {
+        return;
+      }
+      const packages = Array.isArray(repo?.packages) ? repo.packages : [];
+      const repoPath = normalizeDeployRepoPath(repo?.path);
+      const key = repoPath || repoName;
+      const targets = packages.map((pkg) => ({
+        name: String(pkg?.name || '').trim(),
+        path: String(pkg?.path || '').trim()
+      }));
+      const existing = byRepoPath.get(key);
+
+      if (existing) {
+        existing.controllers = Array.from(new Set([...(existing.controllers || []), controllerName]));
+        existing.build_supported = existing.build_supported || Boolean(repo?.build_supported);
+        existing.default_target = existing.default_target || repo?.package || '';
+        existing.targets = mergeDeployTargets(existing.targets, targets);
+        return;
+      }
+
+      byRepoPath.set(key, {
+        id: '',
+        controller: controllerName,
+        controllers: [controllerName],
+        repo: repoName,
+        path: repoPath,
+        location_label: formatDeployRepoLocation(repoPath),
+        build_supported: Boolean(repo?.build_supported),
+        default_target: repo?.package || '',
+        targets: mergeDeployTargets([], targets)
+      });
+    });
+  });
+  const repositories = Array.from(byRepoPath.values());
+  const nameCounts = new Map();
+  repositories.forEach((repo) => {
+    nameCounts.set(repo.repo, (nameCounts.get(repo.repo) || 0) + 1);
+  });
+  repositories.forEach((repo) => {
+    if ((nameCounts.get(repo.repo) || 0) > 1) {
+      const suffix = crypto
+        .createHash('sha1')
+        .update(repo.path || `${repo.controller}:${repo.repo}`)
+        .digest('hex')
+        .slice(0, 8);
+      repo.id = `${repo.repo}#${suffix}`;
+      return;
+    }
+    repo.id = repo.repo;
+  });
+  repositories.sort((left, right) => {
+    const repoCompare = left.repo.localeCompare(right.repo, 'zh-CN');
+    return repoCompare || String(left.location_label || '').localeCompare(String(right.location_label || ''), 'zh-CN');
+  });
+  return repositories;
+}
+
+function normalizeDeployBranches(statusResult) {
+  const branches = Array.isArray(statusResult?.branches) ? statusResult.branches : [];
+  const seen = new Set();
+  const normalized = [];
+  branches.forEach((branch) => {
+    const rawName = String(branch?.name || '').trim();
+    const value = normalizeDeployBranchName(rawName);
+    if (!value || value === 'HEAD' || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    normalized.push({
+      value,
+      name: rawName || value,
+      label: rawName || value,
+      sha_short: branch?.sha_short || '',
+      subject: branch?.subject || '',
+      time: branch?.time || ''
+    });
+  });
+  const currentBranch = normalizeDeployBranchName(statusResult?.current_branch);
+  if (currentBranch && !seen.has(currentBranch)) {
+    normalized.unshift({
+      value: currentBranch,
+      name: currentBranch,
+      label: currentBranch,
+      sha_short: statusResult?.head?.short || '',
+      subject: statusResult?.head?.subject || '',
+      time: statusResult?.head?.time || ''
+    });
+  }
+  return normalized;
+}
+
+function firstDeployFetchRemote(statusResult) {
+  const remotes = Array.isArray(statusResult?.remotes) ? statusResult.remotes : [];
+  const remote =
+    remotes.find((item) => item?.kind === 'fetch' && item?.url) ||
+    remotes.find((item) => item?.url);
+  return String(remote?.url || '').trim();
+}
+
+function fallbackDeployCommits(statusResult, branchName) {
+  const commits = [];
+  const normalizedBranch = normalizeDeployBranchName(branchName);
+  const branch = (Array.isArray(statusResult?.branches) ? statusResult.branches : []).find(
+    (item) => normalizeDeployBranchName(item?.name) === normalizedBranch
+  );
+  if (branch?.sha_short) {
+    commits.push({
+      sha: branch.sha_short,
+      short: branch.sha_short,
+      subject: branch.subject || `${normalizedBranch} HEAD`,
+      time: branch.time || ''
+    });
+  }
+  if (statusResult?.head?.sha || statusResult?.head?.short) {
+    commits.push({
+      sha: statusResult.head.sha || statusResult.head.short,
+      short: statusResult.head.short || String(statusResult.head.sha || '').slice(0, 8),
+      subject: statusResult.head.subject || '当前 HEAD',
+      time: statusResult.head.time || ''
+    });
+  }
+  const seen = new Set();
+  return commits.filter((commit) => {
+    const key = String(commit.sha || commit.short || '').trim();
+    const shortKey = String(commit.short || key.slice(0, 8)).trim();
+    if (!key || seen.has(key) || (shortKey && seen.has(shortKey))) {
+      return false;
+    }
+    seen.add(key);
+    if (shortKey) {
+      seen.add(shortKey);
+    }
+    return true;
+  });
+}
+
+function isAllowedDeployRemoteUrl(remoteUrl) {
+  if (/^[\w.-]+@[\w.-]+:.+/.test(remoteUrl)) {
+    return true;
+  }
+  try {
+    const parsed = new URL(remoteUrl);
+    return ['http:', 'https:', 'ssh:', 'git:'].includes(parsed.protocol);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function applyGitHttpCredentials(remoteUrl, username, password) {
+  const gitUsername = String(username || '').trim();
+  const gitPassword = String(password || '');
+  if (!gitUsername || !gitPassword) {
+    return remoteUrl;
+  }
+  try {
+    const parsed = new URL(remoteUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return remoteUrl;
+    }
+    parsed.username = gitUsername;
+    parsed.password = gitPassword;
+    return parsed.toString();
+  } catch (_error) {
+    return remoteUrl;
+  }
+}
+
+function redactDeploySecret(text, secrets = []) {
+  let value = String(text || '');
+  secrets
+    .map((secret) => String(secret || ''))
+    .filter(Boolean)
+    .forEach((secret) => {
+      value = value.split(secret).join('***');
+      try {
+        value = value.split(encodeURIComponent(secret)).join('***');
+      } catch (_error) {
+        // Ignore malformed URI encoding edge cases.
+      }
+    });
+  return value;
+}
+
+function redactGitRemoteUrl(remoteUrl) {
+  try {
+    const parsed = new URL(remoteUrl);
+    if (parsed.username) {
+      parsed.username = parsed.username ? '***' : '';
+    }
+    if (parsed.password) {
+      parsed.password = '***';
+    }
+    return parsed.toString();
+  } catch (_error) {
+    return remoteUrl;
+  }
+}
+
+function isSensitivePayloadKey(key) {
+  return /password|secret|token|credential|authorization|cookie/i.test(String(key || ''));
+}
+
+function redactSensitiveString(value) {
+  return String(value || '').replace(/((?:https?|git):\/\/[^:/\s@]+:)([^@\s]+)(@)/gi, '$1***$3');
+}
+
+function sanitizeCloudOpsPayload(value, seen = new WeakSet()) {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeCloudOpsPayload(item, seen));
+  }
+
+  if (value && typeof value === 'object') {
+    if (seen.has(value)) {
+      return '[Circular]';
+    }
+    seen.add(value);
+    const output = {};
+    Object.entries(value).forEach(([key, item]) => {
+      output[key] = isSensitivePayloadKey(key)
+        ? (item ? '***' : item)
+        : sanitizeCloudOpsPayload(item, seen);
+    });
+    seen.delete(value);
+    return output;
+  }
+
+  if (typeof value === 'string') {
+    return redactSensitiveString(value);
+  }
+
+  return value;
+}
+
+async function listDeployCommitsWithGit(remoteUrl, branchName, limit, credentials = {}) {
+  if (!remoteUrl || !isAllowedDeployRemoteUrl(remoteUrl)) {
+    throw new Error('unsupported_git_remote_url');
+  }
+  const normalizedBranch = normalizeDeployBranchName(branchName);
+  if (!normalizedBranch || normalizedBranch === 'HEAD') {
+    throw new Error('invalid_branch');
+  }
+  await execFileAsync('git', ['check-ref-format', '--branch', normalizedBranch], {
+    timeout: 5000,
+    maxBuffer: 1024 * 64
+  });
+  const depth = Math.min(200, Math.max(20, Number(limit) || 50));
+  const gitRemoteUrl = applyGitHttpCredentials(
+    remoteUrl,
+    credentials.git_username,
+    credentials.git_password
+  );
+  const localRef = `refs/heads/${normalizedBranch}`;
+  const fetchRefspec = `+refs/heads/${normalizedBranch}:${localRef}`;
+  const cacheKey = crypto
+    .createHash('sha256')
+    .update(`${remoteUrl}#${normalizedBranch}`)
+    .digest('hex')
+    .slice(0, 24);
+  const cachePath = path.join(cloudOpsDeployGitCacheDir, `${cacheKey}.git`);
+  await fs.mkdir(cloudOpsDeployGitCacheDir, { recursive: true });
+
+  const gitEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: 'echo'
+  };
+
+  try {
+    await fs.access(cachePath);
+    await execFileAsync(
+      'git',
+      ['-C', cachePath, 'fetch', '--prune', '--no-tags', '--depth', String(depth), gitRemoteUrl, fetchRefspec],
+      { timeout: 45000, maxBuffer: 1024 * 1024, env: gitEnv }
+    );
+  } catch (_error) {
+    await fs.rm(cachePath, { recursive: true, force: true }).catch(() => {});
+    await execFileAsync(
+      'git',
+      [
+        'clone',
+        '--bare',
+        '--filter=blob:none',
+        '--no-tags',
+        '--depth',
+        String(depth),
+        '--branch',
+        normalizedBranch,
+        gitRemoteUrl,
+        cachePath
+      ],
+      { timeout: 90000, maxBuffer: 1024 * 1024, env: gitEnv }
+    );
+    await execFileAsync('git', ['-C', cachePath, 'remote', 'set-url', 'origin', remoteUrl], {
+      timeout: 5000,
+      maxBuffer: 1024 * 128,
+      env: gitEnv
+    }).catch(() => {});
+  }
+
+  const logResult = await execFileAsync(
+    'git',
+    [
+      '-C',
+      cachePath,
+      'log',
+      '--date=iso-strict',
+      '--pretty=format:%H%x1f%h%x1f%s%x1f%cd',
+      '-n',
+      String(Math.min(100, Math.max(1, Number(limit) || 50))),
+      localRef
+    ],
+    { timeout: 20000, maxBuffer: 1024 * 1024, env: gitEnv }
+  );
+  return String(logResult.stdout || '')
+    .split('\n')
+    .map((line) => {
+      const [sha, short, subject, time] = line.split('\x1f');
+      return { sha, short, subject, time };
+    })
+    .filter((item) => item.sha);
 }
 
 function inferVehicleIdFromMessage(message, vehicles = []) {
@@ -3633,8 +4033,341 @@ function buildOpenClawContextMessage(message, options = {}) {
   return blocks.join('\n\n');
 }
 
+function requestMeta(req) {
+  return {
+    ip: req.ip || req.socket?.remoteAddress || '',
+    user_agent: req.get('user-agent') || ''
+  };
+}
+
+function authUserResponse(auth) {
+  return {
+    ok: true,
+    authenticated: Boolean(auth?.user),
+    username: auth?.user?.username || null,
+    user: auth?.user || null,
+    permissions: auth?.user?.effective_permissions || []
+  };
+}
+
+function publicSiteBaseUrl(req) {
+  const configured = String(process.env.JGZJ_PUBLIC_SITE_URL || '').trim();
+  if (configured) {
+    return configured.replace(/\/+$/, '');
+  }
+  const host = req.get('x-forwarded-host') || req.get('host') || `127.0.0.1:${port}`;
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+  return `${proto}://${host}`.replace(/\/+$/, '');
+}
+
+function emailVerificationUrl(req, token) {
+  const url = new URL('/api/auth/verify-email', publicSiteBaseUrl(req));
+  url.searchParams.set('token', token);
+  return url.toString();
+}
+
+async function sendEmailVerification(req, issue) {
+  const verificationUrl = emailVerificationUrl(req, issue.token);
+  const delivery = await mailer.sendVerificationEmail({
+    to: issue.email,
+    username: issue.user.username,
+    verificationUrl,
+    expiresAtMs: issue.expires_at_ms
+  });
+  return {
+    ...delivery,
+    debug_verification_url:
+      String(process.env.JGZJ_EMAIL_DEBUG_RESPONSE || '').toLowerCase() === 'true'
+        ? verificationUrl
+        : undefined
+  };
+}
+
+function renderEmailVerificationPage({ ok, title, detail }) {
+  const tone = ok ? '#16a34a' : '#dc2626';
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #020617; color: #e2e8f0; }
+      main { width: min(560px, calc(100vw - 32px)); border: 1px solid rgba(148, 163, 184, .28); border-radius: 18px; background: rgba(15, 23, 42, .92); padding: 28px; box-shadow: 0 24px 70px rgba(0,0,0,.35); }
+      h1 { margin: 0 0 12px; color: ${tone}; font-size: 1.6rem; }
+      p { margin: 0 0 18px; line-height: 1.75; color: #cbd5e1; }
+      a { display: inline-flex; min-height: 40px; align-items: center; border-radius: 10px; padding: 0 14px; color: #082f49; background: #67e8f9; font-weight: 800; text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${title}</h1>
+      <p>${detail}</p>
+      <a href="/">返回网站</a>
+    </main>
+  </body>
+</html>`;
+}
+
+function cloudOpsPermissionForTool(toolName) {
+  const name = String(toolName || '').trim();
+  if (!name) {
+    return 'vehicle:read';
+  }
+  if (name.startsWith('deploy.')) {
+    return ['deploy.git_update', 'deploy.build', 'deploy.update_and_build', 'deploy.cancel'].includes(name)
+      ? 'vehicle:code:write'
+      : 'vehicle:code:read';
+  }
+  if (
+    name.startsWith('map_editor.') ||
+    name.startsWith('route.edit') ||
+    name.startsWith('route.create') ||
+    name.startsWith('route.delete')
+  ) {
+    return 'vehicle:path:write';
+  }
+  if (
+    name === 'route.start_patrol' ||
+    name === 'route.stop_patrol' ||
+    name === 'vehicle.body_control' ||
+    name === 'vehicle.clear_collision_stop' ||
+    name === 'controller.reboot_master' ||
+    name === 'controller.reboot_media' ||
+    name.startsWith('audio.uplink.')
+  ) {
+    return 'vehicle:control';
+  }
+  if (name === 'ai_detection.images') {
+    return 'ai:history:read';
+  }
+  return 'vehicle:read';
+}
+
+function cloudOpsPermissionForPlan(plan) {
+  const action = String(plan?.action || '').trim();
+  if (action === 'tool_call') {
+    return cloudOpsPermissionForTool(plan?.tool_name);
+  }
+  return 'vehicle:read';
+}
+
 app.get('/healthz', (_req, res) => {
   res.type('text/plain').send('ok');
+});
+
+app.get('/api/auth/me', async (req, res) => {
+  const auth = await authStore.getAuthFromRequest(req);
+  if (!auth) {
+    return res.json({
+      ok: true,
+      authenticated: false,
+      username: null,
+      user: null,
+      permissions: []
+    });
+  }
+  return res.json(authUserResponse(auth));
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const user = await authStore.register(req.body || {}, requestMeta(req));
+    const login = await authStore.login(user.username, String(req.body?.password || ''), requestMeta(req));
+    const issue = await authStore.issueEmailVerification(user.username, requestMeta(req), { force: true });
+    const emailDelivery = await sendEmailVerification(req, issue).catch((error) => ({
+      ok: false,
+      mode: 'error',
+      error: error.message || 'email_send_failed'
+    }));
+    authStore.setSessionCookie(res, login.token, login.expires_at_ms - Date.now());
+    return res.status(201).json({
+      ok: true,
+      authenticated: true,
+      username: login.user.username,
+      user: issue.user,
+      permissions: issue.user.effective_permissions,
+      email_delivery: emailDelivery,
+      message: 'registered_email_verification_required'
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      ok: false,
+      error: error.message || 'register_failed',
+      detail:
+        error.message === 'invalid_username'
+          ? '用户名需为 3-32 位小写字母、数字、点、下划线或短横线。'
+          : error.message === 'weak_password'
+            ? '密码长度需为 6-128 位。'
+            : error.message === 'invalid_email'
+              ? '请输入有效邮箱。'
+              : error.message === 'username_exists'
+                ? '该用户名已存在。'
+                : '注册失败。'
+    });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const login = await authStore.login(req.body?.username, req.body?.password, requestMeta(req));
+    authStore.setSessionCookie(res, login.token, login.expires_at_ms - Date.now());
+    return res.json({
+      ok: true,
+      authenticated: true,
+      username: login.user.username,
+      user: login.user,
+      permissions: login.user.effective_permissions
+    });
+  } catch (error) {
+    authStore.clearSessionCookie(res);
+    return res.status(error.status || 401).json({
+      ok: false,
+      error: 'login_failed',
+      detail: '用户名或密码错误。'
+    });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  const auth = await authStore.getAuthFromRequest(req, { touch: false });
+  await authStore.logout(req, auth?.username || null);
+  authStore.clearSessionCookie(res);
+  clearOpenClawAuthCookie(res);
+  return res.json({
+    ok: true,
+    authenticated: false
+  });
+});
+
+app.post('/api/auth/request-email-verification', async (req, res) => {
+  const auth = await authStore.getAuthFromRequest(req);
+  if (!auth) {
+    authStore.clearSessionCookie(res);
+    return res.status(401).json({
+      ok: false,
+      error: 'login_required',
+      detail: '请先登录。'
+    });
+  }
+  try {
+    let user = auth.user;
+    if (typeof req.body?.email === 'string' && req.body.email.trim()) {
+      user = await authStore.updateOwnEmail(auth.user.username, req.body.email, requestMeta(req));
+    }
+    if (user.email_verified) {
+      return res.json({
+        ok: true,
+        user,
+        email_delivery: null,
+        message: 'email_already_verified'
+      });
+    }
+    const issue = await authStore.issueEmailVerification(user.username, requestMeta(req));
+    const emailDelivery = await sendEmailVerification(req, issue);
+    return res.json({
+      ok: true,
+      user: issue.user,
+      email_delivery: emailDelivery,
+      message: 'verification_email_sent'
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      ok: false,
+      error: error.message || 'email_verification_request_failed',
+      retry_after_ms: error.retry_after_ms || undefined,
+      detail:
+        error.message === 'invalid_email'
+          ? '请输入有效邮箱。'
+          : error.message === 'email_required'
+            ? '请先填写邮箱。'
+            : error.message === 'email_verification_rate_limited'
+              ? '验证邮件发送太频繁，请稍后再试。'
+              : '发送验证邮件失败。'
+    });
+  }
+});
+
+app.get('/api/auth/verify-email', async (req, res) => {
+  try {
+    const user = await authStore.verifyEmailToken(req.query?.token, requestMeta(req));
+    const acceptsJson = String(req.get('accept') || '').includes('application/json');
+    if (acceptsJson) {
+      return res.json({
+        ok: true,
+        user,
+        message: 'email_verified'
+      });
+    }
+    return res
+      .status(200)
+      .type('html')
+      .send(
+        renderEmailVerificationPage({
+          ok: true,
+          title: '邮箱验证成功',
+          detail: '账号邮箱已经完成验证。重新打开账号面板后，对应权限会自动恢复。'
+        })
+      );
+  } catch (error) {
+    const acceptsJson = String(req.get('accept') || '').includes('application/json');
+    if (acceptsJson) {
+      return res.status(error.status || 400).json({
+        ok: false,
+        error: error.message || 'email_verify_failed',
+        detail: '验证链接无效或已过期。'
+      });
+    }
+    return res
+      .status(error.status || 400)
+      .type('html')
+      .send(
+        renderEmailVerificationPage({
+          ok: false,
+          title: '邮箱验证失败',
+          detail: '验证链接无效或已过期。请登录后在账号面板重新发送验证邮件。'
+        })
+      );
+  }
+});
+
+app.get('/api/auth/permissions', async (_req, res) => {
+  return res.json({
+    ok: true,
+    permissions: authStore.permissions()
+  });
+});
+
+app.get('/api/auth/users', (req, res, next) => authStore.requireSuperAdmin(req, res, next), async (_req, res) => {
+  const users = await authStore.listUsers();
+  return res.json({
+    ok: true,
+    users,
+    permissions: authStore.permissions()
+  });
+});
+
+app.patch('/api/auth/users/:username', (req, res, next) => authStore.requireSuperAdmin(req, res, next), async (req, res) => {
+  try {
+    const user = await authStore.updateUser(req.jgzjAuth?.user, req.params.username, req.body || {});
+    return res.json({
+      ok: true,
+      user
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      ok: false,
+      error: error.message || 'user_update_failed',
+      detail:
+        error.message === 'cannot_modify_super_admin'
+          ? '不能修改其他超级管理员。'
+          : error.message === 'cannot_disable_self'
+            ? '不能禁用当前登录账号。'
+            : error.message === 'user_not_found'
+              ? '账号不存在。'
+              : '账号更新失败。'
+    });
+  }
 });
 
 app.get('/api/health', async (_req, res) => {
@@ -3650,7 +4383,7 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
-app.get('/api/chat-identities', async (_req, res) => {
+app.get('/api/chat-identities', authStore.requirePermission('ai:chat'), async (_req, res) => {
   try {
     const identities = await listVehicleIdentities();
     return res.json({
@@ -3669,48 +4402,52 @@ app.get('/api/chat-identities', async (_req, res) => {
 });
 
 app.get('/api/openclaw-auth-status', (req, res) => {
-  const auth = getOpenClawAuthFromRequest(req);
-  if (!auth) {
-    clearOpenClawAuthCookie(res);
-    return res.status(401).json({
-      ok: false,
-      authenticated: false,
-      username: null,
-      expires_at_ms: null
+  return authStore.requirePermission('vehicle:read')(req, res, () => {
+    const auth = req.jgzjAuth;
+    return res.json({
+      ok: true,
+      authenticated: true,
+      username: auth.user.username,
+      expires_at_ms: auth.session.expires_at_ms,
+      permissions: auth.user.effective_permissions
     });
-  }
-
-  return res.json({
-    ok: true,
-    authenticated: true,
-    username: auth.username,
-    expires_at_ms: auth.expires_at_ms
   });
 });
 
-app.post('/api/openclaw-login', (req, res) => {
-  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
-
-  if (!isOpenClawLoginValid(username, password)) {
+app.post('/api/openclaw-login', async (req, res) => {
+  try {
+    const login = await authStore.login(req.body?.username, req.body?.password, requestMeta(req));
+    authStore.setSessionCookie(res, login.token, login.expires_at_ms - Date.now());
+    if (!authStore.hasPermission(login.user, 'vehicle:read')) {
+      return res.status(403).json({
+        ok: false,
+        error: 'permission_denied',
+        required_permission: 'vehicle:read',
+        detail: '当前账号没有车辆运维权限。'
+      });
+    }
+    return res.json({
+      ok: true,
+      authenticated: true,
+      username: login.user.username,
+      expires_at_ms: login.expires_at_ms,
+      permissions: login.user.effective_permissions
+    });
+  } catch (_error) {
+    authStore.clearSessionCookie(res);
     clearOpenClawAuthCookie(res);
     return res.status(401).json({
       ok: false,
-      error: 'openclaw_login_failed'
+      error: 'openclaw_login_failed',
+      detail: '用户名或密码错误。'
     });
   }
-
-  const token = issueOpenClawAuthToken(username);
-  setOpenClawAuthCookie(res, token);
-  return res.json({
-    ok: true,
-    authenticated: true,
-    username,
-    expires_at_ms: verifyOpenClawAuthToken(token)?.expires_at_ms || null
-  });
 });
 
-app.post('/api/openclaw-logout', (_req, res) => {
+app.post('/api/openclaw-logout', async (req, res) => {
+  const auth = await authStore.getAuthFromRequest(req, { touch: false });
+  await authStore.logout(req, auth?.username || null);
+  authStore.clearSessionCookie(res);
   clearOpenClawAuthCookie(res);
   return res.json({
     ok: true,
@@ -3718,7 +4455,7 @@ app.post('/api/openclaw-logout', (_req, res) => {
   });
 });
 
-app.get('/api/openclaw-health', requireOpenClawAuth, async (_req, res) => {
+app.get('/api/openclaw-health', authStore.requirePermission('vehicle:read'), async (_req, res) => {
   const [health, cloudAgent] = await Promise.all([probeOpenClaw(), probeCloudAgent()]);
   return res.status(health.ok ? 200 : 502).json({
     ok: health.ok,
@@ -3728,7 +4465,7 @@ app.get('/api/openclaw-health', requireOpenClawAuth, async (_req, res) => {
   });
 });
 
-app.get('/api/cloud-agent-health', requireOpenClawAuth, async (_req, res) => {
+app.get('/api/cloud-agent-health', authStore.requirePermission('vehicle:read'), async (_req, res) => {
   const health = await probeCloudAgent();
   return res.status(health.ok ? 200 : 502).json({
     ok: health.ok,
@@ -3737,7 +4474,7 @@ app.get('/api/cloud-agent-health', requireOpenClawAuth, async (_req, res) => {
   });
 });
 
-app.get('/api/cloud-ops/vehicles', requireOpenClawAuth, async (_req, res) => {
+app.get('/api/cloud-ops/vehicles', authStore.requirePermission('vehicle:read'), async (_req, res) => {
   try {
     const vehicles = await listCloudAgentVehicles();
     return res.json({
@@ -3752,7 +4489,7 @@ app.get('/api/cloud-ops/vehicles', requireOpenClawAuth, async (_req, res) => {
   }
 });
 
-app.get('/api/cloud-ops/vehicles/:vehicleId', requireOpenClawAuth, async (req, res) => {
+app.get('/api/cloud-ops/vehicles/:vehicleId', authStore.requirePermission('vehicle:read'), async (req, res) => {
   const vehicleId = String(req.params?.vehicleId || '').trim();
   if (!vehicleId) {
     return res.status(400).json({
@@ -3779,7 +4516,7 @@ app.get('/api/cloud-ops/vehicles/:vehicleId', requireOpenClawAuth, async (req, r
 
 app.get(
   '/api/cloud-ops/vehicles/:vehicleId/tool-list',
-  requireOpenClawAuth,
+  authStore.requirePermission('vehicle:read'),
   async (req, res) => {
     const vehicleId = String(req.params?.vehicleId || '').trim();
     if (!vehicleId) {
@@ -3809,8 +4546,156 @@ app.get(
   }
 );
 
-app.post('/api/cloud-ops/execute', requireOpenClawAuth, async (req, res) => {
-  const vehicles = await listCloudAgentVehicles().catch(() => []);
+app.post('/api/cloud-ops/deploy/catalog', authStore.requirePermission('vehicle:code:read'), async (req, res) => {
+  const vehicleId = String(req.body?.vehicle_id || '').trim();
+  if (!vehicleId) {
+    return res.status(400).json({
+      ok: false,
+      detail: 'vehicle_id_required'
+    });
+  }
+
+  const timeout_s = toFiniteInteger(req.body?.timeout_s, 70, { min: 10, max: 120 });
+  const execution = await executeCloudOpsAction(
+    {
+      action: 'tool_call',
+      vehicle_id: vehicleId,
+      tool_name: 'deploy.targets',
+      args: {},
+      timeout_s
+    },
+    []
+  );
+  const result = execution?.data?.response?.result || {};
+  return res.status(execution.ok ? 200 : 502).json({
+    ok: execution.ok,
+    vehicle_id: vehicleId,
+    repositories: normalizeDeployRepositories(result),
+    raw: result,
+    execution: sanitizeCloudOpsPayload(execution)
+  });
+});
+
+app.post('/api/cloud-ops/deploy/repo-status', authStore.requirePermission('vehicle:code:read'), async (req, res) => {
+  const vehicleId = String(req.body?.vehicle_id || '').trim();
+  const controller = String(req.body?.controller || '').trim();
+  const repo = String(req.body?.repo || '').trim();
+  if (!vehicleId || !controller || !repo) {
+    return res.status(400).json({
+      ok: false,
+      detail: 'vehicle_id_controller_repo_required'
+    });
+  }
+
+  const timeout_s = toFiniteInteger(req.body?.timeout_s, 70, { min: 10, max: 120 });
+  const execution = await executeCloudOpsAction(
+    {
+      action: 'tool_call',
+      vehicle_id: vehicleId,
+      tool_name: 'deploy.repo_status',
+      args: {
+        controller,
+        repo,
+        fetch: Boolean(req.body?.fetch),
+        include_branches: req.body?.include_branches !== false,
+        git_username: String(req.body?.git_username || '').trim(),
+        git_password: String(req.body?.git_password || '')
+      },
+      timeout_s
+    },
+    []
+  );
+  const result = execution?.data?.response?.result || {};
+  return res.status(execution.ok ? 200 : 502).json({
+    ok: execution.ok,
+    vehicle_id: vehicleId,
+    result,
+    branches: normalizeDeployBranches(result),
+    execution: sanitizeCloudOpsPayload(execution)
+  });
+});
+
+app.post('/api/cloud-ops/deploy/commits', authStore.requirePermission('vehicle:code:read'), async (req, res) => {
+  const vehicleId = String(req.body?.vehicle_id || '').trim();
+  const controller = String(req.body?.controller || '').trim();
+  const repo = String(req.body?.repo || '').trim();
+  const branch = normalizeDeployBranchName(req.body?.branch);
+  if (!vehicleId || !controller || !repo || !branch) {
+    return res.status(400).json({
+      ok: false,
+      detail: 'vehicle_id_controller_repo_branch_required'
+    });
+  }
+
+  const timeout_s = toFiniteInteger(req.body?.timeout_s, 70, { min: 10, max: 120 });
+  const limit = toFiniteInteger(req.body?.limit, 50, { min: 1, max: 100 });
+  const gitUsername = String(req.body?.git_username || '').trim();
+  const gitPassword = String(req.body?.git_password || '');
+  const execution = await executeCloudOpsAction(
+    {
+      action: 'tool_call',
+      vehicle_id: vehicleId,
+      tool_name: 'deploy.repo_status',
+      args: {
+        controller,
+        repo,
+        fetch: false,
+        include_branches: true,
+        git_username: gitUsername,
+        git_password: gitPassword
+      },
+      timeout_s
+    },
+    []
+  );
+  if (!execution.ok) {
+    return res.status(502).json({
+      ok: false,
+      detail: execution.detail || execution.error || 'repo_status_failed',
+      execution
+    });
+  }
+
+  const result = execution?.data?.response?.result || {};
+  const remoteUrl = firstDeployFetchRemote(result);
+  try {
+    const commits = await listDeployCommitsWithGit(remoteUrl, branch, limit, {
+      git_username: gitUsername,
+      git_password: gitPassword
+    });
+    return res.json({
+      ok: true,
+      vehicle_id: vehicleId,
+      controller,
+      repo,
+      branch,
+      source: 'git',
+      remote_url: redactGitRemoteUrl(remoteUrl),
+      commits,
+      execution: sanitizeCloudOpsPayload(execution)
+    });
+  } catch (error) {
+    const credentialRemoteUrl = applyGitHttpCredentials(remoteUrl, gitUsername, gitPassword);
+    return res.json({
+      ok: true,
+      vehicle_id: vehicleId,
+      controller,
+      repo,
+      branch,
+      source: 'status_fallback',
+      remote_url: redactGitRemoteUrl(remoteUrl),
+      warning: redactDeploySecret(error?.message || 'git_commit_lookup_failed', [
+        gitUsername,
+        gitPassword,
+        credentialRemoteUrl
+      ]),
+      commits: fallbackDeployCommits(result, branch),
+      execution: sanitizeCloudOpsPayload(execution)
+    });
+  }
+});
+
+app.post('/api/cloud-ops/execute', async (req, res) => {
   const plan = validateCloudOpsPlan(req.body);
 
   if (!plan) {
@@ -3819,6 +4704,14 @@ app.post('/api/cloud-ops/execute', requireOpenClawAuth, async (req, res) => {
       detail: 'invalid_cloud_ops_plan'
     });
   }
+
+  const requiredPermission = cloudOpsPermissionForPlan(plan);
+  const auth = await authStore.ensureRequestPermission(req, res, requiredPermission);
+  if (!auth) {
+    return;
+  }
+
+  const vehicles = await listCloudAgentVehicles().catch(() => []);
 
   if (!plan.vehicle_id && vehicles.length === 1) {
     plan.vehicle_id = String(vehicles[0]?.vehicle_id || vehicles[0]?.plate_number || '').trim();
@@ -3829,13 +4722,13 @@ app.post('/api/cloud-ops/execute', requireOpenClawAuth, async (req, res) => {
 
   return res.status(execution.ok ? 200 : 502).json({
     ok: execution.ok,
-    plan,
+    plan: sanitizeCloudOpsPayload(plan),
     summary,
-    execution
+    execution: sanitizeCloudOpsPayload(execution)
   });
 });
 
-app.get('/api/map-editor/:vehicleId/status', async (req, res) => {
+app.get('/api/map-editor/:vehicleId/status', authStore.requirePermission('vehicle:path:write'), async (req, res) => {
   const vehicleId = String(req.params?.vehicleId || '').trim();
   if (!vehicleId) {
     return res.status(400).json({
@@ -3853,7 +4746,7 @@ app.get('/api/map-editor/:vehicleId/status', async (req, res) => {
   });
 });
 
-app.post('/api/map-editor/:vehicleId/start', async (req, res) => {
+app.post('/api/map-editor/:vehicleId/start', authStore.requirePermission('vehicle:path:write'), async (req, res) => {
   const vehicleId = String(req.params?.vehicleId || '').trim();
   if (!vehicleId) {
     return res.status(400).json({
@@ -3871,7 +4764,7 @@ app.post('/api/map-editor/:vehicleId/start', async (req, res) => {
   });
 });
 
-app.post('/api/map-editor/:vehicleId/stop', async (req, res) => {
+app.post('/api/map-editor/:vehicleId/stop', authStore.requirePermission('vehicle:path:write'), async (req, res) => {
   const vehicleId = String(req.params?.vehicleId || '').trim();
   if (!vehicleId) {
     return res.status(400).json({
@@ -3889,7 +4782,7 @@ app.post('/api/map-editor/:vehicleId/stop', async (req, res) => {
   });
 });
 
-app.get('/vehicles/:vehicleId/map-editor', (req, res, next) => {
+app.get('/vehicles/:vehicleId/map-editor', authStore.requirePermission('vehicle:path:write'), (req, res, next) => {
   const parsedUrl = new URL(req.originalUrl, 'http://localhost');
   if (!parsedUrl.pathname.endsWith('/map-editor')) {
     return next();
@@ -3897,7 +4790,7 @@ app.get('/vehicles/:vehicleId/map-editor', (req, res, next) => {
   return res.redirect(302, `${parsedUrl.pathname}/${parsedUrl.search}`);
 });
 
-app.use('/vehicles/:vehicleId/map-editor', async (req, res) => {
+app.use('/vehicles/:vehicleId/map-editor', authStore.requirePermission('vehicle:path:write'), async (req, res) => {
   const vehicleId = String(req.params?.vehicleId || '').trim();
   const editorPath = normalizeMapEditorPath(req.path || '/');
   const method = String(req.method || 'GET').toUpperCase();
@@ -4023,6 +4916,7 @@ app.use('/vehicles/:vehicleId/map-editor', async (req, res) => {
 
 app.use(
   '/api/ai-check-history/files',
+  authStore.requirePermission('ai:history:read'),
   express.static(aiCheckArchiveRoot, {
     fallthrough: false,
     index: false,
@@ -4030,7 +4924,7 @@ app.use(
   })
 );
 
-app.get('/api/ai-check-history', async (req, res) => {
+app.get('/api/ai-check-history', authStore.requirePermission('ai:history:read'), async (req, res) => {
   const page = toFiniteInteger(req.query.page, 1, { min: 1, max: 9999 });
   const pageSize = toFiniteInteger(req.query.page_size, 8, { min: 1, max: 24 });
   const deviceId =
@@ -4061,7 +4955,7 @@ app.get('/api/ai-check-history', async (req, res) => {
   }
 });
 
-app.get('/api/ai-check-history/:requestRowId(\\d+)', async (req, res) => {
+app.get('/api/ai-check-history/:requestRowId(\\d+)', authStore.requirePermission('ai:history:read'), async (req, res) => {
   const requestRowId = toFiniteInteger(req.params.requestRowId, 0, { min: 1, max: Number.MAX_SAFE_INTEGER });
 
   try {
@@ -4086,7 +4980,7 @@ app.get('/api/ai-check-history/:requestRowId(\\d+)', async (req, res) => {
   }
 });
 
-app.post('/api/cloud-chat', async (req, res) => {
+app.post('/api/cloud-chat', authStore.requirePermission('ai:chat'), async (req, res) => {
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
   const wantsStream =
     req.body?.stream === true || String(req.headers.accept || '').includes('text/event-stream');
@@ -4191,7 +5085,7 @@ app.post('/api/cloud-chat', async (req, res) => {
   }
 });
 
-app.post('/api/openclaw-chat', requireOpenClawAuth, async (req, res) => {
+app.post('/api/openclaw-chat', authStore.requirePermission('vehicle:control'), async (req, res) => {
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
   const sessionId =
     typeof req.body?.session_id === 'string' && req.body.session_id.trim()
@@ -4228,12 +5122,12 @@ app.post('/api/openclaw-chat', requireOpenClawAuth, async (req, res) => {
   }
 });
 
-app.get('/api/qwen36-health', async (_req, res) => {
+app.get('/api/qwen36-health', authStore.requirePermission('ai:chat'), async (_req, res) => {
   const result = await probeQwen36();
   return res.status(result.ok ? 200 : 502).json(result);
 });
 
-app.post('/api/qwen36-chat', async (req, res) => {
+app.post('/api/qwen36-chat', authStore.requirePermission('ai:chat'), async (req, res) => {
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
   const messages = normalizeQwen36Messages(req.body?.messages, message);
   const wantsStream =
@@ -4367,7 +5261,7 @@ app.post('/api/qwen36-chat', async (req, res) => {
   }
 });
 
-app.post('/api/qwen36-mm-check', async (req, res) => {
+app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async (req, res) => {
   const startMs = Date.now();
   const image = req.body?.image;
   if (!image?.mime_type || !image?.data_base64) {
@@ -4465,9 +5359,12 @@ app.post('/api/qwen36-mm-check', async (req, res) => {
   }
 });
 
-registerCloudMappingRoutes(app);
+registerCloudMappingRoutes(app, {
+  authStore
+});
 registerRuntimeControlRoutes(app, {
   requireOpenClawAuth,
+  requirePermission: (permission) => authStore.requirePermission(permission),
   rootDir: path.resolve(__dirname, '..')
 });
 

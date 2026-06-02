@@ -1,0 +1,196 @@
+<section id="cloud-ops-console" class="cloud-chat-panel embedded-panel cloud-ops-console-panel vehicle-devops-console" aria-live="polite" data-authenticated="false" data-ops-mode="vehicle-devops" data-requires-permission="vehicle:code:read">
+  <header class="cloud-chat-head">
+    <div class="cloud-chat-head-main">
+      <p class="cloud-chat-title">车辆代码维护工作台</p>
+      <p id="cloud-ops-status" class="cloud-chat-status" data-state="idle">需登录</p>
+    </div>
+  </header>
+
+  <div id="cloud-ops-shell" class="cloud-ops-shell vehicle-devops-shell">
+    <div class="cloud-ops-toolbar vehicle-devops-toolbar">
+      <label class="cloud-ops-toolbar-field" for="cloud-ops-vehicle">
+        <span>当前车辆</span>
+        <select id="cloud-ops-vehicle">
+          <option value="">加载中...</option>
+        </select>
+      </label>
+      <button id="cloud-ops-refresh" class="cloud-ops-toolbar-button" type="button">刷新车辆</button>
+      <p id="cloud-ops-inline-status" class="cloud-ops-inline-status" data-state="idle">待加载</p>
+    </div>
+
+    <div class="vehicle-devops-grid">
+      <div class="vehicle-devops-main">
+        <section class="vehicle-devops-status-card">
+          <div>
+            <p class="section-kicker">当前车辆</p>
+            <h3>车辆和车端工具能力摘要</h3>
+          </div>
+          <div id="cloud-ops-summary" class="cloud-ops-summary-shell"></div>
+          <p id="cloud-ops-tool-note" class="cloud-ops-tool-note">当前车端支持的代码维护工具会在按钮上自动生效，不支持的按钮会置灰。</p>
+        </section>
+
+        <section class="cloud-ops-deploy-panel vehicle-devops-deploy-panel" aria-labelledby="cloud-ops-deploy-title">
+          <div class="cloud-ops-deploy-head">
+            <div>
+              <p class="section-kicker">代码维护</p>
+              <h3 id="cloud-ops-deploy-title">车端 Git 更新与编译工具</h3>
+            </div>
+          </div>
+          <p class="cloud-ops-permission-tip">
+            当前不单独选择控制器。Repo 下拉会合并当前车辆 media 和主控 modules 下的 git 仓库；选择 Repo 后自动加载编译目标、分支和最近 commit。
+          </p>
+          <div class="cloud-ops-deploy-topbar">
+            <button id="cloud-ops-deploy-refresh" class="cloud-ops-toolbar-button" type="button">刷新仓库列表</button>
+            <p id="cloud-ops-deploy-status" class="cloud-ops-inline-status" data-state="idle">等待刷新</p>
+          </div>
+          <div class="cloud-ops-deploy-form">
+            <label class="cloud-ops-toolbar-field" for="cloud-ops-deploy-repo">
+              <span>Repo</span>
+              <select id="cloud-ops-deploy-repo">
+                <option value="">先刷新仓库列表</option>
+              </select>
+            </label>
+            <label class="cloud-ops-toolbar-field" for="cloud-ops-deploy-package">
+              <span>编译目标</span>
+              <select id="cloud-ops-deploy-package">
+                <option value="">默认目标</option>
+              </select>
+            </label>
+            <label class="cloud-ops-toolbar-field" for="cloud-ops-deploy-branch">
+              <span>分支</span>
+              <select id="cloud-ops-deploy-branch">
+                <option value="">选择 Repo 后加载</option>
+              </select>
+            </label>
+            <label class="cloud-ops-toolbar-field" for="cloud-ops-deploy-commit">
+              <span>Commit</span>
+              <select id="cloud-ops-deploy-commit">
+                <option value="">跟随分支 HEAD</option>
+              </select>
+            </label>
+            <label class="cloud-ops-toolbar-field" for="cloud-ops-deploy-dirty-policy">
+              <span>本地改动策略</span>
+              <select id="cloud-ops-deploy-dirty-policy">
+                <option value="refuse">refuse</option>
+                <option value="stash">stash</option>
+                <option value="discard">discard</option>
+              </select>
+            </label>
+            <label class="cloud-ops-toolbar-field" for="cloud-ops-deploy-git-username">
+              <span>Git 用户</span>
+              <input id="cloud-ops-deploy-git-username" type="text" autocomplete="username" placeholder="私有仓库可选" />
+            </label>
+            <label class="cloud-ops-toolbar-field" for="cloud-ops-deploy-git-password">
+              <span>Git 密码</span>
+              <input id="cloud-ops-deploy-git-password" type="password" autocomplete="current-password" placeholder="只临时使用" />
+            </label>
+            <label class="cloud-ops-toolbar-field" for="cloud-ops-deploy-job-id">
+              <span>Job ID</span>
+              <input id="cloud-ops-deploy-job-id" type="text" placeholder="更新/编译后返回的 job_id" />
+            </label>
+            <label class="cloud-ops-toolbar-field" for="cloud-ops-deploy-tail-lines">
+              <span>日志行数</span>
+              <input id="cloud-ops-deploy-tail-lines" type="number" min="20" max="1000" value="200" />
+            </label>
+          </div>
+          <div class="cloud-ops-deploy-options">
+            <label><input id="cloud-ops-deploy-fetch" type="checkbox" /> repo_status 前先 fetch</label>
+            <label><input id="cloud-ops-deploy-no-deps" type="checkbox" checked /> 编译 no_deps</label>
+            <label><input id="cloud-ops-deploy-force-cmake" type="checkbox" /> force_cmake</label>
+          </div>
+          <div class="cloud-ops-actions-grid cloud-ops-deploy-actions">
+            <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="deploy.repo_status" data-needs-vehicle="true" data-requires-tool="deploy.repo_status" data-timeout-s="70" data-deploy-action="repo_status">
+              <strong>仓库状态</strong>
+            </button>
+            <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="deploy.plan" data-needs-vehicle="true" data-requires-tool="deploy.plan" data-timeout-s="70" data-deploy-action="plan">
+              <strong>更新预览</strong>
+            </button>
+            <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="deploy.git_update" data-needs-vehicle="true" data-requires-tool="deploy.git_update" data-timeout-s="70" data-deploy-action="git_update" data-access="control" data-confirm-message="确认在当前车辆执行 Git 更新？请确认车辆、Repo、分支、Commit 和 dirty policy 都正确。">
+              <strong>启动更新</strong>
+            </button>
+            <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="deploy.build" data-needs-vehicle="true" data-requires-tool="deploy.build" data-timeout-s="70" data-deploy-action="build" data-access="control" data-confirm-message="确认在当前车辆执行编译？编译会占用车端 CPU/磁盘资源。">
+              <strong>启动编译</strong>
+            </button>
+            <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="deploy.update_and_build" data-needs-vehicle="true" data-requires-tool="deploy.update_and_build" data-timeout-s="70" data-deploy-action="update_and_build" data-access="control" data-confirm-message="确认在当前车辆执行更新并编译？这是高风险运维操作。">
+              <strong>更新并编译</strong>
+            </button>
+            <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="deploy.status" data-needs-vehicle="true" data-requires-tool="deploy.status" data-timeout-s="30" data-deploy-action="status">
+              <strong>任务状态</strong>
+            </button>
+            <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="deploy.logs" data-needs-vehicle="true" data-requires-tool="deploy.logs" data-timeout-s="40" data-deploy-action="logs">
+              <strong>任务日志</strong>
+            </button>
+            <button class="cloud-ops-action-button" type="button" data-cloud-ops-action="tool_call" data-tool-name="deploy.cancel" data-needs-vehicle="true" data-requires-tool="deploy.cancel" data-timeout-s="30" data-deploy-action="cancel" data-access="control" data-confirm-message="确认取消当前 job？">
+              <strong>取消任务</strong>
+            </button>
+          </div>
+          <div class="cloud-ops-deploy-live-log">
+            <div class="cloud-ops-deploy-live-head">
+              <div>
+                <p class="section-kicker">实时任务日志</p>
+                <p class="cloud-ops-tool-note">启动更新/编译后会自动跟随当前 Job ID；也可以手动输入 Job ID 后开始实时跟随。</p>
+              </div>
+              <p id="cloud-ops-deploy-live-status" class="cloud-ops-inline-status" data-state="idle">未启动</p>
+            </div>
+            <div class="cloud-ops-deploy-live-actions">
+              <button id="cloud-ops-deploy-tail-start" class="cloud-ops-toolbar-button" type="button">开始实时日志</button>
+              <button id="cloud-ops-deploy-tail-stop" class="cloud-ops-toolbar-button" type="button" disabled>停止</button>
+              <button id="cloud-ops-deploy-tail-clear" class="cloud-ops-toolbar-button" type="button">清空</button>
+            </div>
+            <pre id="cloud-ops-deploy-live-log" class="cloud-ops-deploy-live-pre">等待任务日志...</pre>
+          </div>
+        </section>
+      </div>
+
+      <aside class="vehicle-devops-side">
+        <section class="cloud-ops-chat-stack vehicle-devops-chat">
+          <div class="cloud-ops-chat-head">
+            <div>
+              <p class="section-kicker">自然语言代码维护</p>
+              <h3>结合仓库状态、编译任务和日志继续追问</h3>
+            </div>
+            <p id="openclaw-status" class="cloud-chat-status" data-state="idle">默认模型</p>
+          </div>
+          <div id="openclaw-chat-shell" class="openclaw-chat-shell">
+            <div id="openclaw-messages" class="cloud-chat-messages"></div>
+            <form id="openclaw-form" class="cloud-chat-form">
+              <textarea
+                id="openclaw-input"
+                rows="4"
+                maxlength="1200"
+                data-placeholder="例如：查看当前车 auto_ad_ai 的仓库状态；或者：结合刚才的编译日志判断失败原因，并给出下一步处理建议。"
+                placeholder="例如：查看当前车 auto_ad_ai 的仓库状态；或者：结合刚才的编译日志判断失败原因，并给出下一步处理建议。"
+              ></textarea>
+              <button id="openclaw-send" type="submit">发送</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="cloud-ops-result-shell vehicle-devops-result">
+          <div class="cloud-ops-result-head">
+            <div>
+              <p class="section-kicker">代码维护结果上下文</p>
+              <h3>执行结果和日志摘要会在这里，便于追问</h3>
+            </div>
+          </div>
+          <p id="cloud-ops-result-summary" class="cloud-ops-result-summary">先选择车辆和 Repo，再执行仓库状态、更新预览、编译或日志查看；结果会自动写入当前会话上下文。</p>
+          <div class="cloud-ops-context-head">
+            <p class="cloud-ops-context-title">已插入的运维上下文</p>
+            <button id="cloud-ops-context-clear" class="cloud-ops-context-clear" type="button">清空上下文</button>
+          </div>
+          <div id="cloud-ops-context-list" class="cloud-ops-context-list">
+            <p id="cloud-ops-context-empty" class="cloud-ops-context-empty">还没有插入上下文。点左侧按钮后，结果会作为当前会话的代码维护上下文参与后续问答。</p>
+          </div>
+          <div id="cloud-ops-result-details" class="cloud-ops-result-details"></div>
+          <pre id="cloud-ops-result-log" class="cloud-ops-result-log" hidden></pre>
+          <div id="cloud-ops-result-media" class="cloud-ops-result-media" hidden></div>
+          <details class="cloud-ops-result-raw">
+            <summary>查看原始 JSON</summary>
+            <pre id="cloud-ops-result-json" class="cloud-ops-result-json">等待执行...</pre>
+          </details>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+</section>

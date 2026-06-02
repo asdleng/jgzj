@@ -17,7 +17,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     </div>
     <div class="page-hero-shell">
       <div class="page-hero-copy reveal" data-reveal>
-        <p class="page-kicker">PAGE 07 · CLOUD MAPPING</p>
+        <p class="page-kicker">PAGE 08 · CLOUD MAPPING</p>
         <h1 class="page-title">大规模云端建图</h1>
         <p class="page-subtitle">
           上传现场采集的 bag 文件，系统在云端完成点云地图生成、关键帧提取与首帧 GPS 标定，输出可直接用于自动驾驶定位的完整地图数据包。
@@ -100,37 +100,13 @@ import SiteLayout from "../components/SiteLayout.astro";
           选择采集好的 bag 文件并填写任务信息，点击「开始建图」提交至云端处理队列。建图完成后可在任务列表中下载地图数据包。
         </p>
 
-        <div class="mapping-upload-shell">
+        <div class="mapping-upload-shell" data-requires-permission="mapping:run">
           <div class="mapping-auth-panel">
             <div class="mapping-auth-copy">
               <p class="mapping-auth-kicker">访问控制</p>
-              <h3 class="mapping-auth-title">登录后才可上传 bag 并启动建图</h3>
-              <p class="mapping-auth-hint" id="mapping-auth-hint">当前未登录，仅可查看全局建图状态。</p>
+              <h3 class="mapping-auth-title">使用全局账号授权云端建图</h3>
+              <p class="mapping-auth-hint" id="mapping-auth-hint">当前未登录，仅可查看全局建图状态；请从右上角账号入口登录。</p>
             </div>
-            <form class="mapping-auth-form" id="mapping-auth-form">
-              <input
-                type="text"
-                id="mapping-username"
-                class="mapping-param-input"
-                autocomplete="username"
-                placeholder="用户名"
-                value="jgauto402"
-              />
-              <input
-                type="password"
-                id="mapping-password"
-                class="mapping-param-input"
-                autocomplete="current-password"
-                placeholder="密码"
-                value="jgauto402"
-              />
-              <button type="submit" class="mapping-btn mapping-btn--primary" id="mapping-login-btn">
-                登录
-              </button>
-              <button type="button" class="mapping-btn mapping-btn--ghost" id="mapping-logout-btn" hidden>
-                退出登录
-              </button>
-            </form>
           </div>
 
           <div class="mapping-status-card" id="mapping-status-card">
@@ -350,8 +326,6 @@ import SiteLayout from "../components/SiteLayout.astro";
 
 <script>
   const STATUS_URL = "/api/cloud-mapping/status";
-  const LOGIN_URL = "/api/cloud-mapping/login";
-  const LOGOUT_URL = "/api/cloud-mapping/logout";
   const UPLOAD_URL = "/api/cloud-mapping/upload";
   const START_URL = "/api/cloud-mapping/start";
   const CLEAR_BAG_URL = "/api/cloud-mapping/clear-bag";
@@ -371,11 +345,6 @@ import SiteLayout from "../components/SiteLayout.astro";
   const clearBagBtn = document.getElementById("mapping-clear-bag-btn") as HTMLButtonElement;
   const clearResultBtn = document.getElementById("mapping-clear-result-btn") as HTMLButtonElement;
   const feedback = document.getElementById("mapping-feedback") as HTMLElement;
-  const authForm = document.getElementById("mapping-auth-form") as HTMLFormElement;
-  const usernameInput = document.getElementById("mapping-username") as HTMLInputElement;
-  const passwordInput = document.getElementById("mapping-password") as HTMLInputElement;
-  const loginBtn = document.getElementById("mapping-login-btn") as HTMLButtonElement;
-  const logoutBtn = document.getElementById("mapping-logout-btn") as HTMLButtonElement;
   const authHint = document.getElementById("mapping-auth-hint") as HTMLElement;
   const statusTitle = document.getElementById("mapping-status-title") as HTMLElement;
   const statusBadge = document.getElementById("mapping-status-badge") as HTMLElement;
@@ -478,18 +447,12 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   function applyAuthState() {
     const authenticated = isAuthenticated();
-    usernameInput.disabled = authenticated || uploadInFlight || actionInFlight;
-    passwordInput.disabled = authenticated || uploadInFlight || actionInFlight;
-    loginBtn.hidden = authenticated;
-    loginBtn.disabled = uploadInFlight || actionInFlight;
-    logoutBtn.hidden = !authenticated;
-    logoutBtn.disabled = uploadInFlight || actionInFlight || isBusy();
 
     if (authenticated) {
       authHint.textContent = `已登录：${statusData.auth.username}`;
       authHint.dataset.state = "success";
     } else {
-      authHint.textContent = "当前未登录，仅可查看全局建图状态。";
+      authHint.textContent = "当前未登录，仅可查看全局建图状态；请从右上角账号入口登录。";
       authHint.dataset.state = "idle";
     }
   }
@@ -591,45 +554,6 @@ import SiteLayout from "../components/SiteLayout.astro";
       throw new Error(data?.detail || data?.error || "request_failed");
     }
     return data;
-  }
-
-  async function handleLogin(event: Event) {
-    event.preventDefault();
-    if (uploadInFlight || actionInFlight) return;
-    const username = usernameInput.value.trim();
-    const password = passwordInput.value;
-    if (!username || !password) {
-      setFeedback("请输入用户名和密码。", "error");
-      return;
-    }
-    actionInFlight = true;
-    refreshActionButtons();
-    try {
-      await postJson(LOGIN_URL, { username, password });
-      setFeedback("登录成功。", "success");
-      await safeRefreshStatus();
-    } catch (error) {
-      setFeedback("登录失败，请检查用户名或密码。", "error");
-    } finally {
-      actionInFlight = false;
-      refreshActionButtons();
-    }
-  }
-
-  async function handleLogout() {
-    if (uploadInFlight || actionInFlight) return;
-    actionInFlight = true;
-    refreshActionButtons();
-    try {
-      await postJson(LOGOUT_URL);
-      setFeedback("已退出登录。", "idle");
-      await safeRefreshStatus();
-    } catch (_error) {
-      setFeedback("退出登录失败，请稍后重试。", "error");
-    } finally {
-      actionInFlight = false;
-      refreshActionButtons();
-    }
   }
 
   async function handleUpload() {
@@ -821,8 +745,6 @@ import SiteLayout from "../components/SiteLayout.astro";
     }
   });
 
-  authForm.addEventListener("submit", handleLogin);
-  logoutBtn.addEventListener("click", handleLogout);
   uploadBtn.addEventListener("click", handleUpload);
   startBtn.addEventListener("click", handleStart);
   downloadBtn.addEventListener("click", handleDownload);
@@ -830,6 +752,9 @@ import SiteLayout from "../components/SiteLayout.astro";
   clearResultBtn.addEventListener("click", handleClearResult);
 
   safeRefreshStatus();
+  window.addEventListener("jgzj:auth-change", () => {
+    safeRefreshStatus();
+  });
   window.setInterval(safeRefreshStatus, 1500);
 </script>
 
