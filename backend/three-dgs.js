@@ -84,6 +84,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const remoteRunRoot = process.env.THREE_DGS_REMOTE_RUN_ROOT || '/home/sari/3dgs_runs/cloud_control';
   const remoteSourceRoot = process.env.THREE_DGS_REMOTE_SOURCE_ROOT || '/home/sari/3dgs_src/gaussian-splatting';
   const remoteEnvName = process.env.THREE_DGS_REMOTE_ENV_NAME || '3dgs124_exact';
+  const defaultVehicleId = process.env.THREE_DGS_DEFAULT_VEHICLE_ID || 'BIT-0041';
 
   let state = createInitialState();
   let statePersistTimer = null;
@@ -777,7 +778,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const auth = await getAuth(req);
     const includeVehicles = String(req.query.include_vehicles || 'true') !== 'false';
     const vehicles = includeVehicles ? await listVehicles().catch(() => []) : [];
-    return res.json(makeStatusResponse(auth, { vehicles }));
+    return res.json(makeStatusResponse(auth, { vehicles, default_vehicle_id: defaultVehicleId }));
   });
 
   app.post('/api/three-dgs/capture/start', requireThreeDgsAuth, async (req, res) => {

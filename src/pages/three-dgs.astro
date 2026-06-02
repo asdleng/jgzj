@@ -283,6 +283,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   function applyVehicles(vehicles) {
     const previous = vehicleSelect.value;
+    const preferred = statusData?.default_vehicle_id || "BIT-0041";
     const items = Array.isArray(vehicles) ? vehicles : [];
     vehicleSelect.innerHTML = "";
     if (!items.length) {
@@ -302,6 +303,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     });
     if (previous && [...vehicleSelect.options].some((option) => option.value === previous)) {
       vehicleSelect.value = previous;
+    } else if (preferred && [...vehicleSelect.options].some((option) => option.value === preferred)) {
+      vehicleSelect.value = preferred;
     }
   }
 

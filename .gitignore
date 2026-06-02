@@ -35,8 +35,14 @@ jiguang_site_kit_from_pptx.zip
 CloudVoice
 VPR
 cloud_control
+FAST-LIVO2
+FAST-LIVO2-Dataset
 .codex
 .monitor/
+car_tmp/
+__pycache__/
+**/__pycache__/
 scripts/.codex
 sucai/
 tmp/
+,*
