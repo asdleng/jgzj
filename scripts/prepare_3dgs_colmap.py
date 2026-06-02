@@ -187,7 +187,26 @@ def find_images_dir(root: Path) -> Path | None:
     return None
 
 
+def record_camera_id(record: dict, manifest: dict) -> str:
+    image_obj = record.get("image") if isinstance(record.get("image"), dict) else {}
+    raw = first_key(
+        [record, image_obj, manifest],
+        ("camera", "camera_id", "camera_name", "sensor", "sensor_id"),
+    )
+    if isinstance(raw, dict):
+        raw = raw.get("camera") or raw.get("camera_id") or raw.get("id") or raw.get("name")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    topic = first_key([record, image_obj], ("topic", "image_topic", "camera_topic"))
+    if isinstance(topic, str):
+        for name in ("camera1", "camera2", "camera3", "camera4"):
+            if name in topic:
+                return name
+    return "camera1"
+
+
 def camera_sources(record: dict, manifest: dict) -> list[object]:
+    camera_id = record_camera_id(record, manifest)
     sources: list[object] = [
         record,
         record.get("camera"),
@@ -198,8 +217,9 @@ def camera_sources(record: dict, manifest: dict) -> list[object]:
         manifest.get("camera"),
         manifest.get("intrinsics"),
         manifest.get("camera_intrinsics"),
-        nested_get(manifest, "calibration", "camera1"),
-        nested_get(manifest, "calibration", "cameras", "camera1"),
+        nested_get(manifest, "calibration", camera_id),
+        nested_get(manifest, "calibration", "cameras", camera_id),
+        nested_get(manifest, "cameras", camera_id),
     ]
     return sources
 
@@ -397,7 +417,8 @@ def prepare_scene(args: argparse.Namespace) -> dict:
         image_root = extract_archive(Path(args.image_pose).resolve(), work_dir)
         manifest, records = load_records(image_root)
 
-        camera_model: tuple[int, int, float, float, float, float] | None = None
+        camera_models: dict[tuple[str, int, int, float, float, float, float], int] = {}
+        camera_lines: list[str] = []
         image_lines: list[str] = []
         copied_count = 0
 
@@ -412,16 +433,29 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                 params,
                 args.undistort.lower() != "false",
             )
-            current_camera = (width, height, fx, fy, cx, cy)
-            if camera_model is None:
-                camera_model = current_camera
+            camera_key = (
+                record_camera_id(record, manifest),
+                width,
+                height,
+                round(fx, 8),
+                round(fy, 8),
+                round(cx, 8),
+                round(cy, 8),
+            )
+            camera_id = camera_models.get(camera_key)
+            if camera_id is None:
+                camera_id = len(camera_models) + 1
+                camera_models[camera_key] = camera_id
+                camera_lines.append(
+                    f"{camera_id} PINHOLE {width} {height} {fx:.12g} {fy:.12g} {cx:.12g} {cy:.12g}\n"
+                )
 
             world_to_camera = matrix_from_record(record)
             rot = world_to_camera[:3, :3]
             tvec = world_to_camera[:3, 3]
             qvec = rotmat_to_qvec(rot)
             image_lines.append(
-                "{} {:.12g} {:.12g} {:.12g} {:.12g} {:.12g} {:.12g} {:.12g} 1 {}\n\n".format(
+                "{} {:.12g} {:.12g} {:.12g} {:.12g} {:.12g} {:.12g} {:.12g} {} {}\n\n".format(
                     image_id,
                     qvec[0],
                     qvec[1],
@@ -430,19 +464,19 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     tvec[0],
                     tvec[1],
                     tvec[2],
+                    camera_id,
                     out_name,
                 )
             )
             copied_count += 1
 
-        if camera_model is None:
+        if not camera_models:
             raise ValueError("no usable camera frames")
 
-        width, height, fx, fy, cx, cy = camera_model
         with (sparse_out / "cameras.txt").open("w", encoding="utf-8") as handle:
             handle.write("# Camera list with one line of data per camera:\n")
             handle.write("# CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
-            handle.write(f"1 PINHOLE {width} {height} {fx:.12g} {fy:.12g} {cx:.12g} {cy:.12g}\n")
+            handle.writelines(camera_lines)
 
         with (sparse_out / "images.txt").open("w", encoding="utf-8") as handle:
             handle.write("# Image list with two lines of data per image:\n")
@@ -458,16 +492,22 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             "output": str(output),
             "image_count": copied_count,
             "point_count": len(points),
-            "camera": {
-                "model": "PINHOLE",
-                "width": width,
-                "height": height,
-                "fx": fx,
-                "fy": fy,
-                "cx": cx,
-                "cy": cy,
-                "undistorted": args.undistort.lower() != "false" and cv2 is not None,
-            },
+            "camera_count": len(camera_models),
+            "cameras": [
+                {
+                    "camera_id": camera_id,
+                    "name": key[0],
+                    "model": "PINHOLE",
+                    "width": key[1],
+                    "height": key[2],
+                    "fx": key[3],
+                    "fy": key[4],
+                    "cx": key[5],
+                    "cy": key[6],
+                    "undistorted": args.undistort.lower() != "false" and cv2 is not None,
+                }
+                for key, camera_id in camera_models.items()
+            ],
         }
 
         with (output / "three_dgs_dataset_summary.json").open("w", encoding="utf-8") as handle:

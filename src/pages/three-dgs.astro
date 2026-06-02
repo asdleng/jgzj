@@ -4,7 +4,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 
 <SiteLayout
   title="三维高斯泼溅场景渲染"
-  description="面向车端 camera1 与 /ndt_pose 的 3DGS 数据采集、COLMAP 数据规整、点云初始化和 A100 训练工作台。"
+  description="面向车端 camera1/camera4 与 /ndt_pose 的 3DGS 数据采集、COLMAP 数据规整、点云初始化和 A100 训练工作台。"
   currentPath="/three-dgs"
 >
   <header class="page-hero three-dgs-hero">
@@ -16,7 +16,7 @@ import SiteLayout from "../components/SiteLayout.astro";
         <p class="page-kicker">PAGE 09 · 3D GAUSSIAN SPLATTING</p>
         <h1 class="page-title">三维高斯泼溅场景渲染</h1>
         <p class="page-subtitle">
-          通过车端 camera1 和 /ndt_pose 采集图像-位姿关键帧，上传点云地图初始化高斯点，云端规整为 COLMAP 格式后在 A100 上启动 3DGS 训练。
+          通过车端有正式外参的相机和 /ndt_pose 采集图像-位姿关键帧，使用 GlobalMap.pcd 初始化高斯点，云端规整为 COLMAP 格式后在 A100 上启动 3DGS 训练。
         </p>
       </div>
     </div>
@@ -48,9 +48,9 @@ import SiteLayout from "../components/SiteLayout.astro";
             <div class="three-dgs-panel-head">
               <div>
                 <p class="section-kicker">车端采集</p>
-                <h3>camera1 图像与 /ndt_pose 位姿</h3>
+                <h3>有外参相机图像与 /ndt_pose 位姿</h3>
               </div>
-              <p id="three-dgs-capture-note" class="three-dgs-note">选择在线车辆后启动采集。车端只在平移或旋转超过阈值时保存关键帧。</p>
+              <p id="three-dgs-capture-note" class="three-dgs-note">当前按车端 capabilities 只允许正式标定相机采集。BIT-0041 现阶段是 camera1 和 camera4。</p>
             </div>
 
             <div class="three-dgs-form-grid">
@@ -58,6 +58,13 @@ import SiteLayout from "../components/SiteLayout.astro";
                 <span>在线车辆</span>
                 <select id="three-dgs-vehicle">
                   <option value="">加载中...</option>
+                </select>
+              </label>
+              <label class="three-dgs-field">
+                <span>采集相机</span>
+                <select id="three-dgs-camera">
+                  <option value="camera1">camera1</option>
+                  <option value="camera4">camera4</option>
                 </select>
               </label>
               <label class="three-dgs-field">
@@ -75,13 +82,18 @@ import SiteLayout from "../components/SiteLayout.astro";
             </div>
 
             <div class="three-dgs-actions">
+              <button id="three-dgs-capabilities" class="three-dgs-button three-dgs-button--ghost" type="button">读取相机能力</button>
               <button id="three-dgs-start-capture" class="three-dgs-button three-dgs-button--primary" type="button">开始采集</button>
               <button id="three-dgs-capture-status" class="three-dgs-button" type="button">采集状态</button>
-              <button id="three-dgs-stop-capture" class="three-dgs-button three-dgs-button--danger" type="button">关闭采集</button>
+              <button id="three-dgs-stop-capture" class="three-dgs-button three-dgs-button--danger" type="button">停止采集</button>
               <button id="three-dgs-read-manifest" class="three-dgs-button three-dgs-button--ghost" type="button">读取清单</button>
             </div>
 
             <div class="three-dgs-mini-grid">
+              <div>
+                <span>相机</span>
+                <strong id="three-dgs-capture-camera">-</strong>
+              </div>
               <div>
                 <span>采集车辆</span>
                 <strong id="three-dgs-capture-vehicle">-</strong>
@@ -100,30 +112,35 @@ import SiteLayout from "../components/SiteLayout.astro";
           <section class="three-dgs-panel">
             <div class="three-dgs-panel-head">
               <div>
-                <p class="section-kicker">上传训练数据</p>
-                <h3>点云地图与图像-位姿包</h3>
+                <p class="section-kicker">车端数据同步</p>
+                <h3>GlobalMap.pcd 与图像-位姿包</h3>
               </div>
-              <p class="three-dgs-note">图像-位姿包建议使用车端 3DGS package，点云支持 .pcd / .ply。</p>
+              <p class="three-dgs-note">车端地图固定路径为 map/GlobalMap.pcd；图像-位姿来自当前 3DGS 采集 session。</p>
+            </div>
+
+            <div class="three-dgs-actions">
+              <button id="three-dgs-update-map" class="three-dgs-button three-dgs-button--primary" type="button">更新地图</button>
+              <button id="three-dgs-pull-image-pose" class="three-dgs-button three-dgs-button--primary" type="button">上传图片数据</button>
             </div>
 
             <div class="three-dgs-upload-grid">
               <div class="three-dgs-dropzone" data-kind="pointcloud">
-                <p class="three-dgs-dropzone-title">上传点云地图</p>
-                <p id="three-dgs-pointcloud-name" class="three-dgs-dropzone-copy">支持 GlobalMap.pcd 或 .ply</p>
+                <p class="three-dgs-dropzone-title">云端点云地图</p>
+                <p id="three-dgs-pointcloud-name" class="three-dgs-dropzone-copy">等待更新 map/GlobalMap.pcd</p>
                 <input id="three-dgs-pointcloud-input" type="file" accept=".pcd,.ply" hidden />
-                <button id="three-dgs-pointcloud-button" class="three-dgs-button" type="button">选择点云</button>
+                <button id="three-dgs-pointcloud-button" class="three-dgs-button three-dgs-button--ghost" type="button">手动选择点云</button>
               </div>
               <div class="three-dgs-dropzone" data-kind="image-pose">
-                <p class="three-dgs-dropzone-title">上传图像-位姿</p>
-                <p id="three-dgs-image-pose-name" class="three-dgs-dropzone-copy">支持 .zip / .tar / frames.jsonl</p>
+                <p class="three-dgs-dropzone-title">云端图像-位姿</p>
+                <p id="three-dgs-image-pose-name" class="three-dgs-dropzone-copy">等待上传当前采集 session</p>
                 <input id="three-dgs-image-pose-input" type="file" accept=".zip,.tar,.tgz,.gz,.json,.jsonl" hidden />
-                <button id="three-dgs-image-pose-button" class="three-dgs-button" type="button">选择图像-位姿包</button>
+                <button id="three-dgs-image-pose-button" class="three-dgs-button three-dgs-button--ghost" type="button">手动选择图像包</button>
               </div>
             </div>
 
             <div class="three-dgs-actions">
-              <button id="three-dgs-upload-pointcloud" class="three-dgs-button three-dgs-button--primary" type="button" disabled>上传点云地图</button>
-              <button id="three-dgs-upload-image-pose" class="three-dgs-button three-dgs-button--primary" type="button" disabled>上传图像-位姿</button>
+              <button id="three-dgs-upload-pointcloud" class="three-dgs-button" type="button" disabled>手动上传点云</button>
+              <button id="three-dgs-upload-image-pose" class="three-dgs-button" type="button" disabled>手动上传图像包</button>
             </div>
           </section>
         </div>
@@ -166,7 +183,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 
           <div class="three-dgs-actions">
             <button id="three-dgs-prepare" class="three-dgs-button three-dgs-button--primary" type="button">规整 COLMAP 数据</button>
-            <button id="three-dgs-start-train" class="three-dgs-button three-dgs-button--primary" type="button">启动 A100 训练</button>
+            <button id="three-dgs-start-train" class="three-dgs-button three-dgs-button--primary" type="button">开始训练</button>
             <button id="three-dgs-load-prepare-log" class="three-dgs-button three-dgs-button--ghost" type="button">准备日志</button>
             <button id="three-dgs-load-train-log" class="three-dgs-button three-dgs-button--ghost" type="button">训练日志</button>
           </div>
@@ -202,10 +219,13 @@ import SiteLayout from "../components/SiteLayout.astro";
   // @ts-nocheck
   const STATUS_URL = "/api/three-dgs/status";
   const api = {
+    capabilities: "/api/three-dgs/capture/capabilities",
     startCapture: "/api/three-dgs/capture/start",
     captureStatus: "/api/three-dgs/capture/status",
     stopCapture: "/api/three-dgs/capture/stop",
     manifest: "/api/three-dgs/capture/manifest",
+    updateMap: "/api/three-dgs/map/update",
+    pullImagePose: "/api/three-dgs/capture/package",
     uploadPointcloud: "/api/three-dgs/upload/pointcloud",
     uploadImagePose: "/api/three-dgs/upload/image-pose",
     prepare: "/api/three-dgs/prepare",
@@ -217,6 +237,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   const el = (id) => document.getElementById(id);
   const vehicleSelect = el("three-dgs-vehicle");
+  const cameraSelect = el("three-dgs-camera");
   const statusTitle = el("three-dgs-status-title");
   const statusCopy = el("three-dgs-status-copy");
   const statusBadge = el("three-dgs-status-badge");
@@ -256,17 +277,20 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   function isTaskBusy() {
     const state = statusData?.state || {};
-    return ["uploading", "preparing", "training"].includes(state.phase) || state.prepare?.running || state.train?.running;
+    return ["uploading", "preparing", "training", "updating_map", "pulling_image_pose"].includes(state.phase) || state.prepare?.running || state.train?.running;
   }
 
   function refreshButtons() {
     const allow = isAuthed() && hasRunPermission() && !busy;
     const taskBusy = isTaskBusy();
     [
+      "three-dgs-capabilities",
       "three-dgs-start-capture",
       "three-dgs-capture-status",
       "three-dgs-stop-capture",
       "three-dgs-read-manifest",
+      "three-dgs-update-map",
+      "three-dgs-pull-image-pose",
       "three-dgs-prepare",
       "three-dgs-start-train",
       "three-dgs-load-prepare-log",
@@ -278,7 +302,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     el("three-dgs-upload-pointcloud").disabled = !allow || taskBusy || !pointcloudFile;
     el("three-dgs-upload-image-pose").disabled = !allow || taskBusy || !imagePoseFile;
     el("three-dgs-prepare").disabled = !allow || taskBusy || !statusData?.state?.uploads?.pointcloud || !statusData?.state?.uploads?.image_pose;
-    el("three-dgs-start-train").disabled = !allow || taskBusy || !statusData?.state?.dataset?.prepared;
+    el("three-dgs-start-train").disabled =
+      !allow || taskBusy || (!statusData?.state?.dataset?.prepared && (!statusData?.state?.uploads?.pointcloud || !statusData?.state?.uploads?.image_pose));
   }
 
   function applyVehicles(vehicles) {
@@ -308,6 +333,34 @@ import SiteLayout from "../components/SiteLayout.astro";
     }
   }
 
+  function applyCameras() {
+    const previous = cameraSelect.value;
+    const vehicleData = statusData?.state?.vehicle_data || {};
+    const configured = statusData?.configured_camera_ids || ["camera1", "camera2", "camera3", "camera4"];
+    const cachedMatchesVehicle = !vehicleData.vehicle_id || vehicleData.vehicle_id === vehicleSelect.value;
+    const capabilities = cachedMatchesVehicle && vehicleData.capabilities?.cameras ? vehicleData.capabilities.cameras : configured.map((camera) => ({
+      camera,
+      enabled: (statusData?.fallback_calibrated_cameras || ["camera1", "camera4"]).includes(camera),
+      reason: (statusData?.fallback_calibrated_cameras || ["camera1", "camera4"]).includes(camera)
+        ? "formal_camera_lidar_calibration_available"
+        : "formal_camera_lidar_calibration_missing"
+    }));
+    cameraSelect.innerHTML = "";
+    capabilities.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.camera;
+      option.disabled = !item.enabled;
+      option.textContent = `${item.camera}${item.enabled ? "" : ` · ${item.reason || "disabled"}`}`;
+      cameraSelect.appendChild(option);
+    });
+    if (previous && [...cameraSelect.options].some((option) => option.value === previous && !option.disabled)) {
+      cameraSelect.value = previous;
+    } else {
+      const firstEnabled = [...cameraSelect.options].find((option) => !option.disabled);
+      if (firstEnabled) cameraSelect.value = firstEnabled.value;
+    }
+  }
+
   function applyStatus() {
     const state = statusData?.state || {};
     const phase = state.phase || "idle";
@@ -321,6 +374,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     authHint.dataset.state = isAuthed() && hasRunPermission() ? "success" : "idle";
 
     const capture = state.capture || {};
+    el("three-dgs-capture-camera").textContent = Array.isArray(capture.cameras) && capture.cameras.length ? capture.cameras.join("、") : "-";
     el("three-dgs-capture-vehicle").textContent = capture.vehicle_id || "-";
     el("three-dgs-capture-session").textContent = capture.session_id || "-";
     el("three-dgs-capture-frames").textContent = String(capture.saved_frames || 0);
@@ -330,12 +384,12 @@ import SiteLayout from "../components/SiteLayout.astro";
       ? `${uploads.pointcloud.name} · ${formatSize(uploads.pointcloud.size_bytes)}`
       : pointcloudFile
         ? `${pointcloudFile.name} · ${formatSize(pointcloudFile.size)}`
-        : "支持 GlobalMap.pcd 或 .ply";
+        : "等待更新 map/GlobalMap.pcd";
     imagePoseName.textContent = uploads.image_pose
       ? `${uploads.image_pose.name} · ${formatSize(uploads.image_pose.size_bytes)}`
       : imagePoseFile
         ? `${imagePoseFile.name} · ${formatSize(imagePoseFile.size)}`
-        : "支持 .zip / .tar / frames.jsonl";
+        : "等待上传当前采集 session";
 
     const dataset = state.dataset || {};
     el("three-dgs-dataset-path").textContent = dataset.path || "-";
@@ -346,6 +400,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     const train = state.train || {};
     el("three-dgs-train-run").textContent = train.run_id || "-";
     el("three-dgs-remote-run").textContent = train.remote_run_path || "-";
+    applyCameras();
     refreshButtons();
   }
 
@@ -375,10 +430,48 @@ import SiteLayout from "../components/SiteLayout.astro";
   function selectedVehiclePayload() {
     return {
       vehicle_id: vehicleSelect.value,
+      camera: cameraSelect.value,
       min_translation_m: Number(el("three-dgs-min-translation").value || 0.5),
       min_rotation_deg: Number(el("three-dgs-min-rotation").value || 10),
       min_interval_s: Number(el("three-dgs-min-interval").value || 0.2)
     };
+  }
+
+  function trainPayload() {
+    return {
+      gpu: Number(el("three-dgs-gpu").value || 3),
+      iterations: Number(el("three-dgs-iterations").value || 7000),
+      resolution: Number(el("three-dgs-resolution").value || 4)
+    };
+  }
+
+  function preparePayload() {
+    return {
+      scene_name: el("three-dgs-scene-name").value,
+      max_points: Number(el("three-dgs-max-points").value || 500000),
+      undistort: el("three-dgs-undistort").checked
+    };
+  }
+
+  async function waitForPrepared() {
+    for (let i = 0; i < 240; i += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 3000));
+      await fetchStatus();
+      const state = statusData?.state || {};
+      if (state.dataset?.prepared) return;
+      if (state.phase === "error" || state.prepare?.running === false && state.prepare?.completed_at_ms && !state.dataset?.prepared) {
+        throw new Error(state.error_message || "prepare_failed");
+      }
+    }
+    throw new Error("prepare_timeout");
+  }
+
+  async function prepareThenTrain() {
+    if (!statusData?.state?.dataset?.prepared) {
+      await postJson(api.prepare, preparePayload());
+      await waitForPrepared();
+    }
+    await postJson(api.train, trainPayload());
   }
 
   async function runAction(label, fn) {
@@ -440,17 +533,26 @@ import SiteLayout from "../components/SiteLayout.astro";
   }
 
   el("three-dgs-refresh").addEventListener("click", () => runAction("刷新状态", fetchStatus));
+  el("three-dgs-capabilities").addEventListener("click", () =>
+    runAction("读取相机能力", () => postJson(api.capabilities, { vehicle_id: vehicleSelect.value }))
+  );
   el("three-dgs-start-capture").addEventListener("click", () =>
     runAction("开始采集", () => postJson(api.startCapture, selectedVehiclePayload()))
   );
   el("three-dgs-capture-status").addEventListener("click", () =>
-    runAction("读取采集状态", () => postJson(api.captureStatus, { vehicle_id: vehicleSelect.value }))
+    runAction("读取采集状态", () => postJson(api.captureStatus, { vehicle_id: vehicleSelect.value, camera: cameraSelect.value }))
   );
   el("three-dgs-stop-capture").addEventListener("click", () =>
-    runAction("关闭采集", () => postJson(api.stopCapture, { vehicle_id: vehicleSelect.value }))
+    runAction("停止采集", () => postJson(api.stopCapture, { vehicle_id: vehicleSelect.value, camera: cameraSelect.value }))
   );
   el("three-dgs-read-manifest").addEventListener("click", () =>
-    runAction("读取清单", () => postJson(api.manifest, { vehicle_id: vehicleSelect.value, include_records: true, max_records: 100 }))
+    runAction("读取清单", () => postJson(api.manifest, { vehicle_id: vehicleSelect.value, camera: cameraSelect.value, include_records: true, max_records: 100 }))
+  );
+  el("three-dgs-update-map").addEventListener("click", () =>
+    runAction("更新地图", () => postJson(api.updateMap, { vehicle_id: vehicleSelect.value }))
+  );
+  el("three-dgs-pull-image-pose").addEventListener("click", () =>
+    runAction("上传图片数据", () => postJson(api.pullImagePose, { vehicle_id: vehicleSelect.value, camera: cameraSelect.value }))
   );
 
   el("three-dgs-pointcloud-button").addEventListener("click", () => pointcloudInput.click());
@@ -471,22 +573,10 @@ import SiteLayout from "../components/SiteLayout.astro";
   );
 
   el("three-dgs-prepare").addEventListener("click", () =>
-    runAction("规整 COLMAP 数据", () =>
-      postJson(api.prepare, {
-        scene_name: el("three-dgs-scene-name").value,
-        max_points: Number(el("three-dgs-max-points").value || 500000),
-        undistort: el("three-dgs-undistort").checked
-      })
-    )
+    runAction("规整 COLMAP 数据", () => postJson(api.prepare, preparePayload()))
   );
   el("three-dgs-start-train").addEventListener("click", () =>
-    runAction("启动 A100 训练", () =>
-      postJson(api.train, {
-        gpu: Number(el("three-dgs-gpu").value || 3),
-        iterations: Number(el("three-dgs-iterations").value || 7000),
-        resolution: Number(el("three-dgs-resolution").value || 4)
-      })
-    )
+    runAction("开始训练", prepareThenTrain)
   );
   el("three-dgs-load-prepare-log").addEventListener("click", () => runAction("读取准备日志", () => loadLog(api.prepareLog)));
   el("three-dgs-load-train-log").addEventListener("click", () =>
