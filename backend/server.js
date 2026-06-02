@@ -10,6 +10,7 @@ const { createAuthStore } = require('./auth-store');
 const { createMailer } = require('./mailer');
 const registerCloudMappingRoutes = require('./cloud-mapping');
 const registerRuntimeControlRoutes = require('./runtime-control');
+const registerThreeDgsRoutes = require('./three-dgs');
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -5361,6 +5362,10 @@ app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async
 
 registerCloudMappingRoutes(app, {
   authStore
+});
+registerThreeDgsRoutes(app, {
+  authStore,
+  cloudAgentBaseUrl
 });
 registerRuntimeControlRoutes(app, {
   requireOpenClawAuth,

@@ -13,6 +13,7 @@ const PERMISSIONS = [
   { id: 'vehicle:code:read', label: '查看车端代码状态', group: '代码' },
   { id: 'vehicle:code:write', label: '更新/编译车端代码', group: '代码' },
   { id: 'mapping:run', label: '云端建图', group: '地图' },
+  { id: 'three-dgs:run', label: '3DGS 场景训练', group: '地图' },
   { id: 'runtime:read', label: '查看服务器节点', group: '运维' },
   { id: 'runtime:restart', label: '重启服务器节点', group: '运维' }
 ];

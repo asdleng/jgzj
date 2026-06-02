@@ -1,0 +1,731 @@
+---
+import SiteLayout from "../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="三维高斯泼溅场景渲染"
+  description="面向车端 camera1 与 /ndt_pose 的 3DGS 数据采集、COLMAP 数据规整、点云初始化和 A100 训练工作台。"
+  currentPath="/three-dgs"
+>
+  <header class="page-hero three-dgs-hero">
+    <img src="/assets/hero-cloud-ops.png" alt="三维高斯泼溅场景渲染" class="hero-media" data-parallax />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">PAGE 09 · 3D GAUSSIAN SPLATTING</p>
+        <h1 class="page-title">三维高斯泼溅场景渲染</h1>
+        <p class="page-subtitle">
+          通过车端 camera1 和 /ndt_pose 采集图像-位姿关键帧，上传点云地图初始化高斯点，云端规整为 COLMAP 格式后在 A100 上启动 3DGS 训练。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+    <section class="page-section">
+      <div class="glass-card section-card three-dgs-shell" data-requires-permission="three-dgs:run">
+        <div class="three-dgs-head">
+          <div>
+            <p class="section-kicker">3DGS 工作台</p>
+            <h2 class="section-title">采集、上传、规整和训练</h2>
+            <p id="three-dgs-auth-hint" class="section-copy">当前未登录，仅可查看状态；请从右上角账号入口登录。</p>
+          </div>
+          <button id="three-dgs-refresh" class="three-dgs-button three-dgs-button--ghost" type="button">刷新状态</button>
+        </div>
+
+        <div class="three-dgs-status-card">
+          <div>
+            <p class="three-dgs-status-kicker">全局状态</p>
+            <h3 id="three-dgs-status-title">等待加载</h3>
+            <p id="three-dgs-status-copy">正在读取 3DGS 链路状态。</p>
+          </div>
+          <span id="three-dgs-status-badge" class="three-dgs-badge" data-state="idle">idle</span>
+        </div>
+
+        <div class="three-dgs-grid">
+          <section class="three-dgs-panel">
+            <div class="three-dgs-panel-head">
+              <div>
+                <p class="section-kicker">车端采集</p>
+                <h3>camera1 图像与 /ndt_pose 位姿</h3>
+              </div>
+              <p id="three-dgs-capture-note" class="three-dgs-note">选择在线车辆后启动采集。车端只在平移或旋转超过阈值时保存关键帧。</p>
+            </div>
+
+            <div class="three-dgs-form-grid">
+              <label class="three-dgs-field">
+                <span>在线车辆</span>
+                <select id="three-dgs-vehicle">
+                  <option value="">加载中...</option>
+                </select>
+              </label>
+              <label class="three-dgs-field">
+                <span>最小平移 m</span>
+                <input id="three-dgs-min-translation" type="number" min="0.05" step="0.05" value="0.5" />
+              </label>
+              <label class="three-dgs-field">
+                <span>最小旋转 deg</span>
+                <input id="three-dgs-min-rotation" type="number" min="1" step="1" value="10" />
+              </label>
+              <label class="three-dgs-field">
+                <span>最小间隔 s</span>
+                <input id="three-dgs-min-interval" type="number" min="0.05" step="0.05" value="0.2" />
+              </label>
+            </div>
+
+            <div class="three-dgs-actions">
+              <button id="three-dgs-start-capture" class="three-dgs-button three-dgs-button--primary" type="button">开始采集</button>
+              <button id="three-dgs-capture-status" class="three-dgs-button" type="button">采集状态</button>
+              <button id="three-dgs-stop-capture" class="three-dgs-button three-dgs-button--danger" type="button">关闭采集</button>
+              <button id="three-dgs-read-manifest" class="three-dgs-button three-dgs-button--ghost" type="button">读取清单</button>
+            </div>
+
+            <div class="three-dgs-mini-grid">
+              <div>
+                <span>采集车辆</span>
+                <strong id="three-dgs-capture-vehicle">-</strong>
+              </div>
+              <div>
+                <span>Session</span>
+                <strong id="three-dgs-capture-session">-</strong>
+              </div>
+              <div>
+                <span>已保存帧</span>
+                <strong id="three-dgs-capture-frames">0</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="three-dgs-panel">
+            <div class="three-dgs-panel-head">
+              <div>
+                <p class="section-kicker">上传训练数据</p>
+                <h3>点云地图与图像-位姿包</h3>
+              </div>
+              <p class="three-dgs-note">图像-位姿包建议使用车端 3DGS package，点云支持 .pcd / .ply。</p>
+            </div>
+
+            <div class="three-dgs-upload-grid">
+              <div class="three-dgs-dropzone" data-kind="pointcloud">
+                <p class="three-dgs-dropzone-title">上传点云地图</p>
+                <p id="three-dgs-pointcloud-name" class="three-dgs-dropzone-copy">支持 GlobalMap.pcd 或 .ply</p>
+                <input id="three-dgs-pointcloud-input" type="file" accept=".pcd,.ply" hidden />
+                <button id="three-dgs-pointcloud-button" class="three-dgs-button" type="button">选择点云</button>
+              </div>
+              <div class="three-dgs-dropzone" data-kind="image-pose">
+                <p class="three-dgs-dropzone-title">上传图像-位姿</p>
+                <p id="three-dgs-image-pose-name" class="three-dgs-dropzone-copy">支持 .zip / .tar / frames.jsonl</p>
+                <input id="three-dgs-image-pose-input" type="file" accept=".zip,.tar,.tgz,.gz,.json,.jsonl" hidden />
+                <button id="three-dgs-image-pose-button" class="three-dgs-button" type="button">选择图像-位姿包</button>
+              </div>
+            </div>
+
+            <div class="three-dgs-actions">
+              <button id="three-dgs-upload-pointcloud" class="three-dgs-button three-dgs-button--primary" type="button" disabled>上传点云地图</button>
+              <button id="three-dgs-upload-image-pose" class="three-dgs-button three-dgs-button--primary" type="button" disabled>上传图像-位姿</button>
+            </div>
+          </section>
+        </div>
+
+        <section class="three-dgs-panel">
+          <div class="three-dgs-panel-head">
+            <div>
+              <p class="section-kicker">COLMAP 与训练</p>
+              <h3>规整数据并在 A100 上启动训练</h3>
+            </div>
+            <p id="three-dgs-dataset-note" class="three-dgs-note">点云会写成 sparse/0/points3D.ply，图像位姿会写成 cameras.txt / images.txt。</p>
+          </div>
+
+          <div class="three-dgs-form-grid three-dgs-form-grid--train">
+            <label class="three-dgs-field">
+              <span>场景名</span>
+              <input id="three-dgs-scene-name" type="text" placeholder="futian-park-3dgs" />
+            </label>
+            <label class="three-dgs-field">
+              <span>最大初始化点数</span>
+              <input id="three-dgs-max-points" type="number" min="10000" step="10000" value="500000" />
+            </label>
+            <label class="three-dgs-field">
+              <span>A100 GPU</span>
+              <input id="three-dgs-gpu" type="number" min="0" max="5" step="1" value="3" />
+            </label>
+            <label class="three-dgs-field">
+              <span>训练迭代</span>
+              <input id="three-dgs-iterations" type="number" min="100" step="100" value="7000" />
+            </label>
+            <label class="three-dgs-field">
+              <span>图像缩放 -r</span>
+              <input id="three-dgs-resolution" type="number" min="1" step="1" value="4" />
+            </label>
+            <label class="three-dgs-check">
+              <input id="three-dgs-undistort" type="checkbox" checked />
+              <span>使用标定内参去畸变</span>
+            </label>
+          </div>
+
+          <div class="three-dgs-actions">
+            <button id="three-dgs-prepare" class="three-dgs-button three-dgs-button--primary" type="button">规整 COLMAP 数据</button>
+            <button id="three-dgs-start-train" class="three-dgs-button three-dgs-button--primary" type="button">启动 A100 训练</button>
+            <button id="three-dgs-load-prepare-log" class="three-dgs-button three-dgs-button--ghost" type="button">准备日志</button>
+            <button id="three-dgs-load-train-log" class="three-dgs-button three-dgs-button--ghost" type="button">训练日志</button>
+          </div>
+
+          <div class="three-dgs-mini-grid">
+            <div>
+              <span>数据集</span>
+              <strong id="three-dgs-dataset-path">-</strong>
+            </div>
+            <div>
+              <span>图片 / 点数</span>
+              <strong id="three-dgs-dataset-summary">-</strong>
+            </div>
+            <div>
+              <span>训练 Run</span>
+              <strong id="three-dgs-train-run">-</strong>
+            </div>
+            <div>
+              <span>A100 输出</span>
+              <strong id="three-dgs-remote-run">-</strong>
+            </div>
+          </div>
+
+          <p id="three-dgs-feedback" class="three-dgs-feedback">等待操作。</p>
+          <pre id="three-dgs-log" class="three-dgs-log">日志会显示在这里。</pre>
+        </section>
+      </div>
+    </section>
+  </main>
+</SiteLayout>
+
+<script>
+  // @ts-nocheck
+  const STATUS_URL = "/api/three-dgs/status";
+  const api = {
+    startCapture: "/api/three-dgs/capture/start",
+    captureStatus: "/api/three-dgs/capture/status",
+    stopCapture: "/api/three-dgs/capture/stop",
+    manifest: "/api/three-dgs/capture/manifest",
+    uploadPointcloud: "/api/three-dgs/upload/pointcloud",
+    uploadImagePose: "/api/three-dgs/upload/image-pose",
+    prepare: "/api/three-dgs/prepare",
+    train: "/api/three-dgs/train/start",
+    prepareLog: "/api/three-dgs/logs/prepare",
+    trainLocalLog: "/api/three-dgs/logs/train-local",
+    trainRemoteLog: "/api/three-dgs/logs/train-remote"
+  };
+
+  const el = (id) => document.getElementById(id);
+  const vehicleSelect = el("three-dgs-vehicle");
+  const statusTitle = el("three-dgs-status-title");
+  const statusCopy = el("three-dgs-status-copy");
+  const statusBadge = el("three-dgs-status-badge");
+  const authHint = el("three-dgs-auth-hint");
+  const feedback = el("three-dgs-feedback");
+  const logNode = el("three-dgs-log");
+  const pointcloudInput = el("three-dgs-pointcloud-input");
+  const imagePoseInput = el("three-dgs-image-pose-input");
+  const pointcloudName = el("three-dgs-pointcloud-name");
+  const imagePoseName = el("three-dgs-image-pose-name");
+
+  let statusData = null;
+  let pointcloudFile = null;
+  let imagePoseFile = null;
+  let busy = false;
+
+  function formatSize(bytes) {
+    const value = Number(bytes || 0);
+    if (value >= 1073741824) return `${(value / 1073741824).toFixed(2)} GB`;
+    if (value >= 1048576) return `${(value / 1048576).toFixed(1)} MB`;
+    if (value > 0) return `${(value / 1024).toFixed(0)} KB`;
+    return "-";
+  }
+
+  function setFeedback(text, state = "idle") {
+    feedback.textContent = text;
+    feedback.dataset.state = state;
+  }
+
+  function isAuthed() {
+    return Boolean(statusData?.auth?.authenticated);
+  }
+
+  function hasRunPermission() {
+    return Array.isArray(statusData?.auth?.permissions) && statusData.auth.permissions.includes("three-dgs:run");
+  }
+
+  function isTaskBusy() {
+    const state = statusData?.state || {};
+    return ["uploading", "preparing", "training"].includes(state.phase) || state.prepare?.running || state.train?.running;
+  }
+
+  function refreshButtons() {
+    const allow = isAuthed() && hasRunPermission() && !busy;
+    const taskBusy = isTaskBusy();
+    [
+      "three-dgs-start-capture",
+      "three-dgs-capture-status",
+      "three-dgs-stop-capture",
+      "three-dgs-read-manifest",
+      "three-dgs-prepare",
+      "three-dgs-start-train",
+      "three-dgs-load-prepare-log",
+      "three-dgs-load-train-log"
+    ].forEach((id) => {
+      const button = el(id);
+      if (button) button.disabled = !allow;
+    });
+    el("three-dgs-upload-pointcloud").disabled = !allow || taskBusy || !pointcloudFile;
+    el("three-dgs-upload-image-pose").disabled = !allow || taskBusy || !imagePoseFile;
+    el("three-dgs-prepare").disabled = !allow || taskBusy || !statusData?.state?.uploads?.pointcloud || !statusData?.state?.uploads?.image_pose;
+    el("three-dgs-start-train").disabled = !allow || taskBusy || !statusData?.state?.dataset?.prepared;
+  }
+
+  function applyVehicles(vehicles) {
+    const previous = vehicleSelect.value;
+    const items = Array.isArray(vehicles) ? vehicles : [];
+    vehicleSelect.innerHTML = "";
+    if (!items.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "暂无在线车辆";
+      vehicleSelect.appendChild(option);
+      return;
+    }
+    items.forEach((vehicle) => {
+      const id = vehicle.vehicle_id || vehicle.plate_number || vehicle.vin || "";
+      if (!id) return;
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = `${id}${vehicle.last_seen ? ` · ${vehicle.last_seen}` : ""}`;
+      vehicleSelect.appendChild(option);
+    });
+    if (previous && [...vehicleSelect.options].some((option) => option.value === previous)) {
+      vehicleSelect.value = previous;
+    }
+  }
+
+  function applyStatus() {
+    const state = statusData?.state || {};
+    const phase = state.phase || "idle";
+    statusTitle.textContent = phase === "idle" ? "等待操作" : phase;
+    statusCopy.textContent = state.stage_text || "等待操作。";
+    statusBadge.textContent = phase;
+    statusBadge.dataset.state = phase;
+    authHint.textContent = isAuthed()
+      ? `已登录：${statusData.auth.username}${hasRunPermission() ? "" : "，但缺少 3DGS 场景训练权限。"}`
+      : "当前未登录，仅可查看状态；请从右上角账号入口登录。";
+    authHint.dataset.state = isAuthed() && hasRunPermission() ? "success" : "idle";
+
+    const capture = state.capture || {};
+    el("three-dgs-capture-vehicle").textContent = capture.vehicle_id || "-";
+    el("three-dgs-capture-session").textContent = capture.session_id || "-";
+    el("three-dgs-capture-frames").textContent = String(capture.saved_frames || 0);
+
+    const uploads = state.uploads || {};
+    pointcloudName.textContent = uploads.pointcloud
+      ? `${uploads.pointcloud.name} · ${formatSize(uploads.pointcloud.size_bytes)}`
+      : pointcloudFile
+        ? `${pointcloudFile.name} · ${formatSize(pointcloudFile.size)}`
+        : "支持 GlobalMap.pcd 或 .ply";
+    imagePoseName.textContent = uploads.image_pose
+      ? `${uploads.image_pose.name} · ${formatSize(uploads.image_pose.size_bytes)}`
+      : imagePoseFile
+        ? `${imagePoseFile.name} · ${formatSize(imagePoseFile.size)}`
+        : "支持 .zip / .tar / frames.jsonl";
+
+    const dataset = state.dataset || {};
+    el("three-dgs-dataset-path").textContent = dataset.path || "-";
+    el("three-dgs-dataset-summary").textContent = dataset.summary
+      ? `${dataset.summary.image_count || 0} 张 / ${dataset.summary.point_count || 0} 点`
+      : "-";
+
+    const train = state.train || {};
+    el("three-dgs-train-run").textContent = train.run_id || "-";
+    el("three-dgs-remote-run").textContent = train.remote_run_path || "-";
+    refreshButtons();
+  }
+
+  async function fetchStatus() {
+    const response = await fetch(STATUS_URL, { credentials: "same-origin", cache: "no-store" });
+    statusData = await response.json();
+    applyVehicles(statusData.vehicles);
+    applyStatus();
+  }
+
+  async function postJson(url, payload = {}) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.detail || data.error || "request_failed");
+    }
+    statusData = data;
+    applyStatus();
+    return data;
+  }
+
+  function selectedVehiclePayload() {
+    return {
+      vehicle_id: vehicleSelect.value,
+      min_translation_m: Number(el("three-dgs-min-translation").value || 0.5),
+      min_rotation_deg: Number(el("three-dgs-min-rotation").value || 10),
+      min_interval_s: Number(el("three-dgs-min-interval").value || 0.2)
+    };
+  }
+
+  async function runAction(label, fn) {
+    busy = true;
+    refreshButtons();
+    setFeedback(`${label}...`);
+    try {
+      await fn();
+      await fetchStatus();
+      setFeedback(`${label}完成。`, "success");
+    } catch (error) {
+      setFeedback(`${label}失败：${error.message}`, "error");
+    } finally {
+      busy = false;
+      refreshButtons();
+    }
+  }
+
+  function uploadFile(url, file, label) {
+    return new Promise((resolve, reject) => {
+      if (!file) {
+        reject(new Error("file_required"));
+        return;
+      }
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url, true);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
+      xhr.setRequestHeader("X-File-Size", String(file.size));
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const pct = ((event.loaded / event.total) * 100).toFixed(1);
+        setFeedback(`${label}：${pct}%`);
+      };
+      xhr.onload = () => {
+        try {
+          const data = JSON.parse(xhr.responseText || "{}");
+          if (xhr.status < 200 || xhr.status >= 300) {
+            reject(new Error(data.detail || data.error || "upload_failed"));
+            return;
+          }
+          statusData = data;
+          applyStatus();
+          resolve(data);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      xhr.onerror = () => reject(new Error("upload_failed"));
+      xhr.send(file);
+    });
+  }
+
+  async function loadLog(url) {
+    const response = await fetch(`${url}?tail=260`, { credentials: "same-origin", cache: "no-store" });
+    const text = await response.text();
+    logNode.textContent = text || "暂无日志。";
+  }
+
+  el("three-dgs-refresh").addEventListener("click", () => runAction("刷新状态", fetchStatus));
+  el("three-dgs-start-capture").addEventListener("click", () =>
+    runAction("开始采集", () => postJson(api.startCapture, selectedVehiclePayload()))
+  );
+  el("three-dgs-capture-status").addEventListener("click", () =>
+    runAction("读取采集状态", () => postJson(api.captureStatus, { vehicle_id: vehicleSelect.value }))
+  );
+  el("three-dgs-stop-capture").addEventListener("click", () =>
+    runAction("关闭采集", () => postJson(api.stopCapture, { vehicle_id: vehicleSelect.value }))
+  );
+  el("three-dgs-read-manifest").addEventListener("click", () =>
+    runAction("读取清单", () => postJson(api.manifest, { vehicle_id: vehicleSelect.value, include_records: true, max_records: 100 }))
+  );
+
+  el("three-dgs-pointcloud-button").addEventListener("click", () => pointcloudInput.click());
+  el("three-dgs-image-pose-button").addEventListener("click", () => imagePoseInput.click());
+  pointcloudInput.addEventListener("change", () => {
+    pointcloudFile = pointcloudInput.files?.[0] || null;
+    applyStatus();
+  });
+  imagePoseInput.addEventListener("change", () => {
+    imagePoseFile = imagePoseInput.files?.[0] || null;
+    applyStatus();
+  });
+  el("three-dgs-upload-pointcloud").addEventListener("click", () =>
+    runAction("上传点云地图", () => uploadFile(api.uploadPointcloud, pointcloudFile, "上传点云地图"))
+  );
+  el("three-dgs-upload-image-pose").addEventListener("click", () =>
+    runAction("上传图像-位姿", () => uploadFile(api.uploadImagePose, imagePoseFile, "上传图像-位姿"))
+  );
+
+  el("three-dgs-prepare").addEventListener("click", () =>
+    runAction("规整 COLMAP 数据", () =>
+      postJson(api.prepare, {
+        scene_name: el("three-dgs-scene-name").value,
+        max_points: Number(el("three-dgs-max-points").value || 500000),
+        undistort: el("three-dgs-undistort").checked
+      })
+    )
+  );
+  el("three-dgs-start-train").addEventListener("click", () =>
+    runAction("启动 A100 训练", () =>
+      postJson(api.train, {
+        gpu: Number(el("three-dgs-gpu").value || 3),
+        iterations: Number(el("three-dgs-iterations").value || 7000),
+        resolution: Number(el("three-dgs-resolution").value || 4)
+      })
+    )
+  );
+  el("three-dgs-load-prepare-log").addEventListener("click", () => runAction("读取准备日志", () => loadLog(api.prepareLog)));
+  el("three-dgs-load-train-log").addEventListener("click", () =>
+    runAction("读取训练日志", async () => {
+      await loadLog(statusData?.state?.train?.phase === "training" ? api.trainRemoteLog : api.trainLocalLog);
+    })
+  );
+
+  fetchStatus().catch((error) => setFeedback(`状态读取失败：${error.message}`, "error"));
+  window.setInterval(() => fetchStatus().catch(() => {}), 2500);
+  window.addEventListener("jgzj:auth-change", () => fetchStatus().catch(() => {}));
+</script>
+
+<style>
+  .three-dgs-hero {
+    background: #020617;
+  }
+
+  .three-dgs-shell,
+  .three-dgs-panel {
+    display: grid;
+    gap: 18px;
+  }
+
+  .three-dgs-head,
+  .three-dgs-panel-head,
+  .three-dgs-status-card {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+  }
+
+  .three-dgs-status-card,
+  .three-dgs-panel,
+  .three-dgs-dropzone {
+    padding: 18px;
+    border: 1px solid rgba(71, 85, 105, 0.46);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.72);
+  }
+
+  .three-dgs-status-kicker,
+  .three-dgs-note,
+  .three-dgs-field span,
+  .three-dgs-mini-grid span,
+  .three-dgs-dropzone-copy {
+    color: #94a3b8;
+    font-size: 0.86rem;
+  }
+
+  .three-dgs-status-card h3,
+  .three-dgs-panel h3,
+  .three-dgs-dropzone-title {
+    margin: 0;
+    color: #fff;
+  }
+
+  .three-dgs-status-card p,
+  .three-dgs-panel-head p,
+  .three-dgs-dropzone p {
+    margin: 0;
+  }
+
+  .three-dgs-badge {
+    flex: none;
+    padding: 7px 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    color: #cbd5e1;
+    background: rgba(15, 23, 42, 0.8);
+    font: 700 0.78rem "Orbitron", "Noto Sans SC", sans-serif;
+  }
+
+  .three-dgs-badge[data-state="capturing"],
+  .three-dgs-badge[data-state="preparing"],
+  .three-dgs-badge[data-state="training"] {
+    color: #67e8f9;
+    border-color: rgba(103, 232, 249, 0.38);
+  }
+
+  .three-dgs-badge[data-state="prepared"],
+  .three-dgs-badge[data-state="completed"] {
+    color: #5eead4;
+    border-color: rgba(94, 234, 212, 0.38);
+  }
+
+  .three-dgs-badge[data-state="error"] {
+    color: #fca5a5;
+    border-color: rgba(248, 113, 113, 0.42);
+  }
+
+  .three-dgs-grid,
+  .three-dgs-upload-grid,
+  .three-dgs-form-grid,
+  .three-dgs-mini-grid {
+    display: grid;
+    gap: 14px;
+  }
+
+  .three-dgs-grid {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  }
+
+  .three-dgs-upload-grid,
+  .three-dgs-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .three-dgs-form-grid--train {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .three-dgs-field,
+  .three-dgs-check {
+    display: grid;
+    gap: 8px;
+  }
+
+  .three-dgs-field input,
+  .three-dgs-field select {
+    width: 100%;
+    min-height: 42px;
+    border-radius: 8px;
+    border: 1px solid rgba(71, 85, 105, 0.7);
+    background: rgba(2, 6, 23, 0.72);
+    color: #e2e8f0;
+    padding: 9px 11px;
+  }
+
+  .three-dgs-check {
+    align-content: end;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    color: #cbd5e1;
+    min-height: 42px;
+  }
+
+  .three-dgs-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .three-dgs-button {
+    min-height: 40px;
+    border: 1px solid rgba(103, 232, 249, 0.28);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.8);
+    color: #dbeafe;
+    padding: 9px 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .three-dgs-button:hover:not(:disabled) {
+    border-color: rgba(103, 232, 249, 0.7);
+  }
+
+  .three-dgs-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .three-dgs-button--primary {
+    background: linear-gradient(135deg, #0891b2, #2563eb);
+    border-color: rgba(125, 211, 252, 0.45);
+    color: #fff;
+  }
+
+  .three-dgs-button--danger {
+    border-color: rgba(248, 113, 113, 0.44);
+    color: #fecaca;
+  }
+
+  .three-dgs-button--ghost {
+    background: transparent;
+  }
+
+  .three-dgs-mini-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .three-dgs-mini-grid div {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    padding: 12px;
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.42);
+  }
+
+  .three-dgs-mini-grid strong {
+    overflow-wrap: anywhere;
+    color: #e0f2fe;
+    font-size: 0.92rem;
+  }
+
+  .three-dgs-dropzone {
+    min-height: 150px;
+    align-content: center;
+    justify-items: start;
+  }
+
+  .three-dgs-feedback {
+    margin: 0;
+    color: #cbd5e1;
+  }
+
+  .three-dgs-feedback[data-state="success"] {
+    color: #5eead4;
+  }
+
+  .three-dgs-feedback[data-state="error"] {
+    color: #fca5a5;
+  }
+
+  .three-dgs-log {
+    min-height: 220px;
+    max-height: 420px;
+    overflow: auto;
+    border-radius: 8px;
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    background: #020617;
+    color: #cbd5e1;
+    padding: 14px;
+    white-space: pre-wrap;
+  }
+
+  @media (max-width: 980px) {
+    .three-dgs-grid,
+    .three-dgs-upload-grid,
+    .three-dgs-form-grid,
+    .three-dgs-form-grid--train,
+    .three-dgs-mini-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .three-dgs-head,
+    .three-dgs-panel-head,
+    .three-dgs-status-card {
+      display: grid;
+    }
+  }
+</style>

@@ -12,6 +12,7 @@ export const navigationItems = [
   { href: "/cloud-operations", label: "云端智能运维" },
   { href: "/vehicle-devops", label: "车辆代码维护" },
   { href: "/cloud-mapping", label: "大规模云端建图" },
+  { href: "/three-dgs", label: "三维高斯泼溅场景渲染" },
   { href: "/distributed-map-management", label: "分布地图云端统一管理" }
 ];
 
