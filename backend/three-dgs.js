@@ -2135,8 +2135,26 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       return '';
     }
     const content = await fsp.readFile(filePath, 'utf8');
-    return content
-      .split('\n')
+    return normalizeTerminalLog(content, maxLines);
+  }
+
+  function normalizeTerminalLog(content, maxLines = 160) {
+    const lines = [];
+    let line = '';
+    for (const char of String(content || '').replace(/\r\n/g, '\n')) {
+      if (char === '\r') {
+        line = '';
+      } else if (char === '\n') {
+        lines.push(line);
+        line = '';
+      } else {
+        line += char;
+      }
+    }
+    if (line) {
+      lines.push(line);
+    }
+    return lines
       .slice(-Math.max(1, Math.min(1000, maxLines)))
       .join('\n');
   }
@@ -2606,8 +2624,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     }
     if (kind === 'train-remote' && state.train.remote_run_path) {
       try {
-        const output = await execSsh(`tail -n ${tail} ${remoteQuote(`${state.train.remote_run_path}/train.log`)} 2>/dev/null || true`, 10000);
-        return res.type('text/plain').send(output);
+        const tailBytes = Math.max(65536, Math.min(512000, tail * 2000));
+        const output = await execSsh(`tail -c ${tailBytes} ${remoteQuote(`${state.train.remote_run_path}/train.log`)} 2>/dev/null || true`, 10000);
+        return res.type('text/plain').send(normalizeTerminalLog(output, tail));
       } catch (error) {
         return res.status(502).type('text/plain').send(error.message);
       }
