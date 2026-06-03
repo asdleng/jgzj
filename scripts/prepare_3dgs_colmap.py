@@ -209,7 +209,23 @@ def record_camera_id(record: dict, manifest: dict) -> str:
         for name in ("camera1", "camera2", "camera3", "camera4"):
             if name in topic:
                 return name
-    return "camera1"
+    path_candidates = [
+        record.get("image_path"),
+        record.get("path"),
+        record.get("file_path"),
+        record.get("filename"),
+        image_obj.get("path"),
+        image_obj.get("file_path"),
+        image_obj.get("relative_path"),
+        image_obj.get("name"),
+    ]
+    for value in path_candidates:
+        if not isinstance(value, str):
+            continue
+        for name in ("camera1", "camera2", "camera3", "camera4"):
+            if name in value:
+                return name
+    return "unknown_camera"
 
 
 def camera_sources(record: dict, manifest: dict) -> list[object]:

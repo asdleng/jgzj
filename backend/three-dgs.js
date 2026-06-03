@@ -1025,29 +1025,23 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return [...new Set((values || []).flatMap((value) => String(value || '').split(',')).map((item) => item.trim()).filter(Boolean))];
   }
 
-  function resolveCapturePackageSessionId(payload = {}) {
-    const requestedSessionIds = uniqueStrings([payload.session_id]);
-    if (requestedSessionIds.length === 1) {
-      return requestedSessionIds[0];
-    }
-    if (requestedSessionIds.length > 1) {
-      const error = new Error('multiple_capture_sessions_require_single_session_id');
-      error.status = 400;
-      error.session_ids = requestedSessionIds;
-      throw error;
-    }
+  function sessionIdMatchesCamera(camera, sessionId) {
+    const value = String(sessionId || '');
+    if (!value) return false;
+    const taggedCamera = configuredCameraIds.find((cameraId) => value.includes(cameraId));
+    return !taggedCamera || taggedCamera === camera;
+  }
 
-    const stateSessionIds = uniqueStrings([state.capture.session_id, ...Object.values(state.capture.session_ids || {})]);
-    if (stateSessionIds.length === 1) {
-      return stateSessionIds[0];
-    }
-    if (stateSessionIds.length > 1) {
-      const error = new Error('multiple_capture_sessions_require_single_session_id');
-      error.status = 400;
-      error.session_ids = stateSessionIds;
-      throw error;
-    }
-    return '';
+  function captureSessionIdForCamera(camera, payload = {}, includeShared = false) {
+    const candidates = uniqueStrings([
+      payload.session_ids?.[camera],
+      payload.sessions?.[camera],
+      payload[`${camera}_session_id`],
+      includeShared ? payload.session_id : null,
+      state.capture.session_ids?.[camera],
+      includeShared ? state.capture.session_id : null
+    ]);
+    return candidates.find((sessionId) => sessionIdMatchesCamera(camera, sessionId)) || '';
   }
 
   function normalizeCaptureStatusEntry(camera, payload, error = null) {
@@ -1375,7 +1369,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       uploads.pointcloud = null;
     }
     if (!uploads.image_pose) {
-      uploads.image_pose = await discoverUpload(imagePoseUploadPath, ['.zip', '.tar', '.tgz', '.gz', '.json', '.jsonl'], 'image_pose_upload');
+      uploads.image_pose = await discoverUpload(imagePoseUploadPath, ['.zip', '.tar', '.tar.gz', '.tgz', '.gz', '.json', '.jsonl'], 'image_pose_upload');
     }
     if (!uploads.pointcloud) {
       uploads.pointcloud = await discoverUpload(pointcloudUploadPath, ['.pcd', '.ply'], 'GlobalMap.pcd');
@@ -1949,109 +1943,149 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       throw new Error('three_dgs_busy');
     }
     const vehicleId = resolveThreeDgsVehicleId(payload.vehicle_id || state.capture.vehicle_id || defaultVehicleId);
-    const sessionId = resolveCapturePackageSessionId(payload);
+    const requestedCameras = uniqueStrings([
+      payload.camera,
+      ...(Array.isArray(payload.cameras) ? payload.cameras : []),
+      ...(Array.isArray(payload.camera_ids) ? payload.camera_ids : [])
+    ]);
+    const cameras = requestedCameras.length ? requestedCameras : activeCaptureCameras();
+    if (!cameras.length) {
+      throw new Error('three_dgs_no_capture_cameras');
+    }
 
     updateState({
       phase: 'pulling_image_pose',
       active_username: auth.username,
-      stage_text: `正在从 ${vehicleId} 拉取 3DGS 图像-位姿包。`,
+      stage_text: `正在从 ${vehicleId} 拉取 ${cameras.join('、')} 3DGS 图像-位姿包。`,
       error_message: null
     });
 
-    const packageName = `image_pose_${vehicleId}_${sessionId || 'active'}.zip`;
-    const uploadTicket = createVehicleUploadTicket({
-      vehicleId,
-      kind: 'image_pose',
-      fileName: packageName
-    });
-    setVehicleUploadProgress(uploadTicket, {
-      status: 'waiting_vehicle',
-      received_bytes: 0,
-      total_bytes: 0,
-      progress_pct: 0
-    });
-    const packageArgs = {
-      include_base64: false,
-      upload_url: uploadTicket.upload_url,
-      method: 'POST',
-      ...(sessionId ? { session_id: sessionId } : {})
-    };
+    const packageInfos = [];
+    const packageResponses = [];
+    const packageTimeoutS = Number(process.env.THREE_DGS_IMAGE_POSE_PACKAGE_TIMEOUT_S || 900);
+    const uploadWaitMs = Number(process.env.THREE_DGS_IMAGE_POSE_UPLOAD_WAIT_MS || 20000);
+    const partDir = path.join(uploadDir, 'image-pose-parts');
+    let lastUploadTicket = null;
+    await fsp.mkdir(partDir, { recursive: true });
 
-    const packagePayload = await callVehicleTool(
-      vehicleId,
-      '3dgs.capture.package',
-      packageArgs,
-      Number(process.env.THREE_DGS_IMAGE_POSE_PACKAGE_TIMEOUT_S || 900)
-    );
-    const uploadedStat = await waitForUploadedFile(
-      uploadTicket.target_path,
-      Number(process.env.THREE_DGS_IMAGE_POSE_UPLOAD_WAIT_MS || 20000),
-      uploadTicket.created_at_ms
-    );
-    let packageInfo = uploadInfoFromTicket(uploadTicket, uploadedStat);
-    if (packageInfo) {
-      pendingVehicleUploads.delete(uploadTicket.token);
-    }
-    if (!packageInfo) {
-      packageInfo = await writeArtifactToFile(packagePayload, imagePoseUploadPath, packageName, [
-        '.zip',
-        '.tar',
-        '.tgz',
-        '.gz',
-        '.json',
-        '.jsonl'
-      ]);
+    for (const [index, camera] of cameras.entries()) {
+      const sessionId = captureSessionIdForCamera(camera, payload, cameras.length === 1);
+      const packageName = cameras.length > 1
+        ? `image_pose_${vehicleId}_${camera}_${sessionId || 'active'}.tar.gz`
+        : `image_pose_${vehicleId}_${sessionId || camera || 'active'}.zip`;
+      const uploadTicket = createVehicleUploadTicket({
+        vehicleId,
+        kind: 'image_pose',
+        fileName: packageName,
+        staging: cameras.length > 1,
+        targetPath: cameras.length > 1
+          ? path.join(partDir, `${Date.now()}-${index}-${sanitizeFileName(camera, 'camera')}.tar.gz`)
+          : null
+      });
+      lastUploadTicket = uploadTicket;
+      setVehicleUploadProgress(uploadTicket, {
+        status: 'waiting_vehicle',
+        received_bytes: 0,
+        total_bytes: 0,
+        progress_pct: cameras.length > 1 ? (index / cameras.length) * 100 : 0
+      });
+      updateState({
+        phase: 'pulling_image_pose',
+        stage_text: `正在从 ${vehicleId} 拉取 ${camera} 图像-位姿包（${index + 1}/${cameras.length}）。`
+      });
+      const packageArgs = {
+        include_base64: false,
+        upload_url: uploadTicket.upload_url,
+        method: 'POST',
+        camera,
+        camera_id: camera,
+        ...(sessionId ? { session_id: sessionId } : {})
+      };
+      const packagePayload = await callVehicleTool(
+        vehicleId,
+        '3dgs.capture.package',
+        packageArgs,
+        packageTimeoutS
+      );
+      packageResponses.push({
+        camera,
+        response: packagePayload,
+        upload_ticket: redactedUploadTicket(uploadTicket)
+      });
+      const uploadedStat = await waitForUploadedFile(uploadTicket.target_path, uploadWaitMs, uploadTicket.created_at_ms);
+      let packageInfo = uploadInfoFromTicket(uploadTicket, uploadedStat);
+      if (packageInfo) {
+        pendingVehicleUploads.delete(uploadTicket.token);
+      }
+      if (!packageInfo && cameras.length === 1) {
+        packageInfo = await writeArtifactToFile(packagePayload, imagePoseUploadPath, packageName, [
+          '.zip',
+          '.tar',
+          '.tar.gz',
+          '.tgz',
+          '.gz',
+          '.json',
+          '.jsonl'
+        ]);
+      }
+      if (!packageInfo) {
+        const packageResult = unwrapToolPayload(packagePayload) || {};
+        const packagePath = packageResult.package_path || packageResult.path || packageResult.file_path || '';
+        const packageSize = Number(packageResult.size_bytes || packageResult.file_size || 0);
+        const packageError = mapUploadErrorMessage(packagePayload);
+        const errorMessage = packageError || (packagePath ? 'image_pose_package_not_uploaded' : 'image_pose_file_transfer_unavailable');
+        setVehicleUploadProgress(uploadTicket, {
+          status: 'failed',
+          error_message: packagePath
+            ? `车端 ${camera} 已打包${formatBytesForStatus(packageSize) ? ` ${formatBytesForStatus(packageSize)}` : ''}，但未上传到云端`
+            : errorMessage,
+          package_path: packagePath || null,
+          package_size_bytes: packageSize
+        });
+        updateNestedState('capture', {
+          vehicle_id: vehicleId,
+          last_response: {
+            packages: packageResponses
+          }
+        });
+        updateState({
+          phase: state.dataset.prepared ? 'prepared' : 'idle',
+          stage_text: `车端 ${camera} 3DGS package 上传失败。`,
+          error_message: errorMessage
+        });
+        const error = new Error(errorMessage);
+        error.status = 424;
+        throw error;
+      }
+      packageInfos.push({ camera, info: packageInfo });
     }
 
+    const packageInfo = await mergeImagePosePackages({ vehicleId, packageInfos, cameras });
+    if (lastUploadTicket) {
+      setVehicleUploadProgress(lastUploadTicket, {
+        status: 'completed',
+        received_bytes: packageInfo.size_bytes,
+        total_bytes: packageInfo.size_bytes,
+        progress_pct: 100
+      });
+    }
     mergeVehicleData({
       vehicle_id: vehicleId,
       last_image_pull_ms: Date.now()
     });
-
-    if (!packageInfo) {
-      const packageResult = unwrapToolPayload(packagePayload) || {};
-      const packagePath = packageResult.package_path || packageResult.path || packageResult.file_path || '';
-      const packageSize = Number(packageResult.size_bytes || packageResult.file_size || 0);
-      updateNestedState('capture', {
-        vehicle_id: vehicleId,
-        last_response: {
-          package: packagePayload,
-          upload_ticket: redactedUploadTicket(uploadTicket)
-        }
-      });
-      const packageError = mapUploadErrorMessage(packagePayload);
-      const errorMessage = packageError || (packagePath ? 'image_pose_package_not_uploaded' : 'image_pose_file_transfer_unavailable');
-      setVehicleUploadProgress(uploadTicket, {
-        status: 'failed',
-        error_message: packagePath
-          ? `车端已打包${formatBytesForStatus(packageSize) ? ` ${formatBytesForStatus(packageSize)}` : ''}，但未上传到云端`
-          : errorMessage,
-        package_path: packagePath || null,
-        package_size_bytes: packageSize
-      });
-      updateState({
-        phase: state.uploads.pointcloud ? 'idle' : 'idle',
-        stage_text: packageError
-          ? `车端 3DGS package 上传失败：${packageError}`
-          : packagePath
-            ? `车端已打包图像-位姿包${formatBytesForStatus(packageSize) ? `（${formatBytesForStatus(packageSize)}）` : ''}，但未执行 upload_url 上传：${packagePath}`
-            : '车端已响应 3DGS package 请求，但没有上传或返回可落盘的图像-位姿文件。',
-        error_message: errorMessage
-      });
-      const error = new Error(errorMessage);
-      error.status = 424;
-      throw error;
-    }
-
-    setVehicleUploadProgress(uploadTicket, {
-      status: 'completed',
-      received_bytes: packageInfo.size_bytes,
-      total_bytes: packageInfo.size_bytes,
-      progress_pct: 100
+    updateNestedState('capture', {
+      vehicle_id: vehicleId,
+      cameras,
+      last_response: {
+        packages: packageResponses,
+        merged_package: packageInfo
+      }
     });
     updateState({
       phase: state.dataset.prepared ? 'prepared' : 'idle',
-      stage_text: '车端图像-位姿包已上传到云端服务器。',
+      stage_text: cameras.length > 1
+        ? `车端 ${cameras.join('、')} 图像-位姿包已合并上传到云端服务器。`
+        : '车端图像-位姿包已上传到云端服务器。',
       uploads: {
         ...state.uploads,
         image_pose: packageInfo
@@ -3101,7 +3135,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       const cameras = activeCaptureCameras();
       const manifests = [];
       for (const camera of cameras) {
-        const sessionId = uniqueStrings([req.body?.session_id || state.capture.session_ids?.[camera] || state.capture.session_id])[0] || '';
+        const sessionId = captureSessionIdForCamera(camera, req.body || {}, cameras.length === 1);
         const manifest = await callVehicleTool(
           vehicleId,
           '3dgs.capture.manifest',
