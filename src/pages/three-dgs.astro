@@ -793,9 +793,14 @@ import SiteLayout from "../components/SiteLayout.astro";
     }[progress.status] || "上传中";
     const received = formatSize(progress.received_bytes);
     const total = Number(progress.total_bytes || 0) > 0 ? ` / ${formatSize(progress.total_bytes)}` : "";
+    const requestBytes = Number(progress.request_bytes || 0);
+    const resumeFromBytes = Number(progress.resume_from_bytes || 0);
+    const resumeReplayDetail = progress.status === "uploading" && resumeFromBytes > 0 && requestBytes > 0 && requestBytes < resumeFromBytes
+      ? ` · 续传校验中 ${formatSize(requestBytes)} / ${formatSize(resumeFromBytes)}，越过已保存前缀后进度继续增长`
+      : "";
     const detail = progress.error_message
       ? `${kindText} ${statusText}：${progress.error_message}`
-      : `${kindText} ${statusText} · ${received}${total}`;
+      : `${kindText} ${statusText} · ${received}${total}${resumeReplayDetail}`;
     setUploadProgress(progress.progress_pct, detail, {
       state: progress.status === "failed" ? "error" : progress.status === "completed" ? "success" : "active"
     });
