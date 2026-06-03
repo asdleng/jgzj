@@ -1554,6 +1554,32 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     });
   }
 
+  function datasetInvalidationPatchForUploads(uploads = state.uploads) {
+    if (!state.dataset.prepared || state.prepare.running || state.train.running) return {};
+    const preparedAtMs = Number(state.dataset.prepared_at_ms || 0);
+    if (!preparedAtMs) return {};
+    const sourceUpdates = [
+      Number(uploads?.image_pose?.updated_at_ms || 0),
+      Number(uploads?.pointcloud?.updated_at_ms || 0)
+    ].filter((value) => Number.isFinite(value) && value > 0);
+    const newestUploadAtMs = sourceUpdates.length ? Math.max(...sourceUpdates) : 0;
+    if (!newestUploadAtMs || newestUploadAtMs <= preparedAtMs) return {};
+    return {
+      phase: state.phase === 'prepared' ? 'idle' : state.phase,
+      stage_text: '上传数据已更新，请重新规整 COLMAP/3DGS 训练数据。',
+      dataset: {
+        ...state.dataset,
+        prepared: false,
+        summary: null,
+        prepared_at_ms: null,
+        stale_reason: 'source_upload_newer_than_dataset',
+        stale_at_ms: Date.now(),
+        previous_scene_name: state.dataset.scene_name || null,
+        previous_path: state.dataset.path || null
+      }
+    };
+  }
+
   function makeStatusResponse(auth, extra = {}) {
     return {
       ok: true,
@@ -1595,8 +1621,22 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     if (!uploads.pointcloud) {
       uploads.pointcloud = await discoverUpload(pointcloudUploadPath, ['.pcd', '.ply'], 'GlobalMap.pcd');
     }
-    if (uploads.image_pose !== state.uploads.image_pose || uploads.pointcloud !== state.uploads.pointcloud) {
-      updateState({ uploads });
+    const stalePatch = datasetInvalidationPatchForUploads(uploads);
+    const clearStalePatch = state.dataset.prepared &&
+      state.dataset.stale_reason &&
+      !Object.keys(stalePatch).length
+      ? {
+          dataset: {
+            ...state.dataset,
+            stale_reason: null,
+            stale_at_ms: null,
+            previous_scene_name: null,
+            previous_path: null
+          }
+        }
+      : {};
+    if (uploads.image_pose !== state.uploads.image_pose || uploads.pointcloud !== state.uploads.pointcloud || Object.keys(stalePatch).length || Object.keys(clearStalePatch).length) {
+      updateState({ uploads, ...clearStalePatch, ...stalePatch });
     }
   }
 
@@ -1639,6 +1679,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       status_url: statusUrl,
       resume_supported: true,
       content_range_supported: true,
+      chunk_size_bytes: Number(process.env.THREE_DGS_VEHICLE_UPLOAD_CHUNK_SIZE_BYTES || 32 * 1024 * 1024),
       recommended_chunk_size_bytes: Number(process.env.THREE_DGS_VEHICLE_UPLOAD_CHUNK_SIZE_BYTES || 32 * 1024 * 1024)
     };
   }
@@ -1655,7 +1696,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       upload_url: ticket.upload_url ? ticket.upload_url.replace(/\/[0-9a-f]{48}(?=\/status$|$)/i, '/<redacted-token>') : null,
       status_url: ticket.status_url ? ticket.status_url.replace(/\/[0-9a-f]{48}(?=\/status$|$)/i, '/<redacted-token>') : null,
       resume_supported: Boolean(ticket.resume_supported),
-      content_range_supported: Boolean(ticket.content_range_supported)
+      content_range_supported: Boolean(ticket.content_range_supported),
+      chunk_size_bytes: Number(ticket.chunk_size_bytes || ticket.recommended_chunk_size_bytes || 0) || null
     };
   }
 
@@ -2301,6 +2343,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
             method: 'POST',
             resume_supported: true,
             content_range_supported: true,
+            chunk_size_bytes: ticket.chunk_size_bytes,
             recommended_chunk_size_bytes: ticket.recommended_chunk_size_bytes,
             ...extraArgs
           },
@@ -2375,6 +2418,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     if (captureStartInFlight || uploadInFlight || state.prepare.running || state.train.running) {
       throw new Error('three_dgs_busy');
     }
+    if (state.capture.active) {
+      updateState({
+        phase: state.dataset.prepared ? 'prepared' : 'idle',
+        stage_text: '请先停止车端 3DGS 采集，再上传图像-位姿包。',
+        error_message: 'three_dgs_capture_must_stop_before_package'
+      });
+      const error = new Error('three_dgs_capture_must_stop_before_package');
+      error.status = 409;
+      throw error;
+    }
     const vehicleId = resolveThreeDgsVehicleId(payload.vehicle_id || state.capture.vehicle_id || defaultVehicleId);
     const requestedCameras = uniqueStrings([
       payload.camera,
@@ -2414,6 +2467,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         method: 'POST',
         resume_supported: true,
         content_range_supported: true,
+        chunk_size_bytes: uploadTicket.chunk_size_bytes,
         recommended_chunk_size_bytes: uploadTicket.recommended_chunk_size_bytes,
         ...(sessionId ? { session_id: sessionId } : {})
       };
@@ -2560,6 +2614,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         method: 'POST',
         resume_supported: true,
         content_range_supported: true,
+        chunk_size_bytes: uploadTicket.chunk_size_bytes,
         recommended_chunk_size_bytes: uploadTicket.recommended_chunk_size_bytes,
         camera,
         camera_id: camera,
@@ -3009,7 +3064,11 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         scene_name: sceneName,
         path: outputDir,
         summary: null,
-        prepared_at_ms: null
+        prepared_at_ms: null,
+        stale_reason: null,
+        stale_at_ms: null,
+        previous_scene_name: null,
+        previous_path: null
       },
       prepare: {
         running: true,
@@ -3090,7 +3149,11 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           ...state.dataset,
           prepared: true,
           summary,
-          prepared_at_ms: Date.now()
+          prepared_at_ms: Date.now(),
+          stale_reason: null,
+          stale_at_ms: null,
+          previous_scene_name: null,
+          previous_path: null
         },
         prepare: {
           ...state.prepare,
@@ -3512,6 +3575,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       return res.status(410).json({ ok: false, error: 'upload_ticket_expired' });
     }
     const contentLength = Number(req.headers['content-length'] || 0);
+    const contentRange = parseContentRangeHeader(req.headers['content-range']);
     if (contentLength > uploadMaxBytes) {
       return res.status(413).json({ ok: false, error: 'vehicle_upload_too_large' });
     }
@@ -3524,8 +3588,10 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       setVehicleUploadProgress(ticket, {
         status: 'uploading',
         received_bytes: storageStatus.received_bytes || 0,
-        total_bytes: contentLength,
-        progress_pct: contentLength && storageStatus.received_bytes ? (storageStatus.received_bytes / contentLength) * 100 : 0,
+        total_bytes: Number(contentRange?.total_bytes || storageStatus.part_meta?.total_bytes || contentLength || 0),
+        progress_pct: (contentRange?.total_bytes || storageStatus.part_meta?.total_bytes || contentLength) && storageStatus.received_bytes
+          ? (storageStatus.received_bytes / Number(contentRange?.total_bytes || storageStatus.part_meta?.total_bytes || contentLength)) * 100
+          : 0,
         resume_available: Boolean(storageStatus.received_bytes),
         resume_from_bytes: storageStatus.received_bytes || 0
       });
@@ -3557,7 +3623,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       setVehicleUploadProgress(ticket, {
         status: 'completed',
         received_bytes: uploadInfo.size_bytes,
-        total_bytes: contentLength || uploadInfo.size_bytes,
+        total_bytes: uploadInfo.size_bytes,
         progress_pct: 100,
         resume_available: false,
         resume_from_bytes: 0
@@ -3636,12 +3702,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       kind,
       token,
       completed: status.completed,
+      offset: receivedBytes,
+      upload_offset: receivedBytes,
       received_bytes: receivedBytes,
       completed_bytes: status.completed_bytes,
       partial_bytes: status.received_bytes,
+      resume_from_bytes: receivedBytes,
       total_bytes: Number(status.part_meta?.total_bytes || 0),
       resume_supported: true,
       content_range_supported: true,
+      chunk_size_bytes: Number(process.env.THREE_DGS_VEHICLE_UPLOAD_CHUNK_SIZE_BYTES || 32 * 1024 * 1024),
       recommended_chunk_size_bytes: Number(process.env.THREE_DGS_VEHICLE_UPLOAD_CHUNK_SIZE_BYTES || 32 * 1024 * 1024),
       expires_at_ms: ticket.expires_at_ms
     });

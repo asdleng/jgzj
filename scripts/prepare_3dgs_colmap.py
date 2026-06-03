@@ -201,6 +201,9 @@ def record_group_key(record: dict, image_id: int) -> str:
         (
             "capture_id",
             "capture_key",
+            "index",
+            "frame_index",
+            "image_index",
             "keyframe_id",
             "keyframe_index",
             "group_id",
