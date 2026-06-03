@@ -405,7 +405,15 @@ import SiteLayout from "../components/SiteLayout.astro";
   }
 
   function viewerUrlFor(pointCloudUrl) {
-    return pointCloudUrl ? `/supersplat-viewer/?webgl&content=${encodeURIComponent(pointCloudUrl)}` : "";
+    if (!pointCloudUrl) return "";
+    const state = statusData?.state || {};
+    const settingsKey = [
+      state.dataset?.prepared_at_ms || 0,
+      state.viewer?.synced_at_ms || 0,
+      state.train?.run_id || ""
+    ].join("-");
+    const settingsUrl = `/api/three-dgs/viewer/settings?key=${encodeURIComponent(settingsKey)}`;
+    return `/supersplat-viewer/?webgl&content=${encodeURIComponent(pointCloudUrl)}&settings=${encodeURIComponent(settingsUrl)}`;
   }
 
   function currentVehicleId() {

@@ -568,6 +568,137 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     };
   }
 
+  function roundViewerNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Number(number.toFixed(4)) : 0;
+  }
+
+  function roundViewerVector(values) {
+    return values.map(roundViewerNumber);
+  }
+
+  function makeSuperSplatSettings(initialCamera, source = 'fallback') {
+    return {
+      version: 2,
+      tonemapping: 'linear',
+      highPrecisionRendering: false,
+      background: {
+        color: [0.02, 0.03, 0.05]
+      },
+      postEffectSettings: {
+        sharpness: { enabled: false, amount: 0 },
+        bloom: { enabled: false, intensity: 0.1, blurLevel: 2 },
+        grading: {
+          enabled: false,
+          brightness: 1,
+          contrast: 1,
+          saturation: 1,
+          tint: [1, 1, 1]
+        },
+        vignette: {
+          enabled: false,
+          intensity: 0.5,
+          inner: 0.3,
+          outer: 0.75,
+          curvature: 1
+        },
+        fringing: { enabled: false, intensity: 0.5 }
+      },
+      cameras: [
+        {
+          initial: initialCamera || {
+            position: [0, 2, -5],
+            target: [0, 0, 0],
+            fov: 75
+          }
+        }
+      ],
+      animTracks: [],
+      annotations: [],
+      startMode: 'default',
+      jgzj: {
+        source,
+        generated_at_ms: Date.now()
+      }
+    };
+  }
+
+  async function buildTrajectoryViewerCamera() {
+    const datasetPath = resolveCurrentDatasetPath();
+    const imagesPath = path.join(datasetPath, 'sparse', '0', 'images.txt');
+    const frames = parseColmapImagesText(await fsp.readFile(imagesPath, 'utf8'));
+    if (!frames.length) {
+      throw new Error('three_dgs_dataset_has_no_camera_frames');
+    }
+
+    const positions = frames.map((frame) => frame.position);
+    const extent = summarizePreviewPoints(positions);
+    const target = [
+      (extent.min_x + extent.max_x) / 2,
+      (extent.min_y + extent.max_y) / 2,
+      (extent.min_z + extent.max_z) / 2
+    ];
+
+    const start = positions[0];
+    const end = positions[positions.length - 1];
+    let directionX = end[0] - start[0];
+    let directionY = end[1] - start[1];
+    let pathLength = Math.hypot(directionX, directionY);
+    if (pathLength < 0.001) {
+      directionX = 1;
+      directionY = 0;
+      pathLength = 1;
+    }
+    directionX /= pathLength;
+    directionY /= pathLength;
+
+    const spanX = Math.abs(extent.max_x - extent.min_x);
+    const spanY = Math.abs(extent.max_y - extent.min_y);
+    const spanZ = Math.abs(extent.max_z - extent.min_z);
+    const horizontalSpan = Math.max(spanX, spanY, Math.hypot(spanX, spanY));
+    const distance = Math.max(6, horizontalSpan * 0.75, spanZ * 5);
+    const sideX = -directionY;
+    const sideY = directionX;
+    const height = Math.max(3, distance * 0.35, spanZ * 2);
+
+    return {
+      position: roundViewerVector([
+        target[0] + sideX * distance,
+        target[1] + sideY * distance,
+        target[2] + height
+      ]),
+      target: roundViewerVector(target),
+      fov: 68,
+      frame_count: frames.length,
+      extent: {
+        min_x: roundViewerNumber(extent.min_x),
+        max_x: roundViewerNumber(extent.max_x),
+        min_y: roundViewerNumber(extent.min_y),
+        max_y: roundViewerNumber(extent.max_y),
+        min_z: roundViewerNumber(extent.min_z),
+        max_z: roundViewerNumber(extent.max_z)
+      }
+    };
+  }
+
+  async function buildViewerSettings() {
+    try {
+      const camera = await buildTrajectoryViewerCamera();
+      const settings = makeSuperSplatSettings({
+        position: camera.position,
+        target: camera.target,
+        fov: camera.fov
+      }, 'trajectory');
+      settings.jgzj.frame_count = camera.frame_count;
+      settings.jgzj.extent = camera.extent;
+      return settings;
+    } catch (error) {
+      const settings = makeSuperSplatSettings(null, 'fallback');
+      settings.jgzj.error = error.message || 'viewer_settings_fallback';
+      return settings;
+    }
+  }
+
   function sanitizeSceneName(value) {
     return String(value || '')
       .trim()
@@ -2763,6 +2894,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       return res.sendFile(imagePath);
     } catch (error) {
       return res.status(error.status || 500).send(error.message || 'dataset_image_failed');
+    }
+  });
+
+  app.get('/api/three-dgs/viewer/settings', requireThreeDgsAuth, async (_req, res) => {
+    try {
+      const settings = await buildViewerSettings();
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(settings);
+    } catch (error) {
+      return res.status(500).json(makeSuperSplatSettings(null, error.message || 'viewer_settings_failed'));
     }
   });
 
