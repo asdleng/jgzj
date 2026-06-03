@@ -4,7 +4,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 
 <SiteLayout
   title="三维高斯泼溅场景渲染"
-  description="面向车端 camera1/camera4 与 /ndt_pose 的 3DGS 数据采集、COLMAP 数据规整、点云初始化和 A100 训练工作台。"
+  description="面向车端多路正式标定相机与 /ndt_pose 的 3DGS 数据采集、COLMAP 数据规整、点云初始化和 A100 训练工作台。"
   currentPath="/three-dgs"
 >
   <header class="page-hero three-dgs-hero">
@@ -50,7 +50,7 @@ import SiteLayout from "../components/SiteLayout.astro";
                 <p class="section-kicker">车端采集</p>
                 <h3>有外参相机图像与 /ndt_pose 位姿</h3>
               </div>
-              <p id="three-dgs-capture-note" class="three-dgs-note">点击开始采集后，车端所有 enabled=true 的正式标定相机会一起工作。BIT-0041 现阶段是 camera1 和 camera4。</p>
+              <p id="three-dgs-capture-note" class="three-dgs-note">点击开始采集后，车端会按一个车辆级 session 启动所有 enabled=true 的正式标定通道。</p>
             </div>
 
             <div class="three-dgs-form-grid">
@@ -61,8 +61,8 @@ import SiteLayout from "../components/SiteLayout.astro";
                 </select>
               </label>
               <div class="three-dgs-field three-dgs-readonly">
-                <span>将采集相机</span>
-                <strong id="three-dgs-enabled-cameras">camera1、camera2、camera3、camera4</strong>
+                <span>采集 session</span>
+                <strong id="three-dgs-enabled-cameras">车辆级采集</strong>
               </div>
               <label class="three-dgs-field">
                 <span>最小平移 m</span>
@@ -79,7 +79,7 @@ import SiteLayout from "../components/SiteLayout.astro";
             </div>
 
             <div class="three-dgs-actions">
-              <button id="three-dgs-capabilities" class="three-dgs-button three-dgs-button--ghost" type="button">读取相机能力</button>
+              <button id="three-dgs-capabilities" class="three-dgs-button three-dgs-button--ghost" type="button">读取采集能力</button>
               <button id="three-dgs-start-capture" class="three-dgs-button three-dgs-button--primary" type="button">开始采集</button>
               <button id="three-dgs-capture-status" class="three-dgs-button" type="button">采集状态</button>
               <button id="three-dgs-stop-capture" class="three-dgs-button three-dgs-button--danger" type="button">停止采集</button>
@@ -88,7 +88,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 
             <div class="three-dgs-mini-grid">
               <div>
-                <span>相机</span>
+                <span>采集模式</span>
                 <strong id="three-dgs-capture-camera">-</strong>
               </div>
               <div>
@@ -397,6 +397,12 @@ import SiteLayout from "../components/SiteLayout.astro";
     return Number.isFinite(number) ? number.toLocaleString("zh-CN") : "0";
   }
 
+  function channelLabel(cameraName, fallbackId = "") {
+    const match = String(cameraName || "").match(/camera(\d+)/i);
+    if (match) return `采集通道 ${match[1]}`;
+    return cameraName || (fallbackId ? `采集通道 ${fallbackId}` : "采集通道");
+  }
+
   function formatMeters(value) {
     const number = Number(value || 0);
     if (!Number.isFinite(number)) return "-";
@@ -634,7 +640,7 @@ import SiteLayout from "../components/SiteLayout.astro";
         const card = document.createElement("div");
         card.className = "three-dgs-data-image-card";
         const label = document.createElement("span");
-        label.textContent = `${frame.camera_name || `camera ${frame.camera_id || "-"}`} · #${frame.image_id}`;
+        label.textContent = `${channelLabel(frame.camera_name, frame.camera_id)} · #${frame.image_id}`;
         const image = document.createElement("img");
         image.src = `${frame.image_url}?v=${encodeURIComponent(datasetInspection?.dataset?.scene_name || "")}`;
         image.alt = frame.name || "3DGS 采集图像";
@@ -647,7 +653,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     if (datasetEmpty) datasetEmpty.hidden = frames.length > 0;
     if (datasetFrameMeta) {
       const pos = Array.isArray(group.position) ? group.position.map((value) => Number(value).toFixed(2)).join(", ") : "-";
-      const cameras = frames.map((frame) => frame.camera_name || `camera ${frame.camera_id || "-"}`).join("、") || "-";
+      const cameras = frames.map((frame) => channelLabel(frame.camera_name, frame.camera_id)).join("、") || "-";
       datasetFrameMeta.textContent = `候选 ${index + 1}/${groups.length} · ${frames.length} 路：${cameras} · 位置 [${pos}]`;
     }
     drawDatasetInspection();
@@ -813,30 +819,35 @@ import SiteLayout from "../components/SiteLayout.astro";
     if (!captureCameraCounts) return;
     const statuses = Array.isArray(capture.camera_statuses) ? capture.camera_statuses : [];
     captureCameraCounts.innerHTML = "";
-    if (!statuses.length) {
+    const cameraCount = Array.isArray(capture.cameras) && capture.cameras.length
+      ? capture.cameras.length
+      : statuses.length;
+    if (!statuses.length && !cameraCount) {
       captureCameraCounts.textContent = capture.monitor_error
         ? `监控异常：${capture.monitor_error}`
         : capture.active
-          ? "等待车端返回相机帧数。"
+          ? "等待车端返回 session 累计帧数。"
           : "等待采集数据。";
       return;
     }
-    statuses.forEach((item) => {
-      const row = document.createElement("div");
-      row.className = "three-dgs-camera-count";
-      row.dataset.state = item.error ? "error" : item.active === true ? "active" : item.active === false ? "idle" : "unknown";
-
-      const camera = document.createElement("span");
-      camera.textContent = item.camera || "-";
-      const count = document.createElement("strong");
-      const stateText = item.error
-        ? `错误：${item.error}`
-        : `${formatFrameCount(item.saved_frames)} 张${item.active === true ? " · 采集中" : item.active === false ? " · 已停止" : ""}`;
-      count.textContent = stateText;
-
-      row.append(camera, count);
-      captureCameraCounts.appendChild(row);
-    });
+    const activeCount = statuses.filter((item) => item.active === true).length;
+    const errorItems = statuses.filter((item) => item.error);
+    const row = document.createElement("div");
+    row.className = "three-dgs-camera-count";
+    row.dataset.state = errorItems.length
+      ? "error"
+      : capture.active || activeCount
+        ? "active"
+        : "idle";
+    const label = document.createElement("span");
+    label.textContent = "当前车辆 session";
+    const count = document.createElement("strong");
+    const stateText = errorItems.length
+      ? `异常 ${errorItems.length} 路 · 累计 ${formatFrameCount(capture.saved_frames)} 张`
+      : `${cameraCount || "-"} 路可用 · 累计 ${formatFrameCount(capture.saved_frames)} 张${capture.active ? " · 采集中" : " · 等待/已停止"}`;
+    count.textContent = capture.monitor_error ? `监控异常：${capture.monitor_error}` : stateText;
+    row.append(label, count);
+    captureCameraCounts.appendChild(row);
   }
 
   function closeCaptureStream() {
@@ -992,7 +1003,13 @@ import SiteLayout from "../components/SiteLayout.astro";
     authHint.dataset.state = isAuthed() && hasRunPermission() ? "success" : "idle";
 
     const capture = state.capture || {};
-    el("three-dgs-capture-camera").textContent = Array.isArray(capture.cameras) && capture.cameras.length ? capture.cameras.join("、") : "-";
+    const captureStatuses = Array.isArray(capture.camera_statuses) ? capture.camera_statuses : [];
+    const captureChannelCount = Array.isArray(capture.cameras) && capture.cameras.length
+      ? capture.cameras.length
+      : captureStatuses.length;
+    el("three-dgs-capture-camera").textContent = captureChannelCount
+      ? `车辆级 session（${captureChannelCount} 路可用）`
+      : "车辆级 session";
     el("three-dgs-capture-vehicle").textContent = capture.vehicle_id || "-";
     el("three-dgs-capture-session").textContent = capture.session_id || "-";
     el("three-dgs-capture-frames").textContent = formatFrameCount(capture.saved_frames);
@@ -1052,7 +1069,9 @@ import SiteLayout from "../components/SiteLayout.astro";
     }
 
     const enabledNames = enabledCameraNames();
-    enabledCamerasText.textContent = enabledNames.length ? enabledNames.join("、") : "暂无 enabled 相机";
+    enabledCamerasText.textContent = enabledNames.length
+      ? `车辆级采集（${enabledNames.length} 路可用）`
+      : "暂无可用采集通道";
     refreshButtons();
   }
 
@@ -1210,7 +1229,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     applyStatus();
   });
   el("three-dgs-capabilities").addEventListener("click", () =>
-    runAction("读取相机能力", () => postJson(api.capabilities, { vehicle_id: currentVehicleId() }))
+    runAction("读取采集能力", () => postJson(api.capabilities, { vehicle_id: currentVehicleId() }))
   );
   el("three-dgs-start-capture").addEventListener("click", () =>
     runAction("开始采集", () => postJson(api.startCapture, selectedVehiclePayload()))

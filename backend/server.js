@@ -46,6 +46,9 @@ const upstreamHealthUrl = new URL(
   upstreamBaseUrl
 ).toString();
 const requestTimeoutMs = Number(process.env.CHAT_PROXY_TIMEOUT_MS || 120000);
+const httpServerRequestTimeoutMs = Number(process.env.HTTP_SERVER_REQUEST_TIMEOUT_MS || 30 * 60 * 1000);
+const httpServerHeadersTimeoutMs = Number(process.env.HTTP_SERVER_HEADERS_TIMEOUT_MS || 65 * 1000);
+const httpServerKeepAliveTimeoutMs = Number(process.env.HTTP_SERVER_KEEP_ALIVE_TIMEOUT_MS || 75 * 1000);
 const qwen36BaseUrl = process.env.QWEN36_BASE_URL || 'http://127.0.0.1:18000/v1';
 const qwen36BaseUrlWithSlash = qwen36BaseUrl.endsWith('/') ? qwen36BaseUrl : `${qwen36BaseUrl}/`;
 const qwen36ChatUrl = new URL('chat/completions', qwen36BaseUrlWithSlash).toString();
@@ -5389,7 +5392,10 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(webRoot, 'index.html'));
 });
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`backend listening on ${port}`);
   console.log(`proxying cloud chat to ${upstreamStreamUrl}`);
 });
+server.requestTimeout = httpServerRequestTimeoutMs;
+server.headersTimeout = httpServerHeadersTimeoutMs;
+server.keepAliveTimeout = httpServerKeepAliveTimeoutMs;

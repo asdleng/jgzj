@@ -134,6 +134,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const fallbackMapUploadStagingDir = process.env.THREE_DGS_MAP_UPLOAD_FALLBACK_STAGING_DIR || '/home/nvidia/auto_ad_ai_map_upload';
   const publicBaseUrl = String(process.env.THREE_DGS_PUBLIC_BASE_URL || 'http://idtrd.kmdns.net:7791').replace(/\/+$/, '');
   const vehicleUploadTokenTtlMs = Number(process.env.THREE_DGS_VEHICLE_UPLOAD_TOKEN_TTL_MS || 2 * 60 * 60 * 1000);
+  const vehicleUploadRequestTimeoutMs = Number(process.env.THREE_DGS_VEHICLE_UPLOAD_REQUEST_TIMEOUT_MS || 30 * 60 * 1000);
   const pointcloudPreviewMaxReadBytes = Number(process.env.THREE_DGS_POINTCLOUD_PREVIEW_MAX_READ_BYTES || 512 * 1024 * 1024);
 
   let state = createInitialState();
@@ -240,6 +241,22 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         updated_at_ms: Date.now()
       };
     }
+  }
+
+  function normalizeThreeDgsStageText(text) {
+    let next = String(text || '');
+    next = next.replace(/车端\s+3DGS\s+四路图像-位姿包/g, '车端当前 3DGS session 图像-位姿包');
+    next = next.replace(/车端\s+[^，。]+?\s+四路图像-位姿包/g, '车端当前 3DGS session 图像-位姿包');
+    next = next.replace(/车端\s+[^，。]+?\s+图像-位姿包已合并上传/g, '车端当前 3DGS session 图像-位姿包已上传');
+    next = next.replace(/车端\s+[^，。]+?\s+3DGS\s+采集已启动/g, '车端 3DGS 车辆级采集 session 已启动');
+    return next;
+  }
+
+  function responseState() {
+    return {
+      ...state,
+      stage_text: normalizeThreeDgsStageText(state.stage_text)
+    };
   }
 
   async function safeStat(targetPath) {
@@ -1090,6 +1107,40 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return session?.session_id || session?.id || session?.capture_session_id || session?.session?.session_id || session?.session?.id || null;
   }
 
+  function usableMultiCameraSessionId(value) {
+    const text = String(value || '').trim();
+    if (!text || text.includes(',')) return '';
+    if (/^camera\d+$/i.test(text)) return '';
+    return text;
+  }
+
+  function sessionIdFromChildSessionPaths(childSessions = {}) {
+    const children = childSessions && typeof childSessions === 'object' ? Object.values(childSessions) : [];
+    for (const child of children) {
+      const sessionDir = String(child?.paths?.session_dir || child?.session_dir || '').trim();
+      if (!sessionDir) continue;
+      const parent = path.basename(path.dirname(sessionDir));
+      const usable = usableMultiCameraSessionId(parent);
+      if (usable) return usable;
+    }
+    return '';
+  }
+
+  function sessionIdFromImagePoseUploadName() {
+    const name = String(state.vehicle_uploads?.image_pose?.file_name || '').trim();
+    const match = name.match(/image_pose_[^_]+_(.+)\.(?:tar\.gz|tgz|zip|gz)$/i);
+    return usableMultiCameraSessionId(match?.[1]);
+  }
+
+  function resolveMultiCameraPackageSessionId(payload = {}) {
+    return uniqueStrings([
+      payload.session_id,
+      usableMultiCameraSessionId(state.capture.session_id),
+      sessionIdFromChildSessionPaths(state.capture.child_sessions),
+      sessionIdFromImagePoseUploadName()
+    ]).map(usableMultiCameraSessionId).find(Boolean) || '';
+  }
+
   function childSessionEntries(session) {
     const raw = session?.child_sessions || session?.children || session?.camera_sessions || session?.sessions || null;
     if (Array.isArray(raw)) {
@@ -1271,6 +1322,15 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       : mergeSessionIds(statuses);
     const sessionIdList = uniqueStrings(Object.values(sessionIds));
     const parentSessionId = aggregateSession ? sessionIdFromSession(aggregateSession) : '';
+    const childSessions = aggregateSession
+      ? Object.fromEntries(childSessionEntries(aggregateSession).map((item) => [item.camera, item.session]))
+      : state.capture.child_sessions;
+    const pathSessionId = sessionIdFromChildSessionPaths(childSessions);
+    const nextSessionId = parentSessionId ||
+      (state.capture.multi_camera ? usableMultiCameraSessionId(state.capture.session_id) || pathSessionId : '') ||
+      (sessionIdList.length === 1 ? sessionIdList[0] : sessionIdList.join(',')) ||
+      state.capture.session_id ||
+      null;
     const active = aggregateCaptureActivity(statuses);
     const errorText = statuses
       .filter((item) => item.error)
@@ -1280,9 +1340,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       vehicle_id: vehicleId,
       active,
       cameras,
-      session_id: parentSessionId || (sessionIdList.length === 1 ? sessionIdList[0] : sessionIdList.join(',')) || state.capture.session_id || null,
+      session_id: nextSessionId,
       session_ids: sessionIds,
-      child_sessions: aggregateSession ? Object.fromEntries(childSessionEntries(aggregateSession).map((item) => [item.camera, item.session])) : state.capture.child_sessions,
+      child_sessions: childSessions,
       saved_frames: Math.max(savedFramesFromSession(aggregateSession), aggregateCaptureFrames(statuses)),
       camera_statuses: statuses,
       last_monitor_ms: Date.now(),
@@ -1321,7 +1381,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       ok: true,
       ts_ms: Date.now(),
       phase: state.phase,
-      stage_text: state.stage_text,
+      stage_text: normalizeThreeDgsStageText(state.stage_text),
       capture: compactCaptureForStream(),
       uploads: state.uploads,
       vehicle_uploads: state.vehicle_uploads,
@@ -1498,7 +1558,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return {
       ok: true,
       auth: statusAuthPayload(auth),
-      state,
+      state: responseState(),
       ...extra
     };
   }
@@ -1572,9 +1632,14 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       uploadPath = `/api/three-dgs/image-pose-upload/${token}`;
     }
     const uploadUrl = `${publicBaseUrl}${uploadPath}`;
+    const statusUrl = `${publicBaseUrl}${uploadPath}/status`;
     return {
       ...ticket,
-      upload_url: uploadUrl
+      upload_url: uploadUrl,
+      status_url: statusUrl,
+      resume_supported: true,
+      content_range_supported: true,
+      recommended_chunk_size_bytes: Number(process.env.THREE_DGS_VEHICLE_UPLOAD_CHUNK_SIZE_BYTES || 32 * 1024 * 1024)
     };
   }
 
@@ -1587,7 +1652,10 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       target_path: ticket.target_path,
       staging: Boolean(ticket.staging),
       expires_at_ms: ticket.expires_at_ms,
-      upload_url: ticket.upload_url ? ticket.upload_url.replace(/\/[0-9a-f]{48}$/i, '/<redacted-token>') : null
+      upload_url: ticket.upload_url ? ticket.upload_url.replace(/\/[0-9a-f]{48}(?=\/status$|$)/i, '/<redacted-token>') : null,
+      status_url: ticket.status_url ? ticket.status_url.replace(/\/[0-9a-f]{48}(?=\/status$|$)/i, '/<redacted-token>') : null,
+      resume_supported: Boolean(ticket.resume_supported),
+      content_range_supported: Boolean(ticket.content_range_supported)
     };
   }
 
@@ -1881,6 +1949,10 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   function setVehicleUploadProgress(ticket, patch = {}) {
     if (!ticket?.kind || !['image_pose', 'pointcloud'].includes(ticket.kind)) return;
     const current = state.vehicle_uploads?.[ticket.kind] || {};
+    const sameUpload =
+      current.vehicle_id === ticket.vehicle_id &&
+      current.file_name === ticket.file_name &&
+      current.kind === ticket.kind;
     const totalBytes = Number(patch.total_bytes ?? current.total_bytes ?? 0);
     const receivedBytes = Math.max(0, Number(patch.received_bytes ?? current.received_bytes ?? 0));
     let progressPct = Number(patch.progress_pct);
@@ -1901,9 +1973,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       progress_pct: progressPct,
       status: patch.status || current.status || 'pending',
       error_message: patch.error_message || null,
-      package_path: patch.package_path || current.package_path || null,
-      package_size_bytes: Number(patch.package_size_bytes ?? current.package_size_bytes ?? 0) || 0,
-      started_at_ms: current.started_at_ms || Date.now(),
+      package_path: Object.prototype.hasOwnProperty.call(patch, 'package_path')
+        ? patch.package_path || null
+        : sameUpload
+          ? current.package_path || null
+          : null,
+      package_size_bytes: Number(patch.package_size_bytes ?? (sameUpload ? current.package_size_bytes : 0) ?? 0) || 0,
+      resume_available: Boolean(patch.resume_available ?? (sameUpload ? current.resume_available : false) ?? false),
+      resume_from_bytes: Number(patch.resume_from_bytes ?? (sameUpload ? current.resume_from_bytes : 0) ?? 0) || 0,
+      request_bytes: Number(patch.request_bytes ?? (sameUpload ? current.request_bytes : 0) ?? 0) || 0,
+      started_at_ms: sameUpload ? current.started_at_ms || Date.now() : Date.now(),
       updated_at_ms: Date.now()
     };
     updateNestedState('vehicle_uploads', {
@@ -1931,21 +2010,164 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return Boolean(fallbackMapUploadStagingDir && /permission denied/i.test(message) && message.includes('/media/data'));
   }
 
+  function parseContentRangeHeader(value) {
+    const text = String(value || '').trim();
+    if (!text) return null;
+    const match = text.match(/^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i);
+    if (!match) return null;
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    const total = match[3] === '*' ? 0 : Number(match[3]);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) {
+      return null;
+    }
+    if (match[3] !== '*' && (!Number.isFinite(total) || total <= end)) {
+      return null;
+    }
+    return {
+      start,
+      end,
+      total_bytes: total
+    };
+  }
+
+  async function readUploadPartMeta(metaPath) {
+    try {
+      return JSON.parse(await fsp.readFile(metaPath, 'utf8'));
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async function writeUploadPartMeta(metaPath, data) {
+    await fsp.writeFile(metaPath, JSON.stringify({
+      ...data,
+      updated_at_ms: Date.now()
+    }, null, 2), 'utf8');
+  }
+
+  async function getVehicleUploadStorageStatus(ticket) {
+    const targetPath = ticket.target_path;
+    const partPath = `${targetPath}.part`;
+    const metaPath = `${partPath}.json`;
+    const [targetStat, partStat, partMeta] = await Promise.all([
+      safeStat(targetPath),
+      safeStat(partPath),
+      readUploadPartMeta(metaPath)
+    ]);
+    return {
+      target_path: targetPath,
+      part_path: partPath,
+      meta_path: metaPath,
+      completed: Boolean(targetStat?.size),
+      completed_bytes: Number(targetStat?.size || 0),
+      received_bytes: Number(partStat?.size || 0),
+      part_meta: partMeta,
+      updated_at_ms: Number(targetStat?.mtimeMs || partStat?.mtimeMs || 0)
+    };
+  }
+
   async function writeVehicleUpload(req, ticket, onProgress = null) {
     await ensureRuntimeDirs();
     const targetPath = ticket.target_path;
     const partPath = `${targetPath}.part`;
+    const metaPath = `${partPath}.json`;
     await fsp.mkdir(path.dirname(targetPath), { recursive: true });
-    await fsp.rm(partPath, { force: true });
-    await fsp.rm(targetPath, { force: true });
 
-    let receivedBytes = 0;
+    const contentLength = Number(req.headers['content-length'] || 0);
+    const contentRange = parseContentRangeHeader(req.headers['content-range']);
+    const targetStat = await safeStat(targetPath);
+    const partStat = await safeStat(partPath);
+    const partMeta = await readUploadPartMeta(metaPath);
+    let existingBytes = Number(partStat?.size || 0);
+    let totalBytes = Number(contentRange?.total_bytes || contentLength || partMeta?.total_bytes || 0);
+    const samePartial =
+      existingBytes > 0 &&
+      partMeta?.kind === ticket.kind &&
+      partMeta?.file_name === ticket.file_name &&
+      (!totalBytes || !partMeta?.total_bytes || Number(partMeta.total_bytes) === totalBytes);
+
+    if (targetStat?.size && totalBytes && Number(targetStat.size) === totalBytes) {
+      return {
+        name: sanitizeFileName(ticket.file_name, path.basename(targetPath)),
+        path: targetPath,
+        size_bytes: targetStat.size,
+        updated_at_ms: targetStat.mtimeMs || Date.now(),
+        resumed: false,
+        already_completed: true
+      };
+    }
+
+    if (!samePartial || (contentRange?.start === 0 && existingBytes > 0)) {
+      await fsp.rm(partPath, { force: true });
+      await fsp.rm(metaPath, { force: true });
+      if (!contentRange || contentRange.start === 0) {
+        await fsp.rm(targetPath, { force: true });
+      }
+      existingBytes = 0;
+    }
+
+    if (contentRange) {
+      totalBytes = Number(contentRange.total_bytes || totalBytes || 0);
+      if (totalBytes > uploadMaxBytes) {
+        throw new Error('vehicle_upload_too_large');
+      }
+      if (existingBytes < contentRange.start) {
+        const error = new Error(`vehicle_upload_range_gap:${existingBytes}:${contentRange.start}`);
+        error.status = 409;
+        throw error;
+      }
+    } else if (contentLength > uploadMaxBytes) {
+      throw new Error('vehicle_upload_too_large');
+    }
+
+    const writeStartBytes = contentRange ? contentRange.start : 0;
+    let skipBytes = contentRange
+      ? Math.max(0, existingBytes - writeStartBytes)
+      : Math.max(0, Math.min(existingBytes, contentLength || existingBytes));
+    const appendMode = existingBytes > 0 && skipBytes >= 0;
+    let storedBytes = existingBytes;
+    let requestBytes = 0;
     let lastProgressAtMs = 0;
-    const totalBytes = Number(req.headers['content-length'] || 0);
+    const progressTotalBytes = totalBytes || contentLength || 0;
+
+    await writeUploadPartMeta(metaPath, {
+      vehicle_id: ticket.vehicle_id,
+      kind: ticket.kind,
+      file_name: ticket.file_name,
+      target_path: targetPath,
+      total_bytes: progressTotalBytes || 0,
+      resumed_from_bytes: existingBytes,
+      content_range: contentRange,
+      created_at_ms: partMeta?.created_at_ms || Date.now()
+    });
+
     const limiter = new Transform({
       transform(chunk, _encoding, callback) {
-        receivedBytes += chunk.length;
-        if (receivedBytes > uploadMaxBytes) {
+        requestBytes += chunk.length;
+        let output = chunk;
+        if (skipBytes > 0) {
+          if (chunk.length <= skipBytes) {
+            skipBytes -= chunk.length;
+            const now = Date.now();
+            if (typeof onProgress === 'function' && (!lastProgressAtMs || now - lastProgressAtMs >= 1000)) {
+              lastProgressAtMs = now;
+              onProgress({
+                status: 'uploading',
+                received_bytes: storedBytes,
+                total_bytes: progressTotalBytes,
+                resume_from_bytes: existingBytes,
+                request_bytes: requestBytes
+              });
+            }
+            callback();
+            return;
+          }
+          output = chunk.subarray(skipBytes);
+          skipBytes = 0;
+        }
+        storedBytes += output.length;
+        if (storedBytes > uploadMaxBytes) {
           callback(new Error('vehicle_upload_too_large'));
           return;
         }
@@ -1954,26 +2176,72 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           lastProgressAtMs = now;
           onProgress({
             status: 'uploading',
-            received_bytes: receivedBytes,
-            total_bytes: totalBytes
+            received_bytes: storedBytes,
+            total_bytes: progressTotalBytes,
+            resume_from_bytes: existingBytes,
+            request_bytes: requestBytes
           });
         }
-        callback(null, chunk);
+        callback(null, output);
       }
     });
 
     try {
-      await pipeline(req, limiter, fs.createWriteStream(partPath, { flags: 'w' }));
+      await pipeline(req, limiter, fs.createWriteStream(partPath, { flags: appendMode ? 'a' : 'w' }));
+      const expectedBytes = totalBytes || contentLength || storedBytes;
+      if (contentRange && totalBytes && storedBytes < totalBytes) {
+        await writeUploadPartMeta(metaPath, {
+          vehicle_id: ticket.vehicle_id,
+          kind: ticket.kind,
+          file_name: ticket.file_name,
+          target_path: targetPath,
+          total_bytes: totalBytes,
+          received_bytes: storedBytes,
+          partial: true,
+          created_at_ms: partMeta?.created_at_ms || Date.now()
+        });
+        const partStatAfter = await safeStat(partPath);
+        return {
+          name: sanitizeFileName(ticket.file_name, path.basename(targetPath)),
+          path: partPath,
+          size_bytes: partStatAfter?.size || storedBytes,
+          updated_at_ms: partStatAfter?.mtimeMs || Date.now(),
+          partial: true,
+          received_bytes: storedBytes,
+          total_bytes: totalBytes,
+          resume_from_bytes: storedBytes
+        };
+      }
+      if (expectedBytes && storedBytes < expectedBytes) {
+        const error = new Error(`vehicle_upload_incomplete:${storedBytes}:${expectedBytes}`);
+        error.status = 499;
+        throw error;
+      }
       await fsp.rename(partPath, targetPath);
+      await fsp.rm(metaPath, { force: true }).catch(() => {});
       const stat = await safeStat(targetPath);
       return {
         name: sanitizeFileName(ticket.file_name, path.basename(targetPath)),
         path: targetPath,
-        size_bytes: stat?.size || receivedBytes,
-        updated_at_ms: stat?.mtimeMs || Date.now()
+        size_bytes: stat?.size || storedBytes,
+        updated_at_ms: stat?.mtimeMs || Date.now(),
+        resumed: existingBytes > 0
       };
     } catch (error) {
-      await fsp.rm(partPath, { force: true }).catch(() => {});
+      await writeUploadPartMeta(metaPath, {
+        vehicle_id: ticket.vehicle_id,
+        kind: ticket.kind,
+        file_name: ticket.file_name,
+        target_path: targetPath,
+        total_bytes: progressTotalBytes || 0,
+        received_bytes: storedBytes,
+        partial: true,
+        last_error: error.message || 'vehicle_upload_failed',
+        created_at_ms: partMeta?.created_at_ms || Date.now()
+      }).catch(() => {});
+      error.received_bytes = storedBytes;
+      error.total_bytes = progressTotalBytes || 0;
+      error.resume_available = storedBytes > 0;
       throw error;
     }
   }
@@ -2029,7 +2297,11 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           mapUploadTool,
           {
             upload_url: ticket.upload_url,
+            status_url: ticket.status_url,
             method: 'POST',
+            resume_supported: true,
+            content_range_supported: true,
+            recommended_chunk_size_bytes: ticket.recommended_chunk_size_bytes,
             ...extraArgs
           },
           Number(process.env.THREE_DGS_MAP_UPLOAD_TOOL_TIMEOUT_S || 240)
@@ -2117,12 +2389,12 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     updateState({
       phase: 'pulling_image_pose',
       active_username: auth.username,
-      stage_text: `正在从 ${vehicleId} 拉取 ${cameras.join('、')} 3DGS 图像-位姿包。`,
+      stage_text: `正在从 ${vehicleId} 当前 3DGS session 拉取图像-位姿包。`,
       error_message: null
     });
 
     if (state.capture.multi_camera) {
-      const sessionId = uniqueStrings([payload.session_id, state.capture.session_id])[0] || '';
+      const sessionId = resolveMultiCameraPackageSessionId(payload);
       const packageName = `image_pose_${vehicleId}_${sessionId || 'multi_camera'}.tar.gz`;
       const uploadTicket = createVehicleUploadTicket({
         vehicleId,
@@ -2138,18 +2410,29 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       const packageArgs = {
         include_base64: false,
         upload_url: uploadTicket.upload_url,
+        status_url: uploadTicket.status_url,
         method: 'POST',
+        resume_supported: true,
+        content_range_supported: true,
+        recommended_chunk_size_bytes: uploadTicket.recommended_chunk_size_bytes,
         ...(sessionId ? { session_id: sessionId } : {})
       };
-      const packagePayload = await callVehicleTool(
-        vehicleId,
-        '3dgs.capture.package',
-        packageArgs,
-        Number(process.env.THREE_DGS_IMAGE_POSE_PACKAGE_TIMEOUT_S || 900)
-      );
+      let packagePayload = null;
+      let packageToolError = null;
+      try {
+        packagePayload = await callVehicleTool(
+          vehicleId,
+          '3dgs.capture.package',
+          packageArgs,
+          Number(process.env.THREE_DGS_IMAGE_POSE_PACKAGE_TIMEOUT_S || 1800)
+        );
+      } catch (error) {
+        packageToolError = error;
+        packagePayload = { error: error.message || 'image_pose_package_failed' };
+      }
       const uploadedStat = await waitForUploadedFile(
         uploadTicket.target_path,
-        Number(process.env.THREE_DGS_IMAGE_POSE_UPLOAD_WAIT_MS || 20000),
+        Number(process.env.THREE_DGS_IMAGE_POSE_UPLOAD_WAIT_MS || 60000),
         uploadTicket.created_at_ms
       );
       let packageInfo = uploadInfoFromTicket(uploadTicket, uploadedStat);
@@ -2168,16 +2451,24 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         ]);
       }
       if (!packageInfo) {
+        const storageStatus = await getVehicleUploadStorageStatus(uploadTicket);
         const packageResult = unwrapToolPayload(packagePayload) || {};
         const packagePath = packageResult.package_path || packageResult.path || packageResult.file_path || '';
         const packageSize = Number(packageResult.size_bytes || packageResult.file_size || 0);
         const packageError = mapUploadErrorMessage(packagePayload);
+        const resumeBytes = Number(storageStatus.received_bytes || 0);
         const errorMessage = packageError || (packagePath ? 'image_pose_package_not_uploaded' : 'image_pose_file_transfer_unavailable');
         setVehicleUploadProgress(uploadTicket, {
           status: 'failed',
-          error_message: packagePath
-            ? `车端已打包${formatBytesForStatus(packageSize) ? ` ${formatBytesForStatus(packageSize)}` : ''}，但未上传到云端`
-            : errorMessage,
+          error_message: resumeBytes
+            ? `上传中断，云端已保留 ${formatBytesForStatus(resumeBytes)}，可再次点击上传图片数据续传`
+            : packagePath
+              ? `车端已打包${formatBytesForStatus(packageSize) ? ` ${formatBytesForStatus(packageSize)}` : ''}，但未上传到云端`
+              : errorMessage,
+          received_bytes: resumeBytes,
+          total_bytes: Number(storageStatus.part_meta?.total_bytes || packageSize || 0),
+          resume_available: resumeBytes > 0,
+          resume_from_bytes: resumeBytes,
           package_path: packagePath || null,
           package_size_bytes: packageSize
         });
@@ -2190,10 +2481,12 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         });
         updateState({
           phase: state.dataset.prepared ? 'prepared' : 'idle',
-          stage_text: '车端 3DGS 四路图像-位姿包上传失败。',
-          error_message: errorMessage
+          stage_text: resumeBytes
+            ? '车端当前 3DGS session 图像-位姿包上传中断，云端已保留部分数据，可重试续传。'
+            : '车端当前 3DGS session 图像-位姿包上传失败。',
+          error_message: resumeBytes ? 'image_pose_upload_interrupted_resume_available' : errorMessage
         });
-        const error = new Error(errorMessage);
+        const error = new Error(resumeBytes ? 'image_pose_upload_interrupted_resume_available' : (packageToolError?.message || errorMessage));
         error.status = 424;
         throw error;
       }
@@ -2217,7 +2510,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       });
       updateState({
         phase: state.dataset.prepared ? 'prepared' : 'idle',
-        stage_text: `车端 ${cameras.join('、')} 四路图像-位姿包已上传到云端服务器。`,
+        stage_text: `车端 ${vehicleId} 当前 3DGS session 图像-位姿包已上传到云端服务器。`,
         uploads: {
           ...state.uploads,
           image_pose: packageInfo
@@ -2229,8 +2522,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
     const packageInfos = [];
     const packageResponses = [];
-    const packageTimeoutS = Number(process.env.THREE_DGS_IMAGE_POSE_PACKAGE_TIMEOUT_S || 900);
-    const uploadWaitMs = Number(process.env.THREE_DGS_IMAGE_POSE_UPLOAD_WAIT_MS || 20000);
+    const packageTimeoutS = Number(process.env.THREE_DGS_IMAGE_POSE_PACKAGE_TIMEOUT_S || 1800);
+    const uploadWaitMs = Number(process.env.THREE_DGS_IMAGE_POSE_UPLOAD_WAIT_MS || 60000);
     const partDir = path.join(uploadDir, 'image-pose-parts');
     let lastUploadTicket = null;
     await fsp.mkdir(partDir, { recursive: true });
@@ -2258,12 +2551,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       });
       updateState({
         phase: 'pulling_image_pose',
-        stage_text: `正在从 ${vehicleId} 拉取 ${camera} 图像-位姿包（${index + 1}/${cameras.length}）。`
+        stage_text: `正在从 ${vehicleId} 当前 3DGS session 拉取图像-位姿包。`
       });
       const packageArgs = {
         include_base64: false,
         upload_url: uploadTicket.upload_url,
+        status_url: uploadTicket.status_url,
         method: 'POST',
+        resume_supported: true,
+        content_range_supported: true,
+        recommended_chunk_size_bytes: uploadTicket.recommended_chunk_size_bytes,
         camera,
         camera_id: camera,
         ...(sessionId ? { session_id: sessionId } : {})
@@ -2317,7 +2614,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         });
         updateState({
           phase: state.dataset.prepared ? 'prepared' : 'idle',
-          stage_text: `车端 ${camera} 3DGS package 上传失败。`,
+          stage_text: `车端当前 3DGS session 图像-位姿包上传失败。`,
           error_message: errorMessage
         });
         const error = new Error(errorMessage);
@@ -2350,9 +2647,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     });
     updateState({
       phase: state.dataset.prepared ? 'prepared' : 'idle',
-      stage_text: cameras.length > 1
-        ? `车端 ${cameras.join('、')} 图像-位姿包已合并上传到云端服务器。`
-        : '车端图像-位姿包已上传到云端服务器。',
+      stage_text: '车端当前 3DGS session 图像-位姿包已上传到云端服务器。',
       uploads: {
         ...state.uploads,
         image_pose: packageInfo
@@ -2382,7 +2677,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       updateState({
         phase: 'starting_capture',
         active_username: auth.username,
-        stage_text: `正在读取 ${vehicleId} 3DGS 相机能力。`,
+        stage_text: `正在读取 ${vehicleId} 3DGS 采集能力。`,
         error_message: null
       });
       capabilities = await getCaptureCapabilities(vehicleId);
@@ -2408,7 +2703,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       if (capabilities.multi_camera_start_supported) {
         updateState({
           phase: 'starting_capture',
-          stage_text: `正在启动 ${vehicleId} ${enabledCameras.join('、')} 3DGS 统一采集。`
+          stage_text: `正在启动 ${vehicleId} 3DGS 车辆级采集 session。`
         });
         const started = await callVehicleTool(
           vehicleId,
@@ -2445,7 +2740,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         for (const camera of enabledCameras) {
           updateState({
             phase: 'starting_capture',
-            stage_text: `正在启动 ${vehicleId} ${camera} 3DGS 采集。`
+            stage_text: `正在启动 ${vehicleId} 3DGS 车辆级采集 session。`
           });
           const started = await callVehicleTool(
             vehicleId,
@@ -2508,7 +2803,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       updateState({
         phase: 'capturing',
         active_username: auth.username,
-        stage_text: `车端 ${enabledCameras.join('、')} 3DGS 采集已启动。`,
+        stage_text: `车端 ${vehicleId} 3DGS 车辆级采集 session 已启动。`,
         error_message: null
       });
       broadcastCaptureStreamEvent('capture_status', captureStreamPayload());
@@ -3220,21 +3515,52 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     if (contentLength > uploadMaxBytes) {
       return res.status(413).json({ ok: false, error: 'vehicle_upload_too_large' });
     }
+    req.setTimeout?.(vehicleUploadRequestTimeoutMs);
+    res.setTimeout?.(vehicleUploadRequestTimeoutMs);
+    req.socket?.setTimeout?.(vehicleUploadRequestTimeoutMs);
 
     try {
+      const storageStatus = await getVehicleUploadStorageStatus(ticket);
       setVehicleUploadProgress(ticket, {
         status: 'uploading',
-        received_bytes: 0,
+        received_bytes: storageStatus.received_bytes || 0,
         total_bytes: contentLength,
-        progress_pct: 0
+        progress_pct: contentLength && storageStatus.received_bytes ? (storageStatus.received_bytes / contentLength) * 100 : 0,
+        resume_available: Boolean(storageStatus.received_bytes),
+        resume_from_bytes: storageStatus.received_bytes || 0
       });
       const uploadInfo = await writeVehicleUpload(req, ticket, (progress) => setVehicleUploadProgress(ticket, progress));
+      if (uploadInfo.partial) {
+        setVehicleUploadProgress(ticket, {
+          status: 'uploading',
+          received_bytes: uploadInfo.received_bytes,
+          total_bytes: uploadInfo.total_bytes,
+          progress_pct: uploadInfo.total_bytes ? (uploadInfo.received_bytes / uploadInfo.total_bytes) * 100 : null,
+          resume_available: true,
+          resume_from_bytes: uploadInfo.resume_from_bytes || uploadInfo.received_bytes
+        });
+        res.setHeader('Upload-Offset', String(uploadInfo.resume_from_bytes || uploadInfo.received_bytes || 0));
+        if (uploadInfo.received_bytes > 0) {
+          res.setHeader('Range', `bytes=0-${uploadInfo.received_bytes - 1}`);
+        }
+        return res.status(202).json({
+          ok: true,
+          kind,
+          partial: true,
+          received_bytes: uploadInfo.received_bytes,
+          total_bytes: uploadInfo.total_bytes,
+          resume_from_bytes: uploadInfo.resume_from_bytes || uploadInfo.received_bytes,
+          status_url: ticket.status_url
+        });
+      }
       pendingVehicleUploads.delete(token);
       setVehicleUploadProgress(ticket, {
         status: 'completed',
         received_bytes: uploadInfo.size_bytes,
         total_bytes: contentLength || uploadInfo.size_bytes,
-        progress_pct: 100
+        progress_pct: 100,
+        resume_available: false,
+        resume_from_bytes: 0
       });
       if (ticket.staging) {
         return res.json({ ok: true, kind, file: uploadInfo, staging: true });
@@ -3273,28 +3599,74 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     } catch (error) {
       setVehicleUploadProgress(ticket, {
         status: 'failed',
-        error_message: error.message || 'vehicle_upload_failed'
+        error_message: error.resume_available
+          ? `${error.message || 'vehicle_upload_failed'}，可重试续传`
+          : error.message || 'vehicle_upload_failed',
+        received_bytes: Number(error.received_bytes || 0),
+        total_bytes: Number(error.total_bytes || contentLength || 0),
+        resume_available: Boolean(error.resume_available),
+        resume_from_bytes: Number(error.received_bytes || 0)
       });
-      return res.status(error.message === 'vehicle_upload_too_large' ? 413 : 500).json({
+      return res.status(error.status || (error.message === 'vehicle_upload_too_large' ? 413 : 500)).json({
         ok: false,
-        error: error.message || 'vehicle_upload_failed'
+        error: error.message || 'vehicle_upload_failed',
+        resume_available: Boolean(error.resume_available),
+        resume_from_bytes: Number(error.received_bytes || 0),
+        status_url: ticket.status_url
       });
     }
   }
 
+  async function vehicleUploadStatusHandler(req, res, forcedKind = '') {
+    cleanupExpiredVehicleUploads();
+    const kind = String(forcedKind || req.params.kind || '').trim();
+    const token = String(req.params.token || '').trim();
+    const ticket = pendingVehicleUploads.get(token);
+    if (!ticket || ticket.kind !== kind) {
+      return res.status(404).json({ ok: false, error: 'upload_ticket_not_found' });
+    }
+    const status = await getVehicleUploadStorageStatus(ticket);
+    const receivedBytes = status.completed ? status.completed_bytes : status.received_bytes;
+    res.setHeader('Upload-Offset', String(receivedBytes || 0));
+    if (receivedBytes > 0) {
+      res.setHeader('Range', `bytes=0-${receivedBytes - 1}`);
+    }
+    return res.json({
+      ok: true,
+      kind,
+      token,
+      completed: status.completed,
+      received_bytes: receivedBytes,
+      completed_bytes: status.completed_bytes,
+      partial_bytes: status.received_bytes,
+      total_bytes: Number(status.part_meta?.total_bytes || 0),
+      resume_supported: true,
+      content_range_supported: true,
+      recommended_chunk_size_bytes: Number(process.env.THREE_DGS_VEHICLE_UPLOAD_CHUNK_SIZE_BYTES || 32 * 1024 * 1024),
+      expires_at_ms: ticket.expires_at_ms
+    });
+  }
+
   app.post('/api/three-dgs/vehicle-upload/:kind/:token', vehicleUploadHandler);
   app.put('/api/three-dgs/vehicle-upload/:kind/:token', vehicleUploadHandler);
+  app.get('/api/three-dgs/vehicle-upload/:kind/:token/status', vehicleUploadStatusHandler);
   app.post('/api/three-dgs/pointcloud-upload/:token', (req, res) => {
     void vehicleUploadHandler(req, res, 'pointcloud');
   });
   app.put('/api/three-dgs/pointcloud-upload/:token', (req, res) => {
     void vehicleUploadHandler(req, res, 'pointcloud');
   });
+  app.get('/api/three-dgs/pointcloud-upload/:token/status', (req, res) => {
+    void vehicleUploadStatusHandler(req, res, 'pointcloud');
+  });
   app.post('/api/three-dgs/image-pose-upload/:token', (req, res) => {
     void vehicleUploadHandler(req, res, 'image_pose');
   });
   app.put('/api/three-dgs/image-pose-upload/:token', (req, res) => {
     void vehicleUploadHandler(req, res, 'image_pose');
+  });
+  app.get('/api/three-dgs/image-pose-upload/:token/status', (req, res) => {
+    void vehicleUploadStatusHandler(req, res, 'image_pose');
   });
 
   app.post('/api/three-dgs/capture/capabilities', requireThreeDgsAuth, async (req, res) => {
@@ -3449,7 +3821,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       });
       updateState({
         phase: state.dataset.prepared ? 'prepared' : 'idle',
-        stage_text: `车端 ${cameras.join('、')} 3DGS 采集已停止。`
+        stage_text: `车端 ${vehicleId} 3DGS 采集 session 已停止。`
       });
       broadcastCaptureStreamEvent('capture_status', captureStreamPayload());
       return res.json(makeStatusResponse(req.threeDgsAuth));
