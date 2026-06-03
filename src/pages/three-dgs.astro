@@ -199,45 +199,6 @@ import SiteLayout from "../components/SiteLayout.astro";
             <p id="three-dgs-dataset-note" class="three-dgs-note">点云会写成 sparse/0/points3D.ply，图像位姿会写成 cameras.txt / images.txt。</p>
           </div>
 
-          <div class="three-dgs-data-check">
-            <div class="three-dgs-viewer-head">
-              <div>
-                <span>训练数据检查</span>
-                <strong id="three-dgs-data-check-status">等待检查当前 COLMAP 数据集</strong>
-              </div>
-              <button id="three-dgs-check-dataset" class="three-dgs-button three-dgs-button--ghost" type="button">检查训练数据</button>
-            </div>
-            <div class="three-dgs-data-check-grid">
-              <div class="three-dgs-data-map">
-                <canvas id="three-dgs-dataset-canvas" height="360"></canvas>
-                <p id="three-dgs-dataset-map-hint">点云地图和相机轨迹会显示在这里。</p>
-              </div>
-              <div class="three-dgs-data-photo">
-                <div id="three-dgs-dataset-empty" class="three-dgs-data-empty">点击轨迹或用上下键查看候选帧。</div>
-                <div id="three-dgs-dataset-images" class="three-dgs-data-images" hidden></div>
-                <div id="three-dgs-dataset-frame-meta" class="three-dgs-data-meta">未选择关键帧。</div>
-              </div>
-            </div>
-            <div class="three-dgs-mini-grid three-dgs-data-stats">
-              <div>
-                <span>检查图片</span>
-                <strong id="three-dgs-check-images">-</strong>
-              </div>
-              <div>
-                <span>初始化点</span>
-                <strong id="three-dgs-check-points">-</strong>
-              </div>
-              <div>
-                <span>轨迹长度</span>
-                <strong id="three-dgs-check-distance">-</strong>
-              </div>
-              <div>
-                <span>最大帧间距</span>
-                <strong id="three-dgs-check-gap">-</strong>
-              </div>
-            </div>
-          </div>
-
           <div class="three-dgs-form-grid three-dgs-form-grid--train">
             <label class="three-dgs-field">
               <span>场景名</span>
@@ -320,6 +281,58 @@ import SiteLayout from "../components/SiteLayout.astro";
             </div>
           </div>
 
+          <div class="three-dgs-data-check">
+            <div class="three-dgs-viewer-head">
+              <div>
+                <span>训练数据检查</span>
+                <strong id="three-dgs-data-check-status">等待检查当前 COLMAP 数据集</strong>
+              </div>
+              <button id="three-dgs-check-dataset" class="three-dgs-button three-dgs-button--ghost" type="button">检查训练数据</button>
+            </div>
+            <div class="three-dgs-data-check-grid">
+              <div class="three-dgs-data-map">
+                <canvas id="three-dgs-dataset-canvas" height="360"></canvas>
+                <p id="three-dgs-dataset-map-hint">点云地图和相机轨迹会显示在这里。</p>
+              </div>
+              <div class="three-dgs-data-photo">
+                <div id="three-dgs-dataset-empty" class="three-dgs-data-empty">点击轨迹或用上下键查看候选帧。</div>
+                <div id="three-dgs-dataset-images" class="three-dgs-data-images" hidden></div>
+                <div id="three-dgs-dataset-frame-meta" class="three-dgs-data-meta">未选择关键帧。</div>
+              </div>
+            </div>
+            <div class="three-dgs-mini-grid three-dgs-data-stats">
+              <div>
+                <span>检查图片</span>
+                <strong id="three-dgs-check-images">-</strong>
+              </div>
+              <div>
+                <span>初始化点</span>
+                <strong id="three-dgs-check-points">-</strong>
+              </div>
+              <div>
+                <span>轨迹长度</span>
+                <strong id="three-dgs-check-distance">-</strong>
+              </div>
+              <div>
+                <span>最大帧间距</span>
+                <strong id="three-dgs-check-gap">-</strong>
+              </div>
+            </div>
+          </div>
+
+          <p id="three-dgs-feedback" class="three-dgs-feedback">等待操作。</p>
+          <pre id="three-dgs-log" class="three-dgs-log">日志会显示在这里。</pre>
+        </section>
+
+        <section class="three-dgs-panel three-dgs-render-panel">
+          <div class="three-dgs-panel-head">
+            <div>
+              <p class="section-kicker">训练完成后渲染</p>
+              <h3>浏览器实时查看 3DGS 结果</h3>
+            </div>
+            <p class="three-dgs-note">训练完成并同步 point_cloud.ply 后，在这里用 SuperSplat Viewer 查看。</p>
+          </div>
+
           <div class="three-dgs-viewer-card">
             <div class="three-dgs-viewer-head">
               <div>
@@ -333,9 +346,6 @@ import SiteLayout from "../components/SiteLayout.astro";
             </div>
             <iframe id="three-dgs-viewer-frame" title="3DGS SuperSplat Viewer" hidden></iframe>
           </div>
-
-          <p id="three-dgs-feedback" class="three-dgs-feedback">等待操作。</p>
-          <pre id="three-dgs-log" class="three-dgs-log">日志会显示在这里。</pre>
         </section>
       </div>
     </section>
