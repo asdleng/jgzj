@@ -268,8 +268,37 @@ import SiteLayout from "../components/SiteLayout.astro";
           <div class="three-dgs-actions">
             <button id="three-dgs-prepare" class="three-dgs-button three-dgs-button--primary" type="button">规整 COLMAP 数据</button>
             <button id="three-dgs-start-train" class="three-dgs-button three-dgs-button--primary" type="button">开始训练</button>
+            <button id="three-dgs-load-train-metrics" class="three-dgs-button three-dgs-button--ghost" type="button">训练曲线</button>
             <button id="three-dgs-load-prepare-log" class="three-dgs-button three-dgs-button--ghost" type="button">准备日志</button>
             <button id="three-dgs-load-train-log" class="three-dgs-button three-dgs-button--ghost" type="button">训练日志</button>
+          </div>
+
+          <div class="three-dgs-train-metrics">
+            <div class="three-dgs-viewer-head">
+              <div>
+                <span>训练指标</span>
+                <strong id="three-dgs-train-metrics-status">等待训练日志</strong>
+              </div>
+            </div>
+            <canvas id="three-dgs-loss-canvas" height="230"></canvas>
+            <div class="three-dgs-mini-grid three-dgs-train-metrics-grid">
+              <div>
+                <span>最新 Loss</span>
+                <strong id="three-dgs-metric-loss">-</strong>
+              </div>
+              <div>
+                <span>Depth Loss</span>
+                <strong id="three-dgs-metric-depth-loss">-</strong>
+              </div>
+              <div>
+                <span>Train PSNR</span>
+                <strong id="three-dgs-metric-psnr">-</strong>
+              </div>
+              <div>
+                <span>初始化点</span>
+                <strong id="three-dgs-metric-init-points">-</strong>
+              </div>
+            </div>
           </div>
 
           <div class="three-dgs-mini-grid">
@@ -331,6 +360,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     datasetInspection: "/api/three-dgs/dataset/inspection",
     prepare: "/api/three-dgs/prepare",
     train: "/api/three-dgs/train/start",
+    trainMetrics: "/api/three-dgs/train/metrics",
     viewerSync: "/api/three-dgs/viewer/sync",
     prepareLog: "/api/three-dgs/logs/prepare",
     trainLocalLog: "/api/three-dgs/logs/train-local",
@@ -367,6 +397,8 @@ import SiteLayout from "../components/SiteLayout.astro";
   const datasetImages = el("three-dgs-dataset-images");
   const datasetEmpty = el("three-dgs-dataset-empty");
   const datasetFrameMeta = el("three-dgs-dataset-frame-meta");
+  const trainMetricsStatus = el("three-dgs-train-metrics-status");
+  const lossCanvas = el("three-dgs-loss-canvas");
 
   let statusData = null;
   let pointcloudFile = null;
@@ -378,6 +410,8 @@ import SiteLayout from "../components/SiteLayout.astro";
   let datasetInspection = null;
   let datasetHitPoints = [];
   let selectedDatasetFrameIndex = -1;
+  let trainMetricsData = null;
+  let lastTrainMetricsFetchMs = 0;
 
   function formatSize(bytes) {
     const value = Number(bytes || 0);
@@ -667,6 +701,159 @@ import SiteLayout from "../components/SiteLayout.astro";
     el("three-dgs-check-gap").textContent = formatMeters(summary.max_gap_m);
   }
 
+  function formatMetric(value, digits = 4) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toFixed(digits) : "-";
+  }
+
+  function drawSeries(ctx, rect, samples, options = {}) {
+    const values = samples.map((item) => ({
+      x: Number(item.iteration || 0),
+      y: Number(item.value)
+    })).filter((item) => Number.isFinite(item.x) && Number.isFinite(item.y));
+    ctx.save();
+    ctx.strokeStyle = "rgba(71, 85, 105, 0.65)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "12px system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText(options.label || "", rect.x + 8, rect.y + 17);
+    if (!values.length) {
+      ctx.fillStyle = "#64748b";
+      ctx.fillText("暂无采样", rect.x + 8, rect.y + rect.h / 2);
+      ctx.restore();
+      return;
+    }
+    const maxIteration = Math.max(1, Number(options.totalIterations || 0), ...values.map((item) => item.x));
+    let minY = Math.min(...values.map((item) => item.y));
+    let maxY = Math.max(...values.map((item) => item.y));
+    if (Math.abs(maxY - minY) < 1e-9) {
+      minY -= Math.max(0.01, Math.abs(minY) * 0.1);
+      maxY += Math.max(0.01, Math.abs(maxY) * 0.1);
+    }
+    const padX = 36;
+    const padY = 24;
+    const inner = {
+      x: rect.x + padX,
+      y: rect.y + padY,
+      w: Math.max(1, rect.w - padX - 12),
+      h: Math.max(1, rect.h - padY - 22)
+    };
+    const project = (item) => ({
+      x: inner.x + (item.x / maxIteration) * inner.w,
+      y: inner.y + inner.h - ((item.y - minY) / (maxY - minY)) * inner.h
+    });
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.22)";
+    ctx.beginPath();
+    for (let i = 0; i <= 3; i += 1) {
+      const y = inner.y + (i / 3) * inner.h;
+      ctx.moveTo(inner.x, y);
+      ctx.lineTo(inner.x + inner.w, y);
+    }
+    ctx.stroke();
+    ctx.fillStyle = "#64748b";
+    ctx.fillText(String(Math.round(maxIteration)), inner.x + inner.w - 34, rect.y + rect.h - 7);
+    ctx.fillText((options.formatY || ((value) => value.toFixed(3)))(maxY), rect.x + 8, inner.y + 4);
+    ctx.fillText((options.formatY || ((value) => value.toFixed(3)))(minY), rect.x + 8, inner.y + inner.h);
+    ctx.strokeStyle = options.color || "#67e8f9";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    values.forEach((item, index) => {
+      const point = project(item);
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = options.color || "#67e8f9";
+    values.forEach((item) => {
+      const point = project(item);
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, values.length === 1 ? 4 : 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  function drawTrainMetrics(metrics) {
+    if (!lossCanvas) return;
+    const rect = lossCanvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(420, Math.floor(rect.width || lossCanvas.clientWidth || 760));
+    const height = Math.max(220, Math.floor(rect.height || 230));
+    lossCanvas.width = Math.floor(width * dpr);
+    lossCanvas.height = Math.floor(height * dpr);
+    const ctx = lossCanvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(0, 0, width, height);
+    const progress = Array.isArray(metrics?.progress) ? metrics.progress : [];
+    const evaluations = Array.isArray(metrics?.evaluations) ? metrics.evaluations.filter((item) => item.split === "train") : [];
+    const totalIterations = metrics?.latest_progress?.total_iterations || statusData?.state?.train?.iterations || 10000;
+    drawSeries(ctx, { x: 10, y: 10, w: width - 20, h: Math.floor((height - 30) / 2) }, progress.map((item) => ({
+      iteration: item.iteration,
+      value: item.loss
+    })), {
+      label: "Loss",
+      color: "#67e8f9",
+      totalIterations,
+      formatY: (value) => value.toFixed(3)
+    });
+    drawSeries(ctx, { x: 10, y: Math.floor(height / 2) + 6, w: width - 20, h: Math.floor((height - 30) / 2) }, evaluations.map((item) => ({
+      iteration: item.iteration,
+      value: item.psnr
+    })), {
+      label: "Train PSNR",
+      color: "#fde047",
+      totalIterations,
+      formatY: (value) => value.toFixed(1)
+    });
+  }
+
+  function renderTrainMetrics(data) {
+    const metrics = data?.metrics || {};
+    const latestProgress = metrics.latest_progress || null;
+    const latestEval = metrics.latest_evaluation || null;
+    el("three-dgs-metric-loss").textContent = formatMetric(latestProgress?.loss, 6);
+    el("three-dgs-metric-depth-loss").textContent = formatMetric(latestProgress?.depth_loss, 6);
+    el("three-dgs-metric-psnr").textContent = formatMetric(latestEval?.psnr, 2);
+    el("three-dgs-metric-init-points").textContent = formatCount(metrics.initial_points);
+    drawTrainMetrics(metrics);
+    const progressCount = Array.isArray(metrics.progress) ? metrics.progress.length : 0;
+    const evalCount = Array.isArray(metrics.evaluations) ? metrics.evaluations.length : 0;
+    if (trainMetricsStatus) {
+      const sampleText = progressCount + evalCount
+        ? `${progressCount} 个 loss 点 · ${evalCount} 个评估点`
+        : "日志里暂无可解析指标";
+      const tbText = metrics.tensorboard_available === false ? " · TensorBoard 未启用" : "";
+      trainMetricsStatus.textContent = `${data?.run_id || "当前训练"} · ${sampleText}${tbText}`;
+    }
+  }
+
+  async function loadTrainMetrics(force = false) {
+    if (!isAuthed() || !hasRunPermission()) return;
+    const train = statusData?.state?.train || {};
+    if (!train.run_id && !train.remote_run_path && !train.local_log_path) {
+      if (trainMetricsStatus) trainMetricsStatus.textContent = "等待训练日志";
+      return;
+    }
+    const now = Date.now();
+    if (!force && lastTrainMetricsFetchMs && now - lastTrainMetricsFetchMs < 30000) {
+      return;
+    }
+    lastTrainMetricsFetchMs = now;
+    if (force && trainMetricsStatus) trainMetricsStatus.textContent = "正在读取训练指标...";
+    const response = await fetch(`${api.trainMetrics}?max_bytes=2097152`, {
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "train_metrics_failed");
+    }
+    trainMetricsData = data;
+    renderTrainMetrics(trainMetricsData);
+  }
+
   async function loadDatasetInspection() {
     if (!isAuthed() || !hasRunPermission()) {
       throw new Error("permission_required");
@@ -744,6 +931,9 @@ import SiteLayout from "../components/SiteLayout.astro";
   function refreshBackgroundViews() {
     loadPointcloudPreview().catch(() => {
       if (pointcloudPreviewStatus) pointcloudPreviewStatus.textContent = "点云预览加载失败";
+    });
+    loadTrainMetrics(false).catch(() => {
+      if (trainMetricsStatus) trainMetricsStatus.textContent = "训练指标读取失败";
     });
     refreshLiveLog().catch(() => {});
   }
@@ -927,6 +1117,7 @@ import SiteLayout from "../components/SiteLayout.astro";
       "three-dgs-pull-image-pose",
       "three-dgs-start-train",
       "three-dgs-sync-result",
+      "three-dgs-load-train-metrics",
       "three-dgs-load-prepare-log",
       "three-dgs-load-train-log"
     ].forEach((id) => {
@@ -940,6 +1131,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     el("three-dgs-start-train").disabled =
       !allow || taskBusy || (!statusData?.state?.dataset?.prepared && (!statusData?.state?.uploads?.pointcloud || !statusData?.state?.uploads?.image_pose));
     el("three-dgs-sync-result").disabled = !allow || taskBusy || !statusData?.state?.train?.remote_run_path;
+    el("three-dgs-load-train-metrics").disabled = !allow || !statusData?.state?.train?.run_id;
   }
 
   function applyVehicles(vehicles) {
@@ -1309,12 +1501,18 @@ import SiteLayout from "../components/SiteLayout.astro";
     selectDatasetFrame(next);
   });
   window.addEventListener("resize", () => drawDatasetInspection());
+  window.addEventListener("resize", () => {
+    if (trainMetricsData?.metrics) drawTrainMetrics(trainMetricsData.metrics);
+  });
 
   el("three-dgs-prepare").addEventListener("click", () =>
     runAction("规整 COLMAP 数据", () => postJson(api.prepare, preparePayload()))
   );
   el("three-dgs-start-train").addEventListener("click", () =>
     runAction("开始训练", prepareThenTrain)
+  );
+  el("three-dgs-load-train-metrics").addEventListener("click", () =>
+    runAction("读取训练曲线", () => loadTrainMetrics(true))
   );
   el("three-dgs-sync-result").addEventListener("click", () =>
     runAction("同步训练结果", () => postJson(api.viewerSync, { run_id: statusData?.state?.train?.run_id }))
@@ -1742,6 +1940,29 @@ import SiteLayout from "../components/SiteLayout.astro";
   }
 
   .three-dgs-data-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .three-dgs-train-metrics {
+    display: grid;
+    gap: 12px;
+    margin-top: 14px;
+    padding: 12px;
+    border: 1px solid rgba(71, 85, 105, 0.45);
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.38);
+  }
+
+  .three-dgs-train-metrics canvas {
+    width: 100%;
+    height: 230px;
+    display: block;
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    border-radius: 8px;
+    background: #020617;
+  }
+
+  .three-dgs-train-metrics-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 

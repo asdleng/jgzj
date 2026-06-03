@@ -559,6 +559,12 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return byId;
   }
 
+  function cameraNameFromImageName(name, cameraId = '') {
+    const stem = path.basename(String(name || ''));
+    const matched = configuredCameraIds.find((camera) => new RegExp(`(^|_)${camera}(_|\\.)`, 'i').test(stem));
+    return matched || (cameraId ? `camera${cameraId}` : '');
+  }
+
   function captureKeyFromImageName(name, cameraName, imageId) {
     const stem = path.basename(String(name || '')).replace(/\.[^.]+$/, '');
     const groupMatch = stem.match(/(?:^|_)g([^_]+)(?:_|$)/);
@@ -788,10 +794,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   async function buildTrajectoryViewerCamera() {
     const datasetPath = resolveCurrentDatasetPath();
     const imagesPath = path.join(datasetPath, 'sparse', '0', 'images.txt');
-    const frames = parseColmapImagesText(await fsp.readFile(imagesPath, 'utf8'));
-    if (!frames.length) {
+    const allFrames = parseColmapImagesText(await fsp.readFile(imagesPath, 'utf8')).map((frame) => ({
+      ...frame,
+      camera_name: cameraNameFromImageName(frame.name, frame.camera_id)
+    }));
+    if (!allFrames.length) {
       throw new Error('three_dgs_dataset_has_no_camera_frames');
     }
+    const trajectoryCamera = String(process.env.THREE_DGS_VIEWER_TRAJECTORY_CAMERA || 'camera1').trim() || 'camera1';
+    const selectedFrames = allFrames.filter((frame) => frame.camera_name === trajectoryCamera);
+    const frames = selectedFrames.length >= 2 ? selectedFrames : allFrames;
 
     const positions = frames.map((frame) => frame.position);
     const extent = summarizePreviewPoints(positions);
@@ -831,6 +843,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       target: roundViewerVector(firstCameraTarget),
       fov: 68,
       frame_count: frames.length,
+      all_frame_count: allFrames.length,
+      trajectory_camera: selectedFrames.length >= 2 ? trajectoryCamera : 'all',
       anim_track: makeVehicleTrajectoryTrack(frames, extent, 68),
       overview_camera: {
         position: roundViewerVector([
@@ -863,6 +877,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         startMode: 'animTrack'
       } : {});
       settings.jgzj.frame_count = camera.frame_count;
+      settings.jgzj.all_frame_count = camera.all_frame_count;
+      settings.jgzj.trajectory_camera = camera.trajectory_camera;
       settings.jgzj.animation = camera.anim_track?.jgzj || null;
       settings.jgzj.extent = camera.extent;
       return settings;
@@ -3536,6 +3552,91 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       .join('\n');
   }
 
+  function stripAnsi(content) {
+    return String(content || '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+  }
+
+  function parseTrainMetrics(content) {
+    const text = stripAnsi(content);
+    const progress = [];
+    const progressByIteration = new Map();
+    const progressRegex = /(?:Training progress:)?[^\r\n]*?(\d+)\s*\/\s*(\d+)[^\r\n]*?Loss=([0-9.eE+-]+),\s*Depth Loss=([0-9.eE+-]+)/g;
+    let match = null;
+    while ((match = progressRegex.exec(text)) !== null) {
+      const iteration = Number(match[1]);
+      const total = Number(match[2]);
+      const loss = Number(match[3]);
+      const depthLoss = Number(match[4]);
+      if (![iteration, total, loss, depthLoss].every(Number.isFinite)) continue;
+      progressByIteration.set(iteration, {
+        iteration,
+        total_iterations: total,
+        loss,
+        depth_loss: depthLoss
+      });
+    }
+    progress.push(...progressByIteration.values());
+    progress.sort((a, b) => a.iteration - b.iteration);
+
+    const evaluations = [];
+    const evalRegex = /\[ITER\s+(\d+)\]\s+Evaluating\s+([A-Za-z0-9_-]+):\s+L1\s+([0-9.eE+-]+)\s+PSNR\s+([0-9.eE+-]+)/g;
+    while ((match = evalRegex.exec(text)) !== null) {
+      const iteration = Number(match[1]);
+      const l1 = Number(match[3]);
+      const psnr = Number(match[4]);
+      if (![iteration, l1, psnr].every(Number.isFinite)) continue;
+      evaluations.push({
+        iteration,
+        split: match[2],
+        l1,
+        psnr
+      });
+    }
+
+    const initialPointsMatch = text.match(/Number of points at initialisation\s*:\s*(\d+)/);
+    return {
+      initial_points: initialPointsMatch ? Number(initialPointsMatch[1]) : null,
+      tensorboard_available: !/Tensorboard not available/i.test(text),
+      progress,
+      evaluations,
+      latest_progress: progress[progress.length - 1] || null,
+      latest_evaluation: evaluations[evaluations.length - 1] || null,
+      sample_count: progress.length + evaluations.length
+    };
+  }
+
+  async function readLocalFileTailBytes(filePath, maxBytes) {
+    if (!filePath) return '';
+    const stat = await safeStat(filePath);
+    if (!stat) return '';
+    if (!stat.size) return '';
+    const start = Math.max(0, stat.size - maxBytes);
+    const stream = fs.createReadStream(filePath, {
+      start,
+      end: Math.max(start, stat.size - 1),
+      encoding: 'utf8'
+    });
+    let content = '';
+    for await (const chunk of stream) {
+      content += chunk;
+    }
+    return content;
+  }
+
+  async function readTrainMetricsLog(maxBytes = 2 * 1024 * 1024) {
+    if (state.train.remote_run_path) {
+      const output = await execSsh(`tail -c ${Math.max(65536, maxBytes)} ${remoteQuote(`${state.train.remote_run_path}/train.log`)} 2>/dev/null || true`, 10000);
+      return { source: 'remote', content: output };
+    }
+    if (state.train.local_log_path) {
+      return {
+        source: 'local',
+        content: await readLocalFileTailBytes(state.train.local_log_path, maxBytes)
+      };
+    }
+    return { source: 'none', content: '' };
+  }
+
   void ensureRuntimeDirs()
     .then(loadStateFromDisk)
     .then(() => persistState())
@@ -4148,6 +4249,33 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       return res.status(400).json({
         ok: false,
         error: error.message || 'three_dgs_train_start_failed'
+      });
+    }
+  });
+
+  app.get('/api/three-dgs/train/metrics', requireThreeDgsAuth, async (req, res) => {
+    try {
+      const maxBytes = Math.max(65536, Math.min(8 * 1024 * 1024, Number(req.query.max_bytes || 2 * 1024 * 1024)));
+      const { source, content } = await readTrainMetricsLog(maxBytes);
+      const metrics = parseTrainMetrics(content);
+      return res.json({
+        ok: true,
+        source,
+        run_id: state.train.run_id || null,
+        remote_run_path: state.train.remote_run_path || null,
+        train: {
+          phase: state.train.phase,
+          running: Boolean(state.train.running),
+          iterations: state.train.iterations || null,
+          resolution: state.train.resolution || null,
+          gpu: state.train.gpu || null
+        },
+        metrics
+      });
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        error: error.message || 'three_dgs_train_metrics_failed'
       });
     }
   });
