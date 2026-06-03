@@ -636,6 +636,22 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return normalizeVector([rotation[2][0], rotation[2][1], rotation[2][2]]);
   }
 
+  function viewerLookDistanceFromExtent(extent) {
+    const spanX = Math.abs(extent.max_x - extent.min_x);
+    const spanY = Math.abs(extent.max_y - extent.min_y);
+    const spanZ = Math.abs(extent.max_z - extent.min_z);
+    return Math.max(2, Math.min(12, Math.hypot(spanX, spanY, spanZ) * 0.18));
+  }
+
+  function cameraOpticalTarget(frame, lookDistance) {
+    const forward = cameraForwardFromQvec(frame.qvec);
+    return [
+      frame.position[0] + forward[0] * lookDistance,
+      frame.position[1] + forward[1] * lookDistance,
+      frame.position[2] + forward[2] * lookDistance
+    ];
+  }
+
   function sampleFrameIndices(frameCount, maxKeyframes) {
     if (frameCount <= 0) return [];
     const limit = Math.max(2, Math.min(frameCount, maxKeyframes));
@@ -655,10 +671,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     if (indices.length < 2) {
       return null;
     }
-    const spanX = Math.abs(extent.max_x - extent.min_x);
-    const spanY = Math.abs(extent.max_y - extent.min_y);
-    const spanZ = Math.abs(extent.max_z - extent.min_z);
-    const lookDistance = Math.max(2, Math.min(12, Math.hypot(spanX, spanY, spanZ) * 0.18));
+    const lookDistance = viewerLookDistanceFromExtent(extent);
     const duration = Math.max(12, Math.min(45, frames.length / 8));
     const times = indices.map((_, index) => (index / Math.max(1, indices.length - 1)) * duration);
     const positions = [];
@@ -668,18 +681,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     for (const frameIndex of indices) {
       const frame = frames[frameIndex];
       const position = frame.position;
-      const before = frames[Math.max(0, frameIndex - 2)]?.position || position;
-      const after = frames[Math.min(frames.length - 1, frameIndex + 2)]?.position || position;
-      const tangent = normalizeVector([
-        after[0] - before[0],
-        after[1] - before[1],
-        after[2] - before[2]
-      ], cameraForwardFromQvec(frame.qvec));
-      const target = [
-        position[0] + tangent[0] * lookDistance,
-        position[1] + tangent[1] * lookDistance,
-        position[2] + tangent[2] * lookDistance
-      ];
+      const target = cameraOpticalTarget(frame, lookDistance);
       positions.push(...roundViewerVector(position));
       targets.push(...roundViewerVector(target));
       fovs.push(fov);
@@ -725,6 +727,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       (extent.min_z + extent.max_z) / 2
     ];
 
+    const firstFrame = frames[0];
+    const lookDistance = viewerLookDistanceFromExtent(extent);
+    const firstCameraTarget = cameraOpticalTarget(firstFrame, lookDistance);
     const start = positions[0];
     const end = positions[positions.length - 1];
     let directionX = end[0] - start[0];
@@ -748,15 +753,19 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const height = Math.max(3, distance * 0.35, spanZ * 2);
 
     return {
-      position: roundViewerVector([
-        target[0] + sideX * distance,
-        target[1] + sideY * distance,
-        target[2] + height
-      ]),
-      target: roundViewerVector(target),
+      position: roundViewerVector(firstFrame.position),
+      target: roundViewerVector(firstCameraTarget),
       fov: 68,
       frame_count: frames.length,
       anim_track: makeVehicleTrajectoryTrack(frames, extent, 68),
+      overview_camera: {
+        position: roundViewerVector([
+          target[0] + sideX * distance,
+          target[1] + sideY * distance,
+          target[2] + height
+        ]),
+        target: roundViewerVector(target)
+      },
       extent: {
         min_x: roundViewerNumber(extent.min_x),
         max_x: roundViewerNumber(extent.max_x),
@@ -1381,17 +1390,22 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     await fsp.appendFile(logPath, `[${new Date().toISOString()}] ${line}\n`, 'utf8');
   }
 
-  function createVehicleUploadTicket({ vehicleId, kind, fileName }) {
+  function createVehicleUploadTicket({ vehicleId, kind, fileName, targetPath = null, staging = false }) {
     const token = crypto.randomBytes(24).toString('hex');
     const ext = path.extname(fileName).toLowerCase() || '.pcd';
-    const targetPath = kind === 'pointcloud' ? `${pointcloudUploadPath}${ext}` : `${imagePoseUploadPath}${ext}`;
+    const resolvedTargetPath = targetPath
+      ? path.resolve(targetPath)
+      : kind === 'pointcloud'
+        ? `${pointcloudUploadPath}${ext}`
+        : `${imagePoseUploadPath}${ext}`;
     const expiresAtMs = Date.now() + vehicleUploadTokenTtlMs;
     const ticket = {
       token,
       vehicle_id: vehicleId,
       kind,
       file_name: fileName,
-      target_path: targetPath,
+      target_path: resolvedTargetPath,
+      staging: Boolean(staging),
       expires_at_ms: expiresAtMs,
       created_at_ms: Date.now()
     };
@@ -1416,6 +1430,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       kind: ticket.kind,
       file_name: ticket.file_name,
       target_path: ticket.target_path,
+      staging: Boolean(ticket.staging),
       expires_at_ms: ticket.expires_at_ms,
       upload_url: ticket.upload_url ? ticket.upload_url.replace(/\/[0-9a-f]{48}$/i, '/<redacted-token>') : null
     };
@@ -1446,6 +1461,258 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       size_bytes: stat.size || 0,
       updated_at_ms: stat.mtimeMs || Date.now()
     };
+  }
+
+  async function listFilesRecursive(rootDir) {
+    const files = [];
+    async function visit(currentDir) {
+      const entries = await fsp.readdir(currentDir, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        const entryPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+          await visit(entryPath);
+        } else if (entry.isFile()) {
+          files.push(entryPath);
+        }
+      }
+    }
+    await visit(rootDir);
+    return files;
+  }
+
+  async function findFirstNamedFile(rootDir, names) {
+    const wanted = new Set(names);
+    const files = await listFilesRecursive(rootDir);
+    return files.find((filePath) => wanted.has(path.basename(filePath))) || null;
+  }
+
+  async function readJsonlFile(filePath) {
+    const text = await fsp.readFile(filePath, 'utf8');
+    return text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((item) => item && typeof item === 'object' && !Array.isArray(item));
+  }
+
+  async function readImagePoseRecords(rootDir) {
+    const manifestPath = await findFirstNamedFile(rootDir, ['manifest.json']);
+    const framesPath = await findFirstNamedFile(rootDir, ['frames.jsonl']);
+    let manifest = {};
+    let records = [];
+    if (manifestPath) {
+      manifest = JSON.parse(await fsp.readFile(manifestPath, 'utf8'));
+      for (const key of ['records', 'frames', 'frame_records']) {
+        if (Array.isArray(manifest[key])) {
+          records = manifest[key].filter((item) => item && typeof item === 'object' && !Array.isArray(item));
+          break;
+        }
+      }
+    }
+    if (!records.length && framesPath) {
+      records = await readJsonlFile(framesPath);
+    }
+    if (!records.length) {
+      const jsonlFiles = (await listFilesRecursive(rootDir)).filter((filePath) => filePath.toLowerCase().endsWith('.jsonl'));
+      for (const filePath of jsonlFiles) {
+        records = await readJsonlFile(filePath);
+        if (records.length) break;
+      }
+    }
+    return { manifest, records };
+  }
+
+  function cameraIdFromFrameRecord(record, manifest, fallbackCamera = '') {
+    const image = record?.image && typeof record.image === 'object' ? record.image : {};
+    const calibration = record?.camera_calibration && typeof record.camera_calibration === 'object' ? record.camera_calibration : {};
+    const candidates = [
+      record?.camera,
+      record?.camera_id,
+      record?.camera_name,
+      record?.sensor,
+      record?.sensor_id,
+      image.camera,
+      image.camera_id,
+      image.camera_name,
+      calibration.camera,
+      calibration.camera_id,
+      calibration.camera_name,
+      manifest?.camera,
+      manifest?.camera_id,
+      manifest?.camera_name,
+      manifest?.camera_calibration?.camera_id,
+      fallbackCamera
+    ];
+    for (const value of candidates) {
+      if (value && typeof value === 'object') {
+        const nested = value.camera || value.camera_id || value.id || value.name;
+        if (typeof nested === 'string' && nested.trim()) return nested.trim();
+      }
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    const topic = String(image.topic || image.image_topic || image.camera_topic || record?.topic || record?.image_topic || '');
+    const known = configuredCameraIds.find((camera) => topic.includes(camera));
+    if (known) return known;
+    const imagePath = String(image.relative_path || image.path || image.file_path || record?.image_path || record?.path || record?.file_path || '');
+    const fromPath = configuredCameraIds.find((camera) => imagePath.includes(camera));
+    return fromPath || fallbackCamera || 'unknown_camera';
+  }
+
+  function imagePathCandidatesFromRecord(record) {
+    const image = record?.image && typeof record.image === 'object' ? record.image : {};
+    return [
+      record?.image_path,
+      record?.path,
+      record?.file_path,
+      record?.filename,
+      image.path,
+      image.file_path,
+      image.relative_path,
+      image.name
+    ].filter(Boolean).map((value) => String(value));
+  }
+
+  async function resolveRecordImagePath(record, rootDir, filesByBasename) {
+    for (const candidate of imagePathCandidatesFromRecord(record)) {
+      const direct = path.resolve(candidate);
+      if (direct.startsWith(`${path.resolve(rootDir)}${path.sep}`) && await safeStat(direct)) {
+        return direct;
+      }
+      const relative = path.resolve(path.join(rootDir, candidate));
+      if (relative.startsWith(`${path.resolve(rootDir)}${path.sep}`) && await safeStat(relative)) {
+        return relative;
+      }
+      const byName = filesByBasename.get(path.basename(candidate));
+      if (byName) return byName;
+    }
+    return null;
+  }
+
+  async function extractImagePoseArchive(sourcePath, targetDir) {
+    await fsp.mkdir(targetDir, { recursive: true });
+    const tarResult = await execFileAsync('tar', ['-xf', sourcePath, '-C', targetDir], {
+      timeout: Number(process.env.THREE_DGS_ARCHIVE_EXTRACT_TIMEOUT_MS || 300000),
+      maxBuffer: 1024 * 1024
+    }).then(() => true).catch(() => false);
+    if (tarResult) return;
+    await execFileAsync('unzip', ['-q', sourcePath, '-d', targetDir], {
+      timeout: Number(process.env.THREE_DGS_ARCHIVE_EXTRACT_TIMEOUT_MS || 300000),
+      maxBuffer: 1024 * 1024
+    });
+  }
+
+  async function mergeImagePosePackages({ vehicleId, packageInfos, cameras }) {
+    if (!packageInfos.length) {
+      throw new Error('image_pose_package_empty');
+    }
+    if (packageInfos.length === 1) {
+      return packageInfos[0].info;
+    }
+
+    await ensureRuntimeDirs();
+    const mergeRoot = await fsp.mkdtemp(path.join(runtimeRoot, 'image-pose-merge-'));
+    const combinedRoot = path.join(mergeRoot, 'combined');
+    const combinedImages = path.join(combinedRoot, 'images');
+    await fsp.mkdir(combinedImages, { recursive: true });
+    const combinedRecords = [];
+    const calibrationByCamera = {};
+    const sourcePackages = [];
+    let imageIndex = 0;
+
+    try {
+      for (const [packageIndex, packageItem] of packageInfos.entries()) {
+        const camera = packageItem.camera || cameras[packageIndex] || '';
+        const extractRoot = path.join(mergeRoot, `part-${packageIndex}`);
+        await extractImagePoseArchive(packageItem.info.path, extractRoot);
+        const { manifest, records } = await readImagePoseRecords(extractRoot);
+        const allFiles = await listFilesRecursive(extractRoot);
+        const filesByBasename = new Map();
+        for (const filePath of allFiles) {
+          if (!filesByBasename.has(path.basename(filePath))) {
+            filesByBasename.set(path.basename(filePath), filePath);
+          }
+        }
+        sourcePackages.push({
+          camera,
+          name: packageItem.info.name,
+          size_bytes: packageItem.info.size_bytes,
+          frame_count: records.length
+        });
+        for (const record of records) {
+          const sourceImage = await resolveRecordImagePath(record, extractRoot, filesByBasename);
+          if (!sourceImage) continue;
+          const cameraId = cameraIdFromFrameRecord(record, manifest, camera);
+          const calibration = record?.camera_calibration || manifest?.camera_calibration || manifest?.calibration?.cameras?.[cameraId] || manifest?.cameras?.[cameraId] || null;
+          if (calibration && typeof calibration === 'object') {
+            calibrationByCamera[cameraId] = calibration;
+          }
+          const ext = path.extname(sourceImage).toLowerCase() || '.jpg';
+          const outName = `frame_${String(imageIndex + 1).padStart(6, '0')}_${sanitizeFileName(cameraId, 'camera')}${ext}`;
+          const outRelativePath = `images/${outName}`;
+          await fsp.copyFile(sourceImage, path.join(combinedImages, outName));
+          const nextRecord = JSON.parse(JSON.stringify(record));
+          nextRecord.camera = cameraId;
+          nextRecord.camera_id = cameraId;
+          if (calibration && typeof calibration === 'object' && (!nextRecord.camera_calibration || typeof nextRecord.camera_calibration !== 'object')) {
+            nextRecord.camera_calibration = calibration;
+          }
+          const nextImage = nextRecord.image && typeof nextRecord.image === 'object' ? { ...nextRecord.image } : {};
+          nextImage.camera = cameraId;
+          nextImage.camera_id = cameraId;
+          nextImage.path = outRelativePath;
+          nextImage.file_path = outRelativePath;
+          nextImage.relative_path = outRelativePath;
+          nextImage.name = outName;
+          nextRecord.image = nextImage;
+          nextRecord.image_path = outRelativePath;
+          combinedRecords.push(nextRecord);
+          imageIndex += 1;
+        }
+      }
+
+      if (!combinedRecords.length) {
+        throw new Error('image_pose_merge_no_records');
+      }
+
+      const combinedManifest = {
+        vehicle_id: vehicleId,
+        generated_at_ms: Date.now(),
+        source: 'cloud_control_multi_camera_merge',
+        source_packages: sourcePackages,
+        camera_ids: Object.keys(calibrationByCamera),
+        cameras: calibrationByCamera,
+        calibration: {
+          cameras: calibrationByCamera
+        },
+        frames: combinedRecords
+      };
+      await fsp.writeFile(path.join(combinedRoot, 'manifest.json'), JSON.stringify(combinedManifest, null, 2), 'utf8');
+      await fsp.writeFile(
+        path.join(combinedRoot, 'frames.jsonl'),
+        combinedRecords.map((record) => JSON.stringify(record)).join('\n') + '\n',
+        'utf8'
+      );
+
+      const finalPath = `${imagePoseUploadPath}.tar.gz`;
+      await fsp.rm(finalPath, { force: true });
+      await execFileAsync('tar', ['-czf', finalPath, '-C', combinedRoot, '.'], {
+        timeout: Number(process.env.THREE_DGS_ARCHIVE_CREATE_TIMEOUT_MS || 300000),
+        maxBuffer: 1024 * 1024
+      });
+      const stat = await safeStat(finalPath);
+      return {
+        name: `image_pose_${vehicleId}_multi_camera.tar.gz`,
+        path: finalPath,
+        size_bytes: stat?.size || 0,
+        updated_at_ms: stat?.mtimeMs || Date.now(),
+        merged_camera_count: Object.keys(calibrationByCamera).length,
+        merged_frame_count: combinedRecords.length,
+        source_packages: sourcePackages
+      };
+    } finally {
+      await fsp.rm(mergeRoot, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   function formatBytesForStatus(bytes) {
@@ -1513,6 +1780,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     await ensureRuntimeDirs();
     const targetPath = ticket.target_path;
     const partPath = `${targetPath}.part`;
+    await fsp.mkdir(path.dirname(targetPath), { recursive: true });
     await fsp.rm(partPath, { force: true });
     await fsp.rm(targetPath, { force: true });
 
@@ -2612,6 +2880,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         total_bytes: contentLength || uploadInfo.size_bytes,
         progress_pct: 100
       });
+      if (ticket.staging) {
+        return res.json({ ok: true, kind, file: uploadInfo, staging: true });
+      }
       if (kind === 'pointcloud') {
         mergeVehicleData({
           vehicle_id: ticket.vehicle_id,
