@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -82,7 +83,6 @@ def find_first(root: Path, names: tuple[str, ...]) -> Path | None:
 
 def load_records(root: Path) -> tuple[dict, list[dict]]:
     manifest_path = find_first(root, ("manifest.json",))
-    frames_path = find_first(root, ("frames.jsonl",))
     manifest: dict = {}
     records: list[dict] = []
 
@@ -91,16 +91,39 @@ def load_records(root: Path) -> tuple[dict, list[dict]]:
         for key in ("records", "frames", "frame_records"):
             value = manifest.get(key)
             if isinstance(value, list):
-                records = [item for item in value if isinstance(item, dict)]
+                records = []
+                for item in value:
+                    if isinstance(item, dict):
+                        next_item = dict(item)
+                        next_item["__manifest"] = manifest
+                        next_item["__record_root"] = str(manifest_path.parent)
+                        records.append(next_item)
                 break
 
-    if not records and frames_path:
-        records = load_jsonl(frames_path)
+    if not records:
+        for item in sorted(root.rglob("frames.jsonl")):
+            local_manifest_path = item.parent / "manifest.json"
+            local_manifest = load_json(local_manifest_path) if local_manifest_path.exists() else manifest
+            camera_hint = item.parent.name if item.parent.name.startswith("camera") else ""
+            for record in load_jsonl(item):
+                next_item = dict(record)
+                next_item["__manifest"] = local_manifest
+                next_item["__record_root"] = str(item.parent)
+                if camera_hint and not any(next_item.get(key) for key in ("camera", "camera_id", "camera_name")):
+                    next_item["camera_id"] = camera_hint
+                records.append(next_item)
 
     if not records:
-        jsonl_files = sorted(root.rglob("*.jsonl"))
-        for item in jsonl_files:
-            records = load_jsonl(item)
+        for item in sorted(root.rglob("*.jsonl")):
+            if item.name == "frames.jsonl":
+                continue
+            local_manifest_path = item.parent / "manifest.json"
+            local_manifest = load_json(local_manifest_path) if local_manifest_path.exists() else manifest
+            for record in load_jsonl(item):
+                next_item = dict(record)
+                next_item["__manifest"] = local_manifest
+                next_item["__record_root"] = str(item.parent)
+                records.append(next_item)
             if records:
                 break
 
@@ -127,6 +150,85 @@ def first_key(sources: list[object], keys: tuple[str, ...]) -> object | None:
             if key in source and source[key] is not None:
                 return source[key]
     return None
+
+
+def record_manifest(record: dict, fallback: dict) -> dict:
+    value = record.get("__manifest")
+    return value if isinstance(value, dict) else fallback
+
+
+def sanitize_component(value: object, fallback: str = "item") -> str:
+    text = str(value or fallback).strip()
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in text)
+    return cleaned.strip("_") or fallback
+
+
+def scalar_timestamp(value: object) -> str | None:
+    if isinstance(value, (int, float, str)):
+        text = str(value).strip()
+        return text or None
+    if not isinstance(value, dict):
+        return None
+    sec = first_key([value], ("sec", "secs", "seconds", "stamp_sec"))
+    nsec = first_key([value], ("nsec", "nsecs", "nanosec", "nanosecs", "nanoseconds", "stamp_nsec"))
+    if sec is not None and nsec is not None:
+        return f"{sec}_{nsec}"
+    for key in ("timestamp", "time", "stamp", "value"):
+        nested = value.get(key)
+        nested_value = scalar_timestamp(nested)
+        if nested_value:
+            return nested_value
+    return None
+
+
+def record_group_key(record: dict, image_id: int) -> str:
+    image_obj = record.get("image") if isinstance(record.get("image"), dict) else {}
+    pose_obj = record.get("pose") if isinstance(record.get("pose"), dict) else {}
+    ndt_pose_obj = record.get("ndt_pose") if isinstance(record.get("ndt_pose"), dict) else {}
+    matched_pose_obj = record.get("matched_pose") if isinstance(record.get("matched_pose"), dict) else {}
+    sources = [
+        record,
+        image_obj,
+        pose_obj,
+        ndt_pose_obj,
+        matched_pose_obj,
+        nested_get(record, "pose", "header", "stamp"),
+        nested_get(record, "ndt_pose", "header", "stamp"),
+        nested_get(record, "matched_pose", "header", "stamp"),
+    ]
+    raw = first_key(
+        sources,
+        (
+            "capture_id",
+            "capture_key",
+            "keyframe_id",
+            "keyframe_index",
+            "group_id",
+            "trigger_id",
+            "pose_id",
+            "pose_timestamp_ns",
+            "pose_timestamp",
+            "ndt_pose_timestamp",
+            "matched_pose_timestamp",
+            "pose_stamp",
+            "pose_time",
+        ),
+    )
+    timestamp = scalar_timestamp(raw)
+    if timestamp:
+        return f"k{timestamp}"
+
+    lidar_pose = record.get("T_map_lidar")
+    if lidar_pose is not None:
+        try:
+            flat = np.asarray(lidar_pose, dtype=float).reshape(-1)
+            rounded = [round(float(item), 3) for item in flat]
+            digest = hashlib.sha1(json.dumps(rounded, separators=(",", ":")).encode("utf-8")).hexdigest()[:12]
+            return f"p{digest}"
+        except Exception:
+            pass
+
+    return f"i{image_id:06d}"
 
 
 def matrix_from_record(record: dict) -> np.ndarray:
@@ -164,7 +266,10 @@ def image_path_from_record(record: dict, root: Path) -> Path:
         image_obj.get("relative_path"),
         image_obj.get("name"),
     ]
-    images_dir = find_images_dir(root)
+    roots = [root]
+    record_root = record.get("__record_root")
+    if isinstance(record_root, str) and record_root:
+        roots.insert(0, Path(record_root))
 
     for raw in candidates:
         if not raw:
@@ -173,12 +278,14 @@ def image_path_from_record(record: dict, root: Path) -> Path:
         direct = Path(value)
         if direct.exists():
             return direct
-        rel = root / value
-        if rel.exists():
-            return rel
-        by_name = images_dir / Path(value).name if images_dir else None
-        if by_name and by_name.exists():
-            return by_name
+        for base in roots:
+            rel = base / value
+            if rel.exists():
+                return rel
+            images_dir = find_images_dir(base)
+            by_name = images_dir / Path(value).name if images_dir else None
+            if by_name and by_name.exists():
+                return by_name
 
     raise ValueError("record missing image path")
 
@@ -453,9 +560,18 @@ def prepare_scene(args: argparse.Namespace) -> dict:
         copied_count = 0
 
         for image_id, record in enumerate(records, start=1):
+            local_manifest = record_manifest(record, manifest)
             source_image = image_path_from_record(record, image_root)
-            params = camera_params(record, manifest, source_image)
-            out_name = f"frame_{image_id:06d}{source_image.suffix.lower() or '.jpg'}"
+            camera_name = record_camera_id(record, local_manifest)
+            group_name = sanitize_component(record_group_key(record, image_id), "group").replace("_", "-")
+            params = camera_params(record, local_manifest, source_image)
+            out_name = (
+                f"frame_{image_id:06d}_"
+                f"{sanitize_component(camera_name, 'camera')}_"
+                f"g{group_name}_"
+                f"{sanitize_component(source_image.stem, 'image')}"
+                f"{source_image.suffix.lower() or '.jpg'}"
+            )
             output_image = images_out / out_name
             width, height, fx, fy, cx, cy = undistort_or_copy(
                 source_image,
@@ -464,7 +580,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                 args.undistort.lower() != "false",
             )
             camera_key = (
-                record_camera_id(record, manifest),
+                camera_name,
                 width,
                 height,
                 round(fx, 8),

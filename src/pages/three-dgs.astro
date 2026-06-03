@@ -66,7 +66,7 @@ import SiteLayout from "../components/SiteLayout.astro";
               </div>
               <label class="three-dgs-field">
                 <span>最小平移 m</span>
-                <input id="three-dgs-min-translation" type="number" min="0.05" step="0.05" value="0.5" />
+                <input id="three-dgs-min-translation" type="number" min="0.05" step="0.05" value="0.1" />
               </label>
               <label class="three-dgs-field">
                 <span>最小旋转 deg</span>
@@ -147,7 +147,7 @@ import SiteLayout from "../components/SiteLayout.astro";
               <div class="three-dgs-dropzone" data-kind="image-pose">
                 <p class="three-dgs-dropzone-title">云端图像-位姿</p>
                 <p id="three-dgs-image-pose-name" class="three-dgs-dropzone-copy">等待上传当前采集 session</p>
-                <input id="three-dgs-image-pose-input" type="file" accept=".zip,.tar,.tgz,.gz,.json,.jsonl" hidden />
+                <input id="three-dgs-image-pose-input" type="file" accept=".zip,.tar,.tar.gz,.tgz,.gz,.json,.jsonl" hidden />
                 <button id="three-dgs-image-pose-button" class="three-dgs-button three-dgs-button--ghost" type="button">手动选择图像包</button>
               </div>
             </div>
@@ -213,8 +213,8 @@ import SiteLayout from "../components/SiteLayout.astro";
                 <p id="three-dgs-dataset-map-hint">点云地图和相机轨迹会显示在这里。</p>
               </div>
               <div class="three-dgs-data-photo">
-                <div id="three-dgs-dataset-empty" class="three-dgs-data-empty">点击轨迹点查看对应照片。</div>
-                <img id="three-dgs-dataset-image" alt="轨迹点对应照片" hidden />
+                <div id="three-dgs-dataset-empty" class="three-dgs-data-empty">点击轨迹或用上下键查看候选帧。</div>
+                <div id="three-dgs-dataset-images" class="three-dgs-data-images" hidden></div>
                 <div id="three-dgs-dataset-frame-meta" class="three-dgs-data-meta">未选择关键帧。</div>
               </div>
             </div>
@@ -253,7 +253,7 @@ import SiteLayout from "../components/SiteLayout.astro";
             </label>
             <label class="three-dgs-field">
               <span>训练迭代</span>
-              <input id="three-dgs-iterations" type="number" min="100" step="100" value="7000" />
+              <input id="three-dgs-iterations" type="number" min="100" step="100" value="10000" />
             </label>
             <label class="three-dgs-field">
               <span>图像缩放 -r</span>
@@ -364,7 +364,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   const datasetCanvas = el("three-dgs-dataset-canvas");
   const datasetCheckStatus = el("three-dgs-data-check-status");
   const datasetMapHint = el("three-dgs-dataset-map-hint");
-  const datasetImage = el("three-dgs-dataset-image");
+  const datasetImages = el("three-dgs-dataset-images");
   const datasetEmpty = el("three-dgs-dataset-empty");
   const datasetFrameMeta = el("three-dgs-dataset-frame-meta");
 
@@ -517,10 +517,29 @@ import SiteLayout from "../components/SiteLayout.astro";
     return result;
   }
 
+  function datasetGroupsFromInspection() {
+    const groups = Array.isArray(datasetInspection?.trajectory?.groups) ? datasetInspection.trajectory.groups : [];
+    if (groups.length) {
+      return groups.map((group, index) => ({
+        ...group,
+        index,
+        frames: Array.isArray(group.frames) ? group.frames : []
+      }));
+    }
+    const frames = Array.isArray(datasetInspection?.trajectory?.frames) ? datasetInspection.trajectory.frames : [];
+    return frames.map((frame, index) => ({
+      key: frame.capture_key || String(frame.image_id || index),
+      index,
+      image_id: frame.image_id,
+      position: frame.position,
+      frames: [frame]
+    }));
+  }
+
   function drawDatasetInspection() {
     if (!datasetCanvas || !datasetInspection) return;
     const points = Array.isArray(datasetInspection.pointcloud?.points) ? datasetInspection.pointcloud.points : [];
-    const frames = Array.isArray(datasetInspection.trajectory?.frames) ? datasetInspection.trajectory.frames : [];
+    const groups = datasetGroupsFromInspection();
     const rect = datasetCanvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     const width = Math.max(420, Math.floor(rect.width || datasetCanvas.clientWidth || 760));
@@ -533,7 +552,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     ctx.fillRect(0, 0, width, height);
 
     datasetHitPoints = [];
-    if (!points.length && !frames.length) {
+    if (!points.length && !groups.length) {
       datasetMapHint.textContent = "当前数据集没有可显示的点云或轨迹。";
       return;
     }
@@ -566,47 +585,70 @@ import SiteLayout from "../components/SiteLayout.astro";
       ctx.fillRect(screen.x, screen.y, 1.4, 1.4);
     }
 
-    if (frames.length) {
+    if (groups.length) {
       ctx.lineWidth = 2;
       ctx.strokeStyle = "rgba(45, 212, 191, 0.9)";
       ctx.beginPath();
-      frames.forEach((frame, index) => {
-        const screen = project(frame.position);
+      groups.forEach((group, index) => {
+        const screen = project(group.position);
         if (index === 0) ctx.moveTo(screen.x, screen.y);
         else ctx.lineTo(screen.x, screen.y);
       });
       ctx.stroke();
 
-      frames.forEach((frame, index) => {
-        const screen = project(frame.position);
+      groups.forEach((group, index) => {
+        const screen = project(group.position);
         datasetHitPoints.push({ ...screen, index });
-        const selected = index === selectedDatasetFrameIndex;
-        ctx.beginPath();
-        ctx.arc(screen.x, screen.y, selected ? 6 : 3.5, 0, Math.PI * 2);
-        ctx.fillStyle = selected ? "#fde047" : "#67e8f9";
-        ctx.fill();
-        ctx.lineWidth = selected ? 2 : 1;
-        ctx.strokeStyle = selected ? "rgba(254, 240, 138, 0.9)" : "rgba(2, 6, 23, 0.8)";
-        ctx.stroke();
       });
+
+      const selectedGroup = groups[selectedDatasetFrameIndex] || groups[0];
+      if (selectedGroup?.position) {
+        const screen = project(selectedGroup.position);
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = "#fde047";
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(2, 6, 23, 0.95)";
+        ctx.stroke();
+      }
     }
 
-    datasetMapHint.textContent = `${formatCount(points.length)} 个采样点 · ${formatCount(frames.length)} 个轨迹点，点击轨迹点查看照片。`;
+    datasetMapHint.textContent = `${formatCount(points.length)} 个点云采样 · ${formatCount(groups.length)} 个候选帧，点击轨迹或用上下键翻图。`;
   }
 
   function selectDatasetFrame(index) {
-    const frames = Array.isArray(datasetInspection?.trajectory?.frames) ? datasetInspection.trajectory.frames : [];
-    const frame = frames[index];
-    if (!frame) return;
+    const groups = datasetGroupsFromInspection();
+    const group = groups[index];
+    if (!group) return;
     selectedDatasetFrameIndex = index;
-    if (datasetImage) {
-      datasetImage.src = `${frame.image_url}?v=${encodeURIComponent(datasetInspection?.dataset?.scene_name || "")}`;
-      datasetImage.hidden = false;
+    const frames = [...(Array.isArray(group.frames) ? group.frames : [])].sort((a, b) => {
+      const cameraOrder = ["camera1", "camera2", "camera3", "camera4"];
+      const left = cameraOrder.indexOf(a.camera_name);
+      const right = cameraOrder.indexOf(b.camera_name);
+      return (left < 0 ? 99 : left) - (right < 0 ? 99 : right);
+    });
+    if (datasetImages) {
+      datasetImages.innerHTML = "";
+      frames.forEach((frame) => {
+        const card = document.createElement("div");
+        card.className = "three-dgs-data-image-card";
+        const label = document.createElement("span");
+        label.textContent = `${frame.camera_name || `camera ${frame.camera_id || "-"}`} · #${frame.image_id}`;
+        const image = document.createElement("img");
+        image.src = `${frame.image_url}?v=${encodeURIComponent(datasetInspection?.dataset?.scene_name || "")}`;
+        image.alt = frame.name || "3DGS 采集图像";
+        image.loading = "lazy";
+        card.append(label, image);
+        datasetImages.appendChild(card);
+      });
+      datasetImages.hidden = frames.length === 0;
     }
-    if (datasetEmpty) datasetEmpty.hidden = true;
+    if (datasetEmpty) datasetEmpty.hidden = frames.length > 0;
     if (datasetFrameMeta) {
-      const pos = Array.isArray(frame.position) ? frame.position.map((value) => Number(value).toFixed(2)).join(", ") : "-";
-      datasetFrameMeta.textContent = `#${frame.image_id} · ${frame.name} · camera ${frame.camera_id} · 位置 [${pos}]`;
+      const pos = Array.isArray(group.position) ? group.position.map((value) => Number(value).toFixed(2)).join(", ") : "-";
+      const cameras = frames.map((frame) => frame.camera_name || `camera ${frame.camera_id || "-"}`).join("、") || "-";
+      datasetFrameMeta.textContent = `候选 ${index + 1}/${groups.length} · ${frames.length} 路：${cameras} · 位置 [${pos}]`;
     }
     drawDatasetInspection();
   }
@@ -644,7 +686,7 @@ import SiteLayout from "../components/SiteLayout.astro";
       ? `检查完成：${warnings.join("；")}`
       : `检查完成：${datasetInspection.dataset?.scene_name || "当前数据集"}`;
     drawDatasetInspection();
-    if (datasetInspection.trajectory?.frames?.length) {
+    if (datasetGroupsFromInspection().length) {
       selectDatasetFrame(0);
     }
   }
@@ -1046,7 +1088,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   function selectedVehiclePayload() {
     return {
       vehicle_id: currentVehicleId(),
-      min_translation_m: Number(el("three-dgs-min-translation").value || 0.5),
+      min_translation_m: Number(el("three-dgs-min-translation").value || 0.1),
       min_rotation_deg: Number(el("three-dgs-min-rotation").value || 10),
       min_interval_s: Number(el("three-dgs-min-interval").value || 0.2)
     };
@@ -1055,7 +1097,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   function trainPayload() {
     return {
       gpu: Number(el("three-dgs-gpu").value || 3),
-      iterations: Number(el("three-dgs-iterations").value || 7000),
+      iterations: Number(el("three-dgs-iterations").value || 10000),
       resolution: Number(el("three-dgs-resolution").value || 4)
     };
   }
@@ -1227,6 +1269,20 @@ import SiteLayout from "../components/SiteLayout.astro";
     if (best && best.distance <= 18) {
       selectDatasetFrame(best.index);
     }
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    const active = document.activeElement;
+    if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
+    if (active?.isContentEditable) return;
+    const groups = datasetGroupsFromInspection();
+    if (!groups.length) return;
+    event.preventDefault();
+    const current = selectedDatasetFrameIndex >= 0 ? selectedDatasetFrameIndex : 0;
+    const next = event.key === "ArrowDown"
+      ? Math.min(groups.length - 1, current + 1)
+      : Math.max(0, current - 1);
+    selectDatasetFrame(next);
   });
   window.addEventListener("resize", () => drawDatasetInspection());
 
@@ -1616,9 +1672,31 @@ import SiteLayout from "../components/SiteLayout.astro";
     align-content: start;
   }
 
-  .three-dgs-data-photo img {
+  .three-dgs-data-images {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .three-dgs-data-images[hidden] {
+    display: none;
+  }
+
+  .three-dgs-data-image-card {
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+  }
+
+  .three-dgs-data-image-card span {
+    color: #cbd5e1;
+    font-size: 0.82rem;
+    overflow-wrap: anywhere;
+  }
+
+  .three-dgs-data-image-card img {
     width: 100%;
-    max-height: 360px;
+    aspect-ratio: 16 / 9;
     object-fit: contain;
     border: 1px solid rgba(71, 85, 105, 0.5);
     border-radius: 8px;
@@ -1784,6 +1862,10 @@ import SiteLayout from "../components/SiteLayout.astro";
     .three-dgs-map-grid,
     .three-dgs-data-check-grid,
     .three-dgs-data-stats {
+      grid-template-columns: 1fr;
+    }
+
+    .three-dgs-data-images {
       grid-template-columns: 1fr;
     }
 
