@@ -577,7 +577,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return values.map(roundViewerNumber);
   }
 
-  function makeSuperSplatSettings(initialCamera, source = 'fallback') {
+  function makeSuperSplatSettings(initialCamera, source = 'fallback', overrides = {}) {
     return {
       version: 2,
       tonemapping: 'linear',
@@ -613,12 +613,98 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           }
         }
       ],
-      animTracks: [],
+      animTracks: Array.isArray(overrides.animTracks) ? overrides.animTracks : [],
       annotations: [],
-      startMode: 'default',
+      startMode: overrides.startMode || 'default',
       jgzj: {
         source,
         generated_at_ms: Date.now()
+      }
+    };
+  }
+
+  function normalizeVector(values, fallback = [1, 0, 0]) {
+    const length = Math.hypot(Number(values[0] || 0), Number(values[1] || 0), Number(values[2] || 0));
+    if (length < 0.001) {
+      return fallback;
+    }
+    return [values[0] / length, values[1] / length, values[2] / length];
+  }
+
+  function cameraForwardFromQvec(qvec) {
+    const rotation = qvecToRotmat(qvec);
+    return normalizeVector([rotation[2][0], rotation[2][1], rotation[2][2]]);
+  }
+
+  function sampleFrameIndices(frameCount, maxKeyframes) {
+    if (frameCount <= 0) return [];
+    const limit = Math.max(2, Math.min(frameCount, maxKeyframes));
+    if (frameCount <= limit) {
+      return new Array(frameCount).fill(0).map((_, index) => index);
+    }
+    const indices = [];
+    for (let index = 0; index < limit; index += 1) {
+      indices.push(Math.round((index / (limit - 1)) * (frameCount - 1)));
+    }
+    return [...new Set(indices)];
+  }
+
+  function makeVehicleTrajectoryTrack(frames, extent, fov = 68) {
+    const maxKeyframes = Number(process.env.THREE_DGS_VIEWER_ANIM_MAX_KEYFRAMES || 160);
+    const indices = sampleFrameIndices(frames.length, maxKeyframes);
+    if (indices.length < 2) {
+      return null;
+    }
+    const spanX = Math.abs(extent.max_x - extent.min_x);
+    const spanY = Math.abs(extent.max_y - extent.min_y);
+    const spanZ = Math.abs(extent.max_z - extent.min_z);
+    const lookDistance = Math.max(2, Math.min(12, Math.hypot(spanX, spanY, spanZ) * 0.18));
+    const duration = Math.max(12, Math.min(45, frames.length / 8));
+    const times = indices.map((_, index) => (index / Math.max(1, indices.length - 1)) * duration);
+    const positions = [];
+    const targets = [];
+    const fovs = [];
+
+    for (const frameIndex of indices) {
+      const frame = frames[frameIndex];
+      const position = frame.position;
+      const before = frames[Math.max(0, frameIndex - 2)]?.position || position;
+      const after = frames[Math.min(frames.length - 1, frameIndex + 2)]?.position || position;
+      const tangent = normalizeVector([
+        after[0] - before[0],
+        after[1] - before[1],
+        after[2] - before[2]
+      ], cameraForwardFromQvec(frame.qvec));
+      const target = [
+        position[0] + tangent[0] * lookDistance,
+        position[1] + tangent[1] * lookDistance,
+        position[2] + tangent[2] * lookDistance
+      ];
+      positions.push(...roundViewerVector(position));
+      targets.push(...roundViewerVector(target));
+      fovs.push(fov);
+    }
+
+    return {
+      name: 'vehicle-camera-trajectory',
+      duration: roundViewerNumber(duration),
+      frameRate: 1,
+      loopMode: 'none',
+      interpolation: 'spline',
+      smoothness: 0.35,
+      keyframes: {
+        times: times.map(roundViewerNumber),
+        values: {
+          position: positions,
+          target: targets,
+          fov: fovs
+        }
+      },
+      jgzj: {
+        source: 'colmap_images_txt',
+        original_frame_count: frames.length,
+        keyframe_count: indices.length,
+        look_distance_m: roundViewerNumber(lookDistance)
       }
     };
   }
@@ -670,6 +756,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       target: roundViewerVector(target),
       fov: 68,
       frame_count: frames.length,
+      anim_track: makeVehicleTrajectoryTrack(frames, extent, 68),
       extent: {
         min_x: roundViewerNumber(extent.min_x),
         max_x: roundViewerNumber(extent.max_x),
@@ -688,8 +775,12 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         position: camera.position,
         target: camera.target,
         fov: camera.fov
-      }, 'trajectory');
+      }, 'trajectory', camera.anim_track ? {
+        animTracks: [camera.anim_track],
+        startMode: 'animTrack'
+      } : {});
       settings.jgzj.frame_count = camera.frame_count;
+      settings.jgzj.animation = camera.anim_track?.jgzj || null;
       settings.jgzj.extent = camera.extent;
       return settings;
     } catch (error) {

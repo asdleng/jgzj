@@ -413,7 +413,7 @@ import SiteLayout from "../components/SiteLayout.astro";
       state.train?.run_id || ""
     ].join("-");
     const settingsUrl = `/api/three-dgs/viewer/settings?key=${encodeURIComponent(settingsKey)}`;
-    return `/supersplat-viewer/?webgl&content=${encodeURIComponent(pointCloudUrl)}&settings=${encodeURIComponent(settingsUrl)}`;
+    return `/supersplat-viewer/?webgl&noanim&content=${encodeURIComponent(pointCloudUrl)}&settings=${encodeURIComponent(settingsUrl)}`;
   }
 
   function currentVehicleId() {
