@@ -395,6 +395,179 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     };
   }
 
+  function parseAsciiPlyPreview(text, maxPoints) {
+    const lines = String(text || '').split(/\r?\n/);
+    const endHeaderIndex = lines.findIndex((line) => line.trim() === 'end_header');
+    if (endHeaderIndex < 0) {
+      throw new Error('ply_header_not_found');
+    }
+    const headerLines = lines.slice(0, endHeaderIndex + 1);
+    const formatLine = headerLines.find((line) => /^format\s+/i.test(line.trim()));
+    if (!/format\s+ascii\s+1\.0/i.test(formatLine || '')) {
+      throw new Error('unsupported_ply_format');
+    }
+    const vertexLine = headerLines.find((line) => /^element\s+vertex\s+/i.test(line.trim()));
+    const totalPoints = Number(vertexLine?.trim().split(/\s+/)[2] || 0);
+    const properties = [];
+    let inVertex = false;
+    for (const line of headerLines) {
+      const parts = line.trim().split(/\s+/);
+      if (parts[0] === 'element') {
+        inVertex = parts[1] === 'vertex';
+      } else if (inVertex && parts[0] === 'property' && parts.length >= 3) {
+        properties.push(parts[2]);
+      }
+    }
+    const xIndex = properties.indexOf('x');
+    const yIndex = properties.indexOf('y');
+    const zIndex = properties.indexOf('z');
+    if (xIndex < 0 || yIndex < 0 || zIndex < 0) {
+      throw new Error('ply_missing_xyz');
+    }
+    const stride = Math.max(1, Math.ceil(totalPoints / Math.max(1, maxPoints)));
+    const points = [];
+    const dataStart = endHeaderIndex + 1;
+    const dataEnd = totalPoints > 0 ? Math.min(lines.length, dataStart + totalPoints) : lines.length;
+    for (let lineIndex = dataStart; lineIndex < dataEnd; lineIndex += stride) {
+      const row = lines[lineIndex]?.trim();
+      if (!row) continue;
+      const values = row.split(/\s+/);
+      const x = Number(values[xIndex]);
+      const y = Number(values[yIndex]);
+      const z = Number(values[zIndex]);
+      if ([x, y, z].every(Number.isFinite)) {
+        points.push([x, y, z]);
+      }
+    }
+    return {
+      format: 'ply',
+      total_points: totalPoints,
+      sampled_points: points.length,
+      extent: summarizePreviewPoints(points),
+      points
+    };
+  }
+
+  function qvecToRotmat(qvec) {
+    const [qw, qx, qy, qz] = qvec.map(Number);
+    return [
+      [1 - 2 * qy * qy - 2 * qz * qz, 2 * qx * qy - 2 * qz * qw, 2 * qx * qz + 2 * qy * qw],
+      [2 * qx * qy + 2 * qz * qw, 1 - 2 * qx * qx - 2 * qz * qz, 2 * qy * qz - 2 * qx * qw],
+      [2 * qx * qz - 2 * qy * qw, 2 * qy * qz + 2 * qx * qw, 1 - 2 * qx * qx - 2 * qy * qy]
+    ];
+  }
+
+  function cameraCenterFromImagePose(qvec, tvec) {
+    const rotation = qvecToRotmat(qvec);
+    return [
+      -(rotation[0][0] * tvec[0] + rotation[1][0] * tvec[1] + rotation[2][0] * tvec[2]),
+      -(rotation[0][1] * tvec[0] + rotation[1][1] * tvec[1] + rotation[2][1] * tvec[2]),
+      -(rotation[0][2] * tvec[0] + rotation[1][2] * tvec[1] + rotation[2][2] * tvec[2])
+    ];
+  }
+
+  function parseColmapImagesText(text) {
+    const frames = [];
+    const lines = String(text || '').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const values = trimmed.split(/\s+/);
+      if (values.length < 10) continue;
+      const imageId = Number(values[0]);
+      const qvec = values.slice(1, 5).map(Number);
+      const tvec = values.slice(5, 8).map(Number);
+      const cameraId = Number(values[8]);
+      const name = values.slice(9).join(' ');
+      if (!Number.isFinite(imageId) || qvec.some((value) => !Number.isFinite(value)) || tvec.some((value) => !Number.isFinite(value)) || !name) {
+        continue;
+      }
+      frames.push({
+        image_id: imageId,
+        camera_id: cameraId,
+        name,
+        qvec,
+        tvec,
+        position: cameraCenterFromImagePose(qvec, tvec)
+      });
+    }
+    frames.sort((a, b) => a.image_id - b.image_id);
+    return frames;
+  }
+
+  function summarizeTrajectory(frames) {
+    let totalDistance = 0;
+    let maxGap = 0;
+    for (let index = 1; index < frames.length; index += 1) {
+      const previous = frames[index - 1].position;
+      const current = frames[index].position;
+      const gap = Math.hypot(current[0] - previous[0], current[1] - previous[1], current[2] - previous[2]);
+      totalDistance += gap;
+      maxGap = Math.max(maxGap, gap);
+    }
+    return {
+      frame_count: frames.length,
+      total_distance_m: totalDistance,
+      avg_gap_m: frames.length > 1 ? totalDistance / (frames.length - 1) : 0,
+      max_gap_m: maxGap,
+      extent: summarizePreviewPoints(frames.map((frame) => frame.position))
+    };
+  }
+
+  function resolveCurrentDatasetPath() {
+    if (!state.dataset.prepared || !state.dataset.path) {
+      const error = new Error('three_dgs_dataset_not_prepared');
+      error.status = 404;
+      throw error;
+    }
+    const datasetPath = path.resolve(state.dataset.path);
+    const root = path.resolve(datasetRoot);
+    if (datasetPath !== root && !datasetPath.startsWith(`${root}${path.sep}`)) {
+      const error = new Error('three_dgs_dataset_path_outside_runtime');
+      error.status = 400;
+      throw error;
+    }
+    return datasetPath;
+  }
+
+  async function buildDatasetInspection(maxPoints = 20000) {
+    const datasetPath = resolveCurrentDatasetPath();
+    const sparsePath = path.join(datasetPath, 'sparse', '0');
+    const imagesPath = path.join(sparsePath, 'images.txt');
+    const pointcloudPath = path.join(sparsePath, 'points3D.ply');
+    const imagesDir = path.join(datasetPath, 'images');
+    const [imagesText, pointcloudText, imageDirStat] = await Promise.all([
+      fsp.readFile(imagesPath, 'utf8'),
+      fsp.readFile(pointcloudPath, 'utf8'),
+      safeStat(imagesDir)
+    ]);
+    const frames = parseColmapImagesText(imagesText).map((frame) => ({
+      ...frame,
+      image_url: `/api/three-dgs/dataset/image/${encodeURIComponent(frame.name)}`
+    }));
+    const pointcloud = parseAsciiPlyPreview(pointcloudText, maxPoints);
+    const summary = state.dataset.summary || null;
+    return {
+      dataset: {
+        scene_name: state.dataset.scene_name,
+        path: datasetPath,
+        summary,
+        images_dir_exists: Boolean(imageDirStat)
+      },
+      pointcloud,
+      trajectory: {
+        summary: summarizeTrajectory(frames),
+        frames
+      },
+      checks: {
+        image_count_matches: !summary?.image_count || Number(summary.image_count) === frames.length,
+        point_count_matches: !summary?.point_count || Number(summary.point_count) === Number(pointcloud.total_points),
+        has_images_dir: Boolean(imageDirStat),
+        has_sparse_files: true
+      }
+    };
+  }
+
   function sanitizeSceneName(value) {
     return String(value || '')
       .trim()
@@ -2555,6 +2728,41 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         ok: false,
         error: error.message || 'pointcloud_preview_failed'
       });
+    }
+  });
+
+  app.get('/api/three-dgs/dataset/inspection', requireThreeDgsAuth, async (req, res) => {
+    try {
+      const maxPoints = Math.max(1000, Math.min(80000, Number(req.query.max_points || 22000)));
+      const inspection = await buildDatasetInspection(maxPoints);
+      return res.json({ ok: true, inspection });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'dataset_inspection_failed'
+      });
+    }
+  });
+
+  app.get('/api/three-dgs/dataset/image/:name', requireThreeDgsAuth, async (req, res) => {
+    try {
+      const datasetPath = resolveCurrentDatasetPath();
+      const rawName = String(req.params.name || '');
+      if (!rawName || rawName !== path.basename(rawName)) {
+        return res.status(400).send('invalid_image_name');
+      }
+      const imagesDir = path.resolve(datasetPath, 'images');
+      const imagePath = path.resolve(path.join(imagesDir, rawName));
+      if (!imagePath.startsWith(`${imagesDir}${path.sep}`)) {
+        return res.status(400).send('invalid_image_path');
+      }
+      const stat = await safeStat(imagePath);
+      if (!stat) {
+        return res.status(404).send('image_not_found');
+      }
+      return res.sendFile(imagePath);
+    } catch (error) {
+      return res.status(error.status || 500).send(error.message || 'dataset_image_failed');
     }
   });
 

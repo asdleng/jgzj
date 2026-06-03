@@ -199,6 +199,45 @@ import SiteLayout from "../components/SiteLayout.astro";
             <p id="three-dgs-dataset-note" class="three-dgs-note">点云会写成 sparse/0/points3D.ply，图像位姿会写成 cameras.txt / images.txt。</p>
           </div>
 
+          <div class="three-dgs-data-check">
+            <div class="three-dgs-viewer-head">
+              <div>
+                <span>训练数据检查</span>
+                <strong id="three-dgs-data-check-status">等待检查当前 COLMAP 数据集</strong>
+              </div>
+              <button id="three-dgs-check-dataset" class="three-dgs-button three-dgs-button--ghost" type="button">检查训练数据</button>
+            </div>
+            <div class="three-dgs-data-check-grid">
+              <div class="three-dgs-data-map">
+                <canvas id="three-dgs-dataset-canvas" height="360"></canvas>
+                <p id="three-dgs-dataset-map-hint">点云地图和相机轨迹会显示在这里。</p>
+              </div>
+              <div class="three-dgs-data-photo">
+                <div id="three-dgs-dataset-empty" class="three-dgs-data-empty">点击轨迹点查看对应照片。</div>
+                <img id="three-dgs-dataset-image" alt="轨迹点对应照片" hidden />
+                <div id="three-dgs-dataset-frame-meta" class="three-dgs-data-meta">未选择关键帧。</div>
+              </div>
+            </div>
+            <div class="three-dgs-mini-grid three-dgs-data-stats">
+              <div>
+                <span>检查图片</span>
+                <strong id="three-dgs-check-images">-</strong>
+              </div>
+              <div>
+                <span>初始化点</span>
+                <strong id="three-dgs-check-points">-</strong>
+              </div>
+              <div>
+                <span>轨迹长度</span>
+                <strong id="three-dgs-check-distance">-</strong>
+              </div>
+              <div>
+                <span>最大帧间距</span>
+                <strong id="three-dgs-check-gap">-</strong>
+              </div>
+            </div>
+          </div>
+
           <div class="three-dgs-form-grid three-dgs-form-grid--train">
             <label class="three-dgs-field">
               <span>场景名</span>
@@ -289,6 +328,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     uploadPointcloud: "/api/three-dgs/upload/pointcloud",
     uploadImagePose: "/api/three-dgs/upload/image-pose",
     pointcloudPreview: "/api/three-dgs/pointcloud/preview",
+    datasetInspection: "/api/three-dgs/dataset/inspection",
     prepare: "/api/three-dgs/prepare",
     train: "/api/three-dgs/train/start",
     viewerSync: "/api/three-dgs/viewer/sync",
@@ -321,6 +361,12 @@ import SiteLayout from "../components/SiteLayout.astro";
   const uploadProgressFill = el("three-dgs-upload-progress-fill");
   const uploadProgressLabel = el("three-dgs-upload-progress-label");
   const uploadProgressDetail = el("three-dgs-upload-progress-detail");
+  const datasetCanvas = el("three-dgs-dataset-canvas");
+  const datasetCheckStatus = el("three-dgs-data-check-status");
+  const datasetMapHint = el("three-dgs-dataset-map-hint");
+  const datasetImage = el("three-dgs-dataset-image");
+  const datasetEmpty = el("three-dgs-dataset-empty");
+  const datasetFrameMeta = el("three-dgs-dataset-frame-meta");
 
   let statusData = null;
   let pointcloudFile = null;
@@ -329,6 +375,9 @@ import SiteLayout from "../components/SiteLayout.astro";
   let vehicleManuallyChanged = false;
   let pointcloudPreviewKey = "";
   let captureEventSource = null;
+  let datasetInspection = null;
+  let datasetHitPoints = [];
+  let selectedDatasetFrameIndex = -1;
 
   function formatSize(bytes) {
     const value = Number(bytes || 0);
@@ -346,6 +395,13 @@ import SiteLayout from "../components/SiteLayout.astro";
   function formatFrameCount(value) {
     const number = Number(value || 0);
     return Number.isFinite(number) ? number.toLocaleString("zh-CN") : "0";
+  }
+
+  function formatMeters(value) {
+    const number = Number(value || 0);
+    if (!Number.isFinite(number)) return "-";
+    if (Math.abs(number) >= 1000) return `${(number / 1000).toFixed(2)} km`;
+    return `${number.toFixed(2)} m`;
   }
 
   function viewerUrlFor(pointCloudUrl) {
@@ -428,6 +484,161 @@ import SiteLayout from "../components/SiteLayout.astro";
       ctx.fillRect(x, y, 1.6, 1.6);
     }
     pointcloudPreviewStatus.textContent = `${formatCount(preview.sampled_points)} / ${formatCount(preview.total_points)} 点采样`;
+  }
+
+  function mergeExtents(...extents) {
+    const result = {
+      min_x: Infinity,
+      max_x: -Infinity,
+      min_y: Infinity,
+      max_y: -Infinity,
+      min_z: Infinity,
+      max_z: -Infinity
+    };
+    extents.filter(Boolean).forEach((extent) => {
+      ["min_x", "max_x", "min_y", "max_y", "min_z", "max_z"].forEach((key) => {
+        const value = Number(extent[key]);
+        if (!Number.isFinite(value)) return;
+        if (key.startsWith("min_")) result[key] = Math.min(result[key], value);
+        if (key.startsWith("max_")) result[key] = Math.max(result[key], value);
+      });
+    });
+    Object.keys(result).forEach((key) => {
+      if (!Number.isFinite(result[key])) result[key] = 0;
+    });
+    return result;
+  }
+
+  function drawDatasetInspection() {
+    if (!datasetCanvas || !datasetInspection) return;
+    const points = Array.isArray(datasetInspection.pointcloud?.points) ? datasetInspection.pointcloud.points : [];
+    const frames = Array.isArray(datasetInspection.trajectory?.frames) ? datasetInspection.trajectory.frames : [];
+    const rect = datasetCanvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(420, Math.floor(rect.width || datasetCanvas.clientWidth || 760));
+    const height = Math.max(320, Math.floor(rect.height || 360));
+    datasetCanvas.width = Math.floor(width * dpr);
+    datasetCanvas.height = Math.floor(height * dpr);
+    const ctx = datasetCanvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(0, 0, width, height);
+
+    datasetHitPoints = [];
+    if (!points.length && !frames.length) {
+      datasetMapHint.textContent = "当前数据集没有可显示的点云或轨迹。";
+      return;
+    }
+
+    const extent = mergeExtents(datasetInspection.pointcloud?.extent, datasetInspection.trajectory?.summary?.extent);
+    const minX = Number(extent.min_x);
+    const maxX = Number(extent.max_x);
+    const minY = Number(extent.min_y);
+    const maxY = Number(extent.max_y);
+    const minZ = Number(extent.min_z);
+    const maxZ = Number(extent.max_z);
+    const rangeX = Math.max(0.001, maxX - minX);
+    const rangeY = Math.max(0.001, maxY - minY);
+    const pad = 22;
+    const scale = Math.min((width - pad * 2) / rangeX, (height - pad * 2) / rangeY);
+    const drawW = rangeX * scale;
+    const drawH = rangeY * scale;
+    const offsetX = (width - drawW) / 2;
+    const offsetY = (height - drawH) / 2;
+    const project = (position) => ({
+      x: (Number(position[0]) - minX) * scale + offsetX,
+      y: height - ((Number(position[1]) - minY) * scale + offsetY)
+    });
+
+    for (const point of points) {
+      const screen = project(point);
+      const z = Number(point[2]);
+      const zNorm = Number.isFinite(z) && maxZ > minZ ? Math.max(0, Math.min(1, (z - minZ) / (maxZ - minZ))) : 0.5;
+      ctx.fillStyle = `rgba(${Math.round(72 + 95 * zNorm)}, ${Math.round(122 + 80 * zNorm)}, 170, 0.34)`;
+      ctx.fillRect(screen.x, screen.y, 1.4, 1.4);
+    }
+
+    if (frames.length) {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(45, 212, 191, 0.9)";
+      ctx.beginPath();
+      frames.forEach((frame, index) => {
+        const screen = project(frame.position);
+        if (index === 0) ctx.moveTo(screen.x, screen.y);
+        else ctx.lineTo(screen.x, screen.y);
+      });
+      ctx.stroke();
+
+      frames.forEach((frame, index) => {
+        const screen = project(frame.position);
+        datasetHitPoints.push({ ...screen, index });
+        const selected = index === selectedDatasetFrameIndex;
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, selected ? 6 : 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = selected ? "#fde047" : "#67e8f9";
+        ctx.fill();
+        ctx.lineWidth = selected ? 2 : 1;
+        ctx.strokeStyle = selected ? "rgba(254, 240, 138, 0.9)" : "rgba(2, 6, 23, 0.8)";
+        ctx.stroke();
+      });
+    }
+
+    datasetMapHint.textContent = `${formatCount(points.length)} 个采样点 · ${formatCount(frames.length)} 个轨迹点，点击轨迹点查看照片。`;
+  }
+
+  function selectDatasetFrame(index) {
+    const frames = Array.isArray(datasetInspection?.trajectory?.frames) ? datasetInspection.trajectory.frames : [];
+    const frame = frames[index];
+    if (!frame) return;
+    selectedDatasetFrameIndex = index;
+    if (datasetImage) {
+      datasetImage.src = `${frame.image_url}?v=${encodeURIComponent(datasetInspection?.dataset?.scene_name || "")}`;
+      datasetImage.hidden = false;
+    }
+    if (datasetEmpty) datasetEmpty.hidden = true;
+    if (datasetFrameMeta) {
+      const pos = Array.isArray(frame.position) ? frame.position.map((value) => Number(value).toFixed(2)).join(", ") : "-";
+      datasetFrameMeta.textContent = `#${frame.image_id} · ${frame.name} · camera ${frame.camera_id} · 位置 [${pos}]`;
+    }
+    drawDatasetInspection();
+  }
+
+  function updateDatasetCheckStats(inspection) {
+    const summary = inspection?.trajectory?.summary || {};
+    el("three-dgs-check-images").textContent = formatCount(summary.frame_count);
+    el("three-dgs-check-points").textContent = formatCount(inspection?.pointcloud?.total_points);
+    el("three-dgs-check-distance").textContent = formatMeters(summary.total_distance_m);
+    el("three-dgs-check-gap").textContent = formatMeters(summary.max_gap_m);
+  }
+
+  async function loadDatasetInspection() {
+    if (!isAuthed() || !hasRunPermission()) {
+      throw new Error("permission_required");
+    }
+    if (datasetCheckStatus) datasetCheckStatus.textContent = "正在读取当前 COLMAP 数据集...";
+    const response = await fetch(`${api.datasetInspection}?max_points=26000`, {
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "dataset_inspection_failed");
+    }
+    datasetInspection = data.inspection;
+    selectedDatasetFrameIndex = -1;
+    updateDatasetCheckStats(datasetInspection);
+    const checks = datasetInspection.checks || {};
+    const warnings = [];
+    if (!checks.image_count_matches) warnings.push("图片数和 summary 不一致");
+    if (!checks.point_count_matches) warnings.push("点数和 summary 不一致");
+    if (!checks.has_images_dir) warnings.push("images 目录缺失");
+    datasetCheckStatus.textContent = warnings.length
+      ? `检查完成：${warnings.join("；")}`
+      : `检查完成：${datasetInspection.dataset?.scene_name || "当前数据集"}`;
+    drawDatasetInspection();
+    if (datasetInspection.trajectory?.frames?.length) {
+      selectDatasetFrame(0);
+    }
   }
 
   async function loadPointcloudPreview(force = false) {
@@ -648,7 +859,6 @@ import SiteLayout from "../components/SiteLayout.astro";
       "three-dgs-read-manifest",
       "three-dgs-update-map",
       "three-dgs-pull-image-pose",
-      "three-dgs-prepare",
       "three-dgs-start-train",
       "three-dgs-sync-result",
       "three-dgs-load-prepare-log",
@@ -657,6 +867,7 @@ import SiteLayout from "../components/SiteLayout.astro";
       const button = el(id);
       if (button) button.disabled = !allow || taskBusy;
     });
+    el("three-dgs-check-dataset").disabled = !allow || !statusData?.state?.dataset?.prepared;
     el("three-dgs-upload-pointcloud").disabled = !allow || taskBusy || !pointcloudFile;
     el("three-dgs-upload-image-pose").disabled = !allow || taskBusy || !imagePoseFile;
     el("three-dgs-prepare").disabled = !allow || taskBusy || !statusData?.state?.uploads?.pointcloud || !statusData?.state?.uploads?.image_pose;
@@ -989,6 +1200,27 @@ import SiteLayout from "../components/SiteLayout.astro";
   el("three-dgs-upload-image-pose").addEventListener("click", () =>
     runAction("上传图像-位姿", () => uploadFile(api.uploadImagePose, imagePoseFile, "上传图像-位姿"))
   );
+
+  el("three-dgs-check-dataset").addEventListener("click", () =>
+    runAction("检查训练数据", loadDatasetInspection)
+  );
+  datasetCanvas?.addEventListener("click", (event) => {
+    if (!datasetHitPoints.length) return;
+    const rect = datasetCanvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    let best = null;
+    for (const item of datasetHitPoints) {
+      const distance = Math.hypot(item.x - x, item.y - y);
+      if (!best || distance < best.distance) {
+        best = { ...item, distance };
+      }
+    }
+    if (best && best.distance <= 18) {
+      selectDatasetFrame(best.index);
+    }
+  });
+  window.addEventListener("resize", () => drawDatasetInspection());
 
   el("three-dgs-prepare").addEventListener("click", () =>
     runAction("规整 COLMAP 数据", () => postJson(api.prepare, preparePayload()))
@@ -1327,6 +1559,82 @@ import SiteLayout from "../components/SiteLayout.astro";
     background: #020617;
   }
 
+  .three-dgs-data-check {
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid rgba(71, 85, 105, 0.45);
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.38);
+  }
+
+  .three-dgs-data-check-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
+    gap: 14px;
+    align-items: stretch;
+  }
+
+  .three-dgs-data-map,
+  .three-dgs-data-photo {
+    min-width: 0;
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid rgba(71, 85, 105, 0.45);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.5);
+  }
+
+  .three-dgs-data-map canvas {
+    width: 100%;
+    height: 360px;
+    display: block;
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    border-radius: 8px;
+    background: #020617;
+    cursor: crosshair;
+  }
+
+  .three-dgs-data-map p,
+  .three-dgs-data-meta,
+  .three-dgs-data-empty {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.86rem;
+  }
+
+  .three-dgs-data-photo {
+    align-content: start;
+  }
+
+  .three-dgs-data-photo img {
+    width: 100%;
+    max-height: 360px;
+    object-fit: contain;
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    border-radius: 8px;
+    background: #020617;
+  }
+
+  .three-dgs-data-empty {
+    min-height: 220px;
+    display: grid;
+    place-items: center;
+    border: 1px dashed rgba(148, 163, 184, 0.34);
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.45);
+    text-align: center;
+  }
+
+  .three-dgs-data-empty[hidden] {
+    display: none;
+  }
+
+  .three-dgs-data-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .three-dgs-viewer-card {
     display: grid;
     gap: 12px;
@@ -1465,7 +1773,9 @@ import SiteLayout from "../components/SiteLayout.astro";
     .three-dgs-form-grid,
     .three-dgs-form-grid--train,
     .three-dgs-mini-grid,
-    .three-dgs-map-grid {
+    .three-dgs-map-grid,
+    .three-dgs-data-check-grid,
+    .three-dgs-data-stats {
       grid-template-columns: 1fr;
     }
 
