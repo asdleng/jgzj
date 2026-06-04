@@ -376,10 +376,19 @@ import SiteLayout from "../components/SiteLayout.astro";
               </div>
               <div class="three-dgs-actions three-dgs-actions--compact">
                 <button id="three-dgs-sync-result" class="three-dgs-button three-dgs-button--primary" type="button">同步训练结果</button>
+                <button id="three-dgs-read-viewer-camera" class="three-dgs-button three-dgs-button--ghost" type="button">读取当前视角</button>
+                <button id="three-dgs-copy-viewer-camera" class="three-dgs-button three-dgs-button--ghost" type="button">复制视角</button>
                 <a id="three-dgs-open-viewer" class="three-dgs-button three-dgs-button--ghost" href="#" target="_blank" rel="noreferrer">新窗口查看</a>
               </div>
             </div>
             <iframe id="three-dgs-viewer-frame" title="3DGS SuperSplat Viewer" hidden></iframe>
+            <div class="three-dgs-viewer-camera">
+              <div>
+                <span>当前视角</span>
+                <strong id="three-dgs-viewer-camera-summary">未读取</strong>
+              </div>
+              <pre id="three-dgs-viewer-camera-json">把浏览器画面转到认为正确的位置后，点击“读取当前视角”。</pre>
+            </div>
           </div>
         </section>
       </div>
@@ -432,6 +441,8 @@ import SiteLayout from "../components/SiteLayout.astro";
   const viewerFrame = el("three-dgs-viewer-frame");
   const viewerStatus = el("three-dgs-viewer-status");
   const viewerOpen = el("three-dgs-open-viewer");
+  const viewerCameraSummary = el("three-dgs-viewer-camera-summary");
+  const viewerCameraJson = el("three-dgs-viewer-camera-json");
   const captureStreamText = el("three-dgs-capture-stream");
   const captureCameraCounts = el("three-dgs-capture-camera-counts");
   const uploadProgress = el("three-dgs-upload-progress");
@@ -470,6 +481,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   let selectedDatasetFrameIndex = -1;
   let trainMetricsData = null;
   let lastTrainMetricsFetchMs = 0;
+  let lastViewerCameraState = null;
 
   function formatSize(bytes) {
     const value = Number(bytes || 0);
@@ -522,6 +534,64 @@ import SiteLayout from "../components/SiteLayout.astro";
     ].join("-");
     const settingsUrl = `/api/three-dgs/viewer/settings?key=${encodeURIComponent(settingsKey)}`;
     return `/supersplat-viewer/?webgl&noanim&content=${encodeURIComponent(pointCloudUrl)}&settings=${encodeURIComponent(settingsUrl)}`;
+  }
+
+  function parseViewerVector(text) {
+    const parts = String(text || "").trim().split(/[\s,]+/).filter(Boolean).map(Number);
+    return parts.length === 3 && parts.every(Number.isFinite) ? parts : null;
+  }
+
+  function ensureViewerCameraDebug() {
+    if (viewerFrame.hidden || !viewerFrame.src) {
+      throw new Error("viewer_not_loaded");
+    }
+    const frameWindow = viewerFrame.contentWindow;
+    if (!frameWindow) {
+      throw new Error("viewer_window_unavailable");
+    }
+    if (typeof frameWindow.getCameraState !== "function") {
+      frameWindow.dispatchEvent(new frameWindow.KeyboardEvent("keydown", {
+        key: "D",
+        code: "KeyD",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true
+      }));
+    }
+    if (typeof frameWindow.getCameraState !== "function") {
+      throw new Error("viewer_camera_debug_unavailable");
+    }
+    return frameWindow;
+  }
+
+  function readViewerCameraState() {
+    const frameWindow = ensureViewerCameraDebug();
+    const frameDocument = viewerFrame.contentDocument;
+    const snapshot = frameWindow.getCameraState();
+    const cameraText = frameDocument?.querySelector("#sse-debug-panel [data-id='position']")?.textContent?.trim() || "";
+    const focusText = frameDocument?.querySelector("#sse-debug-panel [data-id='focus']")?.textContent?.trim() || "";
+    const state = {
+      captured_at: new Date().toISOString(),
+      viewer_src: viewerFrame.src,
+      position: Array.isArray(snapshot.position) ? snapshot.position : parseViewerVector(cameraText),
+      focus: parseViewerVector(focusText),
+      angles: snapshot.angles || null,
+      distance: snapshot.distance,
+      fov: snapshot.fov,
+      mode: snapshot.mode || null
+    };
+    lastViewerCameraState = state;
+    const position = state.position?.map((value) => Number(value).toFixed(3)).join(", ") || "-";
+    const focus = state.focus?.map((value) => Number(value).toFixed(3)).join(", ") || "-";
+    viewerCameraSummary.textContent = `position [${position}] · focus [${focus}] · fov ${Number(state.fov || 0).toFixed(2)}`;
+    viewerCameraJson.textContent = JSON.stringify(state, null, 2);
+    return state;
+  }
+
+  async function copyViewerCameraState() {
+    const state = lastViewerCameraState || readViewerCameraState();
+    await navigator.clipboard.writeText(JSON.stringify(state, null, 2));
+    setFeedback("当前 SuperSplat 视角已复制。", "success");
   }
 
   function currentVehicleId() {
@@ -1414,6 +1484,9 @@ import SiteLayout from "../components/SiteLayout.astro";
       viewerOpen.href = "#";
       viewerOpen.setAttribute("aria-disabled", "true");
       viewerFrame.hidden = true;
+      viewerCameraSummary.textContent = "未读取";
+      viewerCameraJson.textContent = "把浏览器画面转到认为正确的位置后，点击“读取当前视角”。";
+      lastViewerCameraState = null;
     }
 
     const enabledNames = enabledCameraNames();
@@ -1685,6 +1758,12 @@ import SiteLayout from "../components/SiteLayout.astro";
   );
   el("three-dgs-sync-result").addEventListener("click", () =>
     runAction("同步训练结果", () => postJson(api.viewerSync, { run_id: statusData?.state?.train?.run_id }))
+  );
+  el("three-dgs-read-viewer-camera").addEventListener("click", () =>
+    runAction("读取当前视角", async () => readViewerCameraState())
+  );
+  el("three-dgs-copy-viewer-camera").addEventListener("click", () =>
+    runAction("复制当前视角", copyViewerCameraState)
   );
   el("three-dgs-load-prepare-log").addEventListener("click", () => runAction("读取准备日志", () => loadLog(api.prepareLog)));
   el("three-dgs-load-train-log").addEventListener("click", () =>
@@ -2218,6 +2297,39 @@ import SiteLayout from "../components/SiteLayout.astro";
     border: 1px solid rgba(71, 85, 105, 0.5);
     border-radius: 8px;
     background: #020617;
+  }
+
+  .three-dgs-viewer-camera {
+    display: grid;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid rgba(71, 85, 105, 0.42);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.48);
+  }
+
+  .three-dgs-viewer-camera span {
+    display: block;
+    color: #94a3b8;
+    font-size: 0.84rem;
+  }
+
+  .three-dgs-viewer-camera strong {
+    display: block;
+    margin-top: 2px;
+    color: #dbeafe;
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+
+  .three-dgs-viewer-camera pre {
+    margin: 0;
+    max-height: 220px;
+    overflow: auto;
+    color: #cbd5e1;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
   }
 
   .three-dgs-dropzone {
