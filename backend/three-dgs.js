@@ -136,6 +136,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const vehicleUploadTokenTtlMs = Number(process.env.THREE_DGS_VEHICLE_UPLOAD_TOKEN_TTL_MS || 2 * 60 * 60 * 1000);
   const vehicleUploadRequestTimeoutMs = Number(process.env.THREE_DGS_VEHICLE_UPLOAD_REQUEST_TIMEOUT_MS || 30 * 60 * 1000);
   const pointcloudPreviewMaxReadBytes = Number(process.env.THREE_DGS_POINTCLOUD_PREVIEW_MAX_READ_BYTES || 512 * 1024 * 1024);
+  const defaultUndistortMode = ['keep-k', 'optimal'].includes(process.env.THREE_DGS_UNDISTORT_MODE)
+    ? process.env.THREE_DGS_UNDISTORT_MODE
+    : 'keep-k';
 
   let state = createInitialState();
   let statePersistTimer = null;
@@ -3108,7 +3111,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       '--max-points',
       String(Number(payload.max_points || 500000)),
       '--undistort',
-      payload.undistort === false ? 'false' : 'true'
+      payload.undistort === false ? 'false' : 'true',
+      '--undistort-mode',
+      defaultUndistortMode
     ];
 
     const logStream = fs.createWriteStream(logPath, { flags: 'a' });
@@ -3656,6 +3661,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         default_vehicle_id: defaultVehicleId,
         allowed_vehicle_ids: allowedVehicleIds,
         default_train_gpu: defaultTrainGpu,
+        default_undistort_mode: defaultUndistortMode,
         configured_camera_ids: configuredCameraIds,
         fallback_calibrated_cameras: fallbackCalibratedCameras,
         vehicle_map_path: vehicleMapPath

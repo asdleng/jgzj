@@ -441,9 +441,19 @@ import SiteLayout from "../components/SiteLayout.astro";
     return Number.isFinite(number) ? number.toLocaleString("zh-CN") : "0";
   }
 
+  const cameraDirectionLabels = {
+    camera1: "前",
+    camera2: "后",
+    camera3: "左",
+    camera4: "右"
+  };
+
   function channelLabel(cameraName, fallbackId = "") {
     const match = String(cameraName || "").match(/camera(\d+)/i);
-    if (match) return `采集通道 ${match[1]}`;
+    if (match) {
+      const cameraId = `camera${match[1]}`;
+      return `采集通道 ${match[1]}${cameraDirectionLabels[cameraId] ? ` · ${cameraDirectionLabels[cameraId]}` : ""}`;
+    }
     return cameraName || (fallbackId ? `采集通道 ${fallbackId}` : "采集通道");
   }
 

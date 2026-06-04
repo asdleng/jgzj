@@ -424,25 +424,43 @@ def rotmat_to_qvec(rot: np.ndarray) -> np.ndarray:
     return qvec
 
 
-def undistort_or_copy(src: Path, dst: Path, params: tuple[int, int, float, float, float, float, list[float]], undistort: bool) -> tuple[int, int, float, float, float, float]:
+def undistort_or_copy(
+    src: Path,
+    dst: Path,
+    params: tuple[int, int, float, float, float, float, list[float]],
+    undistort: bool,
+    undistort_mode: str,
+) -> tuple[int, int, float, float, float, float, str]:
     width, height, fx, fy, cx, cy, distortion = params
     if not undistort or cv2 is None or not distortion or max(abs(item) for item in distortion) <= 1e-12:
         shutil.copy2(src, dst)
-        return width, height, fx, fy, cx, cy
+        return width, height, fx, fy, cx, cy, "none"
 
     image = cv2.imread(str(src), cv2.IMREAD_COLOR)
     if image is None:
         shutil.copy2(src, dst)
-        return width, height, fx, fy, cx, cy
+        return width, height, fx, fy, cx, cy, "none"
 
     actual_height, actual_width = image.shape[:2]
     width, height = actual_width, actual_height
     camera_matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
     dist = np.array(distortion, dtype=np.float64).reshape(-1, 1)
-    new_matrix, _roi = cv2.getOptimalNewCameraMatrix(camera_matrix, dist, (width, height), 0, (width, height))
-    output = cv2.undistort(image, camera_matrix, dist, None, new_matrix)
+    if undistort_mode == "optimal":
+        new_matrix, _roi = cv2.getOptimalNewCameraMatrix(camera_matrix, dist, (width, height), 0, (width, height))
+        output = cv2.undistort(image, camera_matrix, dist, None, new_matrix)
+    else:
+        new_matrix = camera_matrix
+        output = cv2.undistort(image, camera_matrix, dist, None, camera_matrix)
     cv2.imwrite(str(dst), output)
-    return width, height, float(new_matrix[0, 0]), float(new_matrix[1, 1]), float(new_matrix[0, 2]), float(new_matrix[1, 2])
+    return (
+        width,
+        height,
+        float(new_matrix[0, 0]),
+        float(new_matrix[1, 1]),
+        float(new_matrix[0, 2]),
+        float(new_matrix[1, 2]),
+        undistort_mode,
+    )
 
 
 def unpack_rgb(value: str) -> tuple[int, int, int]:
@@ -558,6 +576,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
         manifest, records = load_records(image_root)
 
         camera_models: dict[tuple[str, int, int, float, float, float, float], int] = {}
+        camera_undistort_modes: dict[int, str] = {}
         camera_lines: list[str] = []
         image_lines: list[str] = []
         copied_count = 0
@@ -576,11 +595,12 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                 f"{source_image.suffix.lower() or '.jpg'}"
             )
             output_image = images_out / out_name
-            width, height, fx, fy, cx, cy = undistort_or_copy(
+            width, height, fx, fy, cx, cy, applied_undistort_mode = undistort_or_copy(
                 source_image,
                 output_image,
                 params,
                 args.undistort.lower() != "false",
+                args.undistort_mode,
             )
             camera_key = (
                 camera_name,
@@ -598,6 +618,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                 camera_lines.append(
                     f"{camera_id} PINHOLE {width} {height} {fx:.12g} {fy:.12g} {cx:.12g} {cy:.12g}\n"
                 )
+            camera_undistort_modes[camera_id] = applied_undistort_mode
 
             world_to_camera = matrix_from_record(record)
             rot = world_to_camera[:3, :3]
@@ -654,6 +675,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     "cx": key[5],
                     "cy": key[6],
                     "undistorted": args.undistort.lower() != "false" and cv2 is not None,
+                    "undistort_mode": camera_undistort_modes.get(camera_id, "none"),
                 }
                 for key, camera_id in camera_models.items()
             ],
@@ -672,6 +694,12 @@ def main() -> None:
     parser.add_argument("--scene-name", default="scene")
     parser.add_argument("--max-points", type=int, default=500000)
     parser.add_argument("--undistort", default="true")
+    parser.add_argument(
+        "--undistort-mode",
+        choices=("keep-k", "optimal"),
+        default="keep-k",
+        help="keep-k matches FAST-Calib's cv::undistort(image, K, D) projection convention; optimal keeps the previous getOptimalNewCameraMatrix(alpha=0) behavior.",
+    )
     args = parser.parse_args()
 
     summary = prepare_scene(args)
