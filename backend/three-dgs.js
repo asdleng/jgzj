@@ -87,6 +87,9 @@ function createInitialState() {
       resume_from_iteration: null,
       checkpoint_interval: null,
       mode: null,
+      sync_progress: null,
+      dataset_fingerprint: null,
+      remote_dataset_synced_at_ms: null,
       gpu: null,
       iterations: null,
       resolution: null,
@@ -3298,6 +3301,131 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return result.stdout;
   }
 
+  async function datasetFileStats(datasetPath) {
+    const files = await listFilesRecursive(datasetPath);
+    let totalBytes = 0;
+    for (const filePath of files) {
+      const stat = await safeStat(filePath);
+      if (stat?.isFile?.()) {
+        totalBytes += Number(stat.size || 0);
+      }
+    }
+    return {
+      file_count: files.length,
+      total_bytes: totalBytes
+    };
+  }
+
+  async function makeDatasetSyncMarker(datasetPath = state.dataset?.path) {
+    if (!datasetPath) {
+      throw new Error('three_dgs_dataset_not_prepared');
+    }
+    const stats = await datasetFileStats(datasetPath);
+    const summary = state.dataset.summary || {};
+    const markerSource = {
+      version: 1,
+      scene_name: state.dataset.scene_name || path.basename(datasetPath),
+      dataset_path: path.resolve(datasetPath),
+      prepared_at_ms: Number(state.dataset.prepared_at_ms || 0),
+      image_count: Number(summary.image_count || 0),
+      point_count: Number(summary.point_count || 0),
+      camera_count: Number(summary.camera_count || 0),
+      colorization_enabled: Boolean(summary.colorization?.enabled),
+      file_count: stats.file_count,
+      total_bytes: stats.total_bytes
+    };
+    const fingerprint = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(markerSource))
+      .digest('hex');
+    return {
+      ...markerSource,
+      fingerprint,
+      created_at_ms: Date.now()
+    };
+  }
+
+  function remoteDatasetPathForCurrentDataset() {
+    const datasetName = sanitizeSceneName(state.dataset?.scene_name || '');
+    return `${remoteDatasetRoot}/${datasetName || 'scene'}`;
+  }
+
+  async function readRemoteDatasetSyncMarker(remoteDatasetPath) {
+    const output = await execSsh(
+      `cat ${remoteQuote(`${remoteDatasetPath}/.cloud_control_sync.json`)} 2>/dev/null || true`,
+      10000
+    );
+    if (!output.trim()) return null;
+    try {
+      const parsed = JSON.parse(output.trim());
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async function remoteDatasetMatchesMarker(remoteDatasetPath, marker) {
+    if (!remoteDatasetPath || !marker?.fingerprint) return false;
+    const remoteMarker = await readRemoteDatasetSyncMarker(remoteDatasetPath);
+    return Boolean(
+      remoteMarker &&
+      remoteMarker.fingerprint === marker.fingerprint &&
+      Number(remoteMarker.file_count || 0) === Number(marker.file_count || 0) &&
+      Number(remoteMarker.total_bytes || 0) === Number(marker.total_bytes || 0)
+    );
+  }
+
+  async function writeRemoteDatasetSyncMarker(remoteDatasetPath, marker) {
+    const content = JSON.stringify({
+      ...marker,
+      synced_at_ms: Date.now(),
+      synced_at_iso: new Date().toISOString()
+    });
+    await execSsh(
+      `printf %s ${remoteQuote(content)} > ${remoteQuote(`${remoteDatasetPath}/.cloud_control_sync.json`)}`,
+      10000
+    );
+  }
+
+  function parseRsyncProgressChunk(chunk) {
+    const text = stripAnsi(String(chunk || '').replace(/\r/g, '\n'));
+    const matches = [...text.matchAll(/([\d,]+)\s+(\d+(?:\.\d+)?)%/g)];
+    const last = matches[matches.length - 1];
+    if (!last) return null;
+    const transferredBytes = Number(last[1].replace(/,/g, ''));
+    const progressPct = Number(last[2]);
+    if (!Number.isFinite(transferredBytes) || !Number.isFinite(progressPct)) return null;
+    return {
+      transferred_bytes: transferredBytes,
+      progress_pct: progressPct
+    };
+  }
+
+  function updateTrainSyncProgress(patch = {}) {
+    const progress = {
+      ...(state.train.sync_progress || {}),
+      ...patch,
+      updated_at_ms: Date.now()
+    };
+    const pctText = Number.isFinite(Number(progress.progress_pct))
+      ? `${Math.max(0, Math.min(100, Number(progress.progress_pct))).toFixed(1)}%`
+      : '';
+    const bytesText = progress.total_bytes
+      ? `${formatBytesForStatus(progress.transferred_bytes || 0)} / ${formatBytesForStatus(progress.total_bytes)}`
+      : formatBytesForStatus(progress.transferred_bytes || 0);
+    updateState({
+      stage_text: progress.status === 'skipped'
+        ? 'A100 已有匹配的训练数据，跳过同步并启动训练。'
+        : progress.status === 'completed'
+          ? '训练数据已同步到 A100，正在启动训练。'
+          : `同步数据到 A100${pctText ? `：${pctText}` : ''}${bytesText ? ` · ${bytesText}` : ''}`,
+      train: {
+        ...state.train,
+        sync_progress: progress
+      }
+    });
+  }
+
   function sanitizeRunId(value) {
     return String(value || '')
       .trim()
@@ -3596,7 +3724,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       }
       runId = makeRunId(state.dataset.scene_name || payload.scene_name || 'scene');
       localLogPath = path.join(logDir, `train-bootstrap-${runId}.log`);
-      remoteDatasetPath = `${remoteDatasetRoot}/${runId}`;
+      remoteDatasetPath = remoteDatasetPathForCurrentDataset();
       remoteRunPath = `${remoteRunRoot}/${runId}`;
       await fsp.rm(localLogPath, { force: true });
     }
@@ -3605,6 +3733,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const gpu = String(payload.gpu ?? state.train.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
     const iterations = Number(payload.iterations || state.train.iterations || 10000);
     const resolution = Number(payload.resolution || state.train.resolution || 4);
+    const datasetMarker = resume ? null : await makeDatasetSyncMarker(state.dataset.path);
 
     updateState({
       phase: 'training',
@@ -3628,6 +3757,19 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         resume_from_iteration: checkpoint?.iteration || null,
         checkpoint_interval: defaultCheckpointInterval,
         mode: resume ? 'resume' : 'restart',
+        sync_progress: resume
+          ? state.train.sync_progress
+          : {
+              status: 'queued',
+              progress_pct: 0,
+              transferred_bytes: 0,
+              total_bytes: datasetMarker.total_bytes,
+              file_count: datasetMarker.file_count,
+              detail: '等待同步训练数据到 A100',
+              updated_at_ms: Date.now()
+            },
+        dataset_fingerprint: datasetMarker?.fingerprint || state.train.dataset_fingerprint || null,
+        remote_dataset_synced_at_ms: null,
         gpu,
         iterations,
         resolution,
@@ -3687,10 +3829,39 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       return;
     }
 
+    const remoteSynced = await remoteDatasetMatchesMarker(remoteDatasetPath, datasetMarker).catch(() => false);
+    if (remoteSynced) {
+      await appendToLog(localLogPath, `remote dataset already synced; reuse ${remoteDatasetPath}`);
+      updateTrainSyncProgress({
+        status: 'skipped',
+        progress_pct: 100,
+        transferred_bytes: datasetMarker.total_bytes,
+        total_bytes: datasetMarker.total_bytes,
+        file_count: datasetMarker.file_count,
+        detail: 'A100 已有匹配 dataset，跳过 rsync'
+      });
+      await launchRemoteTraining({
+        localLogPath,
+        remoteDatasetPath,
+        remoteRunPath,
+        gpu,
+        iterations,
+        resolution,
+        resume: false,
+        checkpoint: null
+      });
+      updateNestedState('train', {
+        remote_dataset_synced_at_ms: Date.now()
+      });
+      return;
+    }
+
     const logStream = fs.createWriteStream(localLogPath, { flags: 'a' });
     const rsyncArgs = [
       '-az',
       '--delete',
+      '--info=progress2',
+      '--stats',
       '-e',
       ['ssh', ...sshBaseArgs()].join(' '),
       `${state.dataset.path.replace(/\/+$/, '')}/`,
@@ -3698,11 +3869,37 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     ];
 
     await appendToLog(localLogPath, `rsync dataset to ${remoteDatasetPath}`);
+    updateTrainSyncProgress({
+      status: 'syncing',
+      progress_pct: 0,
+      transferred_bytes: 0,
+      total_bytes: datasetMarker.total_bytes,
+      file_count: datasetMarker.file_count,
+      detail: '正在同步训练数据到 A100'
+    });
     trainBootstrapProcess = spawn('rsync', rsyncArgs, {
       stdio: ['ignore', 'pipe', 'pipe']
     });
     trainBootstrapProcess.stdout.pipe(logStream, { end: false });
     trainBootstrapProcess.stderr.pipe(logStream, { end: false });
+    let lastRsyncProgressUpdateMs = 0;
+    const handleRsyncProgress = (chunk) => {
+      const parsed = parseRsyncProgressChunk(chunk);
+      if (!parsed) return;
+      const now = Date.now();
+      if (now - lastRsyncProgressUpdateMs < 1000 && parsed.progress_pct < 100) return;
+      lastRsyncProgressUpdateMs = now;
+      updateTrainSyncProgress({
+        status: 'syncing',
+        progress_pct: parsed.progress_pct,
+        transferred_bytes: parsed.transferred_bytes,
+        total_bytes: datasetMarker.total_bytes,
+        file_count: datasetMarker.file_count,
+        detail: '正在同步训练数据到 A100'
+      });
+    };
+    trainBootstrapProcess.stdout.on('data', handleRsyncProgress);
+    trainBootstrapProcess.stderr.on('data', handleRsyncProgress);
     trainBootstrapProcess.on('error', async (error) => {
       trainBootstrapProcess = null;
       logStream.end();
@@ -3745,6 +3942,17 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
       try {
         await appendToLog(localLogPath, 'rsync done');
+        await writeRemoteDatasetSyncMarker(remoteDatasetPath, datasetMarker).catch(async (error) => {
+          await appendToLog(localLogPath, `write remote dataset marker failed: ${error?.message || 'unknown error'}`);
+        });
+        updateTrainSyncProgress({
+          status: 'completed',
+          progress_pct: 100,
+          transferred_bytes: datasetMarker.total_bytes,
+          total_bytes: datasetMarker.total_bytes,
+          file_count: datasetMarker.file_count,
+          detail: '训练数据已同步到 A100'
+        });
         await launchRemoteTraining({
           localLogPath,
           remoteDatasetPath,
@@ -3754,6 +3962,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           resolution,
           resume: false,
           checkpoint: null
+        });
+        updateNestedState('train', {
+          remote_dataset_synced_at_ms: Date.now()
         });
         trainBootstrapProcess = null;
         logStream.end();

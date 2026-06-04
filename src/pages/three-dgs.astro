@@ -253,6 +253,22 @@ import SiteLayout from "../components/SiteLayout.astro";
             <div id="three-dgs-prepare-steps" class="three-dgs-prepare-steps"></div>
           </div>
 
+          <div id="three-dgs-train-sync-progress" class="three-dgs-train-sync-progress" hidden>
+            <div class="three-dgs-viewer-head">
+              <div>
+                <span>A100 数据同步</span>
+                <strong id="three-dgs-train-sync-progress-status">等待启动训练</strong>
+              </div>
+            </div>
+            <div class="three-dgs-upload-progress-track">
+              <span id="three-dgs-train-sync-progress-fill"></span>
+            </div>
+            <div class="three-dgs-upload-progress-meta">
+              <span id="three-dgs-train-sync-progress-label">0%</span>
+              <span id="three-dgs-train-sync-progress-detail">等待同步</span>
+            </div>
+          </div>
+
           <div class="three-dgs-train-metrics">
             <div class="three-dgs-viewer-head">
               <div>
@@ -428,6 +444,11 @@ import SiteLayout from "../components/SiteLayout.astro";
   const prepareProgressDetail = el("three-dgs-prepare-progress-detail");
   const prepareProgressStatus = el("three-dgs-prepare-progress-status");
   const prepareSteps = el("three-dgs-prepare-steps");
+  const trainSyncProgress = el("three-dgs-train-sync-progress");
+  const trainSyncProgressFill = el("three-dgs-train-sync-progress-fill");
+  const trainSyncProgressLabel = el("three-dgs-train-sync-progress-label");
+  const trainSyncProgressDetail = el("three-dgs-train-sync-progress-detail");
+  const trainSyncProgressStatus = el("three-dgs-train-sync-progress-status");
   const datasetCanvas = el("three-dgs-dataset-canvas");
   const datasetCheckStatus = el("three-dgs-data-check-status");
   const datasetMapHint = el("three-dgs-dataset-map-hint");
@@ -1070,6 +1091,45 @@ import SiteLayout from "../components/SiteLayout.astro";
     });
   }
 
+  function renderTrainSyncProgress(state = {}) {
+    const progress = state.train?.sync_progress || null;
+    const syncing = state.train?.phase === "syncing";
+    if (!trainSyncProgress || !trainSyncProgressFill || !trainSyncProgressLabel || !trainSyncProgressDetail || !trainSyncProgressStatus) return;
+    if (!progress && !syncing) {
+      trainSyncProgress.hidden = true;
+      return;
+    }
+    const pct = Number(progress?.progress_pct ?? (syncing ? 0 : 100));
+    const hasPct = Number.isFinite(pct);
+    const status = progress?.status || (syncing ? "syncing" : "idle");
+    const transferred = Number(progress?.transferred_bytes || 0);
+    const total = Number(progress?.total_bytes || 0);
+    const sizeText = total ? `${formatSize(transferred)} / ${formatSize(total)}` : transferred ? formatSize(transferred) : "";
+    trainSyncProgress.hidden = false;
+    trainSyncProgressFill.style.width = hasPct ? `${Math.max(0, Math.min(100, pct))}%` : "35%";
+    trainSyncProgressFill.dataset.state =
+      status === "failed" || state.phase === "error"
+        ? "error"
+        : status === "completed" || status === "skipped"
+          ? "success"
+          : hasPct
+            ? "active"
+            : "indeterminate";
+    trainSyncProgressLabel.textContent = hasPct ? `${Math.max(0, Math.min(100, pct)).toFixed(1)}%` : "同步中";
+    trainSyncProgressStatus.textContent =
+      status === "skipped"
+        ? "A100 已有匹配数据"
+        : status === "completed"
+          ? "同步完成"
+          : status === "syncing"
+            ? "正在同步"
+            : "等待同步";
+    trainSyncProgressDetail.textContent = progress?.detail || sizeText || "等待同步训练数据";
+    if (sizeText && !trainSyncProgressDetail.textContent.includes(sizeText)) {
+      trainSyncProgressDetail.textContent = `${trainSyncProgressDetail.textContent} · ${sizeText}`;
+    }
+  }
+
   function isAuthed() {
     return Boolean(statusData?.auth?.authenticated);
   }
@@ -1301,6 +1361,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     const mapStatus = mapStatusFromState(state);
     renderVehicleUploadProgress(state);
     renderPrepareProgress(state);
+    renderTrainSyncProgress(state);
     pointcloudName.textContent = uploads.pointcloud
       ? `${uploads.pointcloud.name} · ${formatSize(uploads.pointcloud.size_bytes)}`
       : pointcloudFile
@@ -2058,7 +2119,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     background: rgba(2, 6, 23, 0.38);
   }
 
-  .three-dgs-prepare-progress {
+  .three-dgs-prepare-progress,
+  .three-dgs-train-sync-progress {
     display: grid;
     gap: 10px;
     margin-top: 14px;
@@ -2068,7 +2130,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     background: rgba(2, 6, 23, 0.38);
   }
 
-  .three-dgs-prepare-progress[hidden] {
+  .three-dgs-prepare-progress[hidden],
+  .three-dgs-train-sync-progress[hidden] {
     display: none;
   }
 
