@@ -228,7 +228,9 @@ import SiteLayout from "../components/SiteLayout.astro";
 
           <div class="three-dgs-actions">
             <button id="three-dgs-prepare" class="three-dgs-button three-dgs-button--primary" type="button">规整 COLMAP 数据</button>
-            <button id="three-dgs-start-train" class="three-dgs-button three-dgs-button--primary" type="button">开始训练</button>
+            <button id="three-dgs-start-train" class="three-dgs-button three-dgs-button--primary" type="button">开始训练(重新)</button>
+            <button id="three-dgs-stop-train" class="three-dgs-button three-dgs-button--danger" type="button">停止训练</button>
+            <button id="three-dgs-resume-train" class="three-dgs-button" type="button">继续训练</button>
             <button id="three-dgs-load-train-metrics" class="three-dgs-button three-dgs-button--ghost" type="button">训练曲线</button>
             <button id="three-dgs-load-prepare-log" class="three-dgs-button three-dgs-button--ghost" type="button">准备日志</button>
             <button id="three-dgs-load-train-log" class="three-dgs-button three-dgs-button--ghost" type="button">训练日志</button>
@@ -387,6 +389,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     datasetInspection: "/api/three-dgs/dataset/inspection",
     prepare: "/api/three-dgs/prepare",
     train: "/api/three-dgs/train/start",
+    trainStop: "/api/three-dgs/train/stop",
+    trainResume: "/api/three-dgs/train/resume",
     trainMetrics: "/api/three-dgs/train/metrics",
     viewerSync: "/api/three-dgs/viewer/sync",
     prepareLog: "/api/three-dgs/logs/prepare",
@@ -959,7 +963,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     const train = state.train || {};
     if (state.prepare?.running || state.phase === "preparing") return api.prepareLog;
     if (train.phase === "syncing") return api.trainLocalLog;
-    if (train.phase === "training") return api.trainRemoteLog;
+    if (train.phase === "training" || train.phase === "resuming" || train.phase === "stopped") return api.trainRemoteLog;
     if (state.phase === "error" && state.prepare?.completed_at_ms && !state.dataset?.prepared) return api.prepareLog;
     if (state.phase === "error" && train.error_message) return train.phase === "training" ? api.trainRemoteLog : api.trainLocalLog;
     return "";
@@ -1177,6 +1181,13 @@ import SiteLayout from "../components/SiteLayout.astro";
   function refreshButtons() {
     const allow = isAuthed() && hasRunPermission() && !busy;
     const taskBusy = isTaskBusy();
+    const train = statusData?.state?.train || {};
+    const trainRunning = Boolean(train.running || ["syncing", "resuming", "training"].includes(train.phase));
+    const canResumeTrain = Boolean(
+      train.remote_run_path &&
+      !trainRunning &&
+      (["stopped", "completed"].includes(train.phase) || (train.phase === "error" && train.resume_from_checkpoint))
+    );
     [
       "three-dgs-capabilities",
       "three-dgs-start-capture",
@@ -1186,6 +1197,7 @@ import SiteLayout from "../components/SiteLayout.astro";
       "three-dgs-update-map",
       "three-dgs-pull-image-pose",
       "three-dgs-start-train",
+      "three-dgs-resume-train",
       "three-dgs-sync-result",
       "three-dgs-load-train-metrics",
       "three-dgs-load-prepare-log",
@@ -1201,6 +1213,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     const needsPrepare = datasetNeedsPrepare(statusData?.state || {});
     el("three-dgs-start-train").disabled =
       !allow || taskBusy || (needsPrepare && (!statusData?.state?.uploads?.pointcloud || !statusData?.state?.uploads?.image_pose));
+    el("three-dgs-stop-train").disabled = !(isAuthed() && hasRunPermission()) || busy || !trainRunning;
+    el("three-dgs-resume-train").disabled = !allow || taskBusy || !canResumeTrain;
     el("three-dgs-sync-result").disabled = !allow || taskBusy || !statusData?.state?.train?.remote_run_path;
     el("three-dgs-load-train-metrics").disabled = !allow || !statusData?.state?.train?.run_id;
   }
@@ -1591,7 +1605,13 @@ import SiteLayout from "../components/SiteLayout.astro";
     runAction("规整 COLMAP 数据", () => postJson(api.prepare, preparePayload()))
   );
   el("three-dgs-start-train").addEventListener("click", () =>
-    runAction("开始训练", prepareThenTrain)
+    runAction("开始训练(重新)", prepareThenTrain)
+  );
+  el("three-dgs-stop-train").addEventListener("click", () =>
+    runAction("停止训练", () => postJson(api.trainStop, { reason: "operator_stopped" }))
+  );
+  el("three-dgs-resume-train").addEventListener("click", () =>
+    runAction("继续训练", () => postJson(api.trainResume, trainPayload()))
   );
   el("three-dgs-load-train-metrics").addEventListener("click", () =>
     runAction("读取训练曲线", () => loadTrainMetrics(true))
@@ -1602,7 +1622,8 @@ import SiteLayout from "../components/SiteLayout.astro";
   el("three-dgs-load-prepare-log").addEventListener("click", () => runAction("读取准备日志", () => loadLog(api.prepareLog)));
   el("three-dgs-load-train-log").addEventListener("click", () =>
     runAction("读取训练日志", async () => {
-      await loadLog(statusData?.state?.train?.phase === "training" ? api.trainRemoteLog : api.trainLocalLog);
+      const phase = statusData?.state?.train?.phase;
+      await loadLog(["training", "resuming", "stopped", "completed"].includes(phase) ? api.trainRemoteLog : api.trainLocalLog);
     })
   );
 
@@ -1679,13 +1700,15 @@ import SiteLayout from "../components/SiteLayout.astro";
     .three-dgs-badge[data-state="capturing"],
     .three-dgs-badge[data-state="starting_capture"],
     .three-dgs-badge[data-state="preparing"],
-    .three-dgs-badge[data-state="training"] {
+    .three-dgs-badge[data-state="training"],
+    .three-dgs-badge[data-state="resuming"] {
     color: #67e8f9;
     border-color: rgba(103, 232, 249, 0.38);
   }
 
   .three-dgs-badge[data-state="prepared"],
-  .three-dgs-badge[data-state="completed"] {
+  .three-dgs-badge[data-state="completed"],
+  .three-dgs-badge[data-state="stopped"] {
     color: #5eead4;
     border-color: rgba(94, 234, 212, 0.38);
   }

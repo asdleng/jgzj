@@ -83,8 +83,13 @@ function createInitialState() {
       remote_run_path: null,
       remote_status: null,
       remote_pid: null,
+      resume_from_checkpoint: null,
+      resume_from_iteration: null,
+      checkpoint_interval: null,
+      mode: null,
       gpu: null,
       iterations: null,
+      resolution: null,
       started_at_ms: null,
       completed_at_ms: null,
       last_remote_status_check_ms: null,
@@ -148,11 +153,13 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const colorizeOcclusionCellPx = Number(process.env.THREE_DGS_COLORIZE_OCCLUSION_CELL_PX || 8);
   const colorizeDepthToleranceM = Number(process.env.THREE_DGS_COLORIZE_DEPTH_TOLERANCE_M || 1.0);
   const colorizeMinDepthM = Number(process.env.THREE_DGS_COLORIZE_MIN_DEPTH_M || 0.1);
+  const defaultCheckpointInterval = Math.max(100, Number(process.env.THREE_DGS_CHECKPOINT_INTERVAL || 1000));
 
   let state = createInitialState();
   let statePersistTimer = null;
   let prepareProcess = null;
   let trainBootstrapProcess = null;
+  let trainStopRequested = false;
   let captureStartInFlight = false;
   let uploadInFlight = false;
   const pendingVehicleUploads = new Map();
@@ -250,6 +257,23 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         phase: state.dataset.prepared ? 'prepared' : 'idle',
         stage_text: '等待选择车辆、采集或上传 3DGS 数据。',
         error_message: null,
+        updated_at_ms: Date.now()
+      };
+    }
+    if (state.train?.running && state.train.phase === 'syncing') {
+      state = {
+        ...state,
+        phase: 'error',
+        stage_text: '上次同步到 A100 在网站服务重启时中断，请点“开始训练(重新)”重新开始。',
+        error_message: 'train_sync_interrupted_by_backend_restart',
+        train: {
+          ...state.train,
+          phase: 'error',
+          running: false,
+          remote_status: { phase: 'error', reason: 'backend_restart_during_sync' },
+          completed_at_ms: Date.now(),
+          error_message: 'train_sync_interrupted_by_backend_restart'
+        },
         updated_at_ms: Date.now()
       };
     }
@@ -3307,6 +3331,62 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return remotePointCloud;
   }
 
+  async function findLatestRemoteCheckpoint(remoteRunPath) {
+    if (!remoteRunPath) return null;
+    const output = await execSsh(
+      [
+        `RUN_DIR=${remoteQuote(remoteRunPath)}`,
+        'find "$RUN_DIR" -maxdepth 1 -type f -name "chkpnt*.pth" -printf "%f\\t%p\\n" 2>/dev/null |',
+        'sed -nE "s/^chkpnt([0-9]+)\\.pth\\t(.*)$/\\1\\t\\2/p" |',
+        'sort -n | tail -n 1'
+      ].join('\n'),
+      12000
+    );
+    const line = output.trim().split('\n').filter(Boolean).pop();
+    if (!line) return null;
+    const [iterationText, ...pathParts] = line.split('\t');
+    const iteration = Number(iterationText);
+    const checkpointPath = pathParts.join('\t').trim();
+    if (!Number.isFinite(iteration) || !checkpointPath) return null;
+    return {
+      iteration,
+      path: checkpointPath
+    };
+  }
+
+  function makeRemoteStopCommand(remoteRunPath, remotePid) {
+    return [
+      'set -Eeuo pipefail',
+      `RUN_DIR=${remoteQuote(remoteRunPath)}`,
+      `REMOTE_PID=${remoteQuote(remotePid || '')}`,
+      'STATUS_FILE="$RUN_DIR/status.json"',
+      'PID_FILE="$RUN_DIR/train.pid"',
+      'LOG_FILE="$RUN_DIR/train.log"',
+      'mkdir -p "$RUN_DIR"',
+      'if [ -z "$REMOTE_PID" ] && [ -f "$PID_FILE" ]; then REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"; fi',
+      'printf "\\n[%s] stop requested from cloud\\n" "$(date -Iseconds)" >> "$LOG_FILE"',
+      'kill_tree() {',
+      '  local parent="$1"',
+      '  [ -n "$parent" ] || return 0',
+      '  kill -0 "$parent" 2>/dev/null || return 0',
+      '  local child',
+      '  for child in $(pgrep -P "$parent" 2>/dev/null || true); do',
+      '    kill_tree "$child"',
+      '  done',
+      '  kill -TERM "$parent" 2>/dev/null || true',
+      '}',
+      'if [ -n "$REMOTE_PID" ]; then kill_tree "$REMOTE_PID"; fi',
+      'sleep 4',
+      'if [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then',
+      '  for child in $(pgrep -P "$REMOTE_PID" 2>/dev/null || true); do kill -KILL "$child" 2>/dev/null || true; done',
+      '  kill -KILL "$REMOTE_PID" 2>/dev/null || true',
+      'fi',
+      'printf \'{"phase":"stopped","ts":"%s","exit_code":143,"reason":"operator_stopped"}\\n\' "$(date -Iseconds)" > "$STATUS_FILE"',
+      'rm -f "$PID_FILE"',
+      'echo stopped'
+    ].join('\n');
+  }
+
   async function syncViewerPointCloud(payload = {}) {
     const { runId, remoteRunPath } = currentViewerRun(payload);
     const remotePointCloud = await findRemotePointCloud(remoteRunPath);
@@ -3345,6 +3425,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const iterations = Number(trainOptions.iterations || 10000);
     const resolution = Number(trainOptions.resolution || 4);
     const gpu = String(trainOptions.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
+    const resume = Boolean(trainOptions.resume);
+    const checkpointInterval = Math.max(100, Number(trainOptions.checkpointInterval || defaultCheckpointInterval));
     const script = [
       'set -Eeuo pipefail',
       `RUN_DIR=${remoteQuote(remoteRunPath)}`,
@@ -3352,6 +3434,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       'mkdir -p "$RUN_DIR"',
       'STATUS_FILE="$RUN_DIR/status.json"',
       'LOG_FILE="$RUN_DIR/train.log"',
+      'PID_FILE="$RUN_DIR/train.pid"',
       'cat > "$RUN_DIR/run_train.sh" <<\'EOS\'',
       '#!/usr/bin/env bash',
       'set -Eeuo pipefail',
@@ -3362,9 +3445,26 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       `ITERATIONS=${iterations}`,
       `RESOLUTION=${resolution}`,
       `GPU=${remoteQuote(gpu)}`,
+      `RESUME=${resume ? 1 : 0}`,
+      `CHECKPOINT_INTERVAL=${checkpointInterval}`,
       'STATUS_FILE="$RUN_DIR/status.json"',
       'LOG_FILE="$RUN_DIR/train.log"',
+      'PID_FILE="$RUN_DIR/train.pid"',
       'write_status() { printf \'{"phase":"%s","ts":"%s","exit_code":%s}\\n\' "$1" "$(date -Iseconds)" "${2:-0}" > "$STATUS_FILE"; }',
+      'kill_children() {',
+      '  local child',
+      '  for child in $(pgrep -P "$$" 2>/dev/null || true); do',
+      '    kill -TERM "$child" 2>/dev/null || true',
+      '  done',
+      '}',
+      'on_stop() {',
+      '  write_status stopped 143',
+      '  printf "\\n[%s] training stopped by cloud request\\n" "$(date -Iseconds)" >> "$LOG_FILE"',
+      '  kill_children',
+      '  exit 143',
+      '}',
+      'trap on_stop TERM INT',
+      'echo "$$" > "$PID_FILE"',
       'write_status running 0',
       '{',
       '  export MAMBA_ROOT_PREFIX="$HOME/.micromamba"',
@@ -3375,48 +3475,148 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       '  export TORCH_CUDA_ARCH_LIST=8.0',
       '  export CUDA_VISIBLE_DEVICES="$GPU"',
       '  cd "$SOURCE_DIR"',
+      '  CHECKPOINT_ARGS=()',
+      '  if [ "$CHECKPOINT_INTERVAL" -gt 0 ]; then',
+      '    next_checkpoint="$CHECKPOINT_INTERVAL"',
+      '    while [ "$next_checkpoint" -lt "$ITERATIONS" ]; do',
+      '      CHECKPOINT_ARGS+=("$next_checkpoint")',
+      '      next_checkpoint=$((next_checkpoint + CHECKPOINT_INTERVAL))',
+      '    done',
+      '  fi',
+      '  CHECKPOINT_ARGS+=("$ITERATIONS")',
+      '  START_CHECKPOINT_ARGS=()',
+      '  if [ "$RESUME" = "1" ]; then',
+      '    START_CHECKPOINT="$(find "$RUN_DIR" -maxdepth 1 -type f -name "chkpnt*.pth" -printf "%f\\t%p\\n" 2>/dev/null | sed -nE "s/^chkpnt([0-9]+)\\.pth\\t(.*)$/\\1\\t\\2/p" | sort -n | tail -n 1 | cut -f2-)"',
+      '    if [ -z "$START_CHECKPOINT" ]; then',
+      '      printf "\\n[%s] no checkpoint available for resume\\n" "$(date -Iseconds)" >> "$LOG_FILE"',
+      '      write_status error 22',
+      '      exit 22',
+      '    fi',
+      '    START_CHECKPOINT_ARGS=(--start_checkpoint "$START_CHECKPOINT")',
+      '    printf "\\n[%s] resume from checkpoint: %s\\n" "$(date -Iseconds)" "$START_CHECKPOINT" >> "$LOG_FILE"',
+      '  fi',
       '  "$HOME/.local/bin/micromamba" run -n "$ENV_NAME" python train.py \\',
       '    -s "$DATASET_DIR" \\',
       '    -m "$RUN_DIR" \\',
       '    --iterations "$ITERATIONS" \\',
       '    --save_iterations "$ITERATIONS" \\',
-      '    --checkpoint_iterations "$ITERATIONS" \\',
+      '    --checkpoint_iterations "${CHECKPOINT_ARGS[@]}" \\',
       '    --data_device cpu \\',
-      '    -r "$RESOLUTION"',
+      '    -r "$RESOLUTION" \\',
+      '    "${START_CHECKPOINT_ARGS[@]}"',
       '  write_status completed 0',
-      '} >> "$LOG_FILE" 2>&1 || { code=$?; write_status error "$code"; exit "$code"; }',
+      '  rm -f "$PID_FILE"',
+      '} >> "$LOG_FILE" 2>&1 || { code=$?; if [ "$code" != "143" ]; then write_status error "$code"; fi; rm -f "$PID_FILE"; exit "$code"; }',
       'EOS',
       'chmod +x "$RUN_DIR/run_train.sh"',
-      'nohup bash "$RUN_DIR/run_train.sh" >/dev/null 2>&1 & echo $!'
+      'nohup bash "$RUN_DIR/run_train.sh" >/dev/null 2>&1 & pid=$!; echo "$pid" > "$PID_FILE"; echo $pid'
     ];
     return script.join('\n');
   }
 
-  async function startTrainingTask(auth, payload = {}) {
-    if (trainBootstrapProcess || state.train.running || state.prepare.running) {
-      throw new Error('three_dgs_busy');
-    }
-    if (!state.dataset.prepared || !state.dataset.path) {
-      throw new Error('three_dgs_dataset_not_prepared');
-    }
-
-    const runId = makeRunId(state.dataset.scene_name || payload.scene_name || 'scene');
-    const localLogPath = path.join(logDir, `train-bootstrap-${runId}.log`);
-    const remoteDatasetPath = `${remoteDatasetRoot}/${runId}`;
-    const remoteRunPath = `${remoteRunRoot}/${runId}`;
-    const gpu = String(payload.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
-    const iterations = Number(payload.iterations || 10000);
-    const resolution = Number(payload.resolution || 4);
-
-    await fsp.rm(localLogPath, { force: true });
+  function markTrainingStopped(reason = 'operator_stopped', extraTrainPatch = {}) {
     updateState({
-      phase: 'training',
-      active_username: auth.username,
-      stage_text: '正在同步数据到 A100 并启动 3DGS 训练。',
+      phase: 'stopped',
+      stage_text: 'A100 3DGS 训练已停止；可以继续训练或重新开始。',
       error_message: null,
       train: {
         ...state.train,
-        phase: 'syncing',
+        phase: 'stopped',
+        running: false,
+        remote_status: {
+          ...(state.train.remote_status || {}),
+          phase: 'stopped',
+          reason
+        },
+        completed_at_ms: Date.now(),
+        error_message: null,
+        ...extraTrainPatch
+      }
+    });
+  }
+
+  async function launchRemoteTraining({ localLogPath, remoteDatasetPath, remoteRunPath, gpu, iterations, resolution, resume, checkpoint }) {
+    await appendToLog(localLogPath, `${resume ? 'resume' : 'start'} remote training`);
+    const command = makeRemoteTrainCommand(remoteDatasetPath, remoteRunPath, {
+      gpu,
+      iterations,
+      resolution,
+      resume,
+      checkpointInterval: defaultCheckpointInterval
+    });
+    const stdout = await execSsh(command, 30000);
+    const pid = stdout.trim().split(/\s+/).filter(Boolean).pop() || null;
+    updateState({
+      phase: 'training',
+      stage_text: resume
+        ? `A100 训练已从 checkpoint 继续，remote pid=${pid || '-'}。`
+        : `A100 训练已启动，remote pid=${pid || '-'}。`,
+      error_message: null,
+      train: {
+        ...state.train,
+        phase: 'training',
+        running: true,
+        remote_pid: pid,
+        remote_status: { phase: 'running' },
+        resume_from_checkpoint: checkpoint?.path || null,
+        resume_from_iteration: checkpoint?.iteration || null,
+        checkpoint_interval: defaultCheckpointInterval,
+        last_remote_status_check_ms: null,
+        error_message: null
+      }
+    });
+  }
+
+  async function startTrainingTask(auth, payload = {}, options = {}) {
+    const resume = Boolean(options.resume || payload.resume);
+    if (trainBootstrapProcess || state.train.running || state.prepare.running) {
+      throw new Error('three_dgs_busy');
+    }
+
+    let checkpoint = null;
+    let runId = null;
+    let localLogPath = null;
+    let remoteDatasetPath = null;
+    let remoteRunPath = null;
+    if (resume) {
+      runId = sanitizeRunId(state.train.run_id);
+      remoteDatasetPath = state.train.remote_dataset_path;
+      remoteRunPath = state.train.remote_run_path;
+      localLogPath = state.train.local_log_path || path.join(logDir, `train-bootstrap-${runId || 'resume'}.log`);
+      if (!runId || !remoteDatasetPath || !remoteRunPath) {
+        throw new Error('three_dgs_resume_context_missing');
+      }
+      checkpoint = await findLatestRemoteCheckpoint(remoteRunPath);
+      if (!checkpoint) {
+        throw new Error('three_dgs_checkpoint_not_found');
+      }
+    } else {
+      if (!state.dataset.prepared || !state.dataset.path) {
+        throw new Error('three_dgs_dataset_not_prepared');
+      }
+      runId = makeRunId(state.dataset.scene_name || payload.scene_name || 'scene');
+      localLogPath = path.join(logDir, `train-bootstrap-${runId}.log`);
+      remoteDatasetPath = `${remoteDatasetRoot}/${runId}`;
+      remoteRunPath = `${remoteRunRoot}/${runId}`;
+      await fsp.rm(localLogPath, { force: true });
+    }
+
+    trainStopRequested = false;
+    const gpu = String(payload.gpu ?? state.train.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
+    const iterations = Number(payload.iterations || state.train.iterations || 10000);
+    const resolution = Number(payload.resolution || state.train.resolution || 4);
+
+    updateState({
+      phase: 'training',
+      active_username: auth.username,
+      stage_text: resume
+        ? `正在从 checkpoint ${checkpoint.iteration} 继续 A100 训练。`
+        : '正在同步数据到 A100 并启动 3DGS 训练。',
+      error_message: null,
+      viewer: resume ? state.viewer : createInitialState().viewer,
+      train: {
+        ...state.train,
+        phase: resume ? 'resuming' : 'syncing',
         running: true,
         run_id: runId,
         local_log_path: localLogPath,
@@ -3424,6 +3624,10 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         remote_run_path: remoteRunPath,
         remote_status: null,
         remote_pid: null,
+        resume_from_checkpoint: checkpoint?.path || null,
+        resume_from_iteration: checkpoint?.iteration || null,
+        checkpoint_interval: defaultCheckpointInterval,
+        mode: resume ? 'resume' : 'restart',
         gpu,
         iterations,
         resolution,
@@ -3434,21 +3638,51 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       }
     });
 
+    if (resume) {
+      try {
+        await launchRemoteTraining({
+          localLogPath,
+          remoteDatasetPath,
+          remoteRunPath,
+          gpu,
+          iterations,
+          resolution,
+          resume: true,
+          checkpoint
+        });
+      } catch (error) {
+        updateState({
+          phase: 'error',
+          stage_text: 'A100 继续训练启动失败。',
+          error_message: error?.message || 'remote_train_resume_failed',
+          train: {
+            ...state.train,
+            phase: 'error',
+            running: false,
+            error_message: error?.message || 'remote_train_resume_failed',
+            completed_at_ms: Date.now()
+          }
+        });
+      }
+      return;
+    }
+
     await appendToLog(localLogPath, `ensure remote directories ${remoteDatasetPath} and ${remoteRunPath}`);
     try {
       await execSsh(`mkdir -p ${remoteQuote(remoteDatasetPath)} ${remoteQuote(remoteRunPath)}`, 15000);
     } catch (error) {
       await appendToLog(localLogPath, `remote mkdir failed: ${error?.message || 'unknown error'}`);
-      updateNestedState('train', {
-        phase: 'error',
-        running: false,
-        error_message: error?.message || 'remote_mkdir_failed',
-        completed_at_ms: Date.now()
-      });
       updateState({
         phase: 'error',
         stage_text: 'A100 远端目录创建失败。',
-        error_message: error?.message || 'remote_mkdir_failed'
+        error_message: error?.message || 'remote_mkdir_failed',
+        train: {
+          ...state.train,
+          phase: 'error',
+          running: false,
+          error_message: error?.message || 'remote_mkdir_failed',
+          completed_at_ms: Date.now()
+        }
       });
       return;
     }
@@ -3472,77 +3706,117 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     trainBootstrapProcess.on('error', async (error) => {
       trainBootstrapProcess = null;
       logStream.end();
-      updateNestedState('train', {
-        phase: 'error',
-        running: false,
-        error_message: error?.message || 'rsync_spawn_failed',
-        completed_at_ms: Date.now()
-      });
       updateState({
         phase: 'error',
         stage_text: '同步到 A100 失败。',
-        error_message: error?.message || 'rsync_spawn_failed'
+        error_message: error?.message || 'rsync_spawn_failed',
+        train: {
+          ...state.train,
+          phase: 'error',
+          running: false,
+          error_message: error?.message || 'rsync_spawn_failed',
+          completed_at_ms: Date.now()
+        }
       });
     });
     trainBootstrapProcess.on('exit', async (code, signal) => {
       if (signal || code !== 0) {
         trainBootstrapProcess = null;
         logStream.end();
-        updateNestedState('train', {
-          phase: 'error',
-          running: false,
-          error_message: signal || `rsync_exit_${code}`,
-          completed_at_ms: Date.now()
-        });
+        if (trainStopRequested) {
+          trainStopRequested = false;
+          markTrainingStopped('sync_interrupted');
+          return;
+        }
         updateState({
           phase: 'error',
           stage_text: signal ? `同步到 A100 被中断：${signal}` : `同步到 A100 失败，exit code=${code}`,
-          error_message: signal || `rsync_exit_${code}`
+          error_message: signal || `rsync_exit_${code}`,
+          train: {
+            ...state.train,
+            phase: 'error',
+            running: false,
+            error_message: signal || `rsync_exit_${code}`,
+            completed_at_ms: Date.now()
+          }
         });
         return;
       }
 
       try {
-        await appendToLog(localLogPath, 'rsync done; start remote training');
-        const command = makeRemoteTrainCommand(remoteDatasetPath, remoteRunPath, {
+        await appendToLog(localLogPath, 'rsync done');
+        await launchRemoteTraining({
+          localLogPath,
+          remoteDatasetPath,
+          remoteRunPath,
           gpu,
           iterations,
-          resolution
+          resolution,
+          resume: false,
+          checkpoint: null
         });
-        const stdout = await execSsh(command, 30000);
-        const pid = stdout.trim().split(/\s+/).filter(Boolean).pop() || null;
         trainBootstrapProcess = null;
         logStream.end();
-        updateNestedState('train', {
-          phase: 'training',
-          running: true,
-          remote_pid: pid,
-          remote_status: { phase: 'running' }
-        });
-        updateState({
-          phase: 'training',
-          stage_text: `A100 训练已启动，remote pid=${pid || '-'}。`
-        });
       } catch (error) {
         trainBootstrapProcess = null;
         logStream.end();
-        updateNestedState('train', {
-          phase: 'error',
-          running: false,
-          error_message: error?.message || 'remote_train_start_failed',
-          completed_at_ms: Date.now()
-        });
         updateState({
           phase: 'error',
           stage_text: 'A100 训练启动失败。',
-          error_message: error?.message || 'remote_train_start_failed'
+          error_message: error?.message || 'remote_train_start_failed',
+          train: {
+            ...state.train,
+            phase: 'error',
+            running: false,
+            error_message: error?.message || 'remote_train_start_failed',
+            completed_at_ms: Date.now()
+          }
         });
       }
     });
   }
 
+  async function stopTrainingTask(_auth, payload = {}) {
+    const isRunning = Boolean(trainBootstrapProcess || state.train.running || ['syncing', 'resuming', 'training'].includes(state.train.phase));
+    if (!isRunning) {
+      throw new Error('three_dgs_train_not_running');
+    }
+    trainStopRequested = true;
+    const reason = String(payload.reason || 'operator_stopped').slice(0, 80);
+    if (trainBootstrapProcess) {
+      await appendToLog(state.train.local_log_path, `stop requested during dataset sync: ${reason}`).catch(() => {});
+      trainBootstrapProcess.kill('SIGTERM');
+      updateState({
+        phase: 'training',
+        stage_text: '正在中断同步到 A100。',
+        train: {
+          ...state.train,
+          remote_status: { phase: 'stopping', reason }
+        }
+      });
+      return;
+    }
+    if (!state.train.remote_run_path) {
+      markTrainingStopped(reason);
+      trainStopRequested = false;
+      return;
+    }
+    updateState({
+      phase: 'training',
+      stage_text: '正在停止 A100 训练进程。',
+      train: {
+        ...state.train,
+        remote_status: { phase: 'stopping', reason }
+      }
+    });
+    await appendToLog(state.train.local_log_path, `stop requested for remote training: ${reason}`).catch(() => {});
+    await execSsh(makeRemoteStopCommand(state.train.remote_run_path, state.train.remote_pid), 30000);
+    trainStopRequested = false;
+    markTrainingStopped(reason);
+  }
+
   async function refreshRemoteTrainingStatus() {
-    if (!state.train.remote_run_path || !['training', 'syncing'].includes(state.train.phase)) {
+    if (!state.train.remote_run_path || !['training', 'syncing', 'resuming'].includes(state.train.phase)) {
       return null;
     }
     const lastChecked = Number(state.train.last_remote_status_check_ms || 0);
@@ -3582,6 +3856,19 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           phase: 'error',
           stage_text: 'A100 3DGS 训练失败。',
           error_message: patch.error_message,
+          train: {
+            ...state.train,
+            ...patch
+          }
+        });
+      } else if (remoteStatus.phase === 'stopped') {
+        patch.phase = 'stopped';
+        patch.running = false;
+        patch.completed_at_ms = state.train.completed_at_ms || Date.now();
+        updateState({
+          phase: 'stopped',
+          stage_text: 'A100 3DGS 训练已停止；可以继续训练或重新开始。',
+          error_message: null,
           train: {
             ...state.train,
             ...patch
@@ -4330,6 +4617,30 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     }
   });
 
+  app.post('/api/three-dgs/train/stop', requireThreeDgsAuth, async (req, res) => {
+    try {
+      await stopTrainingTask(req.threeDgsAuth, req.body || {});
+      return res.json(makeStatusResponse(req.threeDgsAuth));
+    } catch (error) {
+      return res.status(400).json({
+        ok: false,
+        error: error.message || 'three_dgs_train_stop_failed'
+      });
+    }
+  });
+
+  app.post('/api/three-dgs/train/resume', requireThreeDgsAuth, async (req, res) => {
+    try {
+      await startTrainingTask(req.threeDgsAuth, { ...(req.body || {}), resume: true }, { resume: true });
+      return res.json(makeStatusResponse(req.threeDgsAuth));
+    } catch (error) {
+      return res.status(400).json({
+        ok: false,
+        error: error.message || 'three_dgs_train_resume_failed'
+      });
+    }
+  });
+
   app.get('/api/three-dgs/train/metrics', requireThreeDgsAuth, async (req, res) => {
     try {
       const maxBytes = Math.max(65536, Math.min(8 * 1024 * 1024, Number(req.query.max_bytes || 2 * 1024 * 1024)));
@@ -4345,7 +4656,11 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           running: Boolean(state.train.running),
           iterations: state.train.iterations || null,
           resolution: state.train.resolution || null,
-          gpu: state.train.gpu || null
+          gpu: state.train.gpu || null,
+          mode: state.train.mode || null,
+          checkpoint_interval: state.train.checkpoint_interval || null,
+          resume_from_checkpoint: state.train.resume_from_checkpoint || null,
+          resume_from_iteration: state.train.resume_from_iteration || null
         },
         metrics
       });
