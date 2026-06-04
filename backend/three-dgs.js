@@ -565,7 +565,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   function parseColmapImagesText(text) {
     const frames = [];
     const lines = String(text || '').split(/\r?\n/);
-    for (const line of lines) {
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      const line = lines[lineIndex];
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) continue;
       const values = trimmed.split(/\s+/);
@@ -586,6 +587,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         tvec,
         position: cameraCenterFromImagePose(qvec, tvec)
       });
+      lineIndex += 1;
     }
     frames.sort((a, b) => a.image_id - b.image_id);
     return frames;
@@ -1001,6 +1003,12 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
   function currentManualViewerCamera() {
     const manual = state.viewer_camera?.manual || null;
+    if (manual?.run_id && state.viewer?.run_id && manual.run_id !== state.viewer.run_id) {
+      return null;
+    }
+    if (manual?.dataset_scene_name && state.dataset?.scene_name && manual.dataset_scene_name !== state.dataset.scene_name) {
+      return null;
+    }
     const position = finiteViewerVector(manual?.position);
     const focus = finiteViewerVector(manual?.focus || manual?.target);
     if (!position || !focus) return null;
