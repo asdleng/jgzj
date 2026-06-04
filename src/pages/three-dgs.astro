@@ -378,6 +378,8 @@ import SiteLayout from "../components/SiteLayout.astro";
                 <button id="three-dgs-sync-result" class="three-dgs-button three-dgs-button--primary" type="button">同步训练结果</button>
                 <button id="three-dgs-read-viewer-camera" class="three-dgs-button three-dgs-button--ghost" type="button">读取当前视角</button>
                 <button id="three-dgs-copy-viewer-camera" class="three-dgs-button three-dgs-button--ghost" type="button">复制视角</button>
+                <button id="three-dgs-save-viewer-camera" class="three-dgs-button three-dgs-button--ghost" type="button">保存为默认视角</button>
+                <button id="three-dgs-reset-viewer-camera" class="three-dgs-button three-dgs-button--ghost" type="button">清除默认视角</button>
                 <a id="three-dgs-open-viewer" class="three-dgs-button three-dgs-button--ghost" href="#" target="_blank" rel="noreferrer">新窗口查看</a>
               </div>
             </div>
@@ -418,6 +420,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     trainResume: "/api/three-dgs/train/resume",
     trainMetrics: "/api/three-dgs/train/metrics",
     viewerSync: "/api/three-dgs/viewer/sync",
+    viewerCamera: "/api/three-dgs/viewer/camera",
     prepareLog: "/api/three-dgs/logs/prepare",
     trainLocalLog: "/api/three-dgs/logs/train-local",
     trainRemoteLog: "/api/three-dgs/logs/train-remote"
@@ -530,7 +533,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     const settingsKey = [
       state.dataset?.prepared_at_ms || 0,
       state.viewer?.synced_at_ms || 0,
-      state.train?.run_id || ""
+      state.train?.run_id || "",
+      state.viewer_camera?.manual?.saved_at_ms || 0
     ].join("-");
     const settingsUrl = `/api/three-dgs/viewer/settings?key=${encodeURIComponent(settingsKey)}`;
     return `/supersplat-viewer/?webgl&noanim&content=${encodeURIComponent(pointCloudUrl)}&settings=${encodeURIComponent(settingsUrl)}`;
@@ -575,6 +579,7 @@ import SiteLayout from "../components/SiteLayout.astro";
       viewer_src: viewerFrame.src,
       position: Array.isArray(snapshot.position) ? snapshot.position : parseViewerVector(cameraText),
       focus: parseViewerVector(focusText),
+      target: parseViewerVector(focusText),
       angles: snapshot.angles || null,
       distance: snapshot.distance,
       fov: snapshot.fov,
@@ -592,6 +597,16 @@ import SiteLayout from "../components/SiteLayout.astro";
     const state = lastViewerCameraState || readViewerCameraState();
     await navigator.clipboard.writeText(JSON.stringify(state, null, 2));
     setFeedback("当前 SuperSplat 视角已复制。", "success");
+  }
+
+  async function saveViewerCameraState() {
+    const cameraState = lastViewerCameraState || readViewerCameraState();
+    await postJson(api.viewerCamera, { camera_state: cameraState });
+  }
+
+  async function resetViewerCameraState() {
+    await postJson(api.viewerCamera, { action: "reset" });
+    lastViewerCameraState = null;
   }
 
   function currentVehicleId() {
@@ -1469,6 +1484,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     el("three-dgs-remote-run").textContent = train.remote_run_path || "-";
 
     const viewer = state.viewer || {};
+    const manualViewerCamera = state.viewer_camera?.manual || null;
     const viewerUrl = viewerUrlFor(viewer.point_cloud_url);
     if (viewerUrl) {
       viewerStatus.textContent = `${viewer.run_id || train.run_id || "-"} · ${formatSize(viewer.size_bytes)} · 已同步`;
@@ -1479,6 +1495,12 @@ import SiteLayout from "../components/SiteLayout.astro";
         viewerFrame.src = viewerUrl;
       }
       viewerFrame.hidden = false;
+      if (!lastViewerCameraState && manualViewerCamera?.position && manualViewerCamera?.focus) {
+        const position = manualViewerCamera.position.map((value) => Number(value).toFixed(3)).join(", ");
+        const focus = manualViewerCamera.focus.map((value) => Number(value).toFixed(3)).join(", ");
+        viewerCameraSummary.textContent = `默认锚点 position [${position}] · focus [${focus}]`;
+        viewerCameraJson.textContent = JSON.stringify(manualViewerCamera, null, 2);
+      }
     } else {
       viewerStatus.textContent = train.remote_run_path ? "可同步当前训练结果" : "等待训练输出";
       viewerOpen.href = "#";
@@ -1764,6 +1786,12 @@ import SiteLayout from "../components/SiteLayout.astro";
   );
   el("three-dgs-copy-viewer-camera").addEventListener("click", () =>
     runAction("复制当前视角", copyViewerCameraState)
+  );
+  el("three-dgs-save-viewer-camera").addEventListener("click", () =>
+    runAction("保存默认视角", saveViewerCameraState)
+  );
+  el("three-dgs-reset-viewer-camera").addEventListener("click", () =>
+    runAction("清除默认视角", resetViewerCameraState)
   );
   el("three-dgs-load-prepare-log").addEventListener("click", () => runAction("读取准备日志", () => loadLog(api.prepareLog)));
   el("three-dgs-load-train-log").addEventListener("click", () =>
