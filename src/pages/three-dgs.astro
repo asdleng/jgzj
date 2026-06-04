@@ -1393,6 +1393,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   function refreshButtons() {
     const allow = isAuthed() && hasRunPermission() && !busy;
     const taskBusy = isTaskBusy();
+    const captureActive = Boolean(statusData?.state?.capture?.active);
     const train = statusData?.state?.train || {};
     const trainRunning = Boolean(train.running || ["syncing", "resuming", "training"].includes(train.phase));
     const canResumeTrain = Boolean(
@@ -1429,6 +1430,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     el("three-dgs-resume-train").disabled = !allow || taskBusy || !canResumeTrain;
     el("three-dgs-sync-result").disabled = !allow || taskBusy || !statusData?.state?.train?.remote_run_path;
     el("three-dgs-load-train-metrics").disabled = !allow || !statusData?.state?.train?.run_id;
+    el("three-dgs-start-capture").disabled = !allow || taskBusy || captureActive;
+    el("three-dgs-stop-capture").disabled = !(isAuthed() && hasRunPermission()) || busy || !captureActive;
   }
 
   function applyVehicles(vehicles) {
