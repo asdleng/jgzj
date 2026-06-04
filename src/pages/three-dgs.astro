@@ -66,7 +66,7 @@ import SiteLayout from "../components/SiteLayout.astro";
               </div>
               <label class="three-dgs-field">
                 <span>最小平移 m</span>
-                <input id="three-dgs-min-translation" type="number" min="0.05" step="0.05" value="0.1" />
+                <input id="three-dgs-min-translation" type="number" min="0.05" step="0.05" value="0.5" />
               </label>
               <label class="three-dgs-field">
                 <span>最小旋转 deg</span>
@@ -1620,7 +1620,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   function selectedVehiclePayload() {
     return {
       vehicle_id: currentVehicleId(),
-      min_translation_m: Number(el("three-dgs-min-translation").value || 0.1),
+      min_translation_m: Number(el("three-dgs-min-translation").value || 0.5),
       min_rotation_deg: Number(el("three-dgs-min-rotation").value || 10),
       min_interval_s: Number(el("three-dgs-min-interval").value || 0.2)
     };

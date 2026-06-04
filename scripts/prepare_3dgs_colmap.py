@@ -406,11 +406,28 @@ def record_group_key(record: dict, image_id: int) -> str:
 
 
 def record_pose_mode(record: dict) -> str:
+    if isinstance(record.get("pose_context"), dict):
+        return "vehicle_timestamp_interpolated_pose"
     if any(key in record for key in ("pose_history", "pose_buffer", "ndt_pose_history")):
         return "pose_history_available_not_used"
     if record.get("pose") or record.get("matched_pose") or record.get("ndt_pose"):
         return "vehicle_matched_pose"
     return "vehicle_provided_transform"
+
+
+def record_pointcloud_context_available(record: dict) -> bool:
+    value = record.get("pointcloud_context")
+    return isinstance(value, dict) and (value.get("previous") is not None or value.get("following") is not None)
+
+
+def pose_interpolation_note_for_mode(mode: str) -> str:
+    if mode == "vehicle_timestamp_interpolated_pose":
+        return "Cloud used the per-frame T_map_camera/T_camera_map supplied by the vehicle. The vehicle interpolated /ndt_pose to each image timestamp using surrounding poses."
+    if mode == "pose_history_available_not_used":
+        return "Cloud used the per-frame transform supplied by the vehicle. Pose history is present for diagnostics and future cloud-side interpolation."
+    if mode == "vehicle_matched_pose":
+        return "Cloud used the per-frame pose/transform supplied by the vehicle package. This may be a matched pose if pose_context is absent."
+    return "Cloud used the per-frame transform supplied by the vehicle package."
 
 
 def matrix_from_record(record: dict) -> np.ndarray:
@@ -964,6 +981,8 @@ def prepare_scene(args: argparse.Namespace) -> dict:
         camera_lines: list[str] = []
         image_lines: list[str] = []
         frame_metadata: list[dict] = []
+        pose_mode_counts: dict[str, int] = {}
+        pointcloud_context_frame_count = 0
         copied_count = 0
 
         for image_id, record in enumerate(records, start=1):
@@ -1040,6 +1059,11 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             )
             pose_obj = record.get("pose") if isinstance(record.get("pose"), dict) else {}
             image_obj = record.get("image") if isinstance(record.get("image"), dict) else {}
+            pose_mode = record_pose_mode(record)
+            pose_mode_counts[pose_mode] = pose_mode_counts.get(pose_mode, 0) + 1
+            has_pointcloud_context = record_pointcloud_context_available(record)
+            if has_pointcloud_context:
+                pointcloud_context_frame_count += 1
             frame_metadata.append(
                 {
                     "image_id": image_id,
@@ -1058,9 +1082,10 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     "image_pose_delta_ms": pose_delta_ms,
                     "pose_source": pose_obj.get("source") or record.get("pose_source"),
                     "pose_topic": pose_obj.get("topic"),
-                    "pose_mode": record_pose_mode(record),
-                    "pose_interpolation": "vehicle_matched_pose",
-                    "pose_interpolation_note": "Cloud used the per-frame pose/transform supplied by the vehicle package. True cloud-side timestamp interpolation requires pose_history/pose_buffer in the package.",
+                    "pose_mode": pose_mode,
+                    "pose_interpolation": pose_mode,
+                    "pose_interpolation_note": pose_interpolation_note_for_mode(pose_mode),
+                    "pointcloud_context_available": has_pointcloud_context,
                 }
             )
             copied_count += 1
@@ -1089,10 +1114,15 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     "scene_name": args.scene_name,
                     "generated_at_unix": time.time(),
                     "pose_interpolation": {
-                        "mode": "vehicle_matched_pose",
+                        "mode": "vehicle_timestamp_interpolated_pose" if pose_mode_counts.get("vehicle_timestamp_interpolated_pose") else "vehicle_matched_pose",
                         "cloud_interpolation_available": False,
-                        "required_vehicle_package_fields": ["pose_history", "pose_buffer"],
-                        "note": "Each image uses its own vehicle-supplied pose/transform. Camera streams are not assumed to be synchronized.",
+                        "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
+                        "pose_mode_counts": pose_mode_counts,
+                        "note": "Each image uses its own vehicle-supplied T_map_camera/T_camera_map. Camera streams are not assumed to be synchronized.",
+                    },
+                    "pointcloud_context": {
+                        "available_frame_count": pointcloud_context_frame_count,
+                        "available": pointcloud_context_frame_count > 0,
                     },
                     "frames": frame_metadata,
                 },
@@ -1119,9 +1149,15 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             "colorization": colorization_summary,
             "frame_metadata_path": str(output / "frame_metadata.json"),
             "pose_interpolation": {
-                "mode": "vehicle_matched_pose",
+                "mode": "vehicle_timestamp_interpolated_pose" if pose_mode_counts.get("vehicle_timestamp_interpolated_pose") else "vehicle_matched_pose",
                 "cloud_interpolation_available": False,
-                "note": "The uploaded package did not include a high-rate pose history, so cloud-side interpolation cannot be performed yet.",
+                "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
+                "pose_mode_counts": pose_mode_counts,
+                "note": "Cloud uses the per-frame T_map_camera/T_camera_map supplied by the vehicle package.",
+            },
+            "pointcloud_context": {
+                "available": pointcloud_context_frame_count > 0,
+                "available_frame_count": pointcloud_context_frame_count,
             },
             "cameras": [
                 {

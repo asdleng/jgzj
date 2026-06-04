@@ -15,6 +15,9 @@
 ```text
 manifest.json
 pose_history.jsonl
+shared_context/pose_history.jsonl
+shared_context/pointcloud_context.bag
+shared_context/pointcloud_context.jsonl
 camera1/manifest.json
 camera1/frames.jsonl
 camera1/images/*.jpg
@@ -160,7 +163,40 @@ camera4/images/*.jpg
 }
 ```
 
-如果车端暂时不能提供 `pose_history.jsonl`，也可以先继续上传每张图的 `pose` 和 `T_map_camera`。但必须清楚：这时云端只能使用车端给出的 per-frame matched pose，不能重新插值。
+如果车端已经为每张图提供 `pose_context.previous/following` 和插值后的 `transforms.T_map_camera`，云端训练时直接使用每帧的 `T_map_camera` / `T_camera_map`，不会再按最近邻 `/ndt_pose` 重新配位姿。
+
+## 云端开始采集请求
+
+云端按钮应以车辆级 session 一次启动所有 enabled 且标定正确的相机：
+
+```json
+{
+  "type": "tool.call",
+  "tool": "3dgs.capture.start",
+  "args": {
+    "camera": "all",
+    "pose_topic": "/ndt_pose",
+    "pointcloud_topic": "/rslidar_points32",
+    "min_translation_m": 0.5,
+    "min_rotation_deg": 10.0,
+    "min_interval_s": 0.2,
+    "max_pose_gap_ms": 100,
+    "pose_interpolation_delay_s": 0.25,
+    "interpolation_timeout_s": 1.0,
+    "pointcloud_context_max_gap_ms": 150,
+    "save_pointcloud_context": true,
+    "duration_s": 0,
+    "max_frames": 0
+  }
+}
+```
+
+云端规整 COLMAP 数据时的约定：
+
+- 优先使用每条 frame record 里的 `transforms.T_camera_map`。
+- 如果只有 `transforms.T_map_camera`，云端求逆得到 COLMAP world-to-camera。
+- 不使用四路相机 index 做同步。
+- 不再用云端最近邻 `/ndt_pose` 重算训练位姿。
 
 ## 验收标准
 
@@ -171,4 +207,3 @@ camera4/images/*.jpg
 - 每路相机独立统计帧数，不要求四路帧数相同。
 - 四路预览按时间最近邻显示，并显示 `Δt`，不会使用 `index` 作为同步依据。
 - `image_pose_delta_ms` p90 建议低于 50ms；运动较快时越低越好。
-

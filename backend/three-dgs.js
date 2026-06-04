@@ -3161,10 +3161,15 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   function buildCaptureStartArgs(payload = {}) {
     return {
       pose_topic: '/ndt_pose',
-      min_translation_m: Number(payload.min_translation_m || 0.1),
+      pointcloud_topic: '/rslidar_points32',
+      min_translation_m: Number(payload.min_translation_m || 0.5),
       min_rotation_deg: Number(payload.min_rotation_deg || 10),
       min_interval_s: Number(payload.min_interval_s || 0.2),
       max_pose_gap_ms: Number(payload.max_pose_gap_ms || 100),
+      pose_interpolation_delay_s: Number(payload.pose_interpolation_delay_s || 0.25),
+      interpolation_timeout_s: Number(payload.interpolation_timeout_s || 1.0),
+      pointcloud_context_max_gap_ms: Number(payload.pointcloud_context_max_gap_ms || 150),
+      save_pointcloud_context: payload.save_pointcloud_context !== false,
       duration_s: Number(payload.duration_s || 0),
       max_frames: Number(payload.max_frames || 0)
     };
