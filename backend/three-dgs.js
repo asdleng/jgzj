@@ -71,7 +71,8 @@ function createInitialState() {
       pid: null,
       log_path: null,
       started_at_ms: null,
-      completed_at_ms: null
+      completed_at_ms: null,
+      progress: null
     },
     train: {
       phase: 'idle',
@@ -139,6 +140,14 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const defaultUndistortMode = ['keep-k', 'optimal'].includes(process.env.THREE_DGS_UNDISTORT_MODE)
     ? process.env.THREE_DGS_UNDISTORT_MODE
     : 'keep-k';
+  const colorizeInitialPoints = String(process.env.THREE_DGS_COLORIZE_POINTS || 'true').toLowerCase() !== 'false';
+  const filterVisibleInitialPoints = String(process.env.THREE_DGS_FILTER_VISIBLE_POINTS || 'true').toLowerCase() !== 'false';
+  const colorizeMaxFrames = Number(process.env.THREE_DGS_COLORIZE_MAX_FRAMES || 640);
+  const colorizeMinObservations = Number(process.env.THREE_DGS_COLORIZE_MIN_OBSERVATIONS || 2);
+  const colorizeMinKeptPoints = Number(process.env.THREE_DGS_COLORIZE_MIN_KEPT_POINTS || 20000);
+  const colorizeOcclusionCellPx = Number(process.env.THREE_DGS_COLORIZE_OCCLUSION_CELL_PX || 8);
+  const colorizeDepthToleranceM = Number(process.env.THREE_DGS_COLORIZE_DEPTH_TOLERANCE_M || 1.0);
+  const colorizeMinDepthM = Number(process.env.THREE_DGS_COLORIZE_MIN_DEPTH_M || 0.1);
 
   let state = createInitialState();
   let statePersistTimer = null;
@@ -268,6 +277,38 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     } catch (_error) {
       return null;
     }
+  }
+
+  async function readPrepareProgressFile(datasetPath = state.dataset?.path) {
+    if (!datasetPath) return null;
+    const resolvedDatasetPath = path.resolve(datasetPath);
+    const resolvedDatasetRoot = path.resolve(datasetRoot);
+    if (resolvedDatasetPath !== resolvedDatasetRoot && !resolvedDatasetPath.startsWith(`${resolvedDatasetRoot}${path.sep}`)) {
+      return null;
+    }
+    const targetPath = path.join(resolvedDatasetPath, 'three_dgs_prepare_progress.json');
+    try {
+      const parsed = JSON.parse(await fsp.readFile(targetPath, 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async function refreshPrepareProgressFromDisk() {
+    if (!state.prepare.running && !state.dataset?.path) return;
+    const progress = await readPrepareProgressFile();
+    if (!progress) return;
+    const stageText = state.prepare.running && progress.stage_label
+      ? `预处理：${progress.stage_label}${progress.detail ? ` · ${progress.detail}` : ''}`
+      : state.stage_text;
+    updateState({
+      stage_text: stageText,
+      prepare: {
+        ...state.prepare,
+        progress
+      }
+    });
   }
 
   function sanitizeFileName(value, fallback = 'upload.bin') {
@@ -3094,7 +3135,14 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         pid: null,
         log_path: logPath,
         started_at_ms: Date.now(),
-        completed_at_ms: null
+        completed_at_ms: null,
+        progress: {
+          stage: 'queued',
+          stage_label: '等待启动预处理',
+          progress_pct: 0,
+          detail: '准备启动 COLMAP 数据规整',
+          updated_at_ms: Date.now()
+        }
       }
     });
 
@@ -3113,7 +3161,23 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       '--undistort',
       payload.undistort === false ? 'false' : 'true',
       '--undistort-mode',
-      defaultUndistortMode
+      defaultUndistortMode,
+      '--colorize-points',
+      colorizeInitialPoints ? 'true' : 'false',
+      '--filter-visible-points',
+      filterVisibleInitialPoints ? 'true' : 'false',
+      '--colorize-max-frames',
+      String(Number.isFinite(colorizeMaxFrames) ? colorizeMaxFrames : 640),
+      '--colorize-min-observations',
+      String(Number.isFinite(colorizeMinObservations) ? colorizeMinObservations : 2),
+      '--colorize-min-kept-points',
+      String(Number.isFinite(colorizeMinKeptPoints) ? colorizeMinKeptPoints : 20000),
+      '--colorize-occlusion-cell-px',
+      String(Number.isFinite(colorizeOcclusionCellPx) ? colorizeOcclusionCellPx : 8),
+      '--colorize-depth-tolerance-m',
+      String(Number.isFinite(colorizeDepthToleranceM) ? colorizeDepthToleranceM : 1.0),
+      '--colorize-min-depth-m',
+      String(Number.isFinite(colorizeMinDepthM) ? colorizeMinDepthM : 0.1)
     ];
 
     const logStream = fs.createWriteStream(logPath, { flags: 'a' });
@@ -3143,6 +3207,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       logStream.end();
       const summaryPath = path.join(outputDir, 'three_dgs_dataset_summary.json');
       if (signal || code !== 0) {
+        const progress = await readPrepareProgressFile(outputDir);
         updateState({
           phase: 'error',
           stage_text: signal ? `COLMAP 数据规整被中断：${signal}` : `COLMAP 数据规整失败，exit code=${code}`,
@@ -3150,7 +3215,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           prepare: {
             ...state.prepare,
             running: false,
-            completed_at_ms: Date.now()
+            completed_at_ms: Date.now(),
+            progress: progress || state.prepare.progress || null
           }
         });
         return;
@@ -3162,6 +3228,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       } catch (_error) {
         summary = null;
       }
+      const progress = await readPrepareProgressFile(outputDir);
       updateState({
         phase: 'prepared',
         stage_text: 'COLMAP 数据已规整完成，可以同步到 A100 开始训练。',
@@ -3179,7 +3246,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         prepare: {
           ...state.prepare,
           running: false,
-          completed_at_ms: Date.now()
+          completed_at_ms: Date.now(),
+          progress: progress || state.prepare.progress || null
         }
       });
     });
@@ -3651,6 +3719,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     cleanupExpiredVehicleUploads();
     normalizeStaleTransientState();
     await syncUploadedArtifacts();
+    await refreshPrepareProgressFromDisk();
     await refreshRemoteTrainingStatus();
     const auth = await getAuth(req);
     const includeVehicles = String(req.query.include_vehicles || 'true') !== 'false';
@@ -3662,6 +3731,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         allowed_vehicle_ids: allowedVehicleIds,
         default_train_gpu: defaultTrainGpu,
         default_undistort_mode: defaultUndistortMode,
+        default_colorize_points: colorizeInitialPoints,
+        default_filter_visible_points: filterVisibleInitialPoints,
         configured_camera_ids: configuredCameraIds,
         fallback_calibrated_cameras: fallbackCalibratedCameras,
         vehicle_map_path: vehicleMapPath

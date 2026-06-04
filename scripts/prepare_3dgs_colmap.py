@@ -11,6 +11,7 @@ import struct
 import subprocess
 import tarfile
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -21,6 +22,65 @@ try:
     import cv2
 except Exception:  # pragma: no cover
     cv2 = None
+
+
+PREPARE_STEPS = [
+    ("extract", "解包图像-位姿包"),
+    ("images", "去畸变并写入图像/位姿"),
+    ("pointcloud", "转换点云地图"),
+    ("colorize", "点云投影上色与可见性过滤"),
+    ("write", "写入 COLMAP sparse 数据"),
+]
+
+
+def parse_bool(value: object, default: bool = True) -> bool:
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def progress_path(output: Path) -> Path:
+    return output / "three_dgs_prepare_progress.json"
+
+
+def write_progress(output: Path, stage: str, progress_pct: float, detail: str = "") -> None:
+    step_keys = [key for key, _label in PREPARE_STEPS]
+    clamped_pct = max(0.0, min(100.0, float(progress_pct)))
+    try:
+        current_index = step_keys.index(stage)
+    except ValueError:
+        current_index = len(PREPARE_STEPS) - 1
+    payload = {
+        "stage": stage,
+        "stage_label": dict(PREPARE_STEPS).get(stage, stage),
+        "progress_pct": round(clamped_pct, 2),
+        "detail": detail,
+        "updated_at_ms": int(time.time() * 1000),
+        "steps": [
+            {
+                "key": key,
+                "label": label,
+                "status": "done"
+                if clamped_pct >= 100 or index < current_index
+                else "active"
+                if index == current_index
+                else "pending",
+            }
+            for index, (key, label) in enumerate(PREPARE_STEPS)
+        ],
+    }
+    output.mkdir(parents=True, exist_ok=True)
+    target = progress_path(output)
+    temp = target.with_suffix(".json.tmp")
+    with temp.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+    temp.replace(target)
+    print(f"[prepare] {payload['progress_pct']:.1f}% {payload['stage_label']} {detail}".rstrip(), flush=True)
 
 
 def load_json(path: Path) -> dict:
@@ -563,20 +623,225 @@ def write_points_ply(target: Path, points: list[tuple[float, float, float]], col
             )
 
 
+def choose_colorization_frames(frames: list[dict], max_frames: int) -> list[dict]:
+    if max_frames <= 0 or len(frames) <= max_frames:
+        return frames
+    by_camera: dict[str, list[dict]] = {}
+    for frame in frames:
+        by_camera.setdefault(str(frame.get("camera_name") or "unknown"), []).append(frame)
+    per_camera = max(1, math.ceil(max_frames / max(1, len(by_camera))))
+    selected: list[dict] = []
+    for camera_name in sorted(by_camera):
+        items = by_camera[camera_name]
+        if len(items) <= per_camera:
+            selected.extend(items)
+            continue
+        indexes = np.linspace(0, len(items) - 1, per_camera, dtype=int)
+        selected.extend(items[int(index)] for index in indexes)
+    if len(selected) <= max_frames:
+        return selected
+    indexes = np.linspace(0, len(selected) - 1, max_frames, dtype=int)
+    return [selected[int(index)] for index in indexes]
+
+
+def colorize_and_filter_points(
+    points: list[tuple[float, float, float]],
+    colors: list[tuple[int, int, int]],
+    frames: list[dict],
+    args: argparse.Namespace,
+    output: Path,
+) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]], dict]:
+    start_time = time.time()
+    enabled = parse_bool(args.colorize_points, True)
+    visibility_filter = parse_bool(args.filter_visible_points, True)
+    original_count = len(points)
+    if not enabled or cv2 is None or not points or not frames:
+        return points, colors, {
+            "enabled": enabled,
+            "visibility_filter_enabled": visibility_filter,
+            "skipped_reason": "cv2_unavailable_or_empty_input" if enabled else "disabled",
+            "source_point_count": original_count,
+            "point_count": original_count,
+            "colored_points": 0,
+            "kept_points": original_count,
+            "filtered_points": 0,
+            "elapsed_s": round(time.time() - start_time, 3),
+        }
+
+    max_frames = int(args.colorize_max_frames)
+    selected_frames = choose_colorization_frames(frames, max_frames)
+    if not selected_frames:
+        return points, colors, {
+            "enabled": True,
+            "visibility_filter_enabled": visibility_filter,
+            "skipped_reason": "no_colorization_frames",
+            "source_point_count": original_count,
+            "point_count": original_count,
+            "colored_points": 0,
+            "kept_points": original_count,
+            "filtered_points": 0,
+            "elapsed_s": round(time.time() - start_time, 3),
+        }
+
+    points_array = np.asarray(points, dtype=np.float64)
+    color_sum = np.zeros((points_array.shape[0], 3), dtype=np.float64)
+    observation_count = np.zeros(points_array.shape[0], dtype=np.int32)
+    cell_px = max(1, int(args.colorize_occlusion_cell_px))
+    depth_tolerance = max(0.0, float(args.colorize_depth_tolerance_m))
+    min_depth = max(0.05, float(args.colorize_min_depth_m))
+    processed_frames = 0
+    usable_projection_count = 0
+    per_camera_frames: dict[str, int] = {}
+
+    for frame_index, frame in enumerate(selected_frames, start=1):
+        image = cv2.imread(str(frame["image_path"]), cv2.IMREAD_COLOR)
+        if image is None:
+            continue
+        height, width = image.shape[:2]
+        camera_matrix = frame["camera_matrix"]
+        transform = frame["world_to_camera"]
+        camera_name = str(frame.get("camera_name") or "unknown")
+        per_camera_frames[camera_name] = per_camera_frames.get(camera_name, 0) + 1
+
+        rotation = transform[:3, :3]
+        translation = transform[:3, 3]
+        points_camera = points_array @ rotation.T + translation
+        z = points_camera[:, 2]
+        valid_depth = z > min_depth
+        projected_x = camera_matrix[0, 0] * points_camera[:, 0] / z + camera_matrix[0, 2]
+        projected_y = camera_matrix[1, 1] * points_camera[:, 1] / z + camera_matrix[1, 2]
+        in_image = (
+            valid_depth
+            & (projected_x >= 1)
+            & (projected_x < width - 1)
+            & (projected_y >= 1)
+            & (projected_y < height - 1)
+        )
+        candidate_indexes = np.flatnonzero(in_image)
+        if candidate_indexes.size:
+            x_pixels = np.rint(projected_x[candidate_indexes]).astype(np.int32)
+            y_pixels = np.rint(projected_y[candidate_indexes]).astype(np.int32)
+            depths = z[candidate_indexes]
+
+            if cell_px > 1:
+                grid_width = int(math.ceil(width / cell_px))
+                grid_height = int(math.ceil(height / cell_px))
+                cell_x = np.clip(x_pixels // cell_px, 0, grid_width - 1)
+                cell_y = np.clip(y_pixels // cell_px, 0, grid_height - 1)
+                cell_ids = cell_y * grid_width + cell_x
+                nearest_depth = np.full(grid_width * grid_height, np.inf, dtype=np.float64)
+                np.minimum.at(nearest_depth, cell_ids, depths)
+                visible = depths <= nearest_depth[cell_ids] + depth_tolerance
+                candidate_indexes = candidate_indexes[visible]
+                x_pixels = x_pixels[visible]
+                y_pixels = y_pixels[visible]
+
+            if candidate_indexes.size:
+                rgb = image[y_pixels, x_pixels, ::-1].astype(np.float64)
+                color_sum[candidate_indexes] += rgb
+                observation_count[candidate_indexes] += 1
+                usable_projection_count += int(candidate_indexes.size)
+
+        processed_frames += 1
+        if frame_index == len(selected_frames) or frame_index % 10 == 0:
+            progress = 58.0 + (frame_index / max(1, len(selected_frames))) * 30.0
+            write_progress(
+                output,
+                "colorize",
+                progress,
+                f"投影采样 {frame_index}/{len(selected_frames)} 张，已累计 {int((observation_count > 0).sum())} 个可见点",
+            )
+
+    colored_mask = observation_count > 0
+    colored_count = int(colored_mask.sum())
+    colors_array = np.asarray(colors, dtype=np.int32)
+    if colors_array.shape[0] != points_array.shape[0]:
+        colors_array = np.full((points_array.shape[0], 3), 180, dtype=np.int32)
+    if colored_count:
+        averaged = np.rint(color_sum[colored_mask] / observation_count[colored_mask, None]).astype(np.int32)
+        colors_array[colored_mask] = np.clip(averaged, 0, 255)
+
+    requested_min_observations = max(0, int(args.colorize_min_observations))
+    applied_min_observations = requested_min_observations if visibility_filter else 0
+    keep_mask = np.ones(points_array.shape[0], dtype=bool)
+    filter_reason = "disabled"
+    min_kept_points = max(0, int(args.colorize_min_kept_points))
+    if visibility_filter and requested_min_observations > 0:
+        keep_mask = observation_count >= requested_min_observations
+        filter_reason = "requested_threshold"
+        if int(keep_mask.sum()) < min_kept_points and requested_min_observations > 1:
+            relaxed = observation_count >= 1
+            if int(relaxed.sum()) >= min_kept_points:
+                keep_mask = relaxed
+                applied_min_observations = 1
+                filter_reason = "relaxed_to_one_observation"
+        if int(keep_mask.sum()) < min_kept_points:
+            keep_mask = np.ones(points_array.shape[0], dtype=bool)
+            applied_min_observations = 0
+            filter_reason = "insufficient_visible_points_kept_all"
+
+    filtered_points = points_array[keep_mask]
+    filtered_colors = colors_array[keep_mask]
+    kept_count = int(filtered_points.shape[0])
+    elapsed_s = time.time() - start_time
+    observation_percentiles = {}
+    if colored_count:
+        observed_values = observation_count[colored_mask]
+        observation_percentiles = {
+            "p10": float(np.percentile(observed_values, 10)),
+            "p25": float(np.percentile(observed_values, 25)),
+            "p50": float(np.percentile(observed_values, 50)),
+            "p75": float(np.percentile(observed_values, 75)),
+            "p90": float(np.percentile(observed_values, 90)),
+        }
+    return (
+        [tuple(float(value) for value in point) for point in filtered_points.tolist()],
+        [tuple(int(value) for value in color) for color in filtered_colors.tolist()],
+        {
+            "enabled": True,
+            "visibility_filter_enabled": visibility_filter,
+            "source_point_count": original_count,
+            "point_count": kept_count,
+            "colored_points": colored_count,
+            "default_color_points": int((observation_count == 0).sum()),
+            "kept_points": kept_count,
+            "filtered_points": original_count - kept_count,
+            "usable_projection_count": usable_projection_count,
+            "sampled_frames": processed_frames,
+            "requested_max_frames": max_frames,
+            "per_camera_sampled_frames": per_camera_frames,
+            "requested_min_observations": requested_min_observations,
+            "applied_min_observations": applied_min_observations,
+            "filter_reason": filter_reason,
+            "occlusion_cell_px": cell_px,
+            "depth_tolerance_m": depth_tolerance,
+            "min_depth_m": min_depth,
+            "mean_observations_for_colored_points": float(observation_count[colored_mask].mean()) if colored_count else 0.0,
+            "observation_percentiles": observation_percentiles,
+            "max_observations": int(observation_count.max()) if observation_count.size else 0,
+            "elapsed_s": round(elapsed_s, 3),
+        },
+    )
+
+
 def prepare_scene(args: argparse.Namespace) -> dict:
     output = Path(args.output).resolve()
     images_out = output / "images"
     sparse_out = output / "sparse" / "0"
     images_out.mkdir(parents=True, exist_ok=True)
     sparse_out.mkdir(parents=True, exist_ok=True)
+    write_progress(output, "extract", 1.0, "开始读取上传数据")
 
     with tempfile.TemporaryDirectory(prefix="three_dgs_prepare_") as tmp:
         work_dir = Path(tmp)
         image_root = extract_archive(Path(args.image_pose).resolve(), work_dir)
+        write_progress(output, "extract", 8.0, "图像-位姿包已解包")
         manifest, records = load_records(image_root)
+        write_progress(output, "images", 10.0, f"读取到 {len(records)} 条图像-位姿记录")
 
         camera_models: dict[tuple[str, int, int, float, float, float, float], int] = {}
         camera_undistort_modes: dict[int, str] = {}
+        colorization_frames: list[dict] = []
         camera_lines: list[str] = []
         image_lines: list[str] = []
         copied_count = 0
@@ -617,10 +882,21 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                 camera_models[camera_key] = camera_id
                 camera_lines.append(
                     f"{camera_id} PINHOLE {width} {height} {fx:.12g} {fy:.12g} {cx:.12g} {cy:.12g}\n"
-                )
+            )
             camera_undistort_modes[camera_id] = applied_undistort_mode
 
             world_to_camera = matrix_from_record(record)
+            camera_matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
+            colorization_frames.append(
+                {
+                    "camera_name": camera_name,
+                    "image_path": output_image,
+                    "world_to_camera": world_to_camera,
+                    "camera_matrix": camera_matrix,
+                    "width": width,
+                    "height": height,
+                }
+            )
             rot = world_to_camera[:3, :3]
             tvec = world_to_camera[:3, 3]
             qvec = rotmat_to_qvec(rot)
@@ -639,6 +915,9 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                 )
             )
             copied_count += 1
+            if image_id == len(records) or image_id % 50 == 0:
+                pct = 10.0 + (image_id / max(1, len(records))) * 35.0
+                write_progress(output, "images", pct, f"已处理 {image_id}/{len(records)} 张图像")
 
         if not camera_models:
             raise ValueError("no usable camera frames")
@@ -653,8 +932,13 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             handle.write("# IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
             handle.writelines(image_lines)
 
+        write_progress(output, "pointcloud", 48.0, "正在转换 GlobalMap.pcd")
         ascii_ply = pcd_or_ply_to_ascii_ply(Path(args.pointcloud).resolve(), work_dir)
+        write_progress(output, "pointcloud", 54.0, "正在读取初始化点云")
         points, colors = parse_ascii_ply(ascii_ply, int(args.max_points))
+        write_progress(output, "colorize", 58.0, f"开始点云投影上色，输入 {len(points)} 个点")
+        points, colors, colorization_summary = colorize_and_filter_points(points, colors, colorization_frames, args, output)
+        write_progress(output, "write", 92.0, f"正在写入 {len(points)} 个初始化点")
         write_points_ply(sparse_out / "points3D.ply", points, colors)
 
         summary = {
@@ -663,6 +947,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             "image_count": copied_count,
             "point_count": len(points),
             "camera_count": len(camera_models),
+            "colorization": colorization_summary,
             "cameras": [
                 {
                     "camera_id": camera_id,
@@ -683,6 +968,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
 
         with (output / "three_dgs_dataset_summary.json").open("w", encoding="utf-8") as handle:
             json.dump(summary, handle, ensure_ascii=False, indent=2)
+        write_progress(output, "write", 100.0, f"完成：{copied_count} 张图像，{len(points)} 个初始化点")
         return summary
 
 
@@ -700,6 +986,14 @@ def main() -> None:
         default="keep-k",
         help="keep-k matches FAST-Calib's cv::undistort(image, K, D) projection convention; optimal keeps the previous getOptimalNewCameraMatrix(alpha=0) behavior.",
     )
+    parser.add_argument("--colorize-points", default="true")
+    parser.add_argument("--filter-visible-points", default="true")
+    parser.add_argument("--colorize-max-frames", type=int, default=640)
+    parser.add_argument("--colorize-min-observations", type=int, default=2)
+    parser.add_argument("--colorize-min-kept-points", type=int, default=20000)
+    parser.add_argument("--colorize-occlusion-cell-px", type=int, default=8)
+    parser.add_argument("--colorize-depth-tolerance-m", type=float, default=1.0)
+    parser.add_argument("--colorize-min-depth-m", type=float, default=0.1)
     args = parser.parse_args()
 
     summary = prepare_scene(args)

@@ -234,6 +234,23 @@ import SiteLayout from "../components/SiteLayout.astro";
             <button id="three-dgs-load-train-log" class="three-dgs-button three-dgs-button--ghost" type="button">训练日志</button>
           </div>
 
+          <div id="three-dgs-prepare-progress" class="three-dgs-prepare-progress" hidden>
+            <div class="three-dgs-viewer-head">
+              <div>
+                <span>预处理进度</span>
+                <strong id="three-dgs-prepare-progress-status">等待规整 COLMAP 数据</strong>
+              </div>
+            </div>
+            <div class="three-dgs-upload-progress-track">
+              <span id="three-dgs-prepare-progress-fill"></span>
+            </div>
+            <div class="three-dgs-upload-progress-meta">
+              <span id="three-dgs-prepare-progress-label">0%</span>
+              <span id="three-dgs-prepare-progress-detail">等待预处理</span>
+            </div>
+            <div id="three-dgs-prepare-steps" class="three-dgs-prepare-steps"></div>
+          </div>
+
           <div class="three-dgs-train-metrics">
             <div class="three-dgs-viewer-head">
               <div>
@@ -401,6 +418,12 @@ import SiteLayout from "../components/SiteLayout.astro";
   const uploadProgressFill = el("three-dgs-upload-progress-fill");
   const uploadProgressLabel = el("three-dgs-upload-progress-label");
   const uploadProgressDetail = el("three-dgs-upload-progress-detail");
+  const prepareProgress = el("three-dgs-prepare-progress");
+  const prepareProgressFill = el("three-dgs-prepare-progress-fill");
+  const prepareProgressLabel = el("three-dgs-prepare-progress-label");
+  const prepareProgressDetail = el("three-dgs-prepare-progress-detail");
+  const prepareProgressStatus = el("three-dgs-prepare-progress-status");
+  const prepareSteps = el("three-dgs-prepare-steps");
   const datasetCanvas = el("three-dgs-dataset-canvas");
   const datasetCheckStatus = el("three-dgs-data-check-status");
   const datasetMapHint = el("three-dgs-dataset-map-hint");
@@ -1016,6 +1039,33 @@ import SiteLayout from "../components/SiteLayout.astro";
     });
   }
 
+  function renderPrepareProgress(state = {}) {
+    const progress = state.prepare?.progress || null;
+    const preparing = state.phase === "preparing" || state.prepare?.running;
+    if (!prepareProgress || !prepareProgressFill || !prepareProgressLabel || !prepareProgressDetail || !prepareProgressStatus || !prepareSteps) return;
+    if (!progress && !preparing) {
+      prepareProgress.hidden = true;
+      prepareSteps.innerHTML = "";
+      return;
+    }
+    const pct = Number(progress?.progress_pct ?? (preparing ? 0 : 100));
+    const hasPct = Number.isFinite(pct);
+    prepareProgress.hidden = false;
+    prepareProgressFill.style.width = hasPct ? `${Math.max(0, Math.min(100, pct))}%` : "35%";
+    prepareProgressFill.dataset.state = state.phase === "error" ? "error" : pct >= 100 ? "success" : hasPct ? "active" : "indeterminate";
+    prepareProgressLabel.textContent = hasPct ? `${Math.max(0, Math.min(100, pct)).toFixed(1)}%` : "处理中";
+    prepareProgressStatus.textContent = progress?.stage_label || (preparing ? "预处理启动中" : "预处理完成");
+    prepareProgressDetail.textContent = progress?.detail || (preparing ? "等待预处理进度" : "COLMAP 数据已规整");
+    const steps = Array.isArray(progress?.steps) ? progress.steps : [];
+    prepareSteps.innerHTML = "";
+    steps.forEach((step) => {
+      const item = document.createElement("span");
+      item.dataset.state = step.status || "pending";
+      item.textContent = step.label || step.key || "-";
+      prepareSteps.appendChild(item);
+    });
+  }
+
   function isAuthed() {
     return Boolean(statusData?.auth?.authenticated);
   }
@@ -1148,8 +1198,9 @@ import SiteLayout from "../components/SiteLayout.astro";
     el("three-dgs-upload-pointcloud").disabled = !allow || taskBusy || !pointcloudFile;
     el("three-dgs-upload-image-pose").disabled = !allow || taskBusy || !imagePoseFile;
     el("three-dgs-prepare").disabled = !allow || taskBusy || !statusData?.state?.uploads?.pointcloud || !statusData?.state?.uploads?.image_pose;
+    const needsPrepare = datasetNeedsPrepare(statusData?.state || {});
     el("three-dgs-start-train").disabled =
-      !allow || taskBusy || (!statusData?.state?.dataset?.prepared && (!statusData?.state?.uploads?.pointcloud || !statusData?.state?.uploads?.image_pose));
+      !allow || taskBusy || (needsPrepare && (!statusData?.state?.uploads?.pointcloud || !statusData?.state?.uploads?.image_pose));
     el("three-dgs-sync-result").disabled = !allow || taskBusy || !statusData?.state?.train?.remote_run_path;
     el("three-dgs-load-train-metrics").disabled = !allow || !statusData?.state?.train?.run_id;
   }
@@ -1235,6 +1286,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     const uploads = state.uploads || {};
     const mapStatus = mapStatusFromState(state);
     renderVehicleUploadProgress(state);
+    renderPrepareProgress(state);
     pointcloudName.textContent = uploads.pointcloud
       ? `${uploads.pointcloud.name} · ${formatSize(uploads.pointcloud.size_bytes)}`
       : pointcloudFile
@@ -1259,8 +1311,12 @@ import SiteLayout from "../components/SiteLayout.astro";
 
     const dataset = state.dataset || {};
     el("three-dgs-dataset-path").textContent = dataset.path || "-";
+    const colorization = dataset.summary?.colorization || null;
+    const colorText = colorization?.enabled
+      ? ` · 上色 ${formatCount(colorization.colored_points)} / 过滤 ${formatCount(colorization.filtered_points)}`
+      : "";
     el("three-dgs-dataset-summary").textContent = dataset.summary
-      ? `${dataset.summary.image_count || 0} 张 / ${dataset.summary.point_count || 0} 点`
+      ? `${dataset.summary.image_count || 0} 张 / ${dataset.summary.point_count || 0} 点${colorText}`
       : "-";
 
     const train = state.train || {};
@@ -1351,7 +1407,7 @@ import SiteLayout from "../components/SiteLayout.astro";
       await new Promise((resolve) => window.setTimeout(resolve, 3000));
       await fetchStatus();
       const state = statusData?.state || {};
-      if (state.dataset?.prepared) return;
+      if (!datasetNeedsPrepare(state)) return;
       if (state.phase === "error" || state.prepare?.running === false && state.prepare?.completed_at_ms && !state.dataset?.prepared) {
         throw new Error(state.error_message || "prepare_failed");
       }
@@ -1359,8 +1415,14 @@ import SiteLayout from "../components/SiteLayout.astro";
     throw new Error("prepare_timeout");
   }
 
+  function datasetNeedsPrepare(state = statusData?.state || {}) {
+    if (!state.dataset?.prepared) return true;
+    if (!state.dataset?.summary?.colorization?.enabled) return true;
+    return false;
+  }
+
   async function prepareThenTrain() {
-    if (!statusData?.state?.dataset?.prepared) {
+    if (datasetNeedsPrepare()) {
       await postJson(api.prepare, preparePayload());
       await waitForPrepared();
     }
@@ -1971,6 +2033,47 @@ import SiteLayout from "../components/SiteLayout.astro";
     border: 1px solid rgba(71, 85, 105, 0.45);
     border-radius: 8px;
     background: rgba(2, 6, 23, 0.38);
+  }
+
+  .three-dgs-prepare-progress {
+    display: grid;
+    gap: 10px;
+    margin-top: 14px;
+    padding: 12px;
+    border: 1px solid rgba(71, 85, 105, 0.45);
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.38);
+  }
+
+  .three-dgs-prepare-progress[hidden] {
+    display: none;
+  }
+
+  .three-dgs-prepare-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .three-dgs-prepare-steps span {
+    padding: 5px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(71, 85, 105, 0.52);
+    color: #94a3b8;
+    background: rgba(15, 23, 42, 0.72);
+    font-size: 0.78rem;
+  }
+
+  .three-dgs-prepare-steps span[data-state="active"] {
+    color: #e0f2fe;
+    border-color: rgba(56, 189, 248, 0.58);
+    background: rgba(14, 116, 144, 0.28);
+  }
+
+  .three-dgs-prepare-steps span[data-state="done"] {
+    color: #ccfbf1;
+    border-color: rgba(20, 184, 166, 0.48);
+    background: rgba(13, 148, 136, 0.22);
   }
 
   .three-dgs-train-metrics canvas {
