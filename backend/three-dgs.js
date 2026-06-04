@@ -133,6 +133,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const remoteEnvName = process.env.THREE_DGS_REMOTE_ENV_NAME || '3dgs124_exact';
   const defaultVehicleId = process.env.THREE_DGS_DEFAULT_VEHICLE_ID || 'BIT-0041';
   const defaultTrainGpu = String(process.env.THREE_DGS_DEFAULT_GPU || '3').trim() || '3';
+  const defaultTrainResolution = Math.max(1, Number(process.env.THREE_DGS_DEFAULT_RESOLUTION || 1));
   const remoteStatusPollMs = Number(process.env.THREE_DGS_REMOTE_STATUS_POLL_MS || 30000);
   const vehicleMapPath = process.env.THREE_DGS_VEHICLE_MAP_PATH || 'map/GlobalMap.pcd';
   const configuredCameraIds = parseList(process.env.THREE_DGS_CAMERA_IDS || 'camera1,camera2,camera3,camera4');
@@ -3551,7 +3552,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
   function makeRemoteTrainCommand(remoteDatasetPath, remoteRunPath, trainOptions) {
     const iterations = Number(trainOptions.iterations || 10000);
-    const resolution = Number(trainOptions.resolution || 4);
+    const resolution = Number(trainOptions.resolution || defaultTrainResolution);
     const gpu = String(trainOptions.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
     const resume = Boolean(trainOptions.resume);
     const checkpointInterval = Math.max(100, Number(trainOptions.checkpointInterval || defaultCheckpointInterval));
@@ -3732,7 +3733,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     trainStopRequested = false;
     const gpu = String(payload.gpu ?? state.train.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
     const iterations = Number(payload.iterations || state.train.iterations || 10000);
-    const resolution = Number(payload.resolution || state.train.resolution || 4);
+    const resolution = Number(payload.resolution || state.train.resolution || defaultTrainResolution);
     const datasetMarker = resume ? null : await makeDatasetSyncMarker(state.dataset.path);
 
     updateState({
@@ -4228,6 +4229,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         default_vehicle_id: defaultVehicleId,
         allowed_vehicle_ids: allowedVehicleIds,
         default_train_gpu: defaultTrainGpu,
+        default_train_resolution: defaultTrainResolution,
         default_undistort_mode: defaultUndistortMode,
         default_colorize_points: colorizeInitialPoints,
         default_filter_visible_points: filterVisibleInitialPoints,

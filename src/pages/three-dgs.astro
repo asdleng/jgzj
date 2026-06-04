@@ -218,7 +218,7 @@ import SiteLayout from "../components/SiteLayout.astro";
             </label>
             <label class="three-dgs-field">
               <span>图像缩放 -r</span>
-              <input id="three-dgs-resolution" type="number" min="1" step="1" value="4" />
+              <input id="three-dgs-resolution" type="number" min="1" step="1" value="1" />
             </label>
             <label class="three-dgs-check">
               <input id="three-dgs-undistort" type="checkbox" checked />
@@ -1430,6 +1430,9 @@ import SiteLayout from "../components/SiteLayout.astro";
     if (statusData.default_train_gpu && !el("three-dgs-gpu").dataset.touched) {
       el("three-dgs-gpu").value = statusData.default_train_gpu;
     }
+    if (statusData.default_train_resolution && !el("three-dgs-resolution").dataset.touched) {
+      el("three-dgs-resolution").value = statusData.default_train_resolution;
+    }
     applyStatus();
     connectCaptureStream();
     refreshBackgroundViews();
@@ -1465,7 +1468,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     return {
       gpu: Number(el("three-dgs-gpu").value || 3),
       iterations: Number(el("three-dgs-iterations").value || 10000),
-      resolution: Number(el("three-dgs-resolution").value || 4)
+      resolution: Number(el("three-dgs-resolution").value || 1)
     };
   }
 
@@ -1590,6 +1593,9 @@ import SiteLayout from "../components/SiteLayout.astro";
   );
   el("three-dgs-gpu").addEventListener("input", () => {
     el("three-dgs-gpu").dataset.touched = "true";
+  });
+  el("three-dgs-resolution").addEventListener("input", () => {
+    el("three-dgs-resolution").dataset.touched = "true";
   });
   el("three-dgs-capture-status").addEventListener("click", () =>
     runAction("读取采集状态", () => postJson(api.captureStatus, { vehicle_id: currentVehicleId() }))
