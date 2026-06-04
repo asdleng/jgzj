@@ -158,6 +158,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const colorizeDepthToleranceM = Number(process.env.THREE_DGS_COLORIZE_DEPTH_TOLERANCE_M || 1.0);
   const colorizeMinDepthM = Number(process.env.THREE_DGS_COLORIZE_MIN_DEPTH_M || 0.1);
   const defaultCheckpointInterval = Math.max(100, Number(process.env.THREE_DGS_CHECKPOINT_INTERVAL || 1000));
+  const viewerCameraForwardSign = Number(process.env.THREE_DGS_VIEWER_CAMERA_FORWARD_SIGN || -1) >= 0 ? 1 : -1;
 
   let state = createInitialState();
   let statePersistTimer = null;
@@ -785,7 +786,11 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
   function cameraForwardFromQvec(qvec) {
     const rotation = qvecToRotmat(qvec);
-    return normalizeVector([rotation[2][0], rotation[2][1], rotation[2][2]]);
+    return normalizeVector([
+      viewerCameraForwardSign * rotation[2][0],
+      viewerCameraForwardSign * rotation[2][1],
+      viewerCameraForwardSign * rotation[2][2]
+    ]);
   }
 
   function viewerLookDistanceFromExtent(extent) {
@@ -858,7 +863,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         source: 'colmap_images_txt',
         original_frame_count: frames.length,
         keyframe_count: indices.length,
-        look_distance_m: roundViewerNumber(lookDistance)
+        look_distance_m: roundViewerNumber(lookDistance),
+        camera_forward_sign: viewerCameraForwardSign,
+        camera_forward_axis: viewerCameraForwardSign > 0 ? '+camera_z' : '-camera_z'
       }
     };
   }
@@ -918,6 +925,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       all_frame_count: allFrames.length,
       trajectory_camera: selectedFrames.length >= 2 ? trajectoryCamera : 'all',
       anim_track: makeVehicleTrajectoryTrack(frames, extent, 68),
+      first_camera_forward: roundViewerVector(cameraForwardFromQvec(firstFrame.qvec)),
       overview_camera: {
         position: roundViewerVector([
           target[0] + sideX * distance,
@@ -952,6 +960,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       settings.jgzj.all_frame_count = camera.all_frame_count;
       settings.jgzj.trajectory_camera = camera.trajectory_camera;
       settings.jgzj.animation = camera.anim_track?.jgzj || null;
+      settings.jgzj.first_camera_forward = camera.first_camera_forward;
       settings.jgzj.extent = camera.extent;
       return settings;
     } catch (error) {
