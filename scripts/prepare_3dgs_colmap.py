@@ -241,7 +241,118 @@ def scalar_timestamp(value: object) -> str | None:
     return None
 
 
+def scalar_timestamp_seconds(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if math.isfinite(number):
+            return number / 1e9 if number > 1e12 else number
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            number = float(text)
+            if math.isfinite(number):
+                return number / 1e9 if number > 1e12 else number
+        except ValueError:
+            return None
+    if not isinstance(value, dict):
+        return None
+    sec = first_key([value], ("sec", "secs", "seconds", "stamp_sec"))
+    nsec = first_key([value], ("nsec", "nsecs", "nanosec", "nanosecs", "nanoseconds", "stamp_nsec"))
+    if sec is not None and nsec is not None:
+        try:
+            return float(sec) + float(nsec) / 1e9
+        except (TypeError, ValueError):
+            return None
+    for key in ("timestamp", "time", "stamp", "value"):
+        nested = value.get(key)
+        nested_value = scalar_timestamp_seconds(nested)
+        if nested_value is not None:
+            return nested_value
+    return None
+
+
+def timestamp_ns(value: float | None) -> int | None:
+    if value is None or not math.isfinite(float(value)):
+        return None
+    return int(round(float(value) * 1e9))
+
+
+def record_image_timestamp_s(record: dict) -> float | None:
+    image_obj = record.get("image") if isinstance(record.get("image"), dict) else {}
+    sources = [
+        record,
+        image_obj,
+        nested_get(record, "image", "header", "stamp"),
+        nested_get(record, "image", "stamp"),
+    ]
+    raw = first_key(
+        sources,
+        (
+            "image_ts_unix",
+            "image_timestamp_unix",
+            "image_timestamp",
+            "image_timestamp_ns",
+            "timestamp_ns",
+            "ts_unix",
+            "stamp",
+            "time",
+        ),
+    )
+    return scalar_timestamp_seconds(raw)
+
+
+def record_pose_timestamp_s(record: dict) -> float | None:
+    pose_obj = record.get("pose") if isinstance(record.get("pose"), dict) else {}
+    ndt_pose_obj = record.get("ndt_pose") if isinstance(record.get("ndt_pose"), dict) else {}
+    matched_pose_obj = record.get("matched_pose") if isinstance(record.get("matched_pose"), dict) else {}
+    sources = [
+        record,
+        pose_obj,
+        ndt_pose_obj,
+        matched_pose_obj,
+        nested_get(record, "pose", "stamp"),
+        nested_get(record, "pose", "header", "stamp"),
+        nested_get(record, "ndt_pose", "header", "stamp"),
+        nested_get(record, "matched_pose", "header", "stamp"),
+    ]
+    raw = first_key(
+        sources,
+        (
+            "pose_ts_unix",
+            "pose_timestamp_unix",
+            "pose_timestamp",
+            "pose_timestamp_ns",
+            "ndt_pose_timestamp",
+            "matched_pose_timestamp",
+            "ts_unix",
+            "stamp",
+            "time",
+        ),
+    )
+    return scalar_timestamp_seconds(raw)
+
+
+def record_pose_delta_ms(record: dict, image_ts_s: float | None, pose_ts_s: float | None) -> float | None:
+    pose_obj = record.get("pose") if isinstance(record.get("pose"), dict) else {}
+    raw = first_key([record, pose_obj], ("image_pose_delta_ms", "pose_delta_ms", "image_pose_gap_ms"))
+    try:
+        if raw is not None:
+            return float(raw)
+    except (TypeError, ValueError):
+        pass
+    if image_ts_s is not None and pose_ts_s is not None:
+        return (image_ts_s - pose_ts_s) * 1000.0
+    return None
+
+
 def record_group_key(record: dict, image_id: int) -> str:
+    image_ts_ns = timestamp_ns(record_image_timestamp_s(record))
+    if image_ts_ns is not None:
+        return f"t{image_ts_ns}"
+
     image_obj = record.get("image") if isinstance(record.get("image"), dict) else {}
     pose_obj = record.get("pose") if isinstance(record.get("pose"), dict) else {}
     ndt_pose_obj = record.get("ndt_pose") if isinstance(record.get("ndt_pose"), dict) else {}
@@ -292,6 +403,14 @@ def record_group_key(record: dict, image_id: int) -> str:
             pass
 
     return f"i{image_id:06d}"
+
+
+def record_pose_mode(record: dict) -> str:
+    if any(key in record for key in ("pose_history", "pose_buffer", "ndt_pose_history")):
+        return "pose_history_available_not_used"
+    if record.get("pose") or record.get("matched_pose") or record.get("ndt_pose"):
+        return "vehicle_matched_pose"
+    return "vehicle_provided_transform"
 
 
 def matrix_from_record(record: dict) -> np.ndarray:
@@ -844,13 +963,18 @@ def prepare_scene(args: argparse.Namespace) -> dict:
         colorization_frames: list[dict] = []
         camera_lines: list[str] = []
         image_lines: list[str] = []
+        frame_metadata: list[dict] = []
         copied_count = 0
 
         for image_id, record in enumerate(records, start=1):
             local_manifest = record_manifest(record, manifest)
             source_image = image_path_from_record(record, image_root)
             camera_name = record_camera_id(record, local_manifest)
-            group_name = sanitize_component(record_group_key(record, image_id), "group").replace("_", "-")
+            raw_group_key = record_group_key(record, image_id)
+            group_name = sanitize_component(raw_group_key, "group").replace("_", "-")
+            image_ts_s = record_image_timestamp_s(record)
+            pose_ts_s = record_pose_timestamp_s(record)
+            pose_delta_ms = record_pose_delta_ms(record, image_ts_s, pose_ts_s)
             params = camera_params(record, local_manifest, source_image)
             out_name = (
                 f"frame_{image_id:06d}_"
@@ -914,6 +1038,31 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     out_name,
                 )
             )
+            pose_obj = record.get("pose") if isinstance(record.get("pose"), dict) else {}
+            image_obj = record.get("image") if isinstance(record.get("image"), dict) else {}
+            frame_metadata.append(
+                {
+                    "image_id": image_id,
+                    "camera_id": camera_id,
+                    "camera_name": camera_name,
+                    "image_name": out_name,
+                    "capture_key": group_name,
+                    "source_index": record.get("index"),
+                    "source_image_name": source_image.name,
+                    "source_image_path": str(source_image),
+                    "source_image_relative_path": image_obj.get("relative_path") or image_obj.get("path"),
+                    "image_ts_unix": image_ts_s,
+                    "image_ts_ns": timestamp_ns(image_ts_s),
+                    "pose_ts_unix": pose_ts_s,
+                    "pose_ts_ns": timestamp_ns(pose_ts_s),
+                    "image_pose_delta_ms": pose_delta_ms,
+                    "pose_source": pose_obj.get("source") or record.get("pose_source"),
+                    "pose_topic": pose_obj.get("topic"),
+                    "pose_mode": record_pose_mode(record),
+                    "pose_interpolation": "vehicle_matched_pose",
+                    "pose_interpolation_note": "Cloud used the per-frame pose/transform supplied by the vehicle package. True cloud-side timestamp interpolation requires pose_history/pose_buffer in the package.",
+                }
+            )
             copied_count += 1
             if image_id == len(records) or image_id % 50 == 0:
                 pct = 10.0 + (image_id / max(1, len(records))) * 35.0
@@ -932,6 +1081,26 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             handle.write("# IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
             handle.writelines(image_lines)
 
+        frame_metadata.sort(key=lambda item: item["image_id"])
+        with (output / "frame_metadata.json").open("w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "schema": "jgzj.three_dgs.frame_metadata.v1",
+                    "scene_name": args.scene_name,
+                    "generated_at_unix": time.time(),
+                    "pose_interpolation": {
+                        "mode": "vehicle_matched_pose",
+                        "cloud_interpolation_available": False,
+                        "required_vehicle_package_fields": ["pose_history", "pose_buffer"],
+                        "note": "Each image uses its own vehicle-supplied pose/transform. Camera streams are not assumed to be synchronized.",
+                    },
+                    "frames": frame_metadata,
+                },
+                handle,
+                ensure_ascii=False,
+                indent=2,
+            )
+
         write_progress(output, "pointcloud", 48.0, "正在转换 GlobalMap.pcd")
         ascii_ply = pcd_or_ply_to_ascii_ply(Path(args.pointcloud).resolve(), work_dir)
         write_progress(output, "pointcloud", 54.0, "正在读取初始化点云")
@@ -948,6 +1117,12 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             "point_count": len(points),
             "camera_count": len(camera_models),
             "colorization": colorization_summary,
+            "frame_metadata_path": str(output / "frame_metadata.json"),
+            "pose_interpolation": {
+                "mode": "vehicle_matched_pose",
+                "cloud_interpolation_available": False,
+                "note": "The uploaded package did not include a high-rate pose history, so cloud-side interpolation cannot be performed yet.",
+            },
             "cameras": [
                 {
                     "camera_id": camera_id,

@@ -729,6 +729,31 @@ import SiteLayout from "../components/SiteLayout.astro";
     }));
   }
 
+  const datasetCameraColors = {
+    camera1: [45, 212, 191],
+    camera2: [96, 165, 250],
+    camera3: [74, 222, 128],
+    camera4: [244, 114, 182]
+  };
+
+  function cameraColor(cameraName, alpha = 1) {
+    const rgb = datasetCameraColors[cameraName] || [226, 232, 240];
+    return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+  }
+
+  function datasetCameraTrajectories() {
+    return Array.isArray(datasetInspection?.trajectory?.by_camera)
+      ? datasetInspection.trajectory.by_camera
+      : [];
+  }
+
+  function formatDeltaMs(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "";
+    const sign = number > 0 ? "+" : "";
+    return `${sign}${number.toFixed(Math.abs(number) >= 100 ? 0 : 1)}ms`;
+  }
+
   function drawDatasetInspection() {
     if (!datasetCanvas || !datasetInspection) return;
     const points = Array.isArray(datasetInspection.pointcloud?.points) ? datasetInspection.pointcloud.points : [];
@@ -778,7 +803,22 @@ import SiteLayout from "../components/SiteLayout.astro";
       ctx.fillRect(screen.x, screen.y, 1.4, 1.4);
     }
 
-    if (groups.length) {
+    const cameraTrajectories = datasetCameraTrajectories();
+    if (cameraTrajectories.length) {
+      cameraTrajectories.forEach((trajectory) => {
+        const frames = Array.isArray(trajectory.frames) ? trajectory.frames : [];
+        if (!frames.length) return;
+        ctx.lineWidth = 1.8;
+        ctx.strokeStyle = cameraColor(trajectory.camera_name, 0.9);
+        ctx.beginPath();
+        frames.forEach((frame, index) => {
+          const screen = project(frame.position);
+          if (index === 0) ctx.moveTo(screen.x, screen.y);
+          else ctx.lineTo(screen.x, screen.y);
+        });
+        ctx.stroke();
+      });
+    } else if (groups.length) {
       ctx.lineWidth = 2;
       ctx.strokeStyle = "rgba(45, 212, 191, 0.9)";
       ctx.beginPath();
@@ -788,7 +828,9 @@ import SiteLayout from "../components/SiteLayout.astro";
         else ctx.lineTo(screen.x, screen.y);
       });
       ctx.stroke();
+    }
 
+    if (groups.length) {
       groups.forEach((group, index) => {
         const screen = project(group.position);
         datasetHitPoints.push({ ...screen, index });
@@ -804,10 +846,23 @@ import SiteLayout from "../components/SiteLayout.astro";
         ctx.lineWidth = 3;
         ctx.strokeStyle = "rgba(2, 6, 23, 0.95)";
         ctx.stroke();
+        const selectedFrames = Array.isArray(selectedGroup.frames) ? selectedGroup.frames : [];
+        selectedFrames.forEach((frame) => {
+          if (!frame?.position) return;
+          const candidate = project(frame.position);
+          ctx.beginPath();
+          ctx.arc(candidate.x, candidate.y, 4.5, 0, Math.PI * 2);
+          ctx.fillStyle = cameraColor(frame.camera_name, frame.time_aligned === false ? 0.45 : 0.95);
+          ctx.fill();
+        });
       }
     }
 
-    datasetMapHint.textContent = `${formatCount(points.length)} 个点云采样 · ${formatCount(groups.length)} 个候选帧，点击轨迹或用上下键翻图。`;
+    const grouping = datasetInspection?.trajectory?.grouping || {};
+    const groupingText = grouping.mode === "timestamp_nearest"
+      ? `按时间最近邻显示四路，锚点 ${channelLabel(grouping.anchor_camera)}`
+      : "按 capture_key 回退分组";
+    datasetMapHint.textContent = `${formatCount(points.length)} 个点云采样 · ${formatCount(groups.length)} 个候选帧 · ${groupingText}。`;
   }
 
   function selectDatasetFrame(index) {
@@ -827,7 +882,11 @@ import SiteLayout from "../components/SiteLayout.astro";
         const card = document.createElement("div");
         card.className = "three-dgs-data-image-card";
         const label = document.createElement("span");
-        label.textContent = `${channelLabel(frame.camera_name, frame.camera_id)} · #${frame.image_id}`;
+        const timeDelta = formatDeltaMs(frame.time_delta_ms);
+        const poseDelta = formatDeltaMs(frame.image_pose_delta_ms);
+        const timeText = timeDelta ? ` · Δt ${timeDelta}` : "";
+        const poseText = poseDelta ? ` · pose ${poseDelta}` : "";
+        label.textContent = `${channelLabel(frame.camera_name, frame.camera_id)} · #${frame.image_id}${timeText}${poseText}`;
         const image = document.createElement("img");
         image.src = `${frame.image_url}?v=${encodeURIComponent(datasetInspection?.dataset?.scene_name || "")}`;
         image.alt = frame.name || "3DGS 采集图像";
@@ -841,7 +900,10 @@ import SiteLayout from "../components/SiteLayout.astro";
     if (datasetFrameMeta) {
       const pos = Array.isArray(group.position) ? group.position.map((value) => Number(value).toFixed(2)).join(", ") : "-";
       const cameras = frames.map((frame) => channelLabel(frame.camera_name, frame.camera_id)).join("、") || "-";
-      datasetFrameMeta.textContent = `候选 ${index + 1}/${groups.length} · ${frames.length} 路：${cameras} · 位置 [${pos}]`;
+      const timestamp = group.timestamp_iso ? ` · ${new Date(group.timestamp_iso).toLocaleTimeString("zh-CN", { hour12: false })}` : "";
+      const maxDelta = Number.isFinite(Number(group.max_time_delta_ms)) ? ` · 最大Δt ${formatDeltaMs(group.max_time_delta_ms)}` : "";
+      const warning = group.time_sync_warning ? " · 注意：四路不是严格同步" : "";
+      datasetFrameMeta.textContent = `候选 ${index + 1}/${groups.length}${timestamp}${maxDelta}${warning} · ${frames.length} 路：${cameras} · 位置 [${pos}]`;
     }
     drawDatasetInspection();
   }
@@ -1028,6 +1090,11 @@ import SiteLayout from "../components/SiteLayout.astro";
     if (!checks.image_count_matches) warnings.push("图片数和 summary 不一致");
     if (!checks.point_count_matches) warnings.push("点数和 summary 不一致");
     if (!checks.has_images_dir) warnings.push("images 目录缺失");
+    if (!checks.has_frame_metadata) warnings.push("缺少 frame_metadata，仅能按 capture_key 回退查看");
+    const grouping = datasetInspection?.trajectory?.grouping || {};
+    if (grouping.mode === "timestamp_nearest") {
+      warnings.push(`四路按时间最近邻显示，锚点 ${channelLabel(grouping.anchor_camera)}`);
+    }
     datasetCheckStatus.textContent = warnings.length
       ? `检查完成：${warnings.join("；")}`
       : `检查完成：${datasetInspection.dataset?.scene_name || "当前数据集"}`;

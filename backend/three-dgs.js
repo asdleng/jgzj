@@ -591,25 +591,6 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return frames;
   }
 
-  function summarizeTrajectory(frames) {
-    let totalDistance = 0;
-    let maxGap = 0;
-    for (let index = 1; index < frames.length; index += 1) {
-      const previous = frames[index - 1].position;
-      const current = frames[index].position;
-      const gap = Math.hypot(current[0] - previous[0], current[1] - previous[1], current[2] - previous[2]);
-      totalDistance += gap;
-      maxGap = Math.max(maxGap, gap);
-    }
-    return {
-      frame_count: frames.length,
-      total_distance_m: totalDistance,
-      avg_gap_m: frames.length > 1 ? totalDistance / (frames.length - 1) : 0,
-      max_gap_m: maxGap,
-      extent: summarizePreviewPoints(frames.map((frame) => frame.position))
-    };
-  }
-
   function resolveCurrentDatasetPath() {
     if (!state.dataset.prepared || !state.dataset.path) {
       const error = new Error('three_dgs_dataset_not_prepared');
@@ -657,7 +638,233 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return sourceIndex || String(imageId);
   }
 
-  function buildTrajectoryGroups(frames) {
+  function finiteNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function timestampMsFromMetadata(metadata) {
+    if (!metadata || typeof metadata !== 'object') return null;
+    const ns = finiteNumber(metadata.image_ts_ns);
+    if (ns !== null) return ns / 1e6;
+    const seconds = finiteNumber(metadata.image_ts_unix);
+    if (seconds !== null) return seconds * 1000;
+    return null;
+  }
+
+  function timestampIsoFromMs(timestampMs) {
+    const number = finiteNumber(timestampMs);
+    if (number === null) return null;
+    try {
+      return new Date(number).toISOString();
+    } catch {
+      return null;
+    }
+  }
+
+  function frameSortValue(frame) {
+    const timestamp = finiteNumber(frame.timestamp_ms);
+    return timestamp !== null ? timestamp : Number(frame.image_id || 0);
+  }
+
+  async function readDatasetFrameMetadata(datasetPath) {
+    const metadataPath = path.join(datasetPath, 'frame_metadata.json');
+    if (!(await safeStat(metadataPath))) {
+      return {
+        path: metadataPath,
+        available: false,
+        frames: [],
+        byImageId: new Map(),
+        byName: new Map(),
+        pose_interpolation: null
+      };
+    }
+    const payload = JSON.parse(await fsp.readFile(metadataPath, 'utf8'));
+    const records = Array.isArray(payload.frames) ? payload.frames : [];
+    const byImageId = new Map();
+    const byName = new Map();
+    for (const record of records) {
+      if (!record || typeof record !== 'object') continue;
+      const imageId = Number(record.image_id);
+      if (Number.isFinite(imageId)) byImageId.set(imageId, record);
+      if (record.image_name) byName.set(String(record.image_name), record);
+    }
+    return {
+      path: metadataPath,
+      available: true,
+      frames: records,
+      byImageId,
+      byName,
+      pose_interpolation: payload.pose_interpolation || null
+    };
+  }
+
+  function enrichFrameWithMetadata(frame, metadata) {
+    const timestampMs = timestampMsFromMetadata(metadata);
+    const poseTimestampMs = metadata?.pose_ts_ns
+      ? Number(metadata.pose_ts_ns) / 1e6
+      : metadata?.pose_ts_unix
+        ? Number(metadata.pose_ts_unix) * 1000
+        : null;
+    return {
+      ...frame,
+      capture_key: metadata?.capture_key || frame.capture_key,
+      source_index: metadata?.source_index ?? null,
+      timestamp_ms: timestampMs,
+      timestamp_iso: timestampIsoFromMs(timestampMs),
+      pose_timestamp_ms: Number.isFinite(poseTimestampMs) ? poseTimestampMs : null,
+      image_pose_delta_ms: finiteNumber(metadata?.image_pose_delta_ms),
+      pose_source: metadata?.pose_source || null,
+      pose_topic: metadata?.pose_topic || null,
+      pose_mode: metadata?.pose_mode || null,
+      pose_interpolation: metadata?.pose_interpolation || null,
+      pose_interpolation_note: metadata?.pose_interpolation_note || null,
+      metadata_available: Boolean(metadata)
+    };
+  }
+
+  function summarizeFrameTrajectory(frames) {
+    const ordered = [...frames].sort((a, b) => frameSortValue(a) - frameSortValue(b));
+    let totalDistance = 0;
+    let maxGap = 0;
+    for (let index = 1; index < ordered.length; index += 1) {
+      const previous = ordered[index - 1].position;
+      const current = ordered[index].position;
+      const gap = Math.hypot(current[0] - previous[0], current[1] - previous[1], current[2] - previous[2]);
+      totalDistance += gap;
+      maxGap = Math.max(maxGap, gap);
+    }
+    return {
+      frame_count: ordered.length,
+      total_distance_m: totalDistance,
+      avg_gap_m: ordered.length > 1 ? totalDistance / (ordered.length - 1) : 0,
+      max_gap_m: maxGap,
+      extent: summarizePreviewPoints(ordered.map((frame) => frame.position))
+    };
+  }
+
+  function buildCameraTrajectories(frames) {
+    const byCamera = new Map();
+    for (const frame of frames) {
+      const cameraName = frame.camera_name || `camera${frame.camera_id}`;
+      if (!byCamera.has(cameraName)) byCamera.set(cameraName, []);
+      byCamera.get(cameraName).push(frame);
+    }
+    return [...byCamera.entries()].map(([cameraName, items]) => {
+      const ordered = items.sort((a, b) => frameSortValue(a) - frameSortValue(b));
+      return {
+        camera_name: cameraName,
+        frames: ordered,
+        summary: summarizeFrameTrajectory(ordered)
+      };
+    }).sort((a, b) => {
+      const left = configuredCameraIds.indexOf(a.camera_name);
+      const right = configuredCameraIds.indexOf(b.camera_name);
+      return (left < 0 ? 99 : left) - (right < 0 ? 99 : right);
+    });
+  }
+
+  function summarizeTrajectory(frames) {
+    const perCamera = buildCameraTrajectories(frames);
+    const representative = perCamera.find((item) => configuredCameraIds.includes(item.camera_name)) || perCamera[0] || null;
+    const representativeSummary = representative?.summary || summarizeFrameTrajectory(frames);
+    const allPoints = frames.map((frame) => frame.position);
+    const maxGap = Math.max(0, ...perCamera.map((item) => Number(item.summary?.max_gap_m || 0)));
+    return {
+      frame_count: frames.length,
+      total_distance_m: representativeSummary.total_distance_m || 0,
+      avg_gap_m: representativeSummary.avg_gap_m || 0,
+      max_gap_m: maxGap,
+      representative_camera: representative?.camera_name || null,
+      extent: summarizePreviewPoints(allPoints),
+      per_camera: Object.fromEntries(perCamera.map((item) => [item.camera_name, item.summary]))
+    };
+  }
+
+  function nearestFrameByTimestamp(frames, timestampMs) {
+    if (!frames.length) return null;
+    let best = null;
+    for (const frame of frames) {
+      const candidateTs = finiteNumber(frame.timestamp_ms);
+      if (candidateTs === null) continue;
+      const deltaMs = candidateTs - timestampMs;
+      const absDeltaMs = Math.abs(deltaMs);
+      if (!best || absDeltaMs < best.abs_delta_ms) {
+        best = { frame, delta_ms: deltaMs, abs_delta_ms: absDeltaMs };
+      }
+    }
+    return best;
+  }
+
+  function buildTimestampAlignedGroups(frames) {
+    const timestamped = frames.filter((frame) => finiteNumber(frame.timestamp_ms) !== null);
+    if (!timestamped.length) {
+      return {
+        mode: 'capture_key',
+        groups: buildCaptureKeyTrajectoryGroups(frames),
+        note: 'frame_metadata.json missing; falling back to capture_key grouping.'
+      };
+    }
+    const byCamera = new Map();
+    for (const frame of timestamped) {
+      const cameraName = frame.camera_name || `camera${frame.camera_id}`;
+      if (!byCamera.has(cameraName)) byCamera.set(cameraName, []);
+      byCamera.get(cameraName).push(frame);
+    }
+    for (const items of byCamera.values()) {
+      items.sort((a, b) => Number(a.timestamp_ms) - Number(b.timestamp_ms));
+    }
+    const orderedCameras = [
+      ...configuredCameraIds.filter((cameraName) => byCamera.has(cameraName)),
+      ...[...byCamera.keys()].filter((cameraName) => !configuredCameraIds.includes(cameraName))
+    ];
+    const anchorCamera = orderedCameras.includes('camera1') ? 'camera1' : orderedCameras[0];
+    const anchors = (byCamera.get(anchorCamera) || timestamped).sort((a, b) => Number(a.timestamp_ms) - Number(b.timestamp_ms));
+    const warningDeltaMs = Number(process.env.THREE_DGS_DATASET_ALIGN_WARN_DELTA_MS || 500);
+    const groups = anchors.map((anchor, index) => {
+      const timestampMs = Number(anchor.timestamp_ms);
+      const groupFrames = [];
+      for (const cameraName of orderedCameras) {
+        const items = byCamera.get(cameraName) || [];
+        const nearest = cameraName === anchor.camera_name
+          ? { frame: anchor, delta_ms: 0, abs_delta_ms: 0 }
+          : nearestFrameByTimestamp(items, timestampMs);
+        if (!nearest) continue;
+        groupFrames.push({
+          ...nearest.frame,
+          time_delta_ms: Number(nearest.delta_ms.toFixed(3)),
+          abs_time_delta_ms: Number(nearest.abs_delta_ms.toFixed(3)),
+          time_aligned: nearest.abs_delta_ms <= warningDeltaMs
+        });
+      }
+      const maxDelta = Math.max(0, ...groupFrames.map((frame) => Number(frame.abs_time_delta_ms || 0)));
+      return {
+        key: `t${Math.round(timestampMs)}`,
+        index,
+        image_id: anchor.image_id,
+        timestamp_ms: timestampMs,
+        timestamp_iso: timestampIsoFromMs(timestampMs),
+        anchor_camera: anchor.camera_name,
+        max_time_delta_ms: Number(maxDelta.toFixed(3)),
+        time_sync_warning: maxDelta > warningDeltaMs,
+        position: anchor.position,
+        frames: groupFrames.sort((a, b) => {
+          const left = configuredCameraIds.indexOf(a.camera_name);
+          const right = configuredCameraIds.indexOf(b.camera_name);
+          return (left < 0 ? 99 : left) - (right < 0 ? 99 : right);
+        })
+      };
+    });
+    return {
+      mode: 'timestamp_nearest',
+      anchor_camera: anchorCamera,
+      warning_delta_ms: warningDeltaMs,
+      groups,
+      note: 'Camera streams are displayed by nearest image timestamp. Each image keeps its own pose.'
+    };
+  }
+
+  function buildCaptureKeyTrajectoryGroups(frames) {
     const byKey = new Map();
     for (const frame of frames) {
       const key = frame.capture_key || String(frame.image_id);
@@ -693,34 +900,52 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const pointcloud = parseAsciiPlyPreview(pointcloudText, maxPoints);
     const summary = state.dataset.summary || null;
     const cameraNameById = cameraNameByColmapCameraId(summary);
+    const frameMetadata = await readDatasetFrameMetadata(datasetPath);
     const frames = parseColmapImagesText(imagesText).map((frame) => {
       const cameraName = cameraNameById.get(Number(frame.camera_id)) || configuredCameraIds.find((camera) => frame.name.includes(camera)) || `camera${frame.camera_id}`;
-      return {
+      const fallbackFrame = {
         ...frame,
         camera_name: cameraName,
         capture_key: captureKeyFromImageName(frame.name, cameraName, frame.image_id),
         image_url: `/api/three-dgs/dataset/image/${encodeURIComponent(frame.name)}`
       };
+      const metadata = frameMetadata.byImageId.get(Number(frame.image_id)) || frameMetadata.byName.get(frame.name) || null;
+      return enrichFrameWithMetadata(fallbackFrame, metadata);
     });
-    const groups = buildTrajectoryGroups(frames);
+    const cameraTrajectories = buildCameraTrajectories(frames);
+    const grouping = buildTimestampAlignedGroups(frames);
     return {
       dataset: {
         scene_name: state.dataset.scene_name,
         path: datasetPath,
         summary,
-        images_dir_exists: Boolean(imageDirStat)
+        images_dir_exists: Boolean(imageDirStat),
+        frame_metadata: {
+          available: frameMetadata.available,
+          path: frameMetadata.path,
+          frame_count: frameMetadata.frames.length,
+          pose_interpolation: frameMetadata.pose_interpolation
+        }
       },
       pointcloud,
       trajectory: {
         summary: summarizeTrajectory(frames),
         frames,
-        groups
+        by_camera: cameraTrajectories,
+        grouping: {
+          mode: grouping.mode,
+          anchor_camera: grouping.anchor_camera || null,
+          warning_delta_ms: grouping.warning_delta_ms || null,
+          note: grouping.note || ''
+        },
+        groups: grouping.groups
       },
       checks: {
         image_count_matches: !summary?.image_count || Number(summary.image_count) === frames.length,
         point_count_matches: !summary?.point_count || Number(summary.point_count) === Number(pointcloud.total_points),
         has_images_dir: Boolean(imageDirStat),
-        has_sparse_files: true
+        has_sparse_files: true,
+        has_frame_metadata: frameMetadata.available
       }
     };
   }
@@ -2174,6 +2399,23 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     }
   }
 
+  async function callCapturePackageTool(vehicleId, packageArgs, timeoutSeconds) {
+    try {
+      return await callVehicleTool(vehicleId, '3dgs.capture.package', packageArgs, timeoutSeconds);
+    } catch (error) {
+      const message = String(error?.message || '');
+      const canRetryLegacy = packageArgs?.include_pose_history
+        && /unknown|unsupported|unexpected|invalid.*arg|argument|schema/i.test(message);
+      if (!canRetryLegacy) {
+        throw error;
+      }
+      const legacyArgs = { ...packageArgs };
+      delete legacyArgs.include_pose_history;
+      delete legacyArgs.pose_interpolation;
+      return callVehicleTool(vehicleId, '3dgs.capture.package', legacyArgs, timeoutSeconds);
+    }
+  }
+
   function formatBytesForStatus(bytes) {
     const value = Number(bytes || 0);
     if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(2)}GB`;
@@ -2661,6 +2903,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         method: 'POST',
         resume_supported: true,
         content_range_supported: true,
+        include_pose_history: true,
+        pose_interpolation: 'timestamp',
         chunk_size_bytes: uploadTicket.chunk_size_bytes,
         recommended_chunk_size_bytes: uploadTicket.recommended_chunk_size_bytes,
         ...(sessionId ? { session_id: sessionId } : {})
@@ -2668,9 +2912,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       let packagePayload = null;
       let packageToolError = null;
       try {
-        packagePayload = await callVehicleTool(
+        packagePayload = await callCapturePackageTool(
           vehicleId,
-          '3dgs.capture.package',
           packageArgs,
           Number(process.env.THREE_DGS_IMAGE_POSE_PACKAGE_TIMEOUT_S || 1800)
         );
@@ -2808,15 +3051,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         method: 'POST',
         resume_supported: true,
         content_range_supported: true,
+        include_pose_history: true,
+        pose_interpolation: 'timestamp',
         chunk_size_bytes: uploadTicket.chunk_size_bytes,
         recommended_chunk_size_bytes: uploadTicket.recommended_chunk_size_bytes,
         camera,
         camera_id: camera,
         ...(sessionId ? { session_id: sessionId } : {})
       };
-      const packagePayload = await callVehicleTool(
+      const packagePayload = await callCapturePackageTool(
         vehicleId,
-        '3dgs.capture.package',
         packageArgs,
         packageTimeoutS
       );
