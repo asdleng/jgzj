@@ -3309,6 +3309,7 @@
     const labels = {
       "status.key_nodes": "关键节点",
       "status.audio": "音频状态",
+      "status.audio_alsa": "音频设备",
       "health.autodrive_check": "一键健康检查",
       "vehicle.snapshot": "整车快照",
       "system.snapshot": "系统快照",
@@ -3701,6 +3702,14 @@
     if (toolName === "controller.reboot_master" || toolName === "controller.reboot_media") {
       if (["error", "failed", "refused", "rejected"].includes(status)) return "error";
       if (["noop", "pending"].includes(status)) return "warn";
+      return "ok";
+    }
+    if (toolName === "status.audio_alsa") {
+      const health = String(result?.health || "").trim().toLowerCase();
+      const errorText = String(result?.error || result?.status || "").trim().toLowerCase();
+      if (errorText.includes("unknown") || errorText.includes("unavailable")) return "error";
+      if (result?.ok === false || ["fault", "error", "failed"].includes(health)) return "error";
+      if (["warn", "warning"].includes(health)) return "warn";
       return "ok";
     }
     return "ok";
@@ -4431,6 +4440,59 @@
       }
       if (Array.isArray(result?.warnings) && result.warnings.length) {
         pushCloudOpsDetail(items, "告警", result.warnings.join("、"), "warn");
+      }
+      return items;
+    }
+
+    if (toolName === "status.audio_alsa" && result && typeof result === "object") {
+      const speakerPercent = getCloudOpsValue(result, ["speaker.percent", "speaker.volume_percent", "speaker.pcm_percent"]);
+      const micPercent = getCloudOpsValue(result, ["mic.percent", "microphone.percent", "capture.percent"]);
+      const speakerName = getCloudOpsValue(result, ["speaker.control", "speaker.name", "speaker.device"]);
+      const micName = getCloudOpsValue(result, ["mic.control", "mic.name", "mic.device"]);
+      const selectedDevice =
+        getCloudOpsValue(result, ["selected_device", "device", "card.name", "card.device_name", "audio_device"]) || "";
+      const cardId = getCloudOpsValue(result, ["card.id", "card.card_id", "card.index"]);
+      const issues = Array.isArray(result?.issues) ? result.issues : [];
+      const health = String(result?.health || (result?.ok === false ? "fault" : "")).trim();
+      const normalizedHealth = health.toLowerCase();
+      const healthTone =
+        normalizedHealth === "ok"
+          ? "ok"
+          : ["warn", "warning"].includes(normalizedHealth)
+            ? "warn"
+            : "error";
+      pushCloudOpsDetail(
+        items,
+        "ALSA 音频设备",
+        health === "ok" ? "正常" : health || "未知",
+        healthTone
+      );
+      if (selectedDevice || cardId !== undefined) {
+        pushCloudOpsDetail(
+          items,
+          "命中声卡",
+          `${selectedDevice || "-"}${cardId !== undefined && cardId !== "" ? ` · card ${cardId}` : ""}`,
+          healthTone === "error" ? "warn" : healthTone
+        );
+      }
+      pushCloudOpsDetail(
+        items,
+        "喇叭音量",
+        speakerPercent !== undefined && speakerPercent !== null && speakerPercent !== ""
+          ? `${speakerPercent}%${speakerName ? ` · ${speakerName}` : ""}`
+          : "-",
+        Number(speakerPercent) < 80 ? "error" : "ok"
+      );
+      pushCloudOpsDetail(
+        items,
+        "麦克风音量",
+        micPercent !== undefined && micPercent !== null && micPercent !== ""
+          ? `${micPercent}%${micName ? ` · ${micName}` : ""}`
+          : "-",
+        Number(micPercent) > 0 ? "ok" : "warn"
+      );
+      if (issues.length) {
+        pushCloudOpsDetail(items, "异常项", issues.join("、"), "error");
       }
       return items;
     }
@@ -5364,7 +5426,8 @@
     cloudOpsActionButtons.forEach((button) => {
       const needsVehicle = button.dataset.needsVehicle === "true";
       const requiredTool = button.dataset.requiresTool || "";
-      const supported = !requiredTool || !hasToolCatalog || availableNames.has(requiredTool);
+      const strictTool = button.dataset.requiresToolStrict === "true";
+      const supported = !requiredTool || (!strictTool && !hasToolCatalog) || availableNames.has(requiredTool);
       button.dataset.supported = supported ? "yes" : "no";
       button.dataset.accessState = cloudOpsAuthenticated
         ? (isCloudOpsControlButton(button) ? "control" : "read")

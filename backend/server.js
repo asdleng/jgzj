@@ -2353,6 +2353,18 @@ function createCloudOpsHeuristicPlan(message, vehicles = [], options = {}) {
     return createToolCallPlan(vehicleId, 'status.key_nodes', {}, 20);
   }
 
+  if (/alsa|usb音频|usb 音频|音频设备|声卡|yundea|jabra|麦克风音量|喇叭音量|speaker.*volume|mic.*volume/.test(lower)) {
+    return createToolCallPlan(
+      vehicleId,
+      'status.audio_alsa',
+      {
+        preferred_keywords: ['Yundea', 'Jabra'],
+        speaker_min_percent: 80
+      },
+      20
+    );
+  }
+
   if (/音频状态|音频链路|麦克风状态|喇叭状态|audio status/.test(lower)) {
     return createToolCallPlan(vehicleId, 'status.audio', {}, 20);
   }
@@ -2617,7 +2629,8 @@ async function planCloudOpsAction(message, sessionId, vehicles = [], options = {
     '如果用户想看系统资源、CPU、内存、磁盘、温度，用 tool_call: system.snapshot。',
     '如果用户想看 ROS 总览，用 tool_call: ros.overview。',
     '如果用户想看 ROS 话题列表、节点列表、服务列表、诊断、话题采样、话题频率，用相应 ros.* 工具。',
-    '如果用户想看子系统目录、关键节点、音频状态、一键健康检查、相机状态、相机抓拍、地图预览、上传链路、AI检测配置、AI检测落盘图片、CAN/底盘、车身状态、车身控制、碰撞停复位、定位、规划、routing、控制、障碍处理、障碍俯视图、感知，分别用 status.catalog、status.key_nodes、status.audio、health.autodrive_check、status.camera、camera.capture、map.preview、camera.upload_chain、ai_detection.config、ai_detection.images、status.can、status.body_control、vehicle.body_control、vehicle.clear_collision_stop、status.localization、status.planning、status.routing、status.control、status.obstacle_processor、obstacle.preview、status.perception。',
+    '如果用户想看子系统目录、关键节点、普通音频链路、一键健康检查、相机状态、相机抓拍、地图预览、上传链路、AI检测配置、AI检测落盘图片、CAN/底盘、车身状态、车身控制、碰撞停复位、定位、规划、routing、控制、障碍处理、障碍俯视图、感知，分别用 status.catalog、status.key_nodes、status.audio、health.autodrive_check、status.camera、camera.capture、map.preview、camera.upload_chain、ai_detection.config、ai_detection.images、status.can、status.body_control、vehicle.body_control、vehicle.clear_collision_stop、status.localization、status.planning、status.routing、status.control、status.obstacle_processor、obstacle.preview、status.perception。',
+    '如果用户想看 ALSA、USB 音频设备、Yundea/Jabra、麦克风音量或喇叭音量，用 tool_call: status.audio_alsa，args.preferred_keywords=["Yundea","Jabra"], args.speaker_min_percent=80。',
     '如果用户说打开广告屏、关闭广告屏、打开前照灯、关闭前照灯、打开氛围灯、关闭氛围灯、打开双闪、左转灯、右转灯、关闭转向灯，优先用 vehicle.body_control。',
     '如果用户想看巡逻路线、路线详情、启动巡逻、停止巡逻，分别用 route.list、route.detail、route.start_patrol、route.stop_patrol。',
     '如果用户明确说开始巡逻、启动巡逻、执行巡逻，route.start_patrol 默认按正式执行；只有当用户说预演、演练、试运行、不要真跑时，才把 args.dry_run=true。',
@@ -2795,6 +2808,30 @@ async function executeCloudOpsAction(plan, vehicles = []) {
       const responseOk = result?.data?.response?.ok;
       const toolStatus = String(result?.data?.response?.result?.status || '').trim().toLowerCase();
       if (responseOk === false) {
+        const structuredToolResult = result?.data?.response?.result;
+        if (
+          toolName === 'status.audio_alsa' &&
+          structuredToolResult &&
+          typeof structuredToolResult === 'object' &&
+          !Array.isArray(structuredToolResult) &&
+          (
+            Object.prototype.hasOwnProperty.call(structuredToolResult, 'health') ||
+            Object.prototype.hasOwnProperty.call(structuredToolResult, 'speaker') ||
+            Object.prototype.hasOwnProperty.call(structuredToolResult, 'mic') ||
+            Object.prototype.hasOwnProperty.call(structuredToolResult, 'microphone') ||
+            Object.prototype.hasOwnProperty.call(structuredToolResult, 'issues') ||
+            Object.prototype.hasOwnProperty.call(structuredToolResult, 'selected_device') ||
+            Object.prototype.hasOwnProperty.call(structuredToolResult, 'card')
+          )
+        ) {
+          return {
+            ok: true,
+            action: plan.action,
+            endpoint: result.url,
+            request: { vehicle_id: vehicleId, tool_name: toolName, ...requestBody },
+            data: result.data
+          };
+        }
         return {
           ok: false,
           action: plan.action,
@@ -3240,6 +3277,34 @@ function renderCloudOpsFallbackReply(_message, execution) {
           ? `采样配置 ${audioSummary?.sample_rate_hz ?? '-'} Hz / ${audioSummary?.channel_count ?? '-'} 声道。`
           : '',
         offlineNodes.length ? `异常音频节点：${offlineNodes.join('、')}。` : ''
+      ]
+        .filter(Boolean)
+        .join('');
+    }
+    if (toolName === 'status.audio_alsa' && result && typeof result === 'object') {
+      const speaker = result?.speaker || {};
+      const mic = result?.mic || result?.microphone || {};
+      const speakerPercent = speaker?.percent ?? speaker?.volume_percent ?? speaker?.pcm_percent;
+      const micPercent = mic?.percent ?? mic?.volume_percent ?? result?.capture?.percent;
+      const issues = Array.isArray(result?.issues) ? result.issues : [];
+      const selectedDevice =
+        result?.selected_device ||
+        result?.device ||
+        result?.card?.name ||
+        result?.card?.device_name ||
+        result?.audio_device ||
+        '';
+      return [
+        `${execution?.request?.vehicle_id || '该车辆'} 的 ALSA 音频设备检查已返回。`,
+        result?.health === 'ok'
+          ? '当前音频设备音量正常。'
+          : result?.health
+            ? `当前音频设备状态 ${result.health}。`
+            : '',
+        selectedDevice ? `命中声卡：${selectedDevice}。` : '',
+        speakerPercent !== undefined ? `喇叭音量 ${speakerPercent}%。` : '',
+        micPercent !== undefined ? `麦克风音量 ${micPercent}%。` : '',
+        issues.length ? `异常项：${issues.join('、')}。` : ''
       ]
         .filter(Boolean)
         .join('');
