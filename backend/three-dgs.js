@@ -1657,9 +1657,13 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       camera,
       ok: !error,
       active: activeValue,
+      mode: error ? null : session?.mode || session?.capture_mode || null,
       session_id: error ? state.capture.session_ids?.[camera] || null : sessionIdFromSession(session),
       saved_frames: error ? 0 : savedFramesFromSession(session),
       counts: error ? null : session?.counts || null,
+      child_sessions: error ? null : session?.child_sessions || session?.children || session?.camera_sessions || session?.sessions || null,
+      shared_context: error ? null : session?.shared_context || null,
+      last: error ? null : session?.last || null,
       status: error ? 'error' : session?.status || session?.state || session?.phase || null,
       error: error ? error.message || 'capture_status_failed' : null,
       checked_at_ms: Date.now()
@@ -1672,9 +1676,13 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       camera,
       ok: !error,
       active: activeValue,
+      mode: error ? null : session?.mode || session?.capture_mode || null,
       session_id: error ? state.capture.session_ids?.[camera] || null : sessionIdFromSession(session),
       saved_frames: error ? 0 : savedFramesFromSession(session),
       counts: error ? null : session?.counts || null,
+      child_sessions: error ? null : session?.child_sessions || session?.children || session?.camera_sessions || session?.sessions || null,
+      shared_context: error ? null : session?.shared_context || null,
+      last: error ? null : session?.last || null,
       status: error ? 'error' : session?.status || session?.state || session?.phase || null,
       error: error ? error.message || 'capture_status_failed' : null,
       checked_at_ms: Date.now()
@@ -1884,7 +1892,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
             cameras,
             allowPartial: true,
             multiCamera: true,
-            timeoutS: 6,
+            timeoutS: 10,
             persistLastResponse: false
           });
         }
@@ -2757,6 +2765,11 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     if (captureStartInFlight || uploadInFlight || state.prepare.running || state.train.running) {
       throw new Error('three_dgs_busy');
     }
+    if (state.capture.active) {
+      const error = new Error('three_dgs_capture_must_stop_before_map_upload');
+      error.status = 409;
+      throw error;
+    }
     updateState({
       phase: 'updating_map',
       active_username: auth.username,
@@ -2902,6 +2915,23 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const cameras = requestedCameras.length ? requestedCameras : activeCaptureCameras();
     if (!cameras.length) {
       throw new Error('three_dgs_no_capture_cameras');
+    }
+    const latestCapture = await updateCaptureStatusFromVehicle(vehicleId, {
+      cameras,
+      allowPartial: false,
+      multiCamera: true,
+      timeoutS: 8,
+      persistLastResponse: true
+    });
+    if (aggregateCaptureActivity(latestCapture.statuses)) {
+      updateState({
+        phase: state.dataset.prepared ? 'prepared' : 'idle',
+        stage_text: '请先停止车端 3DGS 采集，再上传图像-位姿包。',
+        error_message: 'three_dgs_capture_must_stop_before_package'
+      });
+      const error = new Error('three_dgs_capture_must_stop_before_package');
+      error.status = 409;
+      throw error;
     }
 
     updateState({
@@ -3235,9 +3265,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         const started = await callVehicleTool(
           vehicleId,
           '3dgs.capture.start',
-          enabledCameras.length === configuredCameraIds.length
-            ? { ...baseCaptureArgs, camera: 'all' }
-            : { ...baseCaptureArgs, cameras: enabledCameras },
+          { ...baseCaptureArgs, camera: 'all' },
           35
         );
         const session = normalizeSession(started);
@@ -4832,7 +4860,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         });
       }
       try {
-        await callVehicleTool(requestedVehicleId, '3dgs.capture.status', {}, Number(process.env.THREE_DGS_START_PREFLIGHT_TIMEOUT_S || 6));
+        await callVehicleTool(requestedVehicleId, '3dgs.capture.status', {}, Number(process.env.THREE_DGS_START_PREFLIGHT_TIMEOUT_S || 10));
       } catch (toolError) {
         return res.status(toolError.status === 404 ? 404 : 502).json({
           ok: false,
@@ -4891,7 +4919,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         cameras: activeCaptureCameras(),
         allowPartial: true,
         multiCamera: true,
-        timeoutS: 6,
+        timeoutS: 10,
         persistLastResponse: true
       });
       broadcastCaptureStreamEvent('capture_status', captureStreamPayload());

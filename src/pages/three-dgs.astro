@@ -1315,6 +1315,11 @@ import SiteLayout from "../components/SiteLayout.astro";
     }
     const activeCount = statuses.filter((item) => item.active === true).length;
     const errorItems = statuses.filter((item) => item.error);
+    const vehicleStatus = statuses.find((item) => item.camera === "all") || statuses[0] || {};
+    const sharedContext = vehicleStatus.shared_context || Object.values(capture.child_sessions || {}).find((item) => item?.shared_context)?.shared_context || null;
+    const childEntries = Object.entries(vehicleStatus.child_sessions || capture.child_sessions || {})
+      .map(([camera, session]) => ({ camera: session?.camera || camera, session }))
+      .filter((item) => item.camera && item.session);
     const row = document.createElement("div");
     row.className = "three-dgs-camera-count";
     row.dataset.state = errorItems.length
@@ -1326,11 +1331,34 @@ import SiteLayout from "../components/SiteLayout.astro";
     label.textContent = "当前车辆 session";
     const count = document.createElement("strong");
     const stateText = errorItems.length
-      ? `异常 ${errorItems.length} 路 · 累计 ${formatFrameCount(capture.saved_frames)} 张`
+      ? `异常 · 累计 ${formatFrameCount(capture.saved_frames)} 张`
       : `${cameraCount || "-"} 路可用 · 累计 ${formatFrameCount(capture.saved_frames)} 张${capture.active ? " · 采集中" : " · 等待/已停止"}`;
     count.textContent = capture.monitor_error ? `监控异常：${capture.monitor_error}` : stateText;
     row.append(label, count);
     captureCameraCounts.appendChild(row);
+    if (sharedContext?.counts) {
+      const contextRow = document.createElement("div");
+      contextRow.className = "three-dgs-camera-count three-dgs-camera-count--detail";
+      const contextLabel = document.createElement("span");
+      contextLabel.textContent = "共享上下文";
+      const contextCount = document.createElement("strong");
+      contextCount.textContent = `pose ${formatFrameCount(sharedContext.counts.received_poses)} · 点云 ${formatFrameCount(sharedContext.counts.received_pointclouds)}`;
+      contextRow.append(contextLabel, contextCount);
+      captureCameraCounts.appendChild(contextRow);
+    }
+    for (const { camera, session } of childEntries) {
+      const detailRow = document.createElement("div");
+      detailRow.className = "three-dgs-camera-count three-dgs-camera-count--detail";
+      detailRow.dataset.state = session?.running || session?.active ? "active" : "idle";
+      const saved = session?.counts?.saved_frames ?? session?.saved_frames;
+      const skipReason = session?.last?.skip_reason ? ` · ${session.last.skip_reason}` : "";
+      const detailLabel = document.createElement("span");
+      detailLabel.textContent = camera;
+      const detailCount = document.createElement("strong");
+      detailCount.textContent = `${formatFrameCount(saved)} 张${skipReason}`;
+      detailRow.append(detailLabel, detailCount);
+      captureCameraCounts.appendChild(detailRow);
+    }
   }
 
   function closeCaptureStream() {
@@ -2175,6 +2203,12 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   .three-dgs-camera-count[data-state="error"] strong {
     color: #fca5a5;
+  }
+
+  .three-dgs-camera-count--detail {
+    padding: 6px 10px;
+    font-size: 0.82rem;
+    background: rgba(15, 23, 42, 0.28);
   }
 
   .three-dgs-map-grid span {
