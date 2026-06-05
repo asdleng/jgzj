@@ -1468,9 +1468,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     );
   }
 
-  async function getCaptureCapabilities(vehicleId) {
+  async function getCaptureCapabilities(vehicleId, timeoutS = 20) {
     try {
-      const capabilities = await callVehicleTool(vehicleId, '3dgs.capture.capabilities', {}, 20);
+      const capabilities = await callVehicleTool(vehicleId, '3dgs.capture.capabilities', {}, timeoutS);
       return {
         ok: true,
         raw: capabilities,
@@ -1869,7 +1869,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           await updateCaptureStatusFromVehicle(vehicleId, {
             cameras,
             allowPartial: true,
-            timeoutS: 20,
+            multiCamera: true,
+            timeoutS: 6,
             persistLastResponse: false
           });
         }
@@ -4793,7 +4794,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     } catch (error) {
       return res.status(error.status || 400).json(vehicleErrorBody(error));
     }
-    const capabilities = await getCaptureCapabilities(vehicleId);
+    const capabilities = await getCaptureCapabilities(vehicleId, 8);
     mergeVehicleData({
       vehicle_id: vehicleId,
       configured_cameras: configuredCameraIds,
@@ -4813,6 +4814,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           ok: false,
           error: 'three_dgs_vehicle_not_connected',
           detail: vehicleError.payload?.error || vehicleError.message || `vehicle '${requestedVehicleId}' is not connected`,
+          vehicle_id: requestedVehicleId
+        });
+      }
+      try {
+        await callVehicleTool(requestedVehicleId, '3dgs.capture.status', {}, Number(process.env.THREE_DGS_START_PREFLIGHT_TIMEOUT_S || 6));
+      } catch (toolError) {
+        return res.status(toolError.status === 404 ? 404 : 502).json({
+          ok: false,
+          error: 'three_dgs_vehicle_tool_unresponsive',
+          detail: toolError.payload?.error || toolError.message || `vehicle '${requestedVehicleId}' tool call timed out`,
           vehicle_id: requestedVehicleId
         });
       }
@@ -4865,7 +4876,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       await updateCaptureStatusFromVehicle(vehicleId, {
         cameras: activeCaptureCameras(),
         allowPartial: true,
-        timeoutS: 25,
+        multiCamera: true,
+        timeoutS: 6,
         persistLastResponse: true
       });
       broadcastCaptureStreamEvent('capture_status', captureStreamPayload());
