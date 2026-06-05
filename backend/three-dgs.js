@@ -1417,7 +1417,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       if (vehicleToolQueues.get(key) === cleanup) {
         vehicleToolQueues.delete(key);
       }
-    });
+    }).catch(() => {});
     vehicleToolQueues.set(key, cleanup);
     return queued;
   }
@@ -2138,6 +2138,13 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       chunk_size_bytes: Number(process.env.THREE_DGS_VEHICLE_UPLOAD_CHUNK_SIZE_BYTES || 32 * 1024 * 1024),
       recommended_chunk_size_bytes: Number(process.env.THREE_DGS_VEHICLE_UPLOAD_CHUNK_SIZE_BYTES || 32 * 1024 * 1024)
     };
+  }
+
+  function uniqueVehicleImagePoseTargetPath(vehicleId, sessionId, fileName) {
+    const safeVehicle = sanitizeFileName(vehicleId || 'vehicle', 'vehicle').replace(/\.[^.]+$/, '');
+    const safeSession = sanitizeFileName(sessionId || 'session', 'session').replace(/\.[^.]+$/, '');
+    const safeName = sanitizeFileName(fileName || 'image_pose.tar.gz', 'image_pose.tar.gz');
+    return path.join(uploadDir, 'vehicle-image-pose', `${safeVehicle}-${safeSession}-${safeName}`);
   }
 
   function redactedUploadTicket(ticket) {
@@ -2947,7 +2954,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       const uploadTicket = createVehicleUploadTicket({
         vehicleId,
         kind: 'image_pose',
-        fileName: packageName
+        fileName: packageName,
+        targetPath: uniqueVehicleImagePoseTargetPath(vehicleId, sessionId || 'multi_camera', packageName)
       });
       setVehicleUploadProgress(uploadTicket, {
         status: 'waiting_vehicle',
@@ -2966,6 +2974,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         pose_interpolation: 'timestamp',
         chunk_size_bytes: uploadTicket.chunk_size_bytes,
         recommended_chunk_size_bytes: uploadTicket.recommended_chunk_size_bytes,
+        ...(payload.output_root ? { output_root: payload.output_root } : {}),
         ...(sessionId ? { session_id: sessionId } : {})
       };
       let packagePayload = null;

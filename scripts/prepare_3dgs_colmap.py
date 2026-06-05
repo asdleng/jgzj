@@ -193,6 +193,21 @@ def load_records(root: Path) -> tuple[dict, list[dict]]:
     return manifest, records
 
 
+def load_pose_history(root: Path) -> list[dict]:
+    path = find_first(root, ("pose_history.jsonl",))
+    if not path:
+        return []
+    poses = []
+    for record in load_jsonl(path):
+        timestamp = pose_history_timestamp_s(record)
+        matrix = matrix_from_pose_history_record(record)
+        if timestamp is None or matrix is None:
+            continue
+        poses.append({"timestamp_s": timestamp, "T_map_lidar": matrix, "raw": record})
+    poses.sort(key=lambda item: item["timestamp_s"])
+    return poses
+
+
 def nested_get(data: object, *keys: str) -> object | None:
     current = data
     for key in keys:
@@ -278,6 +293,27 @@ def timestamp_ns(value: float | None) -> int | None:
     if value is None or not math.isfinite(float(value)):
         return None
     return int(round(float(value) * 1e9))
+
+
+def pose_history_timestamp_s(record: dict) -> float | None:
+    pose_obj = record.get("pose") if isinstance(record.get("pose"), dict) else {}
+    header_obj = record.get("header") if isinstance(record.get("header"), dict) else {}
+    raw = first_key(
+        [record, pose_obj, header_obj, nested_get(record, "pose", "header"), nested_get(record, "msg", "header")],
+        (
+            "ts_unix",
+            "timestamp_unix",
+            "timestamp",
+            "timestamp_ns",
+            "pose_ts_unix",
+            "pose_timestamp_unix",
+            "pose_timestamp",
+            "pose_timestamp_ns",
+            "stamp",
+            "time",
+        ),
+    )
+    return scalar_timestamp_seconds(raw)
 
 
 def record_image_timestamp_s(record: dict) -> float | None:
@@ -421,6 +457,8 @@ def record_pointcloud_context_available(record: dict) -> bool:
 
 
 def pose_interpolation_note_for_mode(mode: str) -> str:
+    if mode == "cloud_pose_history_interpolated":
+        return "Cloud interpolated shared_context/pose_history.jsonl to each image timestamp, then computed T_map_camera = T_map_lidar * inv(T_cam_lidar)."
     if mode == "vehicle_timestamp_interpolated_pose":
         return "Cloud used the per-frame T_map_camera/T_camera_map supplied by the vehicle. The vehicle interpolated /ndt_pose to each image timestamp using surrounding poses."
     if mode == "pose_history_available_not_used":
@@ -430,25 +468,183 @@ def pose_interpolation_note_for_mode(mode: str) -> str:
     return "Cloud used the per-frame transform supplied by the vehicle package."
 
 
-def matrix_from_record(record: dict) -> np.ndarray:
+def matrix_from_value(value: object) -> np.ndarray | None:
+    if value is None:
+        return None
+    try:
+        matrix = np.asarray(value, dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if matrix.shape == (4, 4):
+        return matrix
+    flat = matrix.reshape(-1)
+    if flat.size >= 16:
+        return flat[:16].reshape(4, 4)
+    return None
+
+
+def quaternion_xyzw_to_rotmat(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
+    quat = np.array([qx, qy, qz, qw], dtype=float)
+    norm = np.linalg.norm(quat)
+    if norm <= 1e-12:
+        return np.eye(3, dtype=float)
+    qx, qy, qz, qw = quat / norm
+    return np.array(
+        [
+            [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+        ],
+        dtype=float,
+    )
+
+
+def pose_dict_to_matrix(pose: dict) -> np.ndarray | None:
+    for key in ("T_map_lidar", "matrix", "transform", "T"):
+        matrix = matrix_from_value(pose.get(key))
+        if matrix is not None:
+            return matrix
+    transforms = pose.get("transforms")
+    if isinstance(transforms, dict):
+        for key in ("T_map_lidar", "matrix", "transform", "T"):
+            matrix = matrix_from_value(transforms.get(key))
+            if matrix is not None:
+                return matrix
+
+    position = pose.get("position") or pose.get("translation") or nested_get(pose, "pose", "position") or nested_get(pose, "pose", "translation")
+    orientation = pose.get("orientation") or pose.get("quaternion") or nested_get(pose, "pose", "orientation") or nested_get(pose, "pose", "quaternion")
+    if not isinstance(position, dict) or not isinstance(orientation, dict):
+        return None
+    try:
+        x = float(position.get("x", position.get("tx", 0.0)))
+        y = float(position.get("y", position.get("ty", 0.0)))
+        z = float(position.get("z", position.get("tz", 0.0)))
+        qx = float(orientation.get("x", orientation.get("qx", 0.0)))
+        qy = float(orientation.get("y", orientation.get("qy", 0.0)))
+        qz = float(orientation.get("z", orientation.get("qz", 0.0)))
+        qw = float(orientation.get("w", orientation.get("qw", 1.0)))
+    except (TypeError, ValueError):
+        return None
+    matrix = np.eye(4, dtype=float)
+    matrix[:3, :3] = quaternion_xyzw_to_rotmat(qx, qy, qz, qw)
+    matrix[:3, 3] = [x, y, z]
+    return matrix
+
+
+def matrix_from_pose_history_record(record: dict) -> np.ndarray | None:
+    candidates = [record, record.get("pose"), record.get("msg"), nested_get(record, "msg", "pose")]
+    for item in candidates:
+        if isinstance(item, dict):
+            matrix = pose_dict_to_matrix(item)
+            if matrix is not None:
+                return matrix
+    return None
+
+
+def rotmat_to_quat_xyzw(rot: np.ndarray) -> np.ndarray:
+    qvec = rotmat_to_qvec(rot)
+    return np.array([qvec[1], qvec[2], qvec[3], qvec[0]], dtype=float)
+
+
+def slerp_quat_xyzw(q0: np.ndarray, q1: np.ndarray, alpha: float) -> np.ndarray:
+    q0 = q0.astype(float) / max(np.linalg.norm(q0), 1e-12)
+    q1 = q1.astype(float) / max(np.linalg.norm(q1), 1e-12)
+    dot = float(np.dot(q0, q1))
+    if dot < 0.0:
+        q1 = -q1
+        dot = -dot
+    if dot > 0.9995:
+        out = q0 + alpha * (q1 - q0)
+        return out / max(np.linalg.norm(out), 1e-12)
+    theta_0 = math.acos(max(-1.0, min(1.0, dot)))
+    theta = theta_0 * alpha
+    sin_theta = math.sin(theta)
+    sin_theta_0 = math.sin(theta_0)
+    s0 = math.cos(theta) - dot * sin_theta / sin_theta_0
+    s1 = sin_theta / sin_theta_0
+    return s0 * q0 + s1 * q1
+
+
+def interpolate_pose_history(pose_history: list[dict], timestamp_s: float) -> tuple[np.ndarray, float] | tuple[None, None]:
+    if not pose_history or timestamp_s is None:
+        return None, None
+    if timestamp_s < pose_history[0]["timestamp_s"] or timestamp_s > pose_history[-1]["timestamp_s"]:
+        return None, None
+    lo = 0
+    hi = len(pose_history) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if pose_history[mid]["timestamp_s"] < timestamp_s:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    next_idx = min(lo, len(pose_history) - 1)
+    prev_idx = max(0, next_idx - 1)
+    prev_pose = pose_history[prev_idx]
+    next_pose = pose_history[next_idx]
+    t0 = prev_pose["timestamp_s"]
+    t1 = next_pose["timestamp_s"]
+    if abs(t1 - t0) <= 1e-9:
+        return prev_pose["T_map_lidar"], abs(timestamp_s - t0) * 1000.0
+    alpha = max(0.0, min(1.0, (timestamp_s - t0) / (t1 - t0)))
+    m0 = prev_pose["T_map_lidar"]
+    m1 = next_pose["T_map_lidar"]
+    out = np.eye(4, dtype=float)
+    out[:3, 3] = (1.0 - alpha) * m0[:3, 3] + alpha * m1[:3, 3]
+    quat = slerp_quat_xyzw(rotmat_to_quat_xyzw(m0[:3, :3]), rotmat_to_quat_xyzw(m1[:3, :3]), alpha)
+    out[:3, :3] = quaternion_xyzw_to_rotmat(quat[0], quat[1], quat[2], quat[3])
+    max_gap_ms = max(abs(timestamp_s - t0), abs(t1 - timestamp_s)) * 1000.0
+    return out, max_gap_ms
+
+
+def camera_lidar_extrinsic_from_record(record: dict, manifest: dict) -> np.ndarray | None:
+    sources = [
+        record,
+        record.get("camera_calibration"),
+        nested_get(record, "camera_calibration", "extrinsic"),
+        manifest,
+        manifest.get("camera_calibration"),
+        nested_get(manifest, "camera_calibration", "extrinsic"),
+    ]
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in ("T_cam_lidar", "T_camera_lidar", "T_lidar_to_camera"):
+            matrix = matrix_from_value(source.get(key))
+            if matrix is not None:
+                return matrix
+        for key in ("T_lidar_cam", "T_lidar_camera", "T_camera_to_lidar"):
+            matrix = matrix_from_value(source.get(key))
+            if matrix is not None:
+                return np.linalg.inv(matrix)
+    return None
+
+
+def matrix_from_record(record: dict, pose_history: list[dict] | None = None, manifest: dict | None = None) -> tuple[np.ndarray, str, float | None]:
     for key in ("T_camera_map", "T_world_camera_colmap", "T_wc_colmap"):
         value = record.get(key)
-        if value is not None:
-            matrix = np.asarray(value, dtype=float)
-            if matrix.shape == (4, 4):
-                return matrix
+        matrix = matrix_from_value(value)
+        if matrix is not None:
+            return matrix, record_pose_mode(record), None
 
     for key in ("T_map_camera", "T_camera_world", "T_c2w"):
         value = record.get(key)
-        if value is not None:
-            matrix = np.asarray(value, dtype=float)
-            if matrix.shape == (4, 4):
-                return np.linalg.inv(matrix)
+        matrix = matrix_from_value(value)
+        if matrix is not None:
+            return np.linalg.inv(matrix), record_pose_mode(record), None
 
     transforms = record.get("transforms")
     if isinstance(transforms, dict):
         nested = {**record, **transforms}
-        return matrix_from_record(nested)
+        return matrix_from_record(nested, pose_history, manifest)
+
+    image_ts_s = record_image_timestamp_s(record)
+    if pose_history and image_ts_s is not None:
+        T_map_lidar, pose_gap_ms = interpolate_pose_history(pose_history, image_ts_s)
+        T_cam_lidar = camera_lidar_extrinsic_from_record(record, manifest or {})
+        if T_map_lidar is not None and T_cam_lidar is not None:
+            T_map_camera = T_map_lidar @ np.linalg.inv(T_cam_lidar)
+            return np.linalg.inv(T_map_camera), "cloud_pose_history_interpolated", pose_gap_ms
 
     raise ValueError("record missing T_camera_map or T_map_camera")
 
@@ -973,6 +1169,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
         image_root = extract_archive(Path(args.image_pose).resolve(), work_dir)
         write_progress(output, "extract", 8.0, "图像-位姿包已解包")
         manifest, records = load_records(image_root)
+        pose_history = load_pose_history(image_root)
         write_progress(output, "images", 10.0, f"读取到 {len(records)} 条图像-位姿记录")
 
         camera_models: dict[tuple[str, int, int, float, float, float, float], int] = {}
@@ -1028,7 +1225,9 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             )
             camera_undistort_modes[camera_id] = applied_undistort_mode
 
-            world_to_camera = matrix_from_record(record)
+            world_to_camera, pose_mode, interpolation_gap_ms = matrix_from_record(record, pose_history, local_manifest)
+            if pose_delta_ms is None and interpolation_gap_ms is not None:
+                pose_delta_ms = interpolation_gap_ms
             camera_matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
             colorization_frames.append(
                 {
@@ -1059,7 +1258,6 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             )
             pose_obj = record.get("pose") if isinstance(record.get("pose"), dict) else {}
             image_obj = record.get("image") if isinstance(record.get("image"), dict) else {}
-            pose_mode = record_pose_mode(record)
             pose_mode_counts[pose_mode] = pose_mode_counts.get(pose_mode, 0) + 1
             has_pointcloud_context = record_pointcloud_context_available(record)
             if has_pointcloud_context:
@@ -1114,8 +1312,12 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     "scene_name": args.scene_name,
                     "generated_at_unix": time.time(),
                     "pose_interpolation": {
-                        "mode": "vehicle_timestamp_interpolated_pose" if pose_mode_counts.get("vehicle_timestamp_interpolated_pose") else "vehicle_matched_pose",
-                        "cloud_interpolation_available": False,
+                        "mode": "cloud_pose_history_interpolated"
+                        if pose_mode_counts.get("cloud_pose_history_interpolated")
+                        else "vehicle_timestamp_interpolated_pose"
+                        if pose_mode_counts.get("vehicle_timestamp_interpolated_pose")
+                        else "vehicle_matched_pose",
+                        "cloud_interpolation_available": bool(pose_mode_counts.get("cloud_pose_history_interpolated")),
                         "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
                         "pose_mode_counts": pose_mode_counts,
                         "note": "Each image uses its own vehicle-supplied T_map_camera/T_camera_map. Camera streams are not assumed to be synchronized.",
@@ -1148,12 +1350,16 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             "camera_count": len(camera_models),
             "colorization": colorization_summary,
             "frame_metadata_path": str(output / "frame_metadata.json"),
-            "pose_interpolation": {
-                "mode": "vehicle_timestamp_interpolated_pose" if pose_mode_counts.get("vehicle_timestamp_interpolated_pose") else "vehicle_matched_pose",
-                "cloud_interpolation_available": False,
-                "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
-                "pose_mode_counts": pose_mode_counts,
-                "note": "Cloud uses the per-frame T_map_camera/T_camera_map supplied by the vehicle package.",
+        "pose_interpolation": {
+            "mode": "cloud_pose_history_interpolated"
+            if pose_mode_counts.get("cloud_pose_history_interpolated")
+            else "vehicle_timestamp_interpolated_pose"
+            if pose_mode_counts.get("vehicle_timestamp_interpolated_pose")
+            else "vehicle_matched_pose",
+            "cloud_interpolation_available": bool(pose_mode_counts.get("cloud_pose_history_interpolated")),
+            "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
+            "pose_mode_counts": pose_mode_counts,
+            "note": "Cloud uses the per-frame T_map_camera/T_camera_map supplied by the vehicle package.",
             },
             "pointcloud_context": {
                 "available": pointcloud_context_frame_count > 0,
