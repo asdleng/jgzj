@@ -1402,6 +1402,12 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return Array.isArray(payload?.vehicles) ? payload.vehicles : [];
   }
 
+  async function getVehicleConnection(vehicleId, timeoutMs = 3000) {
+    return fetchJson(new URL(`/api/vehicles/${encodeURIComponent(vehicleId)}`, cloudAgentBaseUrl).toString(), {
+      timeoutMs
+    });
+  }
+
   async function callVehicleTool(vehicleId, tool, args = {}, timeoutS = 30) {
     const endpoint = new URL(`/api/vehicles/${encodeURIComponent(vehicleId)}/tools/${encodeURIComponent(tool)}`, cloudAgentBaseUrl).toString();
     return fetchJson(endpoint, {
@@ -4797,9 +4803,20 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return res.json(makeStatusResponse(req.threeDgsAuth, { capabilities }));
   });
 
-  app.post('/api/three-dgs/capture/start', requireThreeDgsAuth, (req, res) => {
+  app.post('/api/three-dgs/capture/start', requireThreeDgsAuth, async (req, res) => {
     try {
-      queueCaptureStart(req.threeDgsAuth, req.body || {});
+      const requestedVehicleId = resolveThreeDgsVehicleId(req.body?.vehicle_id);
+      try {
+        await getVehicleConnection(requestedVehicleId, Number(process.env.THREE_DGS_VEHICLE_ONLINE_CHECK_TIMEOUT_MS || 3000));
+      } catch (vehicleError) {
+        return res.status(vehicleError.status === 404 ? 404 : 502).json({
+          ok: false,
+          error: 'three_dgs_vehicle_not_connected',
+          detail: vehicleError.payload?.error || vehicleError.message || `vehicle '${requestedVehicleId}' is not connected`,
+          vehicle_id: requestedVehicleId
+        });
+      }
+      queueCaptureStart(req.threeDgsAuth, { ...(req.body || {}), vehicle_id: requestedVehicleId });
       return res.json(makeStatusResponse(req.threeDgsAuth));
     } catch (error) {
       return res.status(error.status || 502).json({

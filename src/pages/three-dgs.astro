@@ -479,6 +479,8 @@ import SiteLayout from "../components/SiteLayout.astro";
   let vehicleManuallyChanged = false;
   let pointcloudPreviewKey = "";
   let captureEventSource = null;
+  let captureStreamReconnectTimer = null;
+  let lastVehicleListRefreshMs = 0;
   let datasetInspection = null;
   let datasetHitPoints = [];
   let selectedDatasetFrameIndex = -1;
@@ -1332,6 +1334,10 @@ import SiteLayout from "../components/SiteLayout.astro";
   }
 
   function closeCaptureStream() {
+    if (captureStreamReconnectTimer) {
+      window.clearTimeout(captureStreamReconnectTimer);
+      captureStreamReconnectTimer = null;
+    }
     if (!captureEventSource) return;
     captureEventSource.close();
     captureEventSource = null;
@@ -1382,6 +1388,17 @@ import SiteLayout from "../components/SiteLayout.astro";
     });
     captureEventSource.onerror = () => {
       setCaptureStreamState("重连中", "error");
+      const failedSource = captureEventSource;
+      failedSource?.close();
+      if (captureEventSource === failedSource) {
+        captureEventSource = null;
+      }
+      if (!captureStreamReconnectTimer) {
+        captureStreamReconnectTimer = window.setTimeout(() => {
+          captureStreamReconnectTimer = null;
+          connectCaptureStream();
+        }, 3000);
+      }
     };
   }
 
@@ -1588,10 +1605,15 @@ import SiteLayout from "../components/SiteLayout.astro";
     refreshButtons();
   }
 
-  async function fetchStatus() {
-    const response = await fetch(STATUS_URL, { credentials: "same-origin", cache: "no-store" });
+  async function fetchStatus(options = {}) {
+    const now = Date.now();
+    const includeVehicles = options.includeVehicles ?? (!statusData || now - lastVehicleListRefreshMs > 30000);
+    const response = await fetch(`${STATUS_URL}?include_vehicles=${includeVehicles ? "true" : "false"}`, { credentials: "same-origin", cache: "no-store" });
     statusData = await response.json();
-    applyVehicles(statusData.vehicles);
+    if (includeVehicles && Array.isArray(statusData.vehicles)) {
+      lastVehicleListRefreshMs = now;
+      applyVehicles(statusData.vehicles);
+    }
     if (statusData.default_train_gpu && !el("three-dgs-gpu").dataset.touched) {
       el("three-dgs-gpu").value = statusData.default_train_gpu;
     }
