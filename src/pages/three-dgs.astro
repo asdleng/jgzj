@@ -1590,8 +1590,12 @@ import SiteLayout from "../components/SiteLayout.astro";
     const colorText = colorization?.enabled
       ? ` · 上色 ${formatCount(colorization.colored_points)} / 过滤 ${formatCount(colorization.filtered_points)}`
       : "";
+    const poseOffsets = dataset.summary?.pose_interpolation?.pose_time_offsets_ms || {};
+    const poseOffsetText = Object.keys(poseOffsets).length
+      ? ` · 位姿偏移 ${Object.entries(poseOffsets).map(([camera, value]) => `${camera}:${Number(value).toFixed(0)}ms`).join(" ")}`
+      : "";
     el("three-dgs-dataset-summary").textContent = dataset.summary
-      ? `${dataset.summary.image_count || 0} 张 / ${dataset.summary.point_count || 0} 点${colorText}`
+      ? `${dataset.summary.image_count || 0} 张 / ${dataset.summary.point_count || 0} 点${colorText}${poseOffsetText}`
       : "-";
 
     const train = state.train || {};

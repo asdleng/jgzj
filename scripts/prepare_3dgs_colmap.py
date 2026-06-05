@@ -99,6 +99,26 @@ def load_jsonl(path: Path) -> list[dict]:
     return records
 
 
+def load_pose_time_offsets(path: str | None) -> dict[str, float]:
+    if not path:
+        return {}
+    data = load_json(Path(path).resolve())
+    raw = (
+        data.get("camera_offsets_ms")
+        or data.get("pose_time_offsets_ms")
+        or data.get("camera_time_offsets_ms")
+        or data
+    )
+    if not isinstance(raw, dict):
+        raise ValueError("pose time offsets must be a JSON object")
+    offsets: dict[str, float] = {}
+    for camera_name, value in raw.items():
+        if not str(camera_name).startswith("camera"):
+            continue
+        offsets[str(camera_name)] = float(value) / 1000.0
+    return offsets
+
+
 def extract_archive(source: Path, work_dir: Path) -> Path:
     if source.is_dir():
         return source
@@ -620,7 +640,12 @@ def camera_lidar_extrinsic_from_record(record: dict, manifest: dict) -> np.ndarr
     return None
 
 
-def matrix_from_record(record: dict, pose_history: list[dict] | None = None, manifest: dict | None = None) -> tuple[np.ndarray, str, float | None]:
+def matrix_from_record(
+    record: dict,
+    pose_history: list[dict] | None = None,
+    manifest: dict | None = None,
+    timestamp_offset_s: float = 0.0,
+) -> tuple[np.ndarray, str, float | None]:
     for key in ("T_camera_map", "T_world_camera_colmap", "T_wc_colmap"):
         value = record.get(key)
         matrix = matrix_from_value(value)
@@ -636,9 +661,11 @@ def matrix_from_record(record: dict, pose_history: list[dict] | None = None, man
     transforms = record.get("transforms")
     if isinstance(transforms, dict):
         nested = {**record, **transforms}
-        return matrix_from_record(nested, pose_history, manifest)
+        return matrix_from_record(nested, pose_history, manifest, timestamp_offset_s)
 
     image_ts_s = record_image_timestamp_s(record)
+    if image_ts_s is not None:
+        image_ts_s += timestamp_offset_s
     if pose_history and image_ts_s is not None:
         T_map_lidar, pose_gap_ms = interpolate_pose_history(pose_history, image_ts_s)
         T_cam_lidar = camera_lidar_extrinsic_from_record(record, manifest or {})
@@ -1170,6 +1197,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
         write_progress(output, "extract", 8.0, "图像-位姿包已解包")
         manifest, records = load_records(image_root)
         pose_history = load_pose_history(image_root)
+        pose_time_offsets_s = load_pose_time_offsets(args.pose_time_offsets_json)
         write_progress(output, "images", 10.0, f"读取到 {len(records)} 条图像-位姿记录")
 
         camera_models: dict[tuple[str, int, int, float, float, float, float], int] = {}
@@ -1186,9 +1214,11 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             local_manifest = record_manifest(record, manifest)
             source_image = image_path_from_record(record, image_root)
             camera_name = record_camera_id(record, local_manifest)
+            pose_time_offset_s = pose_time_offsets_s.get(camera_name, 0.0)
             raw_group_key = record_group_key(record, image_id)
             group_name = sanitize_component(raw_group_key, "group").replace("_", "-")
             image_ts_s = record_image_timestamp_s(record)
+            pose_interpolation_ts_s = image_ts_s + pose_time_offset_s if image_ts_s is not None else None
             pose_ts_s = record_pose_timestamp_s(record)
             pose_delta_ms = record_pose_delta_ms(record, image_ts_s, pose_ts_s)
             params = camera_params(record, local_manifest, source_image)
@@ -1225,7 +1255,12 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             )
             camera_undistort_modes[camera_id] = applied_undistort_mode
 
-            world_to_camera, pose_mode, interpolation_gap_ms = matrix_from_record(record, pose_history, local_manifest)
+            world_to_camera, pose_mode, interpolation_gap_ms = matrix_from_record(
+                record,
+                pose_history,
+                local_manifest,
+                pose_time_offset_s,
+            )
             if pose_delta_ms is None and interpolation_gap_ms is not None:
                 pose_delta_ms = interpolation_gap_ms
             camera_matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
@@ -1275,6 +1310,9 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     "source_image_relative_path": image_obj.get("relative_path") or image_obj.get("path"),
                     "image_ts_unix": image_ts_s,
                     "image_ts_ns": timestamp_ns(image_ts_s),
+                    "pose_interpolation_ts_unix": pose_interpolation_ts_s,
+                    "pose_interpolation_ts_ns": timestamp_ns(pose_interpolation_ts_s),
+                    "pose_time_offset_ms": round(pose_time_offset_s * 1000.0, 6),
                     "pose_ts_unix": pose_ts_s,
                     "pose_ts_ns": timestamp_ns(pose_ts_s),
                     "image_pose_delta_ms": pose_delta_ms,
@@ -1320,7 +1358,8 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                         "cloud_interpolation_available": bool(pose_mode_counts.get("cloud_pose_history_interpolated")),
                         "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
                         "pose_mode_counts": pose_mode_counts,
-                        "note": "Each image uses its own vehicle-supplied T_map_camera/T_camera_map. Camera streams are not assumed to be synchronized.",
+                        "pose_time_offsets_ms": {key: value * 1000.0 for key, value in sorted(pose_time_offsets_s.items())},
+                        "note": "Each image uses its own timestamp. Optional per-camera pose_time_offsets_ms are applied before cloud pose-history interpolation.",
                     },
                     "pointcloud_context": {
                         "available_frame_count": pointcloud_context_frame_count,
@@ -1359,7 +1398,8 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             "cloud_interpolation_available": bool(pose_mode_counts.get("cloud_pose_history_interpolated")),
             "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
             "pose_mode_counts": pose_mode_counts,
-            "note": "Cloud uses the per-frame T_map_camera/T_camera_map supplied by the vehicle package.",
+            "pose_time_offsets_ms": {key: value * 1000.0 for key, value in sorted(pose_time_offsets_s.items())},
+            "note": "Cloud applies optional per-camera pose_time_offsets_ms before pose-history interpolation; records with vehicle-supplied T_map_camera/T_camera_map keep that pose.",
             },
             "pointcloud_context": {
                 "available": pointcloud_context_frame_count > 0,
@@ -1402,6 +1442,11 @@ def main() -> None:
         choices=("keep-k", "optimal"),
         default="keep-k",
         help="keep-k matches FAST-Calib's cv::undistort(image, K, D) projection convention; optimal keeps the previous getOptimalNewCameraMatrix(alpha=0) behavior.",
+    )
+    parser.add_argument(
+        "--pose-time-offsets-json",
+        default="",
+        help="Optional JSON with per-camera pose interpolation offsets in milliseconds, e.g. {\"camera_offsets_ms\":{\"camera1\":-40}}.",
     )
     parser.add_argument("--colorize-points", default="true")
     parser.add_argument("--filter-visible-points", default="true")

@@ -122,6 +122,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const datasetRoot = path.join(runtimeRoot, 'datasets');
   const logDir = path.join(runtimeRoot, 'logs');
   const resultRoot = path.join(runtimeRoot, 'results');
+  const poseOptimizationRoot = path.join(runtimeRoot, 'pose-optimization');
+  const defaultPoseTimeOffsetsJson = process.env.THREE_DGS_POSE_TIME_OFFSETS_JSON
+    || path.join(poseOptimizationRoot, 'latest', 'pose_time_offsets.json');
   const statePath = path.join(runtimeRoot, 'three-dgs-state.json');
   const imagePoseUploadPath = path.join(uploadDir, 'image-pose-upload');
   const pointcloudUploadPath = path.join(uploadDir, 'pointcloud-upload');
@@ -3571,6 +3574,12 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const sceneName = sanitizeSceneName(payload.scene_name) || makeRunId('scene');
     const outputDir = path.join(datasetRoot, sceneName);
     const logPath = path.join(logDir, `prepare-${sceneName}.log`);
+    const requestedPoseTimeOffsetsJson = payload.pose_time_offsets_json === undefined
+      ? defaultPoseTimeOffsetsJson
+      : String(payload.pose_time_offsets_json || '');
+    const poseTimeOffsetsJson = requestedPoseTimeOffsetsJson && await safeStat(requestedPoseTimeOffsetsJson)
+      ? requestedPoseTimeOffsetsJson
+      : '';
     await fsp.rm(outputDir, { recursive: true, force: true });
     await fsp.rm(logPath, { force: true });
     await ensureRuntimeDirs();
@@ -3624,6 +3633,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       payload.undistort === false ? 'false' : 'true',
       '--undistort-mode',
       defaultUndistortMode,
+      '--pose-time-offsets-json',
+      poseTimeOffsetsJson,
       '--colorize-points',
       colorizeInitialPoints ? 'true' : 'false',
       '--filter-visible-points',
