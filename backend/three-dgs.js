@@ -174,6 +174,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const captureStreamClients = new Set();
   let captureMonitorTimer = null;
   let captureMonitorInFlight = false;
+  const vehicleToolQueues = new Map();
 
   function scheduleStatePersist() {
     if (statePersistTimer) {
@@ -1408,15 +1409,30 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     });
   }
 
-  async function callVehicleTool(vehicleId, tool, args = {}, timeoutS = 30) {
-    const endpoint = new URL(`/api/vehicles/${encodeURIComponent(vehicleId)}/tools/${encodeURIComponent(tool)}`, cloudAgentBaseUrl).toString();
-    return fetchJson(endpoint, {
-      method: 'POST',
-      timeoutMs: Math.max(timeoutS * 1000 + 5000, cloudAgentTimeoutMs),
-      body: {
-        args,
-        timeout_s: timeoutS
+  async function enqueueVehicleToolCall(vehicleId, task) {
+    const key = String(vehicleId || '');
+    const previous = vehicleToolQueues.get(key) || Promise.resolve();
+    const queued = previous.catch(() => {}).then(task);
+    const cleanup = queued.finally(() => {
+      if (vehicleToolQueues.get(key) === cleanup) {
+        vehicleToolQueues.delete(key);
       }
+    });
+    vehicleToolQueues.set(key, cleanup);
+    return queued;
+  }
+
+  async function callVehicleTool(vehicleId, tool, args = {}, timeoutS = 30) {
+    return enqueueVehicleToolCall(vehicleId, async () => {
+      const endpoint = new URL(`/api/vehicles/${encodeURIComponent(vehicleId)}/tools/${encodeURIComponent(tool)}`, cloudAgentBaseUrl).toString();
+      return fetchJson(endpoint, {
+        method: 'POST',
+        timeoutMs: Math.max(timeoutS * 1000 + 5000, cloudAgentTimeoutMs),
+        body: {
+          args,
+          timeout_s: timeoutS
+        }
+      });
     });
   }
 
@@ -1683,7 +1699,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
               : normalizeCaptureStatusEntryFromSession(camera, {}, new Error('camera_child_session_missing')));
           }
         } else {
-          const camera = cameras[0] || session?.camera || session?.camera_id || 'all';
+          const camera = session?.camera || session?.camera_id || 'all';
           statuses.push(normalizeCaptureStatusEntryFromSession(camera, session));
         }
         rawStatuses.push({ camera: 'all', response: status, session });
@@ -1692,9 +1708,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         if (!allowPartial) {
           throw error;
         }
-        for (const camera of cameras) {
-          statuses.push(normalizeCaptureStatusEntry(camera, null, error));
-        }
+        statuses.push(normalizeCaptureStatusEntry('all', null, error));
         rawStatuses.push({
           camera: 'all',
           error: error.message || 'capture_status_failed'
@@ -1767,7 +1781,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const active = aggregateCaptureActivity(statuses);
     const errorText = statuses
       .filter((item) => item.error)
-      .map((item) => `${item.camera}:${item.error}`)
+      .map((item) => item.camera === 'all' ? item.error : `${item.camera}:${item.error}`)
       .join('; ');
     updateNestedState('capture', {
       vehicle_id: vehicleId,
