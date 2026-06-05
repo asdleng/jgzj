@@ -111,6 +111,26 @@ def stats(values: np.ndarray) -> dict:
     }
 
 
+def independent_alignment_stats(rows: list[dict]) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    for camera_name in CAMERA_ORDER:
+        items = [row for row in rows if row["camera_name"] == camera_name]
+        if len(items) < 3:
+            result[camera_name] = {"count": len(items), "error": "not enough frames"}
+            continue
+        ndt = np.asarray([row["ndt_position"] for row in items], dtype=np.float64)
+        sfm = np.asarray([row["sfm_position"] for row in items], dtype=np.float64)
+        scale, rotation, translation = umeyama_similarity(sfm, ndt)
+        aligned = (scale * (rotation @ sfm.T)).T + translation
+        residuals = np.linalg.norm(aligned - ndt, axis=1)
+        result[camera_name] = {
+            **stats(residuals),
+            "scale": scale,
+            "translation": translation.tolist(),
+        }
+    return result
+
+
 def draw_trajectory(rows: list[dict], output_path: Path, width: int = 1400, height: int = 1000) -> None:
     if not rows:
         return
@@ -261,6 +281,7 @@ def main() -> int:
         },
         "overall": stats(residuals),
         "per_camera": per_camera,
+        "per_camera_independent_alignment": independent_alignment_stats(rows),
         "csv": str(csv_path),
         "trajectory_plot": str(output / "trajectory_xy_compare.jpg"),
     }
