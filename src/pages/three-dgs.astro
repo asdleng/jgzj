@@ -1825,7 +1825,11 @@ import SiteLayout from "../components/SiteLayout.astro";
     runAction("更新地图", () => postJson(api.updateMap, { vehicle_id: currentVehicleId() }))
   );
   el("three-dgs-pull-image-pose").addEventListener("click", () =>
-    runAction("上传图片数据", () => postJson(api.pullImagePose, { vehicle_id: currentVehicleId() }))
+    runAction("上传图片数据", () => postJson(api.pullImagePose, {
+      vehicle_id: currentVehicleId(),
+      session_id: ".",
+      output_root: "/media/data/auto_ad_ai_3dgs_local/latest"
+    }))
   );
 
   el("three-dgs-pointcloud-button").addEventListener("click", () => pointcloudInput.click());

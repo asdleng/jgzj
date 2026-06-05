@@ -1590,6 +1590,18 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     ]).map(usableMultiCameraSessionId).find(Boolean) || '';
   }
 
+  function imagePosePackageNameSessionId(sessionId, payload = {}) {
+    const text = String(sessionId || '').trim();
+    if (text === '.') {
+      const outputRoot = String(payload.output_root || '').trim();
+      if (/\/auto_ad_ai_3dgs_local\/latest\/?$/i.test(outputRoot)) {
+        return 'local_latest';
+      }
+      return 'session_root';
+    }
+    return text || 'multi_camera';
+  }
+
   function childSessionEntries(session) {
     const raw = session?.child_sessions || session?.children || session?.camera_sessions || session?.sessions || null;
     if (Array.isArray(raw)) {
@@ -2950,12 +2962,13 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
     if (state.capture.multi_camera) {
       const sessionId = resolveMultiCameraPackageSessionId(payload);
-      const packageName = `image_pose_${vehicleId}_${sessionId || 'multi_camera'}.tar.gz`;
+      const packageSessionId = imagePosePackageNameSessionId(sessionId, payload);
+      const packageName = `image_pose_${vehicleId}_${packageSessionId}.tar.gz`;
       const uploadTicket = createVehicleUploadTicket({
         vehicleId,
         kind: 'image_pose',
         fileName: packageName,
-        targetPath: uniqueVehicleImagePoseTargetPath(vehicleId, sessionId || 'multi_camera', packageName)
+        targetPath: uniqueVehicleImagePoseTargetPath(vehicleId, packageSessionId, packageName)
       });
       setVehicleUploadProgress(uploadTicket, {
         status: 'waiting_vehicle',
