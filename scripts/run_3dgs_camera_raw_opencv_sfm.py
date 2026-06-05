@@ -85,6 +85,15 @@ def opencv_params(params: tuple[int, int, float, float, float, float, list[float
     return width, height, [float(fx), float(fy), float(cx), float(cy), float(d[0]), float(d[1]), float(d[2]), float(d[3])]
 
 
+def parse_camera_params_override(raw: str | None) -> list[float] | None:
+    if not raw:
+        return None
+    values = [float(item.strip()) for item in raw.split(",") if item.strip()]
+    if len(values) != 8:
+        raise ValueError("--camera-params must contain fx,fy,cx,cy,k1,k2,p1,p2")
+    return values
+
+
 def write_pairs(frames: list[dict], pairs_path: Path, sequential_overlap: int) -> int:
     pairs_path.parent.mkdir(parents=True, exist_ok=True)
     pair_count = 0
@@ -156,6 +165,7 @@ def run(args: argparse.Namespace) -> dict:
     pose_history = prep.load_pose_history(extracted)
     if not pose_history:
         raise ValueError("pose_history.jsonl missing or empty")
+    camera_params_override = parse_camera_params_override(args.camera_params)
 
     frames: list[dict] = []
     images_root = workspace / "images"
@@ -164,6 +174,8 @@ def run(args: argparse.Namespace) -> dict:
         source_image = prep.image_path_from_record(record, extracted)
         params = prep.camera_params(record, local_manifest, source_image)
         width, height, opencv_camera_params = opencv_params(params)
+        if camera_params_override is not None:
+            opencv_camera_params = list(camera_params_override)
         if index == 0:
             camera_params = (width, height, opencv_camera_params)
         relative_name = f"{args.camera}/{source_image.name}"
@@ -310,6 +322,7 @@ def run(args: argparse.Namespace) -> dict:
         "best_reconstruction_id": int(best_id),
         "pair_count": pair_count,
         "camera_params_initial": camera_params[2],
+        "camera_params_override": camera_params_override,
         "ndt_reference": ndt_reference,
         "similarity_sfm_to_ndt": {
             "scale": scale,
@@ -332,6 +345,11 @@ def main() -> None:
     parser.add_argument("--image-pose", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--camera", default="camera1")
+    parser.add_argument(
+        "--camera-params",
+        default="",
+        help="Optional OPENCV params override: fx,fy,cx,cy,k1,k2,p1,p2. Useful for testing newly reported calibration against old image data.",
+    )
     parser.add_argument("--pycolmap-path", default="/home/admin1/jgzj/.runtime/pycolmap-py313")
     parser.add_argument("--max-image-size", type=int, default=1920)
     parser.add_argument("--max-num-features", type=int, default=8192)
