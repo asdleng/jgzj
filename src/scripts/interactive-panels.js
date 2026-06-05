@@ -240,6 +240,8 @@
   const CLOUD_OPS_BATTERY_WARN_PERCENT = 20;
   const CLOUD_OPS_BATTERY_ERROR_PERCENT = 10;
   const CLOUD_OPS_MASTER_DISK_WARN_PERCENT = 95;
+  const CLOUD_OPS_AUDIO_ALSA_SPEAKER_MIN_PERCENT = 80;
+  const CLOUD_OPS_CONTEXT_POLL_MS = 30000;
 
   function createNonce() {
     if (self.crypto && typeof self.crypto.randomUUID === "function") {
@@ -2263,6 +2265,79 @@
     return null;
   }
 
+  function normalizeCloudOpsAudioAlsaStatus(vehicle) {
+    const telemetrySource = getCloudOpsTelemetrySource(vehicle?.telemetry);
+    const rawStatus =
+      vehicle?.audio_alsa_status ||
+      telemetrySource?.audio_alsa_status ||
+      telemetrySource?.status_audio_alsa ||
+      telemetrySource?.audio?.alsa ||
+      telemetrySource?.audio_alsa ||
+      null;
+    if (!rawStatus || typeof rawStatus !== "object" || rawStatus.supported === false) {
+      return null;
+    }
+
+    const result = rawStatus.result && typeof rawStatus.result === "object" ? rawStatus.result : rawStatus;
+    const issues = Array.isArray(result?.issues)
+      ? result.issues
+      : Array.isArray(rawStatus?.issues)
+        ? rawStatus.issues
+        : [];
+    const speakerPercent = firstCloudOpsPercent(
+      result?.speaker?.percent,
+      result?.speaker?.volume_percent,
+      result?.speaker?.pcm_percent,
+      rawStatus?.speaker?.percent,
+      rawStatus?.speaker_percent
+    );
+    const micPercent = firstCloudOpsPercent(
+      result?.mic?.percent,
+      result?.microphone?.percent,
+      result?.capture?.percent,
+      rawStatus?.mic?.percent,
+      rawStatus?.mic_percent
+    );
+    const speakerMinPercent =
+      firstCloudOpsPercent(rawStatus?.speaker_min_percent, result?.speaker_min_percent) ??
+      CLOUD_OPS_AUDIO_ALSA_SPEAKER_MIN_PERCENT;
+    const health = String(result?.health || rawStatus?.health || "").trim().toLowerCase();
+    const ok = rawStatus?.ok !== false && result?.ok !== false;
+    const selectedDevice =
+      getCloudOpsValue(result, ["selected_device", "device", "card.name", "card.device_name", "audio_device"]) ||
+      getCloudOpsValue(rawStatus, ["selected_device", "device", "card.name", "card.device_name", "audio_device"]) ||
+      "";
+    return {
+      raw: rawStatus,
+      result,
+      issues,
+      speakerPercent,
+      micPercent,
+      speakerMinPercent,
+      health,
+      ok,
+      selectedDevice,
+      checkedAt: rawStatus?.checked_at || result?.checked_at || ""
+    };
+  }
+
+  function formatCloudOpsAudioAlsaStatus(status) {
+    if (!status) {
+      return "";
+    }
+    const parts = [];
+    if (status.selectedDevice) {
+      parts.push(status.selectedDevice);
+    }
+    if (Number.isFinite(status.speakerPercent)) {
+      parts.push(`喇叭 ${formatCloudOpsNumber(status.speakerPercent)}%`);
+    }
+    if (Number.isFinite(status.micPercent)) {
+      parts.push(`麦克风 ${formatCloudOpsNumber(status.micPercent)}%`);
+    }
+    return parts.join(" · ");
+  }
+
   function getCloudOpsMasterDiskPercent(vehicle, telemetry) {
     const snapshot = vehicle?.snapshot || {};
     const master = snapshot?.master || {};
@@ -2426,6 +2501,7 @@
     const keyTopicSummary = countCloudOpsTelemetryStates(telemetry.keyTopics);
     const keyNodeSummary = countCloudOpsTelemetryStates(telemetry.keyNodes);
     const telemetryAgeS = telemetry.dataAgeS;
+    const audioAlsaStatus = normalizeCloudOpsAudioAlsaStatus(vehicle);
 
     if (telemetry.masterReachable === false) {
       issues.push({ tone: "error", text: "主控未连通" });
@@ -2473,6 +2549,29 @@
         tone: "warn",
         text: `主控硬盘占用高 ${formatCloudOpsNumber(masterDiskPercent)}%`
       });
+    }
+    if (audioAlsaStatus) {
+      const audioSummary = formatCloudOpsAudioAlsaStatus(audioAlsaStatus);
+      const speakerTooLow =
+        Number.isFinite(audioAlsaStatus.speakerPercent) &&
+        audioAlsaStatus.speakerPercent < audioAlsaStatus.speakerMinPercent;
+      const healthFault =
+        audioAlsaStatus.ok === false ||
+        (audioAlsaStatus.health && !["ok", "normal", "healthy"].includes(audioAlsaStatus.health));
+      if (speakerTooLow || healthFault || audioAlsaStatus.issues.length) {
+        const reason = speakerTooLow
+          ? `喇叭 ${formatCloudOpsNumber(audioAlsaStatus.speakerPercent)}% < ${formatCloudOpsNumber(
+              audioAlsaStatus.speakerMinPercent,
+              0
+            )}%`
+          : audioAlsaStatus.issues.length
+            ? audioAlsaStatus.issues.slice(0, 2).join("、")
+            : audioAlsaStatus.health || "状态异常";
+        issues.push({
+          tone: "error",
+          text: `音频设备异常：${audioSummary ? `${audioSummary} · ` : ""}${reason}`
+        });
+      }
     }
     if (keyTopicSummary.badKeys.length) {
       issues.push({
@@ -2534,6 +2633,7 @@
 
     const keyTopicSummary = countCloudOpsTelemetryStates(telemetry.keyTopics);
     const keyNodeSummary = countCloudOpsTelemetryStates(telemetry.keyNodes);
+    const audioAlsaStatus = normalizeCloudOpsAudioAlsaStatus(currentVehicle);
     const mediaCpu = Number.isFinite(telemetry.mediaCpuPercent)
       ? telemetry.mediaCpuPercent
       : Number.isFinite(system?.cpu?.percent)
@@ -2653,6 +2753,12 @@
       ["主控 Topic / Node", `${telemetry.masterTopicCount ?? "-"} / ${telemetry.masterNodeCount ?? "-"}`],
       ["电池电压 / 电流", `${Number.isFinite(telemetry.batteryVoltage) ? `${formatCloudOpsNumber(telemetry.batteryVoltage)}V` : "-"} / ${Number.isFinite(telemetry.batteryCurrent) ? `${formatCloudOpsNumber(telemetry.batteryCurrent)}A` : "-"}`]
     ];
+    if (audioAlsaStatus) {
+      resourceCards.push([
+        "USB 音频",
+        formatCloudOpsAudioAlsaStatus(audioAlsaStatus) || "-"
+      ]);
+    }
 
     const overviewSection = createNode("section", "cloud-ops-live-block");
     overviewSection.appendChild(createNode("h4", "cloud-ops-live-block-title", "实时总览"));
@@ -7955,6 +8061,12 @@
     renderCloudOpsContextList();
     updateCloudOpsAudioAvailability();
     refreshCloudOpsAuthStatus();
+    window.setInterval(() => {
+      if (!cloudOpsAuthenticated || cloudOpsBusy || document.hidden) {
+        return;
+      }
+      loadCloudOpsContext({ preserveResult: true, silent: true }).catch(() => {});
+    }, CLOUD_OPS_CONTEXT_POLL_MS);
   }
 
   if (aiCheckStatus) {

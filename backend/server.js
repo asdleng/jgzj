@@ -113,10 +113,33 @@ const cloudAgentAnswerSessionSuffix =
 const cloudOpsRouteCatalogCacheTtlMs = Number(
   process.env.CLOUD_OPS_ROUTE_CATALOG_CACHE_TTL_MS || 15000
 );
+const cloudOpsAudioAlsaEnabled = String(
+  process.env.CLOUD_OPS_AUDIO_ALSA_MONITOR_ENABLED || 'true'
+).toLowerCase() !== 'false';
+const cloudOpsAudioAlsaSpeakerMinPercent = Number(
+  process.env.CLOUD_OPS_AUDIO_ALSA_SPEAKER_MIN_PERCENT || 80
+);
+const cloudOpsAudioAlsaStatusTtlMs = Number(
+  process.env.CLOUD_OPS_AUDIO_ALSA_STATUS_TTL_MS || 30000
+);
+const cloudOpsAudioAlsaToolListTtlMs = Number(
+  process.env.CLOUD_OPS_AUDIO_ALSA_TOOL_LIST_TTL_MS || 120000
+);
+const cloudOpsAudioAlsaTimeoutS = Number(
+  process.env.CLOUD_OPS_AUDIO_ALSA_TIMEOUT_S || 8
+);
+const cloudOpsAudioAlsaHttpTimeoutMs = Number(
+  process.env.CLOUD_OPS_AUDIO_ALSA_HTTP_TIMEOUT_MS ||
+    Math.max(3000, Math.ceil(cloudOpsAudioAlsaTimeoutS * 1000) + 3000)
+);
+const cloudOpsAudioAlsaMaxConcurrent = Number(
+  process.env.CLOUD_OPS_AUDIO_ALSA_MAX_CONCURRENT || 2
+);
 const cloudOpsDeployGitCacheDir = path.resolve(
   process.env.CLOUD_OPS_DEPLOY_GIT_CACHE_DIR || '/tmp/jgzj-deploy-git-cache'
 );
 const cloudOpsRouteCatalogCache = new Map();
+const cloudOpsAudioAlsaCache = new Map();
 const projectRoot = path.resolve(__dirname, '..');
 const authStore = createAuthStore({
   rootDir: projectRoot,
@@ -1116,6 +1139,198 @@ async function listCloudAgentVehicles() {
   const result = await fetchCloudAgentJson('/api/vehicles');
   const vehicles = Array.isArray(result?.data?.vehicles) ? result.data.vehicles : [];
   return vehicles;
+}
+
+function getCloudOpsVehicleId(vehicle) {
+  return String(vehicle?.vehicle_id || vehicle?.plate_number || vehicle?.vin || '').trim();
+}
+
+function extractCloudOpsToolNames(payload) {
+  const tools = Array.isArray(payload?.response?.tools)
+    ? payload.response.tools
+    : Array.isArray(payload?.tools)
+      ? payload.tools
+      : [];
+  return new Set(
+    tools
+      .map((tool) => String(tool?.name || tool || '').trim())
+      .filter(Boolean)
+  );
+}
+
+function unwrapCloudOpsToolCallResult(payload) {
+  return payload?.response?.result || payload?.result || null;
+}
+
+function getCloudOpsAudioAlsaCached(vehicleId) {
+  const cached = cloudOpsAudioAlsaCache.get(vehicleId);
+  if (!cached || typeof cached !== 'object') {
+    return null;
+  }
+  if (!cached.status || cached.supported !== true) {
+    return null;
+  }
+  return cached.status;
+}
+
+async function refreshCloudOpsAudioAlsaStatus(vehicleId) {
+  if (!cloudOpsAudioAlsaEnabled || !vehicleId) {
+    return null;
+  }
+
+  const now = Date.now();
+  const cached = cloudOpsAudioAlsaCache.get(vehicleId) || {};
+  if (cached.pending) {
+    return cached.pending;
+  }
+  if (cached.status && now - Number(cached.status_checked_at_ms || 0) < cloudOpsAudioAlsaStatusTtlMs) {
+    return cached.status;
+  }
+  if (cached.supported === false && now - Number(cached.tool_checked_at_ms || 0) < cloudOpsAudioAlsaToolListTtlMs) {
+    return null;
+  }
+
+  const pending = (async () => {
+    let supported = cached.supported === true;
+    let toolCheckedAtMs = Number(cached.tool_checked_at_ms || 0);
+
+    if (!supported || now - toolCheckedAtMs >= cloudOpsAudioAlsaToolListTtlMs) {
+      try {
+        const toolListResult = await fetchCloudAgentJson(
+          `/api/vehicles/${encodeURIComponent(vehicleId)}/tool-list?timeout_s=${cloudOpsAudioAlsaTimeoutS}`,
+          { timeoutMs: cloudOpsAudioAlsaHttpTimeoutMs }
+        );
+        const names = extractCloudOpsToolNames(toolListResult?.data);
+        supported = names.has('status.audio_alsa');
+        toolCheckedAtMs = Date.now();
+        if (!supported) {
+          cloudOpsAudioAlsaCache.set(vehicleId, {
+            supported: false,
+            tool_checked_at_ms: toolCheckedAtMs,
+            status: null
+          });
+          return null;
+        }
+      } catch (error) {
+        cloudOpsAudioAlsaCache.set(vehicleId, {
+          ...cached,
+          pending: null,
+          last_error: error?.message || 'audio_alsa_tool_list_failed',
+          last_error_at_ms: Date.now()
+        });
+        return cached.status || null;
+      }
+    }
+
+    try {
+      const requestBody = {
+        args: {
+          preferred_keywords: ['Yundea', 'Jabra'],
+          speaker_min_percent: cloudOpsAudioAlsaSpeakerMinPercent
+        },
+        timeout_s: cloudOpsAudioAlsaTimeoutS
+      };
+      const result = await fetchCloudAgentJson(
+        `/api/vehicles/${encodeURIComponent(vehicleId)}/tools/status.audio_alsa`,
+        {
+          method: 'POST',
+          body: requestBody,
+          timeoutMs: cloudOpsAudioAlsaHttpTimeoutMs
+        }
+      );
+      const toolResult = unwrapCloudOpsToolCallResult(result?.data) || {};
+      const responseOk = result?.data?.response?.ok;
+      const status = {
+        supported: true,
+        vehicle_id: vehicleId,
+        checked_at: new Date().toISOString(),
+        checked_at_ms: Date.now(),
+        ok: responseOk !== false && toolResult?.ok !== false,
+        health: toolResult?.health || (responseOk === false || toolResult?.ok === false ? 'fault' : 'ok'),
+        speaker_min_percent: cloudOpsAudioAlsaSpeakerMinPercent,
+        result: toolResult
+      };
+      cloudOpsAudioAlsaCache.set(vehicleId, {
+        supported: true,
+        tool_checked_at_ms: toolCheckedAtMs || Date.now(),
+        status_checked_at_ms: status.checked_at_ms,
+        status
+      });
+      return status;
+    } catch (error) {
+      cloudOpsAudioAlsaCache.set(vehicleId, {
+        supported: true,
+        tool_checked_at_ms: toolCheckedAtMs || Date.now(),
+        status_checked_at_ms: Date.now(),
+        status: cached.status || null,
+        last_error: error?.message || 'audio_alsa_status_failed',
+        last_error_at_ms: Date.now()
+      });
+      return cached.status || null;
+    }
+  })();
+
+  cloudOpsAudioAlsaCache.set(vehicleId, {
+    ...cached,
+    pending
+  });
+
+  try {
+    return await pending;
+  } finally {
+    const latest = cloudOpsAudioAlsaCache.get(vehicleId);
+    if (latest?.pending === pending) {
+      delete latest.pending;
+      cloudOpsAudioAlsaCache.set(vehicleId, latest);
+    }
+  }
+}
+
+async function mapWithConcurrency(items, limit, worker) {
+  const normalizedLimit = Math.max(1, Math.min(Number(limit) || 1, items.length || 1));
+  const results = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: normalizedLimit }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+function scheduleCloudOpsAudioAlsaRefresh(vehicles = []) {
+  if (!cloudOpsAudioAlsaEnabled || !Array.isArray(vehicles) || !vehicles.length) {
+    return;
+  }
+  mapWithConcurrency(vehicles, cloudOpsAudioAlsaMaxConcurrent, async (vehicle) => {
+    const vehicleId = getCloudOpsVehicleId(vehicle);
+    if (vehicleId) {
+      await refreshCloudOpsAudioAlsaStatus(vehicleId);
+    }
+  }).catch(() => {});
+}
+
+function enrichCloudOpsVehiclesWithAudioAlsa(vehicles = []) {
+  if (!cloudOpsAudioAlsaEnabled || !Array.isArray(vehicles) || !vehicles.length) {
+    return vehicles;
+  }
+
+  const enriched = vehicles.map((vehicle) => ({ ...vehicle }));
+  enriched.forEach((vehicle) => {
+    const vehicleId = getCloudOpsVehicleId(vehicle);
+    if (!vehicleId) {
+      return;
+    }
+    const cached = getCloudOpsAudioAlsaCached(vehicleId);
+    if (cached) {
+      vehicle.audio_alsa_status = cached;
+    }
+  });
+  scheduleCloudOpsAudioAlsaRefresh(enriched);
+  return enriched;
 }
 
 function normalizeDeployBranchName(value) {
@@ -4550,9 +4765,10 @@ app.get('/api/cloud-agent-health', authStore.requirePermission('vehicle:read'), 
 app.get('/api/cloud-ops/vehicles', authStore.requirePermission('vehicle:read'), async (_req, res) => {
   try {
     const vehicles = await listCloudAgentVehicles();
+    const enrichedVehicles = enrichCloudOpsVehiclesWithAudioAlsa(vehicles);
     return res.json({
       ok: true,
-      vehicles
+      vehicles: enrichedVehicles
     });
   } catch (error) {
     return res.status(502).json({
