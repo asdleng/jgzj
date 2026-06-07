@@ -161,8 +161,25 @@ def find_first(root: Path, names: tuple[str, ...]) -> Path | None:
     return None
 
 
+def find_dataset_root(root: Path) -> Path:
+    for name in ("records.jsonl", "metadata.json", "summary.json", "manifest.json"):
+        if (root / name).exists():
+            return root
+    candidates: list[Path] = []
+    for item in root.rglob("records.jsonl"):
+        parent = item.parent
+        if parent.name.startswith("camera"):
+            continue
+        candidates.append(parent)
+    if candidates:
+        candidates.sort(key=lambda item: len(item.relative_to(root).parts))
+        return candidates[0]
+    return root
+
+
 def load_records(root: Path) -> tuple[dict, list[dict]]:
-    manifest_path = find_first(root, ("manifest.json",))
+    dataset_root = find_dataset_root(root)
+    manifest_path = find_first(dataset_root, ("manifest.json", "metadata.json", "summary.json"))
     manifest: dict = {}
     records: list[dict] = []
 
@@ -181,7 +198,17 @@ def load_records(root: Path) -> tuple[dict, list[dict]]:
                 break
 
     if not records:
-        for item in sorted(root.rglob("frames.jsonl")):
+        global_records_path = dataset_root / "records.jsonl"
+        if global_records_path.exists():
+            local_manifest = manifest
+            for record in load_jsonl(global_records_path):
+                next_item = dict(record)
+                next_item["__manifest"] = local_manifest
+                next_item["__record_root"] = str(dataset_root)
+                records.append(next_item)
+
+    if not records:
+        for item in sorted(dataset_root.rglob("frames.jsonl")):
             local_manifest_path = item.parent / "manifest.json"
             local_manifest = load_json(local_manifest_path) if local_manifest_path.exists() else manifest
             camera_hint = item.parent.name if item.parent.name.startswith("camera") else ""
@@ -194,8 +221,8 @@ def load_records(root: Path) -> tuple[dict, list[dict]]:
                 records.append(next_item)
 
     if not records:
-        for item in sorted(root.rglob("*.jsonl")):
-            if item.name == "frames.jsonl":
+        for item in sorted(dataset_root.rglob("*.jsonl")):
+            if item.name in {"frames.jsonl"}:
                 continue
             local_manifest_path = item.parent / "manifest.json"
             local_manifest = load_json(local_manifest_path) if local_manifest_path.exists() else manifest

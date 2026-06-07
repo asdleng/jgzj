@@ -2918,7 +2918,14 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     if (captureStartInFlight || uploadInFlight || state.prepare.running || state.train.running) {
       throw new Error('three_dgs_busy');
     }
-    if (state.capture.active) {
+    const useExistingCaptureArtifact = Boolean(
+      payload.use_existing_capture_artifact ||
+      payload.skip_capture_status_check ||
+      payload.existing_package_path ||
+      payload.local_package_path ||
+      (payload.output_root && payload.session_id)
+    );
+    if (!useExistingCaptureArtifact && state.capture.active) {
       updateState({
         phase: state.dataset.prepared ? 'prepared' : 'idle',
         stage_text: '请先停止车端 3DGS 采集，再上传图像-位姿包。',
@@ -2938,22 +2945,24 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     if (!cameras.length) {
       throw new Error('three_dgs_no_capture_cameras');
     }
-    const latestCapture = await updateCaptureStatusFromVehicle(vehicleId, {
-      cameras,
-      allowPartial: false,
-      multiCamera: true,
-      timeoutS: 8,
-      persistLastResponse: true
-    });
-    if (aggregateCaptureActivity(latestCapture.statuses)) {
-      updateState({
-        phase: state.dataset.prepared ? 'prepared' : 'idle',
-        stage_text: '请先停止车端 3DGS 采集，再上传图像-位姿包。',
-        error_message: 'three_dgs_capture_must_stop_before_package'
+    if (!useExistingCaptureArtifact) {
+      const latestCapture = await updateCaptureStatusFromVehicle(vehicleId, {
+        cameras,
+        allowPartial: false,
+        multiCamera: true,
+        timeoutS: 8,
+        persistLastResponse: true
       });
-      const error = new Error('three_dgs_capture_must_stop_before_package');
-      error.status = 409;
-      throw error;
+      if (aggregateCaptureActivity(latestCapture.statuses)) {
+        updateState({
+          phase: state.dataset.prepared ? 'prepared' : 'idle',
+          stage_text: '请先停止车端 3DGS 采集，再上传图像-位姿包。',
+          error_message: 'three_dgs_capture_must_stop_before_package'
+        });
+        const error = new Error('three_dgs_capture_must_stop_before_package');
+        error.status = 409;
+        throw error;
+      }
     }
 
     updateState({
@@ -2990,6 +2999,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         pose_interpolation: 'timestamp',
         chunk_size_bytes: uploadTicket.chunk_size_bytes,
         recommended_chunk_size_bytes: uploadTicket.recommended_chunk_size_bytes,
+        ...(payload.existing_package_path ? { package_path: payload.existing_package_path } : {}),
+        ...(payload.local_package_path ? { package_path: payload.local_package_path } : {}),
         ...(payload.output_root ? { output_root: payload.output_root } : {}),
         ...(sessionId ? { session_id: sessionId } : {})
       };
