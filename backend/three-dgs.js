@@ -121,6 +121,19 @@ function createInitialState() {
       source_remote_path: null,
       error_message: null
     },
+    evaluation: {
+      phase: 'idle',
+      running: false,
+      run_id: null,
+      remote_eval_path: null,
+      local_eval_path: null,
+      remote_status: null,
+      options: null,
+      report: null,
+      started_at_ms: null,
+      completed_at_ms: null,
+      error_message: null
+    },
     viewer_camera: {
       manual: null
     }
@@ -136,6 +149,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const datasetRoot = path.join(runtimeRoot, 'datasets');
   const logDir = path.join(runtimeRoot, 'logs');
   const resultRoot = path.join(runtimeRoot, 'results');
+  const evaluationRoot = path.join(runtimeRoot, 'evaluations');
   const poseOptimizationRoot = path.join(runtimeRoot, 'pose-optimization');
   const defaultPoseTimeOffsetsJson = process.env.THREE_DGS_POSE_TIME_OFFSETS_JSON
     || path.join(poseOptimizationRoot, 'latest', 'pose_time_offsets.json');
@@ -224,7 +238,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       fsp.mkdir(uploadDir, { recursive: true }),
       fsp.mkdir(datasetRoot, { recursive: true }),
       fsp.mkdir(logDir, { recursive: true }),
-      fsp.mkdir(resultRoot, { recursive: true })
+      fsp.mkdir(resultRoot, { recursive: true }),
+      fsp.mkdir(evaluationRoot, { recursive: true })
     ]);
   }
 
@@ -290,6 +305,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           },
           train: { ...createInitialState().train, ...(parsed.train || {}) },
           viewer: { ...createInitialState().viewer, ...(parsed.viewer || {}) },
+          evaluation: { ...createInitialState().evaluation, ...(parsed.evaluation || {}) },
           viewer_camera: { ...createInitialState().viewer_camera, ...(parsed.viewer_camera || {}) },
           updated_at_ms: Number(parsed.updated_at_ms) || Date.now()
         };
@@ -4637,6 +4653,555 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return viewer;
   }
 
+  function normalizeEvaluationOptions(payload = {}) {
+    const split = ['auto', 'test', 'train', 'all'].includes(String(payload.split || '').trim())
+      ? String(payload.split).trim()
+      : 'auto';
+    const maxPerCameraRaw = Number(payload.max_per_camera ?? payload.maxPerCamera ?? 64);
+    const visualCountRaw = Number(payload.visual_count ?? payload.visualCount ?? 18);
+    return {
+      split,
+      max_per_camera: Math.max(0, Math.min(5000, Number.isFinite(maxPerCameraRaw) ? Math.floor(maxPerCameraRaw) : 64)),
+      visual_count: Math.max(0, Math.min(80, Number.isFinite(visualCountRaw) ? Math.floor(visualCountRaw) : 18)),
+      include_lpips: Boolean(payload.include_lpips ?? payload.includeLpips ?? false),
+      gpu: String(payload.gpu ?? state.train?.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu,
+      resolution: Math.max(1, Number(payload.resolution || state.train?.resolution || defaultTrainResolution || 1))
+    };
+  }
+
+  function remoteEvaluationPythonSource() {
+    return String.raw`import argparse
+import json
+import math
+import os
+import re
+import time
+from pathlib import Path
+
+import torch
+import torchvision
+from tqdm import tqdm
+
+from arguments import ModelParams, PipelineParams, get_combined_args
+from gaussian_renderer import GaussianModel, render
+from scene import Scene
+from utils.general_utils import safe_state
+from utils.image_utils import psnr
+from utils.loss_utils import ssim
+
+try:
+    from diff_gaussian_rasterization import SparseGaussianAdam
+    SPARSE_ADAM_AVAILABLE = True
+except Exception:
+    SPARSE_ADAM_AVAILABLE = False
+
+try:
+    from lpipsPyTorch import lpips
+    LPIPS_AVAILABLE = True
+except Exception:
+    LPIPS_AVAILABLE = False
+
+
+def camera_name_from_view(view):
+    name = getattr(view, "image_name", "") or ""
+    match = re.search(r"(camera\d+)", name, re.IGNORECASE)
+    return match.group(1).lower() if match else "unknown"
+
+
+def mean(values):
+    values = [float(v) for v in values if v is not None and math.isfinite(float(v))]
+    return sum(values) / len(values) if values else None
+
+
+def percentile(values, pct):
+    values = sorted(float(v) for v in values if v is not None and math.isfinite(float(v)))
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    pos = (len(values) - 1) * pct
+    low = int(math.floor(pos))
+    high = int(math.ceil(pos))
+    if low == high:
+        return values[low]
+    return values[low] * (high - pos) + values[high] * (pos - low)
+
+
+def summarize(records):
+    return {
+        "count": len(records),
+        "psnr_mean": mean([item.get("psnr") for item in records]),
+        "psnr_p10": percentile([item.get("psnr") for item in records], 0.10),
+        "psnr_min": min([item.get("psnr") for item in records], default=None),
+        "l1_mean": mean([item.get("l1") for item in records]),
+        "ssim_mean": mean([item.get("ssim") for item in records]),
+        "lpips_mean": mean([item.get("lpips") for item in records if item.get("lpips") is not None]),
+    }
+
+
+def select_evenly(items, limit):
+    if limit <= 0 or limit >= len(items):
+        return list(items)
+    if limit == 1:
+        return [items[len(items) // 2]]
+    selected = []
+    for i in range(limit):
+        idx = round(i * (len(items) - 1) / (limit - 1))
+        selected.append(items[idx])
+    seen = set()
+    unique = []
+    for item in selected:
+        key = getattr(item, "image_name", str(id(item)))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def select_views_by_camera(views, max_per_camera):
+    groups = {}
+    for view in views:
+        groups.setdefault(camera_name_from_view(view), []).append(view)
+    selected = []
+    counts = {}
+    for camera, camera_views in sorted(groups.items()):
+        camera_views = sorted(camera_views, key=lambda item: getattr(item, "image_name", ""))
+        picked = select_evenly(camera_views, max_per_camera)
+        selected.extend(picked)
+        counts[camera] = {"available": len(camera_views), "selected": len(picked)}
+    return selected, counts
+
+
+def compute_metrics(image, gt, include_lpips):
+    image = torch.clamp(image, 0.0, 1.0)
+    gt = torch.clamp(gt, 0.0, 1.0)
+    values = {
+        "l1": torch.abs(image - gt).mean().item(),
+        "psnr": psnr(image, gt).mean().item(),
+        "ssim": ssim(image, gt).item(),
+        "lpips": None,
+    }
+    if include_lpips and LPIPS_AVAILABLE:
+        values["lpips"] = lpips(image.unsqueeze(0), gt.unsqueeze(0), net_type="vgg").item()
+    return values
+
+
+def save_triptych(image, gt, output_path):
+    image = torch.clamp(image.detach().cpu(), 0.0, 1.0)
+    gt = torch.clamp(gt.detach().cpu(), 0.0, 1.0)
+    err = torch.abs(image - gt).mean(dim=0, keepdim=True).repeat(3, 1, 1)
+    err = torch.clamp(err * 4.0, 0.0, 1.0)
+    panel = torch.cat([gt, image, err], dim=2)
+    torchvision.utils.save_image(panel, output_path)
+
+
+def render_view(view, scene, pipeline, background, train_test_exp, separate_sh):
+    rendered = render(view, scene.gaussians, pipeline, background, use_trained_exp=train_test_exp, separate_sh=separate_sh)["render"]
+    gt = view.original_image[0:3, :, :].cuda()
+    if train_test_exp:
+        rendered = rendered[..., rendered.shape[-1] // 2:]
+        gt = gt[..., gt.shape[-1] // 2:]
+    return torch.clamp(rendered, 0.0, 1.0), torch.clamp(gt, 0.0, 1.0)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Cloud Control 3DGS evaluation")
+    model = ModelParams(parser, sentinel=True)
+    pipeline = PipelineParams(parser)
+    parser.add_argument("--iteration", default=-1, type=int)
+    parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--split", choices=["auto", "test", "train", "all"], default="auto")
+    parser.add_argument("--max_per_camera", type=int, default=64)
+    parser.add_argument("--visual_count", type=int, default=18)
+    parser.add_argument("--include_lpips", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
+    args = get_combined_args(parser)
+
+    started = time.time()
+    output_dir = Path(args.output_dir)
+    samples_dir = output_dir / "samples"
+    samples_dir.mkdir(parents=True, exist_ok=True)
+    safe_state(args.quiet)
+
+    with torch.no_grad():
+        dataset = model.extract(args)
+        pipe = pipeline.extract(args)
+        gaussians = GaussianModel(dataset.sh_degree)
+        scene = Scene(dataset, gaussians, load_iteration=args.iteration, shuffle=False)
+        bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
+        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        separate_sh = SPARSE_ADAM_AVAILABLE
+
+        train_views = scene.getTrainCameras()
+        test_views = scene.getTestCameras()
+        split_sources = []
+        if args.split in ("auto", "test", "all") and len(test_views):
+            split_sources.append(("test", test_views))
+        if args.split in ("train", "all") or (args.split == "auto" and not len(test_views)):
+            split_sources.append(("train", train_views))
+
+        records = []
+        selection = {}
+        for split_name, views in split_sources:
+            selected, counts = select_views_by_camera(views, args.max_per_camera)
+            selection[split_name] = counts
+            for idx, view in enumerate(tqdm(selected, desc=f"Evaluating {split_name}")):
+                image, gt = render_view(view, scene, pipe, background, dataset.train_test_exp, separate_sh)
+                values = compute_metrics(image, gt, args.include_lpips)
+                records.append({
+                    "split": split_name,
+                    "index": idx,
+                    "image_name": getattr(view, "image_name", f"{idx:05d}"),
+                    "camera": camera_name_from_view(view),
+                    **values,
+                })
+
+        per_camera = {}
+        for record in records:
+            per_camera.setdefault(record["camera"], []).append(record)
+        per_camera_summary = {camera: summarize(items) for camera, items in sorted(per_camera.items())}
+        split_summary = {}
+        for split_name in sorted(set(item["split"] for item in records)):
+            split_summary[split_name] = summarize([item for item in records if item["split"] == split_name])
+
+        visual_records = []
+        if records and args.visual_count > 0:
+            worst = sorted(records, key=lambda item: item.get("psnr", 1e9))[: max(1, args.visual_count // 2)]
+            stride = max(1, len(records) // max(1, args.visual_count - len(worst)))
+            representative = records[::stride][: max(0, args.visual_count - len(worst))]
+            chosen = []
+            seen = set()
+            for item in worst + representative:
+                key = (item["split"], item["image_name"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                chosen.append(item)
+            view_lookup = {}
+            for split_name, views in split_sources:
+                for view in views:
+                    view_lookup[(split_name, getattr(view, "image_name", ""))] = view
+            for item in chosen:
+                view = view_lookup.get((item["split"], item["image_name"]))
+                if view is None:
+                    continue
+                image, gt = render_view(view, scene, pipe, background, dataset.train_test_exp, separate_sh)
+                safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", item["image_name"])
+                file_name = f"{item['split']}_{item['camera']}_{safe_name}.png"
+                save_triptych(image, gt, samples_dir / file_name)
+                visual_records.append({**item, "file": file_name})
+
+        report = {
+            "schema": "cloud_control_3dgs_eval_v1",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "elapsed_s": round(time.time() - started, 3),
+            "model_path": args.model_path,
+            "source_path": args.source_path,
+            "loaded_iteration": scene.loaded_iter,
+            "options": {
+                "split": args.split,
+                "max_per_camera": args.max_per_camera,
+                "visual_count": args.visual_count,
+                "include_lpips": bool(args.include_lpips),
+                "lpips_available": bool(LPIPS_AVAILABLE),
+            },
+            "selection": selection,
+            "overall": summarize(records),
+            "by_split": split_summary,
+            "by_camera": per_camera_summary,
+            "worst_views": sorted(records, key=lambda item: item.get("psnr", 1e9))[:25],
+            "visual_samples": visual_records,
+        }
+        with open(output_dir / "report.json", "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+
+
+if __name__ == "__main__":
+    main()
+`;
+  }
+
+  function makeRemoteEvaluationCommand(remoteRunPath, remoteDatasetPath, options) {
+    const evalDir = `${remoteRunPath.replace(/\/+$/, '')}/cloud_eval`;
+    const pySource = remoteEvaluationPythonSource();
+    const lpipsArg = options.include_lpips ? '    --include_lpips \\' : '';
+    return [
+      'set -Eeuo pipefail',
+      `RUN_DIR=${remoteQuote(remoteRunPath)}`,
+      `DATASET_DIR=${remoteQuote(remoteDatasetPath)}`,
+      `EVAL_DIR=${remoteQuote(evalDir)}`,
+      `SOURCE_DIR=${remoteQuote(remoteSourceRoot)}`,
+      `ENV_NAME=${remoteQuote(remoteEnvName)}`,
+      `GPU=${remoteQuote(options.gpu)}`,
+      `RESOLUTION=${Math.max(1, Number(options.resolution || defaultTrainResolution))}`,
+      `SPLIT=${remoteQuote(options.split)}`,
+      `MAX_PER_CAMERA=${Math.max(0, Number(options.max_per_camera || 0))}`,
+      `VISUAL_COUNT=${Math.max(0, Number(options.visual_count || 0))}`,
+      'mkdir -p "$EVAL_DIR"',
+      'cat > "$EVAL_DIR/evaluate_cloud_control.py" <<\'PY_EVAL\'',
+      pySource,
+      'PY_EVAL',
+      'cat > "$EVAL_DIR/run_eval.sh" <<\'EOS\'',
+      '#!/usr/bin/env bash',
+      'set -Eeuo pipefail',
+      'STATUS_FILE="$EVAL_DIR/status.json"',
+      'LOG_FILE="$EVAL_DIR/eval.log"',
+      'PID_FILE="$EVAL_DIR/eval.pid"',
+      'write_status() { printf \'{"phase":"%s","ts":"%s","exit_code":%s}\\n\' "$1" "$(date -Iseconds)" "${2:-0}" > "$STATUS_FILE"; }',
+      'echo "$$" > "$PID_FILE"',
+      'write_status running 0',
+      '{',
+      '  export MAMBA_ROOT_PREFIX="$HOME/.micromamba"',
+      '  export CUDA_HOME="$HOME/.micromamba/envs/$ENV_NAME"',
+      '  export PATH="$CUDA_HOME/bin:$PATH"',
+      '  export LD_LIBRARY_PATH="$CUDA_HOME/lib:$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"',
+      '  export PYTHONNOUSERSITE=1',
+      '  export CUDA_VISIBLE_DEVICES="$GPU"',
+      '  cd "$SOURCE_DIR"',
+      '  "$HOME/.local/bin/micromamba" run -n "$ENV_NAME" python "$EVAL_DIR/evaluate_cloud_control.py" \\',
+      '    -s "$DATASET_DIR" \\',
+      '    -m "$RUN_DIR" \\',
+      '    --iteration -1 \\',
+      '    --output_dir "$EVAL_DIR" \\',
+      '    --split "$SPLIT" \\',
+      '    --max_per_camera "$MAX_PER_CAMERA" \\',
+      '    --visual_count "$VISUAL_COUNT" \\',
+      lpipsArg,
+      '    --data_device cpu \\',
+      '    -r "$RESOLUTION" \\',
+      '    --quiet',
+      '  write_status completed 0',
+      '  rm -f "$PID_FILE"',
+      '} >> "$LOG_FILE" 2>&1 || { code=$?; write_status error "$code"; rm -f "$PID_FILE"; exit "$code"; }',
+      'EOS',
+      'chmod +x "$EVAL_DIR/run_eval.sh"',
+      'setsid -f bash "$EVAL_DIR/run_eval.sh" >/dev/null 2>&1 < /dev/null',
+      'echo started'
+    ].filter((line) => line !== '').join('\n');
+  }
+
+  async function startEvaluationTask(auth, payload = {}) {
+    const runId = sanitizeRunId(payload.run_id || state.train?.run_id);
+    const remoteRunPath = state.train?.remote_run_path;
+    const remoteDatasetPath = state.train?.remote_dataset_path || remoteDatasetPathForCurrentDataset();
+    if (!runId || !remoteRunPath || !remoteDatasetPath) {
+      throw new Error('three_dgs_train_result_not_available');
+    }
+    await findRemotePointCloud(remoteRunPath);
+    const options = normalizeEvaluationOptions(payload);
+    const remoteEvalPath = `${remoteRunPath.replace(/\/+$/, '')}/cloud_eval`;
+    const localEvalPath = path.join(evaluationRoot, runId);
+    await execSsh(makeRemoteEvaluationCommand(remoteRunPath, remoteDatasetPath, options), 20000);
+    updateState({
+      stage_text: `A100 已启动 3DGS 评估：${options.max_per_camera ? `每路最多 ${options.max_per_camera} 帧` : '全量'}。`,
+      error_message: null,
+      evaluation: {
+        phase: 'running',
+        running: true,
+        run_id: runId,
+        remote_eval_path: remoteEvalPath,
+        local_eval_path: localEvalPath,
+        remote_status: { phase: 'running' },
+        options,
+        report: null,
+        started_at_ms: Date.now(),
+        completed_at_ms: null,
+        error_message: null,
+        started_by: auth?.username || null
+      }
+    });
+  }
+
+  async function readRemoteEvaluationStatus() {
+    const remoteEvalPath = state.evaluation?.remote_eval_path;
+    if (!remoteEvalPath) return null;
+    const output = await execSsh(`cat ${remoteQuote(`${remoteEvalPath}/status.json`)} 2>/dev/null || true`, 8000);
+    if (!output.trim()) return null;
+    try {
+      const parsed = JSON.parse(output.trim());
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function evaluationImageUrl(runId, fileName, stat = null) {
+    const ts = Math.round(stat?.mtimeMs || Date.now());
+    return `/api/three-dgs/evaluation/${encodeURIComponent(runId)}/image/${encodeURIComponent(fileName)}?ts=${ts}`;
+  }
+
+  async function readLocalEvaluationReport(runId) {
+    const localDir = path.join(evaluationRoot, runId);
+    const reportPath = path.join(localDir, 'report.json');
+    const stat = await safeStat(reportPath);
+    if (!stat) return null;
+    const report = JSON.parse(await fsp.readFile(reportPath, 'utf8'));
+    const samples = Array.isArray(report.visual_samples) ? report.visual_samples : [];
+    for (const sample of samples) {
+      if (!sample.file || sample.file !== path.basename(sample.file)) continue;
+      const imageStat = await safeStat(path.join(localDir, 'samples', sample.file));
+      if (imageStat) {
+        sample.url = evaluationImageUrl(runId, sample.file, imageStat);
+      }
+    }
+    return report;
+  }
+
+  async function syncEvaluationResult() {
+    const runId = sanitizeRunId(state.evaluation?.run_id || state.train?.run_id);
+    const remoteEvalPath = state.evaluation?.remote_eval_path;
+    if (!runId || !remoteEvalPath) {
+      throw new Error('three_dgs_evaluation_not_started');
+    }
+    const localDir = path.join(evaluationRoot, runId);
+    await fsp.mkdir(localDir, { recursive: true });
+    const rsyncArgs = [
+      '-az',
+      '--delete',
+      '-e',
+      ['ssh', ...sshBaseArgs()].join(' '),
+      `${sshTarget()}:${remoteEvalPath.replace(/\/+$/, '')}/`,
+      `${localDir.replace(/\/+$/, '')}/`
+    ];
+    await execFileAsync('rsync', rsyncArgs, {
+      timeout: Number(process.env.THREE_DGS_EVAL_SYNC_TIMEOUT_MS || 180000),
+      maxBuffer: 2 * 1024 * 1024
+    });
+    return readLocalEvaluationReport(runId);
+  }
+
+  async function refreshEvaluationReport({ sync = true } = {}) {
+    const runId = sanitizeRunId(state.evaluation?.run_id || state.train?.run_id);
+    let remoteStatus = null;
+    try {
+      remoteStatus = await readRemoteEvaluationStatus();
+    } catch (_error) {
+      remoteStatus = state.evaluation?.remote_status || null;
+    }
+    let report = runId ? await readLocalEvaluationReport(runId).catch(() => null) : null;
+    if (sync && remoteStatus?.phase === 'completed') {
+      report = await syncEvaluationResult();
+    }
+    const phase = remoteStatus?.phase || (report ? 'completed' : state.evaluation?.phase || 'idle');
+    updateNestedState('evaluation', {
+      phase,
+      running: phase === 'running',
+      remote_status: remoteStatus || state.evaluation?.remote_status || null,
+      report: report || state.evaluation?.report || null,
+      completed_at_ms: phase === 'completed'
+        ? (state.evaluation?.completed_at_ms || Date.now())
+        : state.evaluation?.completed_at_ms || null,
+      error_message: phase === 'error' ? `remote_eval_exit_${remoteStatus?.exit_code ?? '-'}` : null
+    });
+    return {
+      status: remoteStatus,
+      report: report || state.evaluation?.report || null
+    };
+  }
+
+  function average(values) {
+    const clean = values.map(Number).filter(Number.isFinite);
+    return clean.length ? clean.reduce((sum, value) => sum + value, 0) / clean.length : null;
+  }
+
+  async function buildDatasetQualityReport() {
+    const datasetPath = resolveCurrentDatasetPath();
+    const sparsePath = path.join(datasetPath, 'sparse', '0');
+    const imagesText = await fsp.readFile(path.join(sparsePath, 'images.txt'), 'utf8');
+    const frames = parseColmapImagesText(imagesText);
+    const summary = state.dataset.summary || {};
+    const cameraNameById = cameraNameByColmapCameraId(summary);
+    const framesByCamera = new Map();
+    for (const frame of frames) {
+      const cameraName = cameraNameById.get(Number(frame.camera_id)) || configuredCameraIds.find((camera) => frame.name.includes(camera)) || `camera${frame.camera_id}`;
+      if (!framesByCamera.has(cameraName)) framesByCamera.set(cameraName, []);
+      framesByCamera.get(cameraName).push(frame);
+    }
+    const depthsDir = path.join(datasetPath, 'depths_pointcloud');
+    let depthFiles = [];
+    try {
+      depthFiles = await fsp.readdir(depthsDir);
+    } catch (_error) {
+      depthFiles = [];
+    }
+    let depthParams = {};
+    try {
+      depthParams = JSON.parse(await fsp.readFile(path.join(sparsePath, 'depth_params.json'), 'utf8'));
+    } catch (_error) {
+      depthParams = {};
+    }
+    const cameras = [...framesByCamera.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([camera, cameraFrames]) => {
+      const positions = cameraFrames.map((frame) => frame.position).filter((position) => Array.isArray(position) && position.length === 3);
+      const stepDistances = [];
+      for (let index = 1; index < positions.length; index += 1) {
+        stepDistances.push(Math.hypot(
+          Number(positions[index][0]) - Number(positions[index - 1][0]),
+          Number(positions[index][1]) - Number(positions[index - 1][1]),
+          Number(positions[index][2]) - Number(positions[index - 1][2])
+        ));
+      }
+      const depthCount = depthFiles.filter((file) => file.includes(camera)).length;
+      return {
+        camera,
+        image_count: cameraFrames.length,
+        depth_count: depthCount,
+        depth_coverage: cameraFrames.length ? depthCount / cameraFrames.length : 0,
+        depth_param_count: Object.keys(depthParams).filter((name) => name.includes(camera)).length,
+        mean_step_m: average(stepDistances),
+        max_step_m: stepDistances.length ? Math.max(...stepDistances) : null
+      };
+    });
+    const warnings = [];
+    const imageCounts = cameras.map((camera) => camera.image_count).filter(Boolean);
+    if (imageCounts.length > 1 && Math.min(...imageCounts) > 0 && Math.max(...imageCounts) / Math.min(...imageCounts) > 1.05) {
+      warnings.push({ level: 'warning', code: 'camera_frame_imbalance', text: '各相机图片数量差异超过 5%，需要检查采集或过滤。' });
+    }
+    for (const camera of cameras) {
+      if (camera.depth_coverage < 0.95) {
+        warnings.push({ level: 'warning', code: 'depth_coverage_low', text: `${camera.camera} depth 覆盖率 ${(camera.depth_coverage * 100).toFixed(1)}%。` });
+      }
+      if (Number(camera.max_step_m || 0) > 5) {
+        warnings.push({ level: 'warning', code: 'trajectory_jump', text: `${camera.camera} 相邻位姿最大跳变 ${camera.max_step_m.toFixed(2)}m。` });
+      }
+    }
+    const poseOffsets = summary.pose_interpolation?.pose_time_offsets_ms || {};
+    for (const [camera, offsetMs] of Object.entries(poseOffsets)) {
+      if (Math.abs(Number(offsetMs || 0)) >= 120) {
+        warnings.push({ level: 'warning', code: 'large_pose_time_offset', text: `${camera} 位姿时间偏移 ${Number(offsetMs).toFixed(0)}ms，建议重点复核。` });
+      }
+    }
+    const colorization = summary.colorization || {};
+    if (colorization.enabled && Number(colorization.mean_observations_for_colored_points || 0) < 20) {
+      warnings.push({ level: 'warning', code: 'low_color_observations', text: '初始化点云平均观测次数偏低，颜色和可见性过滤可能不稳。' });
+    }
+    if (state.init_pointcloud?.selected_source === 'colmap_sfm') {
+      const colmapPoints = Number(state.init_pointcloud?.candidates?.colmap_sfm?.point_count || 0);
+      if (colmapPoints > 0 && colmapPoints < 50000) {
+        warnings.push({ level: 'warning', code: 'sfm_sparse_points_low', text: `COLMAP/SfM 候选只有 ${colmapPoints.toLocaleString('zh-CN')} 点，可能过稀或漂。` });
+      }
+    }
+    return {
+      dataset: {
+        scene_name: state.dataset.scene_name,
+        path: datasetPath,
+        image_count: frames.length,
+        point_count: Number(summary.point_count || 0),
+        selected_init_pointcloud: state.init_pointcloud?.selected_source || summary.init_pointcloud_selection?.source || null,
+        pose_time_offsets_ms: poseOffsets
+      },
+      cameras,
+      depth: {
+        directory_exists: depthFiles.length > 0,
+        file_count: depthFiles.length,
+        depth_param_count: Object.keys(depthParams).length
+      },
+      colorization,
+      warnings,
+      recommendation: '先用 held-out/test 指标、三联图和 depth/reprojection 质量定位数据问题；再决定是否跑 ablation。'
+    };
+  }
+
   function makeRemoteTrainCommand(remoteDatasetPath, remoteRunPath, trainOptions) {
     const iterations = Number(trainOptions.iterations || 10000);
     const resolution = Number(trainOptions.resolution || defaultTrainResolution);
@@ -4717,8 +5282,10 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       '    --iterations "$ITERATIONS" \\',
       '    --save_iterations "$ITERATIONS" \\',
       '    --checkpoint_iterations "${CHECKPOINT_ARGS[@]}" \\',
+      '    --test_iterations 7000 "$ITERATIONS" \\',
       '    --data_device cpu \\',
       '    -r "$RESOLUTION" \\',
+      '    --disable_viewer \\',
       '    "${START_CHECKPOINT_ARGS[@]}"',
       '  write_status completed 0',
       '  rm -f "$PID_FILE"',
@@ -5898,6 +6465,18 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     }
   });
 
+  app.get('/api/three-dgs/dataset/quality', requireThreeDgsAuth, async (_req, res) => {
+    try {
+      const quality = await buildDatasetQualityReport();
+      return res.json({ ok: true, quality });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'dataset_quality_failed'
+      });
+    }
+  });
+
   app.get('/api/three-dgs/dataset/init-pointcloud', requireThreeDgsAuth, async (req, res) => {
     try {
       const maxPoints = Math.max(5000, Math.min(160000, Number(req.query.max_points || 80000)));
@@ -6008,6 +6587,70 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         error: error.message || 'three_dgs_result_sync_failed',
         state
       });
+    }
+  });
+
+  app.post('/api/three-dgs/evaluation/start', requireThreeDgsAuth, async (req, res) => {
+    try {
+      await startEvaluationTask(req.threeDgsAuth, req.body || {});
+      return res.status(202).json(makeStatusResponse(req.threeDgsAuth));
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'three_dgs_evaluation_start_failed',
+        state: responseState()
+      });
+    }
+  });
+
+  app.get('/api/three-dgs/evaluation/report', requireThreeDgsAuth, async (req, res) => {
+    try {
+      const sync = String(req.query.sync || 'true').toLowerCase() !== 'false';
+      const quality = await buildDatasetQualityReport().catch((error) => ({ error: error.message || 'dataset_quality_failed' }));
+      const evaluation = await refreshEvaluationReport({ sync });
+      return res.json({
+        ok: true,
+        run_id: state.evaluation?.run_id || state.train?.run_id || null,
+        evaluation: {
+          phase: state.evaluation?.phase || 'idle',
+          running: Boolean(state.evaluation?.running),
+          remote_eval_path: state.evaluation?.remote_eval_path || null,
+          local_eval_path: state.evaluation?.local_eval_path || null,
+          options: state.evaluation?.options || null,
+          status: evaluation.status || state.evaluation?.remote_status || null,
+          report: evaluation.report || null
+        },
+        quality
+      });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'three_dgs_evaluation_report_failed',
+        state: responseState()
+      });
+    }
+  });
+
+  app.get('/api/three-dgs/evaluation/:runId/image/:name', requireThreeDgsAuth, async (req, res) => {
+    try {
+      const runId = sanitizeRunId(req.params.runId);
+      const fileName = String(req.params.name || '');
+      if (!runId || !fileName || fileName !== path.basename(fileName)) {
+        return res.status(400).type('text/plain').send('invalid_evaluation_image');
+      }
+      const samplesDir = path.join(evaluationRoot, runId, 'samples');
+      const imagePath = path.resolve(path.join(samplesDir, fileName));
+      if (!imagePath.startsWith(`${path.resolve(samplesDir)}${path.sep}`)) {
+        return res.status(400).type('text/plain').send('invalid_evaluation_image_path');
+      }
+      const stat = await safeStat(imagePath);
+      if (!stat) {
+        return res.status(404).type('text/plain').send('evaluation_image_not_found');
+      }
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.sendFile(imagePath);
+    } catch (error) {
+      return res.status(error.status || 500).type('text/plain').send(error.message || 'evaluation_image_failed');
     }
   });
 

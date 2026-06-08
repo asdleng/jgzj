@@ -297,6 +297,62 @@ import SiteLayout from "../components/SiteLayout.astro";
             </div>
           </div>
 
+          <div class="three-dgs-evaluation">
+            <div class="three-dgs-viewer-head">
+              <div>
+                <span>完整评估与视觉诊断</span>
+                <strong id="three-dgs-evaluation-status">等待训练结果</strong>
+              </div>
+              <div class="three-dgs-actions three-dgs-actions--compact">
+                <button id="three-dgs-start-evaluation" class="three-dgs-button three-dgs-button--ghost" type="button">启动评估</button>
+                <button id="three-dgs-load-evaluation" class="three-dgs-button three-dgs-button--ghost" type="button">读取评估</button>
+              </div>
+            </div>
+            <div class="three-dgs-mini-grid three-dgs-evaluation-grid">
+              <div>
+                <span>Eval PSNR</span>
+                <strong id="three-dgs-eval-psnr">-</strong>
+              </div>
+              <div>
+                <span>Eval SSIM</span>
+                <strong id="three-dgs-eval-ssim">-</strong>
+              </div>
+              <div>
+                <span>Eval LPIPS</span>
+                <strong id="three-dgs-eval-lpips">-</strong>
+              </div>
+              <div>
+                <span>最差视角</span>
+                <strong id="three-dgs-eval-worst">-</strong>
+              </div>
+            </div>
+            <div class="three-dgs-evaluation-body">
+              <div>
+                <div class="three-dgs-table-wrap">
+                  <table class="three-dgs-eval-table">
+                    <thead>
+                      <tr>
+                        <th>相机</th>
+                        <th>样本</th>
+                        <th>PSNR</th>
+                        <th>P10</th>
+                        <th>SSIM</th>
+                        <th>L1</th>
+                      </tr>
+                    </thead>
+                    <tbody id="three-dgs-eval-camera-table">
+                      <tr><td colspan="6">暂无评估结果。</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div id="three-dgs-quality-warnings" class="three-dgs-quality-warnings">等待数据质量报告。</div>
+              </div>
+              <div id="three-dgs-eval-samples" class="three-dgs-eval-samples">
+                <div class="three-dgs-data-empty">评估完成后显示 GT / Render / Error 三联图。</div>
+              </div>
+            </div>
+          </div>
+
           <div class="three-dgs-init-pointcloud">
             <div class="three-dgs-viewer-head">
               <div>
@@ -517,6 +573,9 @@ import SiteLayout from "../components/SiteLayout.astro";
     trainStop: "/api/three-dgs/train/stop",
     trainResume: "/api/three-dgs/train/resume",
     trainMetrics: "/api/three-dgs/train/metrics",
+    datasetQuality: "/api/three-dgs/dataset/quality",
+    evaluationStart: "/api/three-dgs/evaluation/start",
+    evaluationReport: "/api/three-dgs/evaluation/report",
     viewerSync: "/api/three-dgs/viewer/sync",
     viewerCamera: "/api/three-dgs/viewer/camera",
     prepareLog: "/api/three-dgs/logs/prepare",
@@ -569,6 +628,10 @@ import SiteLayout from "../components/SiteLayout.astro";
   const datasetFrameMeta = el("three-dgs-dataset-frame-meta");
   const trainMetricsStatus = el("three-dgs-train-metrics-status");
   const lossCanvas = el("three-dgs-loss-canvas");
+  const evaluationStatus = el("three-dgs-evaluation-status");
+  const evaluationSamples = el("three-dgs-eval-samples");
+  const evaluationCameraTable = el("three-dgs-eval-camera-table");
+  const qualityWarnings = el("three-dgs-quality-warnings");
   const initPointcloudCanvas = el("three-dgs-init-pointcloud-canvas");
   const initPointcloudStatus = el("three-dgs-init-pointcloud-status");
   const initPointcloudHint = el("three-dgs-init-pointcloud-hint");
@@ -591,6 +654,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   let datasetHitPoints = [];
   let selectedDatasetFrameIndex = -1;
   let trainMetricsData = null;
+  let evaluationData = null;
   let lastTrainMetricsFetchMs = 0;
   let lastViewerCameraState = null;
   let initPointcloudPreviewKey = "";
@@ -1677,6 +1741,140 @@ import SiteLayout from "../components/SiteLayout.astro";
     renderTrainMetrics(trainMetricsData);
   }
 
+  function evaluationSummary(report) {
+    if (!report) return null;
+    const bySplit = report.by_split || {};
+    return bySplit.test || bySplit.train || report.overall || null;
+  }
+
+  function renderQualityReport(quality) {
+    if (!qualityWarnings) return;
+    const warnings = Array.isArray(quality?.warnings) ? quality.warnings : [];
+    const cameras = Array.isArray(quality?.cameras) ? quality.cameras : [];
+    const fragments = [];
+    const cameraText = cameras.length
+      ? cameras.map((item) => `${item.camera}: ${formatCount(item.image_count)}图 / depth ${(Number(item.depth_coverage || 0) * 100).toFixed(0)}%`).join("；")
+      : "暂无相机统计";
+    fragments.push(cameraText);
+    if (quality?.dataset?.selected_init_pointcloud) {
+      fragments.push(`初始化：${quality.dataset.selected_init_pointcloud}`);
+    }
+    if (warnings.length) {
+      fragments.push(`告警：${warnings.map((item) => item.text || item.code).join("；")}`);
+      qualityWarnings.dataset.state = "warning";
+    } else {
+      fragments.push("未发现明显数据质量告警");
+      qualityWarnings.dataset.state = "success";
+    }
+    qualityWarnings.textContent = fragments.join(" · ");
+  }
+
+  function renderEvaluationReport(data) {
+    evaluationData = data;
+    const evaluation = data?.evaluation || {};
+    const report = evaluation.report || null;
+    const summary = evaluationSummary(report);
+    el("three-dgs-eval-psnr").textContent = formatMetric(summary?.psnr_mean, 2);
+    el("three-dgs-eval-ssim").textContent = formatMetric(summary?.ssim_mean, 4);
+    el("three-dgs-eval-lpips").textContent = formatMetric(summary?.lpips_mean, 4);
+    const worst = Array.isArray(report?.worst_views) ? report.worst_views[0] : null;
+    el("three-dgs-eval-worst").textContent = worst
+      ? `${channelLabel(worst.camera)} · ${formatMetric(worst.psnr, 2)}`
+      : "-";
+
+    if (evaluationStatus) {
+      const phase = evaluation.phase || "idle";
+      if (phase === "running") {
+        evaluationStatus.textContent = "A100 评估运行中";
+      } else if (report) {
+        const count = Number(summary?.count || 0);
+        evaluationStatus.textContent = `${data?.run_id || "当前 run"} · ${count} 个视角 · iteration ${report.loaded_iteration || "-"}`;
+      } else if (phase === "error") {
+        evaluationStatus.textContent = `评估失败：${evaluation.status?.exit_code ?? "-"}`;
+      } else {
+        evaluationStatus.textContent = "暂无评估报告";
+      }
+    }
+
+    if (evaluationCameraTable) {
+      evaluationCameraTable.replaceChildren();
+      const byCamera = report?.by_camera || {};
+      const entries = Object.entries(byCamera);
+      if (!entries.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 6;
+        cell.textContent = "暂无评估结果。";
+        row.appendChild(cell);
+        evaluationCameraTable.appendChild(row);
+      } else {
+        entries.forEach(([camera, item]) => {
+          const row = document.createElement("tr");
+          [channelLabel(camera), formatCount(item.count), formatMetric(item.psnr_mean, 2), formatMetric(item.psnr_p10, 2), formatMetric(item.ssim_mean, 4), formatMetric(item.l1_mean, 4)].forEach((text) => {
+            const cell = document.createElement("td");
+            cell.textContent = text;
+            row.appendChild(cell);
+          });
+          evaluationCameraTable.appendChild(row);
+        });
+      }
+    }
+
+    if (evaluationSamples) {
+      evaluationSamples.replaceChildren();
+      const samples = Array.isArray(report?.visual_samples) ? report.visual_samples.slice(0, 12) : [];
+      if (!samples.length) {
+        const empty = document.createElement("div");
+        empty.className = "three-dgs-data-empty";
+        empty.textContent = report ? "报告里没有样张。" : "评估完成后显示 GT / Render / Error 三联图。";
+        evaluationSamples.appendChild(empty);
+      } else {
+        samples.forEach((sample) => {
+          const figure = document.createElement("figure");
+          const img = document.createElement("img");
+          img.src = sample.url || "#";
+          img.alt = sample.image_name || "evaluation sample";
+          img.loading = "lazy";
+          const caption = document.createElement("figcaption");
+          caption.textContent = `${channelLabel(sample.camera)} · ${formatMetric(sample.psnr, 2)} PSNR`;
+          figure.appendChild(img);
+          figure.appendChild(caption);
+          evaluationSamples.appendChild(figure);
+        });
+      }
+    }
+
+    renderQualityReport(data?.quality);
+  }
+
+  async function loadEvaluationReport(sync = true) {
+    if (!isAuthed() || !hasRunPermission()) return;
+    if (evaluationStatus) evaluationStatus.textContent = sync ? "正在读取/同步评估报告..." : "正在读取评估状态...";
+    const response = await fetch(`${api.evaluationReport}?sync=${sync ? "true" : "false"}`, {
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "evaluation_report_failed");
+    }
+    renderEvaluationReport(data);
+  }
+
+  async function startEvaluation() {
+    const train = statusData?.state?.train || {};
+    await postJson(api.evaluationStart, {
+      run_id: train.run_id,
+      gpu: Number(el("three-dgs-gpu").value || train.gpu || 3),
+      resolution: Number(el("three-dgs-resolution").value || train.resolution || 1),
+      split: "auto",
+      max_per_camera: 64,
+      visual_count: 18,
+      include_lpips: false
+    });
+    if (evaluationStatus) evaluationStatus.textContent = "A100 评估已启动";
+  }
+
   async function loadDatasetInspection() {
     if (!isAuthed() || !hasRunPermission()) {
       throw new Error("permission_required");
@@ -1765,6 +1963,9 @@ import SiteLayout from "../components/SiteLayout.astro";
     });
     loadTrainMetrics(false).catch(() => {
       if (trainMetricsStatus) trainMetricsStatus.textContent = "训练指标读取失败";
+    });
+    loadEvaluationReport(false).catch(() => {
+      if (evaluationStatus) evaluationStatus.textContent = "评估报告读取失败";
     });
     refreshLiveLog().catch(() => {});
   }
@@ -2072,6 +2273,8 @@ import SiteLayout from "../components/SiteLayout.astro";
       "three-dgs-select-init-recolored",
       "three-dgs-select-init-colmap",
       "three-dgs-load-train-metrics",
+      "three-dgs-start-evaluation",
+      "three-dgs-load-evaluation",
       "three-dgs-load-prepare-log",
       "three-dgs-load-train-log"
     ].forEach((id) => {
@@ -2096,6 +2299,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     el("three-dgs-resume-train").disabled = !allow || taskBusy || !canResumeTrain;
     el("three-dgs-sync-result").disabled = !allow || taskBusy || !statusData?.state?.train?.remote_run_path;
     el("three-dgs-load-train-metrics").disabled = !allow || !statusData?.state?.train?.run_id;
+    el("three-dgs-start-evaluation").disabled = !allow || taskBusy || trainRunning || !statusData?.state?.train?.remote_run_path;
+    el("three-dgs-load-evaluation").disabled = !allow || (!statusData?.state?.evaluation?.remote_eval_path && !statusData?.state?.train?.run_id);
     el("three-dgs-start-capture").disabled = !allow || taskBusy || captureActive;
     el("three-dgs-stop-capture").disabled = !(isAuthed() && hasRunPermission()) || busy || !captureActive;
   }
@@ -2222,6 +2427,16 @@ import SiteLayout from "../components/SiteLayout.astro";
     const train = state.train || {};
     el("three-dgs-train-run").textContent = train.run_id || "-";
     el("three-dgs-remote-run").textContent = train.remote_run_path || "-";
+    const evaluation = state.evaluation || {};
+    if (evaluationStatus && !evaluationData?.evaluation?.report) {
+      evaluationStatus.textContent = evaluation.running
+        ? "A100 评估运行中"
+        : evaluation.report
+          ? "已有评估报告"
+          : train.run_id
+            ? "可启动完整评估"
+            : "等待训练结果";
+    }
 
     const viewer = state.viewer || {};
     const manualViewerCamera = state.viewer_camera?.manual || null;
@@ -2553,6 +2768,12 @@ import SiteLayout from "../components/SiteLayout.astro";
   );
   el("three-dgs-load-train-metrics").addEventListener("click", () =>
     runAction("读取训练曲线", () => loadTrainMetrics(true))
+  );
+  el("three-dgs-start-evaluation").addEventListener("click", () =>
+    runAction("启动完整评估", startEvaluation)
+  );
+  el("three-dgs-load-evaluation").addEventListener("click", () =>
+    runAction("读取完整评估", () => loadEvaluationReport(true))
   );
   el("three-dgs-sync-result").addEventListener("click", () =>
     runAction("同步训练结果", () => postJson(api.viewerSync, { run_id: statusData?.state?.train?.run_id }))
@@ -3014,6 +3235,100 @@ import SiteLayout from "../components/SiteLayout.astro";
     background: rgba(2, 6, 23, 0.38);
   }
 
+  .three-dgs-evaluation {
+    display: grid;
+    gap: 12px;
+    margin-top: 14px;
+    padding: 12px;
+    border: 1px solid rgba(71, 85, 105, 0.45);
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.38);
+  }
+
+  .three-dgs-evaluation-body {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(320px, 1.05fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  .three-dgs-table-wrap {
+    overflow-x: auto;
+    border: 1px solid rgba(71, 85, 105, 0.45);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.42);
+  }
+
+  .three-dgs-eval-table {
+    width: 100%;
+    min-width: 560px;
+    border-collapse: collapse;
+    color: #cbd5e1;
+    font-size: 0.86rem;
+  }
+
+  .three-dgs-eval-table th,
+  .three-dgs-eval-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid rgba(71, 85, 105, 0.35);
+    text-align: left;
+  }
+
+  .three-dgs-eval-table th {
+    color: #e0f2fe;
+    background: rgba(15, 23, 42, 0.72);
+    font-weight: 800;
+  }
+
+  .three-dgs-quality-warnings {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid rgba(71, 85, 105, 0.42);
+    border-radius: 8px;
+    color: #cbd5e1;
+    background: rgba(15, 23, 42, 0.45);
+    font-size: 0.86rem;
+    line-height: 1.55;
+  }
+
+  .three-dgs-quality-warnings[data-state="warning"] {
+    color: #fde68a;
+    border-color: rgba(250, 204, 21, 0.32);
+  }
+
+  .three-dgs-quality-warnings[data-state="success"] {
+    color: #99f6e4;
+    border-color: rgba(45, 212, 191, 0.32);
+  }
+
+  .three-dgs-eval-samples {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .three-dgs-eval-samples figure {
+    display: grid;
+    gap: 7px;
+    margin: 0;
+    min-width: 0;
+  }
+
+  .three-dgs-eval-samples img {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: contain;
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    border-radius: 8px;
+    background: #020617;
+  }
+
+  .three-dgs-eval-samples figcaption {
+    color: #94a3b8;
+    font-size: 0.82rem;
+    overflow-wrap: anywhere;
+  }
+
   .three-dgs-init-pointcloud {
     display: grid;
     gap: 12px;
@@ -3307,6 +3622,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     .three-dgs-map-grid,
     .three-dgs-pointcloud-compare,
     .three-dgs-data-check-grid,
+    .three-dgs-evaluation-body,
+    .three-dgs-eval-samples,
     .three-dgs-data-stats {
       grid-template-columns: 1fr;
     }
