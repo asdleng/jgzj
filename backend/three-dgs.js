@@ -1151,7 +1151,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     if (!state.dataset.prepared || !state.dataset.path) return;
     const paths = initCandidatePaths();
     const candidates = {};
-    for (const source of initPointcloudSources) {
+    for (const source of ['raw_rgb', 'recolored', 'colmap_sfm']) {
       const info = await pointcloudCandidateInfo(source, paths[source]);
       if (info) candidates[source] = info;
     }
@@ -5305,6 +5305,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     cleanupExpiredVehicleUploads();
     normalizeStaleTransientState();
     await syncUploadedArtifacts();
+    await syncInitPointcloudCandidates();
     await refreshPrepareProgressFromDisk();
     await refreshRemoteTrainingStatus();
     const auth = await getAuth(req);

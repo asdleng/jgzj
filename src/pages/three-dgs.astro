@@ -361,7 +361,7 @@ import SiteLayout from "../components/SiteLayout.astro";
               <div class="three-dgs-pointcloud-compare-card">
                 <div class="three-dgs-preview-head">
                   <span>COLMAP/SfM 对齐点云</span>
-                  <strong id="three-dgs-colmap-pointcloud-status">等待生成候选</strong>
+                  <strong id="three-dgs-colmap-pointcloud-status">未生成候选</strong>
                 </div>
                 <canvas id="three-dgs-colmap-pointcloud-canvas" height="420"></canvas>
                 <p>
@@ -1198,7 +1198,11 @@ import SiteLayout from "../components/SiteLayout.astro";
     if (!colmapCandidate?.exists && !colmapCandidate?.path) {
       colmapPointcloudPreviewKey = "";
       updateColmapPointcloudStats({});
-      if (colmapPointcloudStatus) colmapPointcloudStatus.textContent = generation.running ? "正在生成候选..." : "等待生成候选";
+      if (colmapPointcloudStatus) {
+        colmapPointcloudStatus.textContent = generation.running
+          ? "正在生成候选，完成后自动加载"
+          : "未生成，点击“生成 COLMAP 候选”";
+      }
       return;
     }
     const key = [

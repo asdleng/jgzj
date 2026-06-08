@@ -160,7 +160,7 @@ def main() -> int:
     alignment = align_sfm_points_to_dataset(dataset, sfm_dataset, args.output_ply.resolve())
     summary = {
         "source": "colmap_sfm_aligned",
-        "note": "pycolmap visual SfM triangulated point cloud aligned to current map/NDT COLMAP camera centers. This is not COLMAP MVS dense stereo because the system colmap CLI is not available.",
+        "note": "pycolmap visual SfM triangulated point cloud aligned to current map/NDT COLMAP camera centers. This is a visual SfM candidate, not CUDA PatchMatch MVS dense stereo.",
         "dataset": str(dataset),
         "workspace": str(workspace),
         "sfm_dataset": str(sfm_dataset.resolve()),
