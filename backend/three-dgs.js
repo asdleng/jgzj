@@ -422,6 +422,41 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return null;
   }
 
+  function unpackRgbNumber(value) {
+    const packed = Number(value) >>> 0;
+    return [
+      (packed >> 16) & 255,
+      (packed >> 8) & 255,
+      packed & 255
+    ];
+  }
+
+  function unpackPcdAsciiRgb(rawValue) {
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) return null;
+    if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff) {
+      return unpackRgbNumber(value);
+    }
+    const scratch = Buffer.allocUnsafe(4);
+    scratch.writeFloatLE(value, 0);
+    return unpackRgbNumber(scratch.readUInt32LE(0));
+  }
+
+  function readPcdRgb(buffer, offset, size, type) {
+    if (offset + size > buffer.length || size < 4) return null;
+    const kind = String(type || 'F').toUpperCase();
+    if (kind === 'F' && size === 4) {
+      return unpackRgbNumber(buffer.readUInt32LE(offset));
+    }
+    if (kind === 'U' && size === 4) {
+      return unpackRgbNumber(buffer.readUInt32LE(offset));
+    }
+    if (kind === 'I' && size === 4) {
+      return unpackRgbNumber(buffer.readInt32LE(offset));
+    }
+    return null;
+  }
+
   function summarizePreviewPoints(points) {
     const extent = {
       min_x: Infinity,
@@ -464,11 +499,13 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const xField = fields.find((field) => field.name === 'x');
     const yField = fields.find((field) => field.name === 'y');
     const zField = fields.find((field) => field.name === 'z');
+    const rgbField = fields.find((field) => ['rgb', 'rgba'].includes(String(field.name || '').toLowerCase()));
     if (!xField || !yField || !zField) {
       throw new Error('pcd_missing_xyz');
     }
 
     const points = [];
+    let sampledColorPoints = 0;
     const stride = Math.max(1, Math.ceil(header.points / Math.max(1, maxPoints)));
     if (header.data === 'binary') {
       for (let pointIndex = 0; pointIndex < header.points; pointIndex += stride) {
@@ -477,7 +514,13 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         const y = readPcdNumber(buffer, base + yField.offset, yField.size, yField.type);
         const z = readPcdNumber(buffer, base + zField.offset, zField.size, zField.type);
         if ([x, y, z].every(Number.isFinite)) {
-          points.push([x, y, z]);
+          const rgb = rgbField ? readPcdRgb(buffer, base + rgbField.offset, rgbField.size, rgbField.type) : null;
+          if (rgb) {
+            sampledColorPoints += 1;
+            points.push([x, y, z, rgb[0], rgb[1], rgb[2]]);
+          } else {
+            points.push([x, y, z]);
+          }
         }
       }
     } else if (header.data === 'ascii') {
@@ -485,6 +528,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       const xIndex = header.fields.indexOf('x');
       const yIndex = header.fields.indexOf('y');
       const zIndex = header.fields.indexOf('z');
+      const rgbIndex = header.fields.findIndex((field) => ['rgb', 'rgba'].includes(String(field || '').toLowerCase()));
       rows.forEach((row, index) => {
         if (index % stride !== 0 || !row.trim()) return;
         const values = row.trim().split(/\s+/);
@@ -492,7 +536,13 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         const y = Number(values[yIndex]);
         const z = Number(values[zIndex]);
         if ([x, y, z].every(Number.isFinite)) {
-          points.push([x, y, z]);
+          const rgb = rgbIndex >= 0 ? unpackPcdAsciiRgb(values[rgbIndex]) : null;
+          if (rgb) {
+            sampledColorPoints += 1;
+            points.push([x, y, z, rgb[0], rgb[1], rgb[2]]);
+          } else {
+            points.push([x, y, z]);
+          }
         }
       });
     } else {
@@ -504,6 +554,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       total_points: header.points,
       sampled_points: points.length,
       fields: header.fields,
+      has_color: Boolean(rgbField),
+      color_fields: rgbField ? [rgbField.name] : [],
+      sampled_color_points: sampledColorPoints,
       extent: summarizePreviewPoints(points),
       points
     };
@@ -535,11 +588,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const xIndex = properties.indexOf('x');
     const yIndex = properties.indexOf('y');
     const zIndex = properties.indexOf('z');
+    const redIndex = properties.findIndex((name) => ['red', 'r', 'diffuse_red'].includes(String(name).toLowerCase()));
+    const greenIndex = properties.findIndex((name) => ['green', 'g', 'diffuse_green'].includes(String(name).toLowerCase()));
+    const blueIndex = properties.findIndex((name) => ['blue', 'b', 'diffuse_blue'].includes(String(name).toLowerCase()));
+    const hasColor = redIndex >= 0 && greenIndex >= 0 && blueIndex >= 0;
     if (xIndex < 0 || yIndex < 0 || zIndex < 0) {
       throw new Error('ply_missing_xyz');
     }
     const stride = Math.max(1, Math.ceil(totalPoints / Math.max(1, maxPoints)));
     const points = [];
+    let sampledColorPoints = 0;
     const dataStart = endHeaderIndex + 1;
     const dataEnd = totalPoints > 0 ? Math.min(lines.length, dataStart + totalPoints) : lines.length;
     for (let lineIndex = dataStart; lineIndex < dataEnd; lineIndex += stride) {
@@ -550,6 +608,16 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       const y = Number(values[yIndex]);
       const z = Number(values[zIndex]);
       if ([x, y, z].every(Number.isFinite)) {
+        if (hasColor) {
+          const r = Math.max(0, Math.min(255, Math.round(Number(values[redIndex]))));
+          const g = Math.max(0, Math.min(255, Math.round(Number(values[greenIndex]))));
+          const b = Math.max(0, Math.min(255, Math.round(Number(values[blueIndex]))));
+          if ([r, g, b].every(Number.isFinite)) {
+            sampledColorPoints += 1;
+            points.push([x, y, z, r, g, b]);
+            continue;
+          }
+        }
         points.push([x, y, z]);
       }
     }
@@ -557,6 +625,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       format: 'ply',
       total_points: totalPoints,
       sampled_points: points.length,
+      has_color: hasColor,
+      color_fields: hasColor ? [properties[redIndex], properties[greenIndex], properties[blueIndex]] : [],
+      sampled_color_points: sampledColorPoints,
       extent: summarizePreviewPoints(points),
       points
     };
@@ -967,6 +1038,32 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         has_sparse_files: true,
         has_frame_metadata: frameMetadata.available
       }
+    };
+  }
+
+  async function buildDatasetInitPointcloudPreview(maxPoints = 80000) {
+    const datasetPath = resolveCurrentDatasetPath();
+    const sparsePath = path.join(datasetPath, 'sparse', '0');
+    const pointcloudPath = path.join(sparsePath, 'points3D.ply');
+    const pointcloudText = await fsp.readFile(pointcloudPath, 'utf8');
+    const pointcloud = parseAsciiPlyPreview(pointcloudText, maxPoints);
+    const summary = state.dataset.summary || null;
+    return {
+      dataset: {
+        scene_name: state.dataset.scene_name,
+        path: datasetPath,
+        prepared_at_ms: state.dataset.prepared_at_ms || null,
+        summary
+      },
+      pointcloud: {
+        ...pointcloud,
+        source: {
+          path: pointcloudPath,
+          kind: 'prepared_colmap_points3d_ply',
+          note: 'Prepared initialization points after cloud-side projection colorization and visibility filtering.'
+        }
+      },
+      colorization: summary?.colorization || null
     };
   }
 
@@ -5317,7 +5414,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           max_read_bytes: pointcloudPreviewMaxReadBytes
         });
       }
-      const maxPoints = Math.max(1000, Math.min(50000, Number(req.query.max_points || 12000)));
+      const maxPoints = Math.max(1000, Math.min(160000, Number(req.query.max_points || 12000)));
       const buffer = await fsp.readFile(pointcloud.path);
       const preview = parsePcdPreview(buffer, maxPoints);
       return res.json({
@@ -5346,6 +5443,19 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       return res.status(error.status || 500).json({
         ok: false,
         error: error.message || 'dataset_inspection_failed'
+      });
+    }
+  });
+
+  app.get('/api/three-dgs/dataset/init-pointcloud', requireThreeDgsAuth, async (req, res) => {
+    try {
+      const maxPoints = Math.max(5000, Math.min(160000, Number(req.query.max_points || 80000)));
+      const preview = await buildDatasetInitPointcloudPreview(maxPoints);
+      return res.json({ ok: true, preview });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'dataset_init_pointcloud_failed'
       });
     }
   });
