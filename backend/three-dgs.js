@@ -1147,6 +1147,31 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     };
   }
 
+  async function syncInitPointcloudCandidates() {
+    if (!state.dataset.prepared || !state.dataset.path) return;
+    const paths = initCandidatePaths();
+    const candidates = {};
+    for (const source of initPointcloudSources) {
+      const info = await pointcloudCandidateInfo(source, paths[source]);
+      if (info) candidates[source] = info;
+    }
+    if (!Object.keys(candidates).length) return;
+    const current = state.init_pointcloud?.candidates || {};
+    const changed = Object.entries(candidates).some(([source, info]) => {
+      const previous = current[source] || {};
+      return previous.path !== info.path ||
+        previous.size_bytes !== info.size_bytes ||
+        previous.point_count !== info.point_count ||
+        previous.updated_at_ms !== info.updated_at_ms;
+    });
+    if (changed) {
+      await updateInitPointcloudCandidatesState({
+        ...current,
+        ...candidates
+      });
+    }
+  }
+
   function writePreviewPointsAsPly(targetPath, preview) {
     const points = Array.isArray(preview?.points) ? preview.points : [];
     const lines = [
@@ -1319,6 +1344,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   }
 
   async function buildDatasetInitPointcloudPreview(maxPoints = 80000, source = 'recolored') {
+    const datasetPath = resolveCurrentDatasetPath();
     const normalized = normalizeInitPointcloudSource(source);
     let pointcloudPath;
     if (normalized === 'recolored') {
