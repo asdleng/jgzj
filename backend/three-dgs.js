@@ -5318,14 +5318,14 @@ if __name__ == "__main__":
     });
   }
 
-  async function launchRemoteTraining({ localLogPath, remoteDatasetPath, remoteRunPath, gpu, iterations, resolution, resume, checkpoint }) {
+  async function launchRemoteTraining({ localLogPath, remoteDatasetPath, remoteRunPath, gpu, iterations, resolution, resume, checkpoint, checkpointInterval = defaultCheckpointInterval }) {
     await appendToLog(localLogPath, `${resume ? 'resume' : 'start'} remote training`);
     const command = makeRemoteTrainCommand(remoteDatasetPath, remoteRunPath, {
       gpu,
       iterations,
       resolution,
       resume,
-      checkpointInterval: defaultCheckpointInterval
+      checkpointInterval
     });
     const stdout = await execSsh(command, 30000);
     const pid = stdout.trim().split(/\s+/).filter(Boolean).pop() || null;
@@ -5343,7 +5343,7 @@ if __name__ == "__main__":
         remote_status: { phase: 'running' },
         resume_from_checkpoint: checkpoint?.path || null,
         resume_from_iteration: checkpoint?.iteration || null,
-        checkpoint_interval: defaultCheckpointInterval,
+        checkpoint_interval: checkpointInterval,
         last_remote_status_check_ms: null,
         error_message: null
       }
@@ -5388,6 +5388,7 @@ if __name__ == "__main__":
     const gpu = String(payload.gpu ?? state.train.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
     const iterations = Number(payload.iterations || state.train.iterations || 10000);
     const resolution = Number(payload.resolution || state.train.resolution || defaultTrainResolution);
+    const checkpointInterval = Math.max(100, Number(payload.checkpointInterval || state.train.checkpoint_interval || defaultCheckpointInterval));
     const datasetMarker = resume ? null : await makeDatasetSyncMarker(state.dataset.path);
 
     updateState({
@@ -5410,7 +5411,7 @@ if __name__ == "__main__":
         remote_pid: null,
         resume_from_checkpoint: checkpoint?.path || null,
         resume_from_iteration: checkpoint?.iteration || null,
-        checkpoint_interval: defaultCheckpointInterval,
+        checkpoint_interval: checkpointInterval,
         mode: resume ? 'resume' : 'restart',
         sync_progress: resume
           ? state.train.sync_progress
@@ -5445,7 +5446,8 @@ if __name__ == "__main__":
           iterations,
           resolution,
           resume: true,
-          checkpoint
+          checkpoint,
+          checkpointInterval
         });
       } catch (error) {
         updateState({
@@ -5503,7 +5505,8 @@ if __name__ == "__main__":
         iterations,
         resolution,
         resume: false,
-        checkpoint: null
+        checkpoint: null,
+        checkpointInterval
       });
       updateNestedState('train', {
         remote_dataset_synced_at_ms: Date.now()
@@ -5616,7 +5619,8 @@ if __name__ == "__main__":
           iterations,
           resolution,
           resume: false,
-          checkpoint: null
+          checkpoint: null,
+          checkpointInterval
         });
         updateNestedState('train', {
           remote_dataset_synced_at_ms: Date.now()
