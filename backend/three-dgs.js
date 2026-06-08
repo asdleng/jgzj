@@ -66,6 +66,20 @@ function createInitialState() {
       summary: null,
       prepared_at_ms: null
     },
+    init_pointcloud: {
+      selected_source: 'recolored',
+      selected_at_ms: null,
+      selected_by: null,
+      candidates: {},
+      colmap_generation: {
+        running: false,
+        pid: null,
+        started_at_ms: null,
+        completed_at_ms: null,
+        log_path: null,
+        error_message: null
+      }
+    },
     prepare: {
       running: false,
       pid: null,
@@ -129,6 +143,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const imagePoseUploadPath = path.join(uploadDir, 'image-pose-upload');
   const pointcloudUploadPath = path.join(uploadDir, 'pointcloud-upload');
   const prepareScriptPath = path.resolve(process.env.THREE_DGS_PREPARE_SCRIPT_PATH || path.resolve(__dirname, '../scripts/prepare_3dgs_colmap.py'));
+  const colmapInitScriptPath = path.resolve(process.env.THREE_DGS_COLMAP_INIT_SCRIPT_PATH || path.resolve(__dirname, '../scripts/build_3dgs_colmap_init_candidate.py'));
   const uploadMaxBytes = Number(process.env.THREE_DGS_UPLOAD_MAX_BYTES || 12 * 1024 * 1024 * 1024);
   const sshKeyPath = process.env.THREE_DGS_A100_SSH_KEY || '/home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519';
   const a100User = process.env.THREE_DGS_A100_USER || 'sari';
@@ -170,6 +185,10 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const colorizeOcclusionCellPx = Number(process.env.THREE_DGS_COLORIZE_OCCLUSION_CELL_PX || 8);
   const colorizeDepthToleranceM = Number(process.env.THREE_DGS_COLORIZE_DEPTH_TOLERANCE_M || 1.0);
   const colorizeMinDepthM = Number(process.env.THREE_DGS_COLORIZE_MIN_DEPTH_M || 0.1);
+  const rawInitMaxPoints = Math.max(10000, Number(process.env.THREE_DGS_RAW_INIT_MAX_POINTS || 800000));
+  const colmapInitMaxFramesPerCamera = Math.max(0, Number(process.env.THREE_DGS_COLMAP_INIT_MAX_FRAMES_PER_CAMERA || 240));
+  const colmapInitMaxImageSize = Math.max(320, Number(process.env.THREE_DGS_COLMAP_INIT_MAX_IMAGE_SIZE || 1100));
+  const colmapInitMaxNumFeatures = Math.max(1000, Number(process.env.THREE_DGS_COLMAP_INIT_MAX_NUM_FEATURES || 10000));
   const defaultCheckpointInterval = Math.max(100, Number(process.env.THREE_DGS_CHECKPOINT_INTERVAL || 1000));
   const viewerCameraForwardSign = Number(process.env.THREE_DGS_VIEWER_CAMERA_FORWARD_SIGN || -1) >= 0 ? 1 : -1;
 
@@ -177,6 +196,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   let statePersistTimer = null;
   let prepareProcess = null;
   let trainBootstrapProcess = null;
+  let colmapInitProcess = null;
   let trainStopRequested = false;
   let captureStartInFlight = false;
   let uploadInFlight = false;
@@ -260,6 +280,14 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
             ...createInitialState().prepare,
             ...(parsed.prepare || {})
           },
+          init_pointcloud: {
+            ...createInitialState().init_pointcloud,
+            ...(parsed.init_pointcloud || {}),
+            colmap_generation: {
+              ...createInitialState().init_pointcloud.colmap_generation,
+              ...(parsed.init_pointcloud?.colmap_generation || {})
+            }
+          },
           train: { ...createInitialState().train, ...(parsed.train || {}) },
           viewer: { ...createInitialState().viewer, ...(parsed.viewer || {}) },
           viewer_camera: { ...createInitialState().viewer_camera, ...(parsed.viewer_camera || {}) },
@@ -300,6 +328,21 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           remote_status: { phase: 'error', reason: 'backend_restart_during_sync' },
           completed_at_ms: Date.now(),
           error_message: 'train_sync_interrupted_by_backend_restart'
+        },
+        updated_at_ms: Date.now()
+      };
+    }
+    if (state.init_pointcloud?.colmap_generation?.running && !colmapInitProcess) {
+      state = {
+        ...state,
+        init_pointcloud: {
+          ...(state.init_pointcloud || {}),
+          colmap_generation: {
+            ...(state.init_pointcloud?.colmap_generation || {}),
+            running: false,
+            completed_at_ms: Date.now(),
+            error_message: 'colmap_init_interrupted_by_backend_restart'
+          }
         },
         updated_at_ms: Date.now()
       };
@@ -1041,10 +1084,250 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     };
   }
 
-  async function buildDatasetInitPointcloudPreview(maxPoints = 80000) {
+  function currentDatasetSparsePointcloudPath() {
     const datasetPath = resolveCurrentDatasetPath();
-    const sparsePath = path.join(datasetPath, 'sparse', '0');
-    const pointcloudPath = path.join(sparsePath, 'points3D.ply');
+    return path.join(datasetPath, 'sparse', '0', 'points3D.ply');
+  }
+
+  function currentDatasetInitCandidateDir() {
+    const datasetPath = resolveCurrentDatasetPath();
+    return path.join(datasetPath, 'init-candidates');
+  }
+
+  function initCandidatePaths() {
+    const root = currentDatasetInitCandidateDir();
+    return {
+      raw_rgb: path.join(root, 'raw_rgb_points3D.ply'),
+      recolored: path.join(root, 'recolored_points3D.ply'),
+      colmap_sfm: path.join(root, 'colmap_sfm_aligned_points3D.ply')
+    };
+  }
+
+  function initCandidateLabels() {
+    return {
+      raw_rgb: '车端上传 RGB 点云地图',
+      recolored: '云端重上色初始化点云',
+      colmap_sfm: 'COLMAP/SfM 对齐点云'
+    };
+  }
+
+  function normalizeInitPointcloudSource(value) {
+    const source = String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    if (['raw', 'raw_rgb', 'vehicle_rgb', 'vehicle'].includes(source)) return 'raw_rgb';
+    if (['recolor', 'recolored', 'cloud_recolored', 'prepared'].includes(source)) return 'recolored';
+    if (['colmap', 'sfm', 'colmap_sfm', 'colmap_dense'].includes(source)) return 'colmap_sfm';
+    const error = new Error('invalid_init_pointcloud_source');
+    error.status = 400;
+    throw error;
+  }
+
+  function readAsciiPlyVertexCount(text) {
+    const match = String(text || '').match(/^element\s+vertex\s+(\d+)/m);
+    return match ? Number(match[1]) : 0;
+  }
+
+  async function pointcloudCandidateInfo(source, candidatePath) {
+    const stat = await safeStat(candidatePath);
+    if (!stat) return null;
+    let pointCount = 0;
+    try {
+      const header = (await fsp.readFile(candidatePath, 'utf8')).split(/\r?\nend_header\r?\n/, 1)[0] || '';
+      pointCount = readAsciiPlyVertexCount(header);
+    } catch (_error) {
+      pointCount = 0;
+    }
+    return {
+      source,
+      label: initCandidateLabels()[source] || source,
+      path: candidatePath,
+      exists: true,
+      size_bytes: stat.size,
+      point_count: pointCount,
+      updated_at_ms: stat.mtimeMs || Date.now()
+    };
+  }
+
+  function writePreviewPointsAsPly(targetPath, preview) {
+    const points = Array.isArray(preview?.points) ? preview.points : [];
+    const lines = [
+      'ply',
+      'format ascii 1.0',
+      `element vertex ${points.length}`,
+      'property float x',
+      'property float y',
+      'property float z',
+      'property float nx',
+      'property float ny',
+      'property float nz',
+      'property uchar red',
+      'property uchar green',
+      'property uchar blue',
+      'end_header'
+    ];
+    for (const point of points) {
+      const x = Number(point[0]);
+      const y = Number(point[1]);
+      const z = Number(point[2]);
+      if (![x, y, z].every(Number.isFinite)) continue;
+      const r = point.length >= 6 ? Math.max(0, Math.min(255, Math.round(Number(point[3])))) : 180;
+      const g = point.length >= 6 ? Math.max(0, Math.min(255, Math.round(Number(point[4])))) : 180;
+      const b = point.length >= 6 ? Math.max(0, Math.min(255, Math.round(Number(point[5])))) : 180;
+      lines.push(`${x.toFixed(8)} ${y.toFixed(8)} ${z.toFixed(8)} 0 0 0 ${r} ${g} ${b}`);
+    }
+    return fsp.writeFile(targetPath, `${lines.join('\n')}\n`, 'utf8');
+  }
+
+  async function updateInitPointcloudCandidatesState(patch = {}) {
+    const candidates = {
+      ...(state.init_pointcloud?.candidates || {}),
+      ...patch
+    };
+    updateNestedState('init_pointcloud', {
+      ...(state.init_pointcloud || {}),
+      candidates
+    });
+    return candidates;
+  }
+
+  async function ensureRecoloredInitCandidate() {
+    const paths = initCandidatePaths();
+    const existing = await pointcloudCandidateInfo('recolored', paths.recolored);
+    if (existing) {
+      await updateInitPointcloudCandidatesState({ recolored: existing });
+      return existing;
+    }
+    const sourcePath = currentDatasetSparsePointcloudPath();
+    const stat = await safeStat(sourcePath);
+    if (!stat) {
+      const error = new Error('prepared_points3d_not_found');
+      error.status = 404;
+      throw error;
+    }
+    await fsp.mkdir(path.dirname(paths.recolored), { recursive: true });
+    await fsp.copyFile(sourcePath, paths.recolored);
+    const info = await pointcloudCandidateInfo('recolored', paths.recolored);
+    await updateInitPointcloudCandidatesState({ recolored: info });
+    return info;
+  }
+
+  async function ensureRawRgbInitCandidate() {
+    const paths = initCandidatePaths();
+    const existing = await pointcloudCandidateInfo('raw_rgb', paths.raw_rgb);
+    const pointcloud = state.uploads.pointcloud;
+    if (existing && pointcloud?.updated_at_ms && existing.updated_at_ms >= pointcloud.updated_at_ms) {
+      await updateInitPointcloudCandidatesState({ raw_rgb: existing });
+      return existing;
+    }
+    if (!pointcloud?.path) {
+      const error = new Error('raw_rgb_pointcloud_not_uploaded');
+      error.status = 404;
+      throw error;
+    }
+    const stat = await safeStat(pointcloud.path);
+    if (!stat) {
+      const error = new Error('raw_rgb_pointcloud_file_not_found');
+      error.status = 404;
+      throw error;
+    }
+    if (stat.size > pointcloudPreviewMaxReadBytes) {
+      const error = new Error('raw_rgb_pointcloud_too_large');
+      error.status = 413;
+      throw error;
+    }
+    await fsp.mkdir(path.dirname(paths.raw_rgb), { recursive: true });
+    const buffer = await fsp.readFile(pointcloud.path);
+    const preview = parsePcdPreview(buffer, rawInitMaxPoints);
+    await writePreviewPointsAsPly(paths.raw_rgb, preview);
+    const info = await pointcloudCandidateInfo('raw_rgb', paths.raw_rgb);
+    await updateInitPointcloudCandidatesState({ raw_rgb: info });
+    return info;
+  }
+
+  async function ensureInitCandidateForSource(source) {
+    const normalized = normalizeInitPointcloudSource(source);
+    if (normalized === 'recolored') return ensureRecoloredInitCandidate();
+    if (normalized === 'raw_rgb') return ensureRawRgbInitCandidate();
+    const paths = initCandidatePaths();
+    const info = await pointcloudCandidateInfo('colmap_sfm', paths.colmap_sfm);
+    if (!info) {
+      const error = new Error('colmap_init_candidate_not_ready');
+      error.status = 404;
+      throw error;
+    }
+    await updateInitPointcloudCandidatesState({ colmap_sfm: info });
+    return info;
+  }
+
+  async function applyInitPointcloudSelection(source, auth) {
+    const normalized = normalizeInitPointcloudSource(source);
+    const info = await ensureInitCandidateForSource(normalized);
+    const datasetPath = resolveCurrentDatasetPath();
+    const targetPath = currentDatasetSparsePointcloudPath();
+    const backupPath = path.join(currentDatasetInitCandidateDir(), 'last_points3D_before_selection.ply');
+    await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+    await fsp.mkdir(path.dirname(backupPath), { recursive: true });
+    if (await safeStat(targetPath)) {
+      await fsp.copyFile(targetPath, backupPath).catch(() => {});
+    }
+    await fsp.copyFile(info.path, targetPath);
+    const summaryPath = path.join(datasetPath, 'three_dgs_dataset_summary.json');
+    let summary = state.dataset.summary || {};
+    try {
+      summary = JSON.parse(await fsp.readFile(summaryPath, 'utf8'));
+    } catch (_error) {
+      summary = state.dataset.summary || {};
+    }
+    summary = {
+      ...summary,
+      point_count: info.point_count || summary.point_count || 0,
+      init_pointcloud_selection: {
+        source: normalized,
+        label: info.label,
+        path: info.path,
+        point_count: info.point_count || null,
+        selected_at_ms: Date.now(),
+        selected_by: auth?.username || null
+      }
+    };
+    await fsp.writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8');
+    updateState({
+      phase: 'prepared',
+      stage_text: `已选择 ${info.label} 作为后续 3DGS 训练初始化点云。`,
+      error_message: null,
+      dataset: {
+        ...state.dataset,
+        summary,
+        prepared_at_ms: Date.now()
+      },
+      init_pointcloud: {
+        ...(state.init_pointcloud || {}),
+        selected_source: normalized,
+        selected_at_ms: Date.now(),
+        selected_by: auth?.username || null,
+        candidates: {
+          ...(state.init_pointcloud?.candidates || {}),
+          [normalized]: info
+        }
+      },
+      train: {
+        ...state.train,
+        dataset_fingerprint: null,
+        remote_dataset_synced_at_ms: null
+      }
+    });
+    return info;
+  }
+
+  async function buildDatasetInitPointcloudPreview(maxPoints = 80000, source = 'recolored') {
+    const normalized = normalizeInitPointcloudSource(source);
+    let pointcloudPath;
+    if (normalized === 'recolored') {
+      pointcloudPath = (await ensureRecoloredInitCandidate()).path;
+    } else if (normalized === 'raw_rgb') {
+      pointcloudPath = (await ensureRawRgbInitCandidate()).path;
+    } else {
+      pointcloudPath = (await ensureInitCandidateForSource('colmap_sfm')).path;
+    }
     const pointcloudText = await fsp.readFile(pointcloudPath, 'utf8');
     const pointcloud = parseAsciiPlyPreview(pointcloudText, maxPoints);
     const summary = state.dataset.summary || null;
@@ -1059,11 +1342,22 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         ...pointcloud,
         source: {
           path: pointcloudPath,
-          kind: 'prepared_colmap_points3d_ply',
-          note: 'Prepared initialization points after cloud-side projection colorization and visibility filtering.'
+          source: normalized,
+          kind: normalized === 'raw_rgb'
+            ? 'vehicle_uploaded_rgb_pointcloud_converted_to_points3d_ply'
+            : normalized === 'colmap_sfm'
+              ? 'colmap_sfm_aligned_points3d_ply'
+              : 'prepared_colmap_points3d_ply',
+          note: normalized === 'raw_rgb'
+            ? 'Vehicle uploaded RGB pointcloud converted into gaussian-splatting compatible points3D.ply.'
+            : normalized === 'colmap_sfm'
+              ? 'pycolmap visual SfM triangulated pointcloud aligned to current map/NDT camera centers.'
+              : 'Prepared initialization points after cloud-side projection colorization and visibility filtering.'
         }
       },
-      colorization: summary?.colorization || null
+      colorization: summary?.colorization || null,
+      selected_source: state.init_pointcloud?.selected_source || 'recolored',
+      candidates: state.init_pointcloud?.candidates || {}
     };
   }
 
@@ -3915,6 +4209,135 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           progress: progress || state.prepare.progress || null
         }
       });
+      ensureRecoloredInitCandidate().catch(() => {});
+    });
+  }
+
+  async function startColmapInitCandidateTask(auth, payload = {}) {
+    if (captureStartInFlight || prepareProcess || state.prepare.running || state.train.running || colmapInitProcess) {
+      const error = new Error('three_dgs_busy');
+      error.status = 409;
+      throw error;
+    }
+    if (!state.dataset.prepared || !state.dataset.path) {
+      const error = new Error('three_dgs_dataset_not_prepared');
+      error.status = 404;
+      throw error;
+    }
+    await ensureRecoloredInitCandidate().catch(() => {});
+    const datasetPath = resolveCurrentDatasetPath();
+    const sceneName = sanitizeSceneName(state.dataset.scene_name || path.basename(datasetPath)) || 'scene';
+    const candidateDir = currentDatasetInitCandidateDir();
+    const workspace = path.join(candidateDir, 'colmap_sfm_workspace');
+    const paths = initCandidatePaths();
+    const summaryPath = path.join(candidateDir, 'colmap_sfm_summary.json');
+    const logPath = path.join(logDir, `colmap-init-${sceneName}.log`);
+    await fsp.mkdir(candidateDir, { recursive: true });
+    await fsp.rm(logPath, { force: true });
+
+    updateNestedState('init_pointcloud', {
+      ...(state.init_pointcloud || {}),
+      colmap_generation: {
+        running: true,
+        pid: null,
+        started_at_ms: Date.now(),
+        completed_at_ms: null,
+        log_path: logPath,
+        error_message: null
+      }
+    });
+    updateState({
+      stage_text: '正在生成 COLMAP/SfM 对齐点云候选。',
+      error_message: null
+    });
+
+    const args = [
+      colmapInitScriptPath,
+      '--dataset',
+      datasetPath,
+      '--workspace',
+      workspace,
+      '--output-ply',
+      paths.colmap_sfm,
+      '--summary',
+      summaryPath,
+      '--pycolmap-path',
+      path.resolve(__dirname, '../.runtime/pycolmap-py313'),
+      '--max-frames-per-camera',
+      String(Number(payload.max_frames_per_camera || colmapInitMaxFramesPerCamera)),
+      '--max-image-size',
+      String(Number(payload.max_image_size || colmapInitMaxImageSize)),
+      '--max-num-features',
+      String(Number(payload.max_num_features || colmapInitMaxNumFeatures)),
+      '--overwrite'
+    ];
+    const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+    colmapInitProcess = spawn('python3', args, {
+      cwd: path.resolve(__dirname, '..'),
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    updateNestedState('init_pointcloud', {
+      ...(state.init_pointcloud || {}),
+      colmap_generation: {
+        ...(state.init_pointcloud?.colmap_generation || {}),
+        running: true,
+        pid: colmapInitProcess.pid
+      }
+    });
+    colmapInitProcess.stdout.pipe(logStream);
+    colmapInitProcess.stderr.pipe(logStream);
+    colmapInitProcess.on('error', (error) => {
+      colmapInitProcess = null;
+      logStream.end();
+      updateNestedState('init_pointcloud', {
+        ...(state.init_pointcloud || {}),
+        colmap_generation: {
+          ...(state.init_pointcloud?.colmap_generation || {}),
+          running: false,
+          completed_at_ms: Date.now(),
+          error_message: error.message || 'colmap_init_spawn_failed'
+        }
+      });
+      updateState({
+        stage_text: 'COLMAP/SfM 点云候选启动失败。',
+        error_message: error.message || 'colmap_init_spawn_failed'
+      });
+    });
+    colmapInitProcess.on('exit', async (code, signal) => {
+      colmapInitProcess = null;
+      logStream.end();
+      if (signal || code !== 0) {
+        const errorMessage = signal || `colmap_init_exit_${code}`;
+        updateNestedState('init_pointcloud', {
+          ...(state.init_pointcloud || {}),
+          colmap_generation: {
+            ...(state.init_pointcloud?.colmap_generation || {}),
+            running: false,
+            completed_at_ms: Date.now(),
+            error_message: errorMessage
+          }
+        });
+        updateState({
+          stage_text: 'COLMAP/SfM 点云候选生成失败。',
+          error_message: errorMessage
+        });
+        return;
+      }
+      const info = await pointcloudCandidateInfo('colmap_sfm', paths.colmap_sfm);
+      await updateInitPointcloudCandidatesState({ colmap_sfm: info });
+      updateNestedState('init_pointcloud', {
+        ...(state.init_pointcloud || {}),
+        colmap_generation: {
+          ...(state.init_pointcloud?.colmap_generation || {}),
+          running: false,
+          completed_at_ms: Date.now(),
+          error_message: null
+        }
+      });
+      updateState({
+        stage_text: `COLMAP/SfM 对齐点云候选已生成：${info?.point_count || 0} 点。`,
+        error_message: null
+      });
     });
   }
 
@@ -3960,13 +4383,14 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     }
     const stats = await datasetFileStats(datasetPath);
     const summary = state.dataset.summary || {};
-    const markerSource = {
-      version: 1,
-      scene_name: state.dataset.scene_name || path.basename(datasetPath),
-      dataset_path: path.resolve(datasetPath),
-      prepared_at_ms: Number(state.dataset.prepared_at_ms || 0),
-      image_count: Number(summary.image_count || 0),
-      point_count: Number(summary.point_count || 0),
+      const markerSource = {
+        version: 1,
+        scene_name: state.dataset.scene_name || path.basename(datasetPath),
+        dataset_path: path.resolve(datasetPath),
+        prepared_at_ms: Number(state.dataset.prepared_at_ms || 0),
+        init_pointcloud_source: state.init_pointcloud?.selected_source || 'recolored',
+        image_count: Number(summary.image_count || 0),
+        point_count: Number(summary.point_count || 0),
       camera_count: Number(summary.camera_count || 0),
       colorization_enabled: Boolean(summary.colorization?.enabled),
       file_count: stats.file_count,
@@ -5450,12 +5874,38 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   app.get('/api/three-dgs/dataset/init-pointcloud', requireThreeDgsAuth, async (req, res) => {
     try {
       const maxPoints = Math.max(5000, Math.min(160000, Number(req.query.max_points || 80000)));
-      const preview = await buildDatasetInitPointcloudPreview(maxPoints);
+      const preview = await buildDatasetInitPointcloudPreview(maxPoints, req.query.source || 'recolored');
       return res.json({ ok: true, preview });
     } catch (error) {
       return res.status(error.status || 500).json({
         ok: false,
         error: error.message || 'dataset_init_pointcloud_failed'
+      });
+    }
+  });
+
+  app.post('/api/three-dgs/dataset/init-pointcloud/select', requireThreeDgsAuth, async (req, res) => {
+    try {
+      const selected = await applyInitPointcloudSelection(req.body?.source || 'recolored', req.threeDgsAuth);
+      return res.json(makeStatusResponse(req.threeDgsAuth, { selected_init_pointcloud: selected }));
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'init_pointcloud_select_failed',
+        state: responseState()
+      });
+    }
+  });
+
+  app.post('/api/three-dgs/dataset/colmap-init/generate', requireThreeDgsAuth, async (req, res) => {
+    try {
+      await startColmapInitCandidateTask(req.threeDgsAuth, req.body || {});
+      return res.status(202).json(makeStatusResponse(req.threeDgsAuth));
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'colmap_init_generate_failed',
+        state: responseState()
       });
     }
   });

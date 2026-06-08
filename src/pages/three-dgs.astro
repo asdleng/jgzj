@@ -303,7 +303,10 @@ import SiteLayout from "../components/SiteLayout.astro";
                 <span>RGB 点云对比</span>
                 <strong id="three-dgs-init-pointcloud-status">等待点云数据</strong>
               </div>
-              <button id="three-dgs-load-init-pointcloud" class="three-dgs-button three-dgs-button--ghost" type="button">刷新对比点云</button>
+              <div class="three-dgs-actions three-dgs-actions--compact">
+                <button id="three-dgs-load-init-pointcloud" class="three-dgs-button three-dgs-button--ghost" type="button">刷新对比点云</button>
+                <button id="three-dgs-generate-colmap-init" class="three-dgs-button three-dgs-button--ghost" type="button">生成 COLMAP 候选</button>
+              </div>
             </div>
             <div class="three-dgs-pointcloud-compare">
               <div class="three-dgs-pointcloud-compare-card">
@@ -313,6 +316,7 @@ import SiteLayout from "../components/SiteLayout.astro";
                 </div>
                 <canvas id="three-dgs-raw-rgb-pointcloud-canvas" height="420"></canvas>
                 <p>显示车端上传的 RGB PCD 原始颜色，用来看地图自身颜色融合质量。</p>
+                <button id="three-dgs-select-init-raw-rgb" class="three-dgs-button three-dgs-button--ghost" type="button">选用这个初始化</button>
                 <div class="three-dgs-mini-grid three-dgs-init-pointcloud-stats">
                   <div>
                     <span>采样 / 总点</span>
@@ -334,6 +338,7 @@ import SiteLayout from "../components/SiteLayout.astro";
                   显示云端按训练相机投影重上色、过滤后的 <code>sparse/0/points3D.ply</code>，
                   用来看初始化颜色是否更贴近本轮训练图像。
                 </p>
+                <button id="three-dgs-select-init-recolored" class="three-dgs-button three-dgs-button--ghost" type="button">选用这个初始化</button>
                 <div class="three-dgs-mini-grid three-dgs-init-pointcloud-stats">
                   <div>
                     <span>采样 / 总点</span>
@@ -353,8 +358,38 @@ import SiteLayout from "../components/SiteLayout.astro";
                   </div>
                 </div>
               </div>
+              <div class="three-dgs-pointcloud-compare-card">
+                <div class="three-dgs-preview-head">
+                  <span>COLMAP/SfM 对齐点云</span>
+                  <strong id="three-dgs-colmap-pointcloud-status">等待生成候选</strong>
+                </div>
+                <canvas id="three-dgs-colmap-pointcloud-canvas" height="420"></canvas>
+                <p>
+                  使用 COLMAP/pycolmap 做视觉 SfM 三角化，再按共同相机中心对齐到当前 map 坐标。
+                  当前系统 COLMAP 已安装，但 Ubuntu 包无 CUDA，真正 PatchMatch MVS 稠密会受限。
+                </p>
+                <button id="three-dgs-select-init-colmap" class="three-dgs-button three-dgs-button--ghost" type="button">选用这个初始化</button>
+                <div class="three-dgs-mini-grid three-dgs-init-pointcloud-stats">
+                  <div>
+                    <span>采样 / 总点</span>
+                    <strong id="three-dgs-colmap-pointcloud-count">-</strong>
+                  </div>
+                  <div>
+                    <span>彩色采样点</span>
+                    <strong id="three-dgs-colmap-pointcloud-colored">-</strong>
+                  </div>
+                  <div>
+                    <span>生成状态</span>
+                    <strong id="three-dgs-colmap-pointcloud-generation">-</strong>
+                  </div>
+                  <div>
+                    <span>当前选用</span>
+                    <strong id="three-dgs-init-pointcloud-selected">-</strong>
+                  </div>
+                </div>
+              </div>
             </div>
-            <p id="three-dgs-init-pointcloud-hint">两个框都支持拖拽旋转，滚轮缩放，双击复位。Z 轴按地图高度向上显示。</p>
+            <p id="three-dgs-init-pointcloud-hint">三个框都支持拖拽旋转，滚轮缩放，双击复位。Z 轴按地图高度向上显示。</p>
           </div>
 
           <div class="three-dgs-mini-grid">
@@ -475,6 +510,8 @@ import SiteLayout from "../components/SiteLayout.astro";
     pointcloudPreview: "/api/three-dgs/pointcloud/preview",
     datasetInspection: "/api/three-dgs/dataset/inspection",
     datasetInitPointcloud: "/api/three-dgs/dataset/init-pointcloud",
+    datasetInitPointcloudSelect: "/api/three-dgs/dataset/init-pointcloud/select",
+    datasetColmapInitGenerate: "/api/three-dgs/dataset/colmap-init/generate",
     prepare: "/api/three-dgs/prepare",
     train: "/api/three-dgs/train/start",
     trainStop: "/api/three-dgs/train/stop",
@@ -538,6 +575,8 @@ import SiteLayout from "../components/SiteLayout.astro";
   const rawRgbPointcloudCanvas = el("three-dgs-raw-rgb-pointcloud-canvas");
   const rawRgbPointcloudStatus = el("three-dgs-raw-rgb-pointcloud-status");
   const recolorPointcloudStatus = el("three-dgs-recolor-pointcloud-status");
+  const colmapPointcloudCanvas = el("three-dgs-colmap-pointcloud-canvas");
+  const colmapPointcloudStatus = el("three-dgs-colmap-pointcloud-status");
 
   let statusData = null;
   let pointcloudFile = null;
@@ -558,6 +597,8 @@ import SiteLayout from "../components/SiteLayout.astro";
   let initPointcloudViewer = null;
   let rawRgbPointcloudPreviewKey = "";
   let rawRgbPointcloudViewer = null;
+  let colmapPointcloudPreviewKey = "";
+  let colmapPointcloudViewer = null;
 
   function formatSize(bytes) {
     const value = Number(bytes || 0);
@@ -965,7 +1006,7 @@ import SiteLayout from "../components/SiteLayout.astro";
     });
     canvas.addEventListener("wheel", (event) => {
       event.preventDefault();
-      state.distance = Math.max(1.15, Math.min(8, state.distance * Math.exp(event.deltaY * 0.0012)));
+      state.distance = Math.max(0.12, Math.min(30, state.distance * Math.exp(event.deltaY * 0.0012)));
       scheduleRender();
     }, { passive: false });
     canvas.addEventListener("dblclick", resetView);
@@ -986,11 +1027,27 @@ import SiteLayout from "../components/SiteLayout.astro";
     return rawRgbPointcloudViewer;
   }
 
+  function ensureColmapPointcloudViewer() {
+    if (colmapPointcloudViewer) return colmapPointcloudViewer;
+    colmapPointcloudViewer = makeInitPointcloudViewer(colmapPointcloudCanvas);
+    return colmapPointcloudViewer;
+  }
+
   function updateRawRgbPointcloudStats(preview) {
     const pointcloud = preview || {};
     el("three-dgs-raw-rgb-pointcloud-count").textContent =
       `${formatCount(pointcloud.sampled_points)} / ${formatCount(pointcloud.total_points)}`;
     el("three-dgs-raw-rgb-pointcloud-colored").textContent =
+      pointcloud.has_color
+        ? `${formatCount(pointcloud.sampled_color_points)} / ${formatCount(pointcloud.sampled_points)}`
+        : "无 RGB 字段";
+  }
+
+  function updateColmapPointcloudStats(preview) {
+    const pointcloud = preview?.pointcloud || preview || {};
+    el("three-dgs-colmap-pointcloud-count").textContent =
+      `${formatCount(pointcloud.sampled_points)} / ${formatCount(pointcloud.total_points)}`;
+    el("three-dgs-colmap-pointcloud-colored").textContent =
       pointcloud.has_color
         ? `${formatCount(pointcloud.sampled_color_points)} / ${formatCount(pointcloud.sampled_points)}`
         : "无 RGB 字段";
@@ -1022,7 +1079,11 @@ import SiteLayout from "../components/SiteLayout.astro";
       "three-dgs-init-pointcloud-count",
       "three-dgs-init-pointcloud-colored",
       "three-dgs-init-pointcloud-colorized",
-      "three-dgs-init-pointcloud-filtered"
+      "three-dgs-init-pointcloud-filtered",
+      "three-dgs-colmap-pointcloud-count",
+      "three-dgs-colmap-pointcloud-colored",
+      "three-dgs-colmap-pointcloud-generation",
+      "three-dgs-init-pointcloud-selected"
     ].forEach((id) => {
       const node = el(id);
       if (node) node.textContent = "-";
@@ -1114,19 +1175,99 @@ import SiteLayout from "../components/SiteLayout.astro";
     }
   }
 
+  async function loadColmapPointcloudPreview(force = false) {
+    const dataset = statusData?.state?.dataset || {};
+    const initState = statusData?.state?.init_pointcloud || {};
+    const colmapCandidate = initState.candidates?.colmap_sfm || null;
+    const generation = initState.colmap_generation || {};
+    if (el("three-dgs-colmap-pointcloud-generation")) {
+      el("three-dgs-colmap-pointcloud-generation").textContent = generation.running
+        ? "生成中"
+        : generation.error_message
+          ? `失败：${generation.error_message}`
+          : colmapCandidate?.exists
+            ? "已生成"
+            : "-";
+    }
+    if (!dataset.prepared || !dataset.path) {
+      colmapPointcloudPreviewKey = "";
+      updateColmapPointcloudStats({});
+      if (colmapPointcloudStatus) colmapPointcloudStatus.textContent = "等待规整数据";
+      return;
+    }
+    if (!colmapCandidate?.exists && !colmapCandidate?.path) {
+      colmapPointcloudPreviewKey = "";
+      updateColmapPointcloudStats({});
+      if (colmapPointcloudStatus) colmapPointcloudStatus.textContent = generation.running ? "正在生成候选..." : "等待生成候选";
+      return;
+    }
+    const key = [
+      dataset.path,
+      colmapCandidate.path || "",
+      colmapCandidate.updated_at_ms || 0,
+      colmapCandidate.point_count || 0
+    ].join(":");
+    if (!force && key === colmapPointcloudPreviewKey) return;
+    colmapPointcloudPreviewKey = key;
+    if (colmapPointcloudStatus) colmapPointcloudStatus.textContent = "正在加载 COLMAP/SfM 候选...";
+    const response = await fetch(`${api.datasetInitPointcloud}?source=colmap_sfm&max_points=90000`, {
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      if (colmapPointcloudStatus) colmapPointcloudStatus.textContent = data.error || "COLMAP/SfM 候选加载失败";
+      throw new Error(data.error || "colmap_init_pointcloud_failed");
+    }
+    const preview = data.preview || {};
+    updateColmapPointcloudStats(preview);
+    ensureColmapPointcloudViewer().setData(preview.pointcloud || {});
+    if (colmapPointcloudStatus) {
+      const pointcloud = preview.pointcloud || {};
+      const colorText = pointcloud.has_color
+        ? ` · RGB ${formatCount(pointcloud.sampled_color_points)} 采样点`
+        : " · 无 RGB 字段";
+      colmapPointcloudStatus.textContent =
+        `${preview.dataset?.scene_name || "当前数据集"} · ${formatCount(pointcloud.sampled_points)} / ${formatCount(pointcloud.total_points)} 点${colorText}`;
+    }
+  }
+
+  function renderInitPointcloudSelection() {
+    const selected = statusData?.state?.init_pointcloud?.selected_source || "recolored";
+    const labels = {
+      raw_rgb: "车端 RGB",
+      recolored: "云端重上色",
+      colmap_sfm: "COLMAP/SfM"
+    };
+    const selectedText = labels[selected] || selected;
+    const selectedNode = el("three-dgs-init-pointcloud-selected");
+    if (selectedNode) selectedNode.textContent = selectedText;
+    [
+      ["three-dgs-select-init-raw-rgb", "raw_rgb"],
+      ["three-dgs-select-init-recolored", "recolored"],
+      ["three-dgs-select-init-colmap", "colmap_sfm"]
+    ].forEach(([id, source]) => {
+      const button = el(id);
+      if (!button) return;
+      button.dataset.selected = selected === source ? "true" : "false";
+      button.textContent = selected === source ? "当前选用" : "选用这个初始化";
+    });
+  }
+
   async function loadInitPointcloudPreview(force = false) {
     if (!isAuthed() || !hasRunPermission()) {
       if (initPointcloudStatus) initPointcloudStatus.textContent = "登录后显示点云对比";
       return;
     }
-    if (initPointcloudStatus) initPointcloudStatus.textContent = "正在加载两种点云...";
+    if (initPointcloudStatus) initPointcloudStatus.textContent = "正在加载三种点云...";
     const results = await Promise.allSettled([
       loadRawRgbPointcloudPreview(force),
-      loadRecolorPointcloudPreview(force)
+      loadRecolorPointcloudPreview(force),
+      loadColmapPointcloudPreview(force)
     ]);
     const failures = results.filter((result) => result.status === "rejected");
     if (failures.length >= results.length) {
-      if (initPointcloudStatus) initPointcloudStatus.textContent = "两种点云都加载失败";
+      if (initPointcloudStatus) initPointcloudStatus.textContent = "三种点云都加载失败";
       throw failures[0].reason;
     }
     if (initPointcloudStatus) {
@@ -1134,6 +1275,20 @@ import SiteLayout from "../components/SiteLayout.astro";
         ? "点云对比部分加载失败，查看各框状态"
         : "点云对比已加载";
     }
+    renderInitPointcloudSelection();
+  }
+
+  async function selectInitPointcloud(source) {
+    const payload = await postJson(api.datasetInitPointcloudSelect, { source });
+    await fetchStatus();
+    await loadInitPointcloudPreview(true).catch(() => {});
+    return payload;
+  }
+
+  async function generateColmapInitPointcloud() {
+    const payload = await postJson(api.datasetColmapInitGenerate, {});
+    await fetchStatus();
+    return payload;
   }
 
   function mergeExtents(...extents) {
@@ -1908,6 +2063,10 @@ import SiteLayout from "../components/SiteLayout.astro";
       "three-dgs-resume-train",
       "three-dgs-sync-result",
       "three-dgs-load-init-pointcloud",
+      "three-dgs-generate-colmap-init",
+      "three-dgs-select-init-raw-rgb",
+      "three-dgs-select-init-recolored",
+      "three-dgs-select-init-colmap",
       "three-dgs-load-train-metrics",
       "three-dgs-load-prepare-log",
       "three-dgs-load-train-log"
@@ -1917,6 +2076,12 @@ import SiteLayout from "../components/SiteLayout.astro";
     });
     el("three-dgs-check-dataset").disabled = !allow || !statusData?.state?.dataset?.prepared;
     el("three-dgs-load-init-pointcloud").disabled = !allow || (!statusData?.state?.dataset?.prepared && !statusData?.state?.uploads?.pointcloud);
+    const initState = statusData?.state?.init_pointcloud || {};
+    const colmapGenerating = Boolean(initState.colmap_generation?.running);
+    el("three-dgs-generate-colmap-init").disabled = !allow || taskBusy || colmapGenerating || !statusData?.state?.dataset?.prepared;
+    el("three-dgs-select-init-raw-rgb").disabled = !allow || taskBusy || colmapGenerating || !statusData?.state?.uploads?.pointcloud || !statusData?.state?.dataset?.prepared;
+    el("three-dgs-select-init-recolored").disabled = !allow || taskBusy || colmapGenerating || !statusData?.state?.dataset?.prepared;
+    el("three-dgs-select-init-colmap").disabled = !allow || taskBusy || colmapGenerating || !initState.candidates?.colmap_sfm;
     el("three-dgs-upload-pointcloud").disabled = !allow || taskBusy || !pointcloudFile;
     el("three-dgs-upload-image-pose").disabled = !allow || taskBusy || !imagePoseFile;
     el("three-dgs-prepare").disabled = !allow || taskBusy || !statusData?.state?.uploads?.pointcloud || !statusData?.state?.uploads?.image_pose;
@@ -2086,6 +2251,18 @@ import SiteLayout from "../components/SiteLayout.astro";
     enabledCamerasText.textContent = enabledNames.length
       ? `车辆级采集（${enabledNames.length} 路可用）`
       : "暂无可用采集通道";
+    const generation = state.init_pointcloud?.colmap_generation || {};
+    const generationNode = el("three-dgs-colmap-pointcloud-generation");
+    if (generationNode) {
+      generationNode.textContent = generation.running
+        ? "生成中"
+        : generation.error_message
+          ? `失败：${generation.error_message}`
+          : state.init_pointcloud?.candidates?.colmap_sfm
+            ? "已生成"
+            : "-";
+    }
+    renderInitPointcloudSelection();
     refreshButtons();
   }
 
@@ -2310,6 +2487,18 @@ import SiteLayout from "../components/SiteLayout.astro";
   );
   el("three-dgs-load-init-pointcloud").addEventListener("click", () =>
     runAction("刷新 RGB 点云对比", () => loadInitPointcloudPreview(true))
+  );
+  el("three-dgs-generate-colmap-init").addEventListener("click", () =>
+    runAction("生成 COLMAP/SfM 候选", generateColmapInitPointcloud)
+  );
+  el("three-dgs-select-init-raw-rgb").addEventListener("click", () =>
+    runAction("选用车端 RGB 点云初始化", () => selectInitPointcloud("raw_rgb"))
+  );
+  el("three-dgs-select-init-recolored").addEventListener("click", () =>
+    runAction("选用云端重上色初始化", () => selectInitPointcloud("recolored"))
+  );
+  el("three-dgs-select-init-colmap").addEventListener("click", () =>
+    runAction("选用 COLMAP/SfM 初始化", () => selectInitPointcloud("colmap_sfm"))
   );
   datasetCanvas?.addEventListener("click", (event) => {
     if (!datasetHitPoints.length) return;
@@ -2833,7 +3022,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   .three-dgs-pointcloud-compare {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     gap: 14px;
   }
 
@@ -2876,6 +3065,12 @@ import SiteLayout from "../components/SiteLayout.astro";
 
   .three-dgs-init-pointcloud-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .three-dgs-pointcloud-compare-card .three-dgs-button[data-selected="true"] {
+    color: #ccfbf1;
+    border-color: rgba(20, 184, 166, 0.58);
+    background: rgba(13, 148, 136, 0.24);
   }
 
   .three-dgs-prepare-progress,
