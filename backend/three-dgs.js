@@ -141,7 +141,14 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const defaultTrainGpu = String(process.env.THREE_DGS_DEFAULT_GPU || '3').trim() || '3';
   const defaultTrainResolution = Math.max(1, Number(process.env.THREE_DGS_DEFAULT_RESOLUTION || 1));
   const remoteStatusPollMs = Number(process.env.THREE_DGS_REMOTE_STATUS_POLL_MS || 30000);
-  const vehicleMapPath = process.env.THREE_DGS_VEHICLE_MAP_PATH || 'map/GlobalMap.pcd';
+  const fallbackVehicleMapPath = process.env.THREE_DGS_VEHICLE_MAP_PATH || 'map/GlobalMap.pcd';
+  const preferredVehicleMapPath = process.env.THREE_DGS_VEHICLE_PREFERRED_MAP_PATH
+    || '/home/nvidia/workspace/devel/config/auto_ad_localization/map/GlobalMap_rgb_corrected_online.pcd';
+  const vehicleMapPathCandidates = uniqueStrings([
+    preferredVehicleMapPath,
+    fallbackVehicleMapPath
+  ]);
+  const vehicleMapPath = vehicleMapPathCandidates[0] || fallbackVehicleMapPath;
   const configuredCameraIds = parseList(process.env.THREE_DGS_CAMERA_IDS || 'camera1,camera2,camera3,camera4');
   const fallbackCalibratedCameras = parseList(process.env.THREE_DGS_FALLBACK_CALIBRATED_CAMERAS || configuredCameraIds.join(','));
   const allowedVehicleIds = parseList(process.env.THREE_DGS_ALLOWED_VEHICLE_IDS || defaultVehicleId);
@@ -173,6 +180,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   let trainStopRequested = false;
   let captureStartInFlight = false;
   let uploadInFlight = false;
+  let mapUpdateInFlight = false;
   const pendingVehicleUploads = new Map();
   const captureStreamClients = new Set();
   let captureMonitorTimer = null;
@@ -241,7 +249,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           vehicle_data: {
             ...createInitialState().vehicle_data,
             ...(parsed.vehicle_data || {}),
-            map_vehicle_path: vehicleMapPath
+            map_vehicle_path: vehicleMapPath,
+            map_vehicle_path_candidates: vehicleMapPathCandidates
           },
           dataset: {
             ...createInitialState().dataset,
@@ -264,7 +273,12 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   }
 
   function normalizeStaleTransientState() {
-    if (['uploading', 'updating_map', 'pulling_image_pose', 'starting_capture'].includes(state.phase)) {
+    const activeTransient =
+      (state.phase === 'uploading' && uploadInFlight) ||
+      (state.phase === 'updating_map' && mapUpdateInFlight) ||
+      (state.phase === 'pulling_image_pose' && uploadInFlight) ||
+      (state.phase === 'starting_capture' && captureStartInFlight);
+    if (!activeTransient && ['uploading', 'updating_map', 'pulling_image_pose', 'starting_capture'].includes(state.phase)) {
       state = {
         ...state,
         phase: state.dataset.prepared ? 'prepared' : 'idle',
@@ -2020,6 +2034,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   function mergeVehicleData(patch) {
     updateNestedState('vehicle_data', {
       map_vehicle_path: vehicleMapPath,
+      map_vehicle_path_candidates: vehicleMapPathCandidates,
       configured_cameras: configuredCameraIds,
       ...patch
     });
@@ -2090,7 +2105,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       uploads.image_pose = await discoverUpload(imagePoseUploadPath, ['.zip', '.tar', '.tar.gz', '.tgz', '.gz', '.json', '.jsonl'], 'image_pose_upload');
     }
     if (!uploads.pointcloud) {
-      uploads.pointcloud = await discoverUpload(pointcloudUploadPath, ['.pcd', '.ply'], 'GlobalMap.pcd');
+      uploads.pointcloud = await discoverUpload(pointcloudUploadPath, ['.pcd', '.ply'], path.basename(vehicleMapPath) || 'GlobalMap.pcd');
     }
     const stalePatch = datasetInvalidationPatchForUploads(uploads);
     const clearStalePatch = state.dataset.prepared &&
@@ -2795,12 +2810,21 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     updateState({
       phase: 'updating_map',
       active_username: auth.username,
-      stage_text: `正在读取 ${vehicleId} 车端地图 map/GlobalMap.pcd 元信息。`,
+      stage_text: `正在读取 ${vehicleId} 车端地图元信息，优先使用 ${path.basename(vehicleMapPath)}。`,
       error_message: null
     });
 
-    const mapInfo = await callVehicleTool(vehicleId, 'map.info', {}, 45).catch((error) => ({ error: error.message }));
-    const mapMeta = await callVehicleTool(vehicleId, 'map.pointcloud.meta', { target: 'global' }, 45);
+    const mapInfo = {
+      skipped: true,
+      reason: 'pointcloud_upload_uses_map_pointcloud_meta',
+      map_path: vehicleMapPath
+    };
+    const mapMeta = await callVehicleTool(vehicleId, 'map.pointcloud.meta', {
+      target: 'global',
+      map_path: vehicleMapPath,
+      path: vehicleMapPath,
+      prefer_rgb_corrected: /rgb/i.test(vehicleMapPath)
+    }, 45);
 
     let pointcloudInfo = await writeArtifactToFile(mapMeta, pointcloudUploadPath, 'GlobalMap.pcd', ['.pcd', '.ply']);
 
@@ -2822,58 +2846,118 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     }
 
     let mapUpload = null;
+    const mapUploadAttempts = [];
     if (!pointcloudInfo) {
-      const ticket = createVehicleUploadTicket({
-        vehicleId,
-        kind: 'pointcloud',
-        fileName: 'GlobalMap.pcd'
-      });
-      mergeVehicleData({
-        vehicle_id: vehicleId,
-        map_upload_pending: true,
-        map_upload_expires_at_ms: ticket.expires_at_ms
-      });
-      const requestMapUpload = (extraArgs = {}) =>
-        callVehicleTool(
+      for (const candidatePath of vehicleMapPathCandidates) {
+        const candidateName = path.basename(candidatePath) || 'GlobalMap.pcd';
+        const candidateExt = path.extname(candidateName).toLowerCase() || '.pcd';
+        const ticketTargetPath = path.join(
+          uploadDir,
+          `pointcloud-upload-${Date.now()}-${crypto.randomBytes(3).toString('hex')}${candidateExt}`
+        );
+        const ticket = createVehicleUploadTicket({
           vehicleId,
-          mapUploadTool,
-          {
-            upload_url: ticket.upload_url,
-            status_url: ticket.status_url,
-            method: 'POST',
-            resume_supported: true,
-            content_range_supported: true,
-            chunk_size_bytes: ticket.chunk_size_bytes,
-            recommended_chunk_size_bytes: ticket.recommended_chunk_size_bytes,
-            ...extraArgs
-          },
-          Number(process.env.THREE_DGS_MAP_UPLOAD_TOOL_TIMEOUT_S || 240)
-        ).catch((error) => ({ error: error.message, tool: mapUploadTool }));
-
-      mapUpload = await requestMapUpload();
-      let uploadedStat = await safeStat(ticket.target_path);
-      if (!uploadedStat && shouldRetryMapUploadWithFallback(mapUpload)) {
+          kind: 'pointcloud',
+          fileName: candidateName,
+          targetPath: ticketTargetPath
+        });
+        const attempt = {
+          path: candidatePath,
+          name: candidateName,
+          target_path: ticket.target_path,
+          started_at_ms: Date.now(),
+          status: 'running'
+        };
+        mapUploadAttempts.push(attempt);
         mergeVehicleData({
           vehicle_id: vehicleId,
-          map_upload_retry_staging_dir: fallbackMapUploadStagingDir
+          map_upload_pending: true,
+          map_upload_vehicle_path: candidatePath,
+          map_upload_attempts: mapUploadAttempts,
+          map_upload_expires_at_ms: ticket.expires_at_ms
         });
         updateState({
           phase: 'updating_map',
-          stage_text: `车端 /media/data staging 无权限，改用 ${fallbackMapUploadStagingDir} 重试 GlobalMap.pcd 上传。`
+          stage_text: `正在请求 ${vehicleId} 上传 ${candidateName}。`
         });
-        mapUpload = await requestMapUpload({
-          staging_dir: fallbackMapUploadStagingDir
-        });
-        uploadedStat = await safeStat(ticket.target_path);
-      }
-      if (uploadedStat) {
-        pointcloudInfo = {
-          name: 'GlobalMap.pcd',
-          path: ticket.target_path,
-          size_bytes: uploadedStat.size,
-          updated_at_ms: uploadedStat.mtimeMs || Date.now()
-        };
-        pendingVehicleUploads.delete(ticket.token);
+        const requestMapUpload = (extraArgs = {}) =>
+          callVehicleTool(
+            vehicleId,
+            mapUploadTool,
+            {
+              upload_url: ticket.upload_url,
+              status_url: ticket.status_url,
+              method: 'POST',
+              target: 'global',
+              map_path: candidatePath,
+              path: candidatePath,
+              prefer_rgb_corrected: /rgb/i.test(candidatePath),
+              resume_supported: true,
+              content_range_supported: true,
+              chunk_size_bytes: ticket.chunk_size_bytes,
+              recommended_chunk_size_bytes: ticket.recommended_chunk_size_bytes,
+              ...extraArgs
+            },
+            Number(process.env.THREE_DGS_MAP_UPLOAD_TOOL_TIMEOUT_S || 240)
+          ).catch((error) => ({ error: error.message, tool: mapUploadTool, path: candidatePath }));
+
+        try {
+          mapUpload = await requestMapUpload();
+          attempt.response = mapUpload;
+          let uploadedStat = await safeStat(ticket.target_path);
+          if (!uploadedStat && shouldRetryMapUploadWithFallback(mapUpload)) {
+            mergeVehicleData({
+              vehicle_id: vehicleId,
+              map_upload_retry_staging_dir: fallbackMapUploadStagingDir,
+              map_upload_attempts: mapUploadAttempts
+            });
+            updateState({
+              phase: 'updating_map',
+              stage_text: `车端 /media/data staging 无权限，改用 ${fallbackMapUploadStagingDir} 重试 ${candidateName} 上传。`
+            });
+            mapUpload = await requestMapUpload({
+              staging_dir: fallbackMapUploadStagingDir
+            });
+            attempt.retry_response = mapUpload;
+            uploadedStat = await safeStat(ticket.target_path);
+          }
+          if (uploadedStat) {
+            const canonicalPath = `${pointcloudUploadPath}${candidateExt}`;
+            await fsp.rm(canonicalPath, { force: true }).catch(() => {});
+            await fsp.rename(ticket.target_path, canonicalPath);
+            const finalStat = await safeStat(canonicalPath);
+            attempt.status = 'uploaded';
+            attempt.completed_at_ms = Date.now();
+            attempt.size_bytes = finalStat?.size || uploadedStat.size;
+            pointcloudInfo = {
+              name: candidateName,
+              path: canonicalPath,
+              size_bytes: finalStat?.size || uploadedStat.size,
+              updated_at_ms: finalStat?.mtimeMs || uploadedStat.mtimeMs || Date.now(),
+              source_vehicle_path: candidatePath
+            };
+            pendingVehicleUploads.delete(ticket.token);
+            break;
+          }
+          attempt.status = 'failed';
+          attempt.completed_at_ms = Date.now();
+          attempt.error = mapUploadErrorMessage(mapUpload) || 'uploaded_file_not_received';
+        } catch (error) {
+          attempt.status = 'failed';
+          attempt.completed_at_ms = Date.now();
+          attempt.error = error.message || 'map_upload_attempt_failed';
+          mapUpload = { error: attempt.error, tool: mapUploadTool, path: candidatePath };
+        } finally {
+          mergeVehicleData({
+            vehicle_id: vehicleId,
+            map_upload_attempts: mapUploadAttempts
+          });
+          pendingVehicleUploads.delete(ticket.token);
+          if (!pointcloudInfo) {
+            await fsp.rm(ticket.target_path, { force: true }).catch(() => {});
+            await fsp.rm(`${ticket.target_path}.part`, { force: true }).catch(() => {});
+          }
+        }
       }
     }
 
@@ -2890,8 +2974,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       updateState({
         phase: state.uploads.image_pose ? 'idle' : 'idle',
         stage_text: mapUploadError
-          ? '已读取车端 GlobalMap.pcd 元信息，但车端上传 GlobalMap.pcd 失败。'
-          : '已向车端下发 GlobalMap.pcd 上传地址，等待车端上传文件。',
+          ? '已读取车端地图元信息，但车端上传点云地图失败。'
+          : '已向车端下发点云地图上传地址，等待车端上传文件。',
         error_message: mapUploadError ? mapUploadError : null
       });
       if (mapUploadError) {
@@ -2904,7 +2988,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
     updateState({
       phase: state.dataset.prepared ? 'prepared' : 'idle',
-      stage_text: '车端 GlobalMap.pcd 已更新到云端服务器。',
+      stage_text: `车端 ${pointcloudInfo.name || '点云地图'} 已更新到云端服务器。`,
       uploads: {
         ...state.uploads,
         pointcloud: pointcloudInfo
@@ -3473,7 +3557,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
   async function handleUpload(req, res, kind) {
     await syncUploadedArtifacts();
-    if (captureStartInFlight || uploadInFlight || state.prepare.running || state.train.running) {
+    if (captureStartInFlight || uploadInFlight || mapUpdateInFlight || state.prepare.running || state.train.running) {
       return res.status(409).json({
         ok: false,
         error: 'three_dgs_busy'
@@ -4691,7 +4775,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
         default_filter_visible_points: filterVisibleInitialPoints,
         configured_camera_ids: configuredCameraIds,
         fallback_calibrated_cameras: fallbackCalibratedCameras,
-        vehicle_map_path: vehicleMapPath
+        vehicle_map_path: vehicleMapPath,
+        vehicle_map_path_candidates: vehicleMapPathCandidates
       })
     );
   });
@@ -5116,6 +5201,50 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   });
 
   app.post('/api/three-dgs/map/update', requireThreeDgsAuth, async (req, res) => {
+    let vehicleId;
+    try {
+      vehicleId = resolveThreeDgsVehicleId(req.body?.vehicle_id);
+    } catch (error) {
+      return res.status(error.status || 400).json(vehicleErrorBody(error));
+    }
+    if (mapUpdateInFlight || captureStartInFlight || uploadInFlight || state.prepare.running || state.train.running) {
+      return res.status(409).json({
+        ok: false,
+        error: 'three_dgs_busy',
+        state
+      });
+    }
+    if (state.capture.active) {
+      return res.status(409).json({
+        ok: false,
+        error: 'three_dgs_capture_must_stop_before_map_upload',
+        state
+      });
+    }
+    mapUpdateInFlight = true;
+    updateState({
+      phase: 'updating_map',
+      active_username: req.threeDgsAuth.username,
+      stage_text: `已下发 ${vehicleId} 点云地图更新任务，等待车端返回。`,
+      error_message: null
+    });
+    setImmediate(() => {
+      updateMapFromVehicle(req.threeDgsAuth, vehicleId)
+        .catch((error) => {
+          updateState({
+            phase: state.dataset.prepared ? 'prepared' : 'idle',
+            stage_text: '更新车端点云地图失败。',
+            error_message: error.message || 'three_dgs_map_update_failed'
+          });
+        })
+        .finally(() => {
+          mapUpdateInFlight = false;
+        });
+    });
+    return res.status(202).json(makeStatusResponse(req.threeDgsAuth));
+  });
+
+  app.post('/api/three-dgs/map/update-sync', requireThreeDgsAuth, async (req, res) => {
     let vehicleId;
     try {
       vehicleId = resolveThreeDgsVehicleId(req.body?.vehicle_id);
