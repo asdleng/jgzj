@@ -1755,6 +1755,75 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     }
   }
 
+  async function selectPreparedDatasetTask(auth, payload = {}) {
+    const requestedSceneName = sanitizeSceneName(payload.scene_name || '');
+    const requestedPath = payload.path
+      ? path.resolve(String(payload.path))
+      : requestedSceneName
+        ? path.join(datasetRoot, requestedSceneName)
+        : '';
+    if (!requestedPath) {
+      const error = new Error('three_dgs_dataset_select_path_required');
+      error.status = 400;
+      throw error;
+    }
+    const datasetPath = path.resolve(requestedPath);
+    const root = path.resolve(datasetRoot);
+    if (datasetPath !== root && !datasetPath.startsWith(`${root}${path.sep}`)) {
+      const error = new Error('three_dgs_dataset_path_outside_runtime');
+      error.status = 400;
+      throw error;
+    }
+    const summaryPath = path.join(datasetPath, 'three_dgs_dataset_summary.json');
+    const imagesPath = path.join(datasetPath, 'sparse', '0', 'images.txt');
+    if (!(await safeStat(summaryPath)) || !(await safeStat(imagesPath))) {
+      const error = new Error('three_dgs_dataset_not_prepared');
+      error.status = 404;
+      throw error;
+    }
+    const summary = JSON.parse(await fsp.readFile(summaryPath, 'utf8'));
+    const sceneName = sanitizeSceneName(requestedSceneName || summary.scene_name || path.basename(datasetPath)) || path.basename(datasetPath);
+    const initial = createInitialState();
+    const now = Date.now();
+    updateState({
+      phase: 'prepared',
+      active_username: auth?.username || state.active_username || null,
+      stage_text: `已选择已有 3DGS 数据集：${sceneName}。`,
+      error_message: null,
+      dataset: {
+        ...initial.dataset,
+        prepared: true,
+        scene_name: sceneName,
+        path: datasetPath,
+        summary,
+        prepared_at_ms: now,
+        stale_reason: null,
+        stale_at_ms: null,
+        previous_scene_name: state.dataset?.scene_name || null,
+        previous_path: state.dataset?.path || null
+      },
+      prepare: initial.prepare,
+      train: {
+        ...initial.train,
+        gpu: String(payload.gpu ?? state.train?.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu,
+        iterations: Number(payload.iterations || 10000),
+        resolution: Number(payload.resolution || defaultTrainResolution)
+      },
+      viewer: initial.viewer,
+      evaluation: initial.evaluation,
+      viewer_camera: {
+        manual: null,
+        updated_at_ms: now,
+        updated_by: auth?.username || null
+      }
+    });
+    return {
+      scene_name: sceneName,
+      path: datasetPath,
+      summary
+    };
+  }
+
   function sanitizeSceneName(value) {
     return String(value || '')
       .trim()
@@ -6505,6 +6574,19 @@ if __name__ == "__main__":
       return res.status(error.status || 500).json({
         ok: false,
         error: error.message || 'dataset_init_pointcloud_failed'
+      });
+    }
+  });
+
+  app.post('/api/three-dgs/dataset/select-prepared', requireThreeDgsAuth, async (req, res) => {
+    try {
+      const dataset = await selectPreparedDatasetTask(req.threeDgsAuth, req.body || {});
+      return res.json(makeStatusResponse(req.threeDgsAuth, { dataset }));
+    } catch (error) {
+      return res.status(error.status || 400).json({
+        ok: false,
+        error: error.message || 'three_dgs_dataset_select_failed',
+        state: responseState()
       });
     }
   });
