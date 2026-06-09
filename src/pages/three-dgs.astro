@@ -534,6 +534,12 @@ import SiteLayout from "../components/SiteLayout.astro";
                 <a id="three-dgs-open-viewer" class="three-dgs-button three-dgs-button--ghost" href="#" target="_blank" rel="noreferrer">新窗口查看</a>
               </div>
             </div>
+            <div class="three-dgs-viewer-track-controls" aria-label="SuperSplat 相机轨迹">
+              <button class="three-dgs-button three-dgs-button--ghost" type="button" data-three-dgs-viewer-track="camera1">camera1 前</button>
+              <button class="three-dgs-button three-dgs-button--ghost" type="button" data-three-dgs-viewer-track="camera2">camera2 后</button>
+              <button class="three-dgs-button three-dgs-button--ghost" type="button" data-three-dgs-viewer-track="camera3">camera3 左</button>
+              <button class="three-dgs-button three-dgs-button--ghost" type="button" data-three-dgs-viewer-track="camera4">camera4 右</button>
+            </div>
             <iframe id="three-dgs-viewer-frame" title="3DGS SuperSplat Viewer" hidden></iframe>
             <div class="three-dgs-viewer-camera">
               <div>
@@ -603,6 +609,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   const viewerOpen = el("three-dgs-open-viewer");
   const viewerCameraSummary = el("three-dgs-viewer-camera-summary");
   const viewerCameraJson = el("three-dgs-viewer-camera-json");
+  const viewerTrajectoryButtons = Array.from(document.querySelectorAll("[data-three-dgs-viewer-track]"));
   const captureStreamText = el("three-dgs-capture-stream");
   const captureCameraCounts = el("three-dgs-capture-camera-counts");
   const uploadProgress = el("three-dgs-upload-progress");
@@ -657,6 +664,7 @@ import SiteLayout from "../components/SiteLayout.astro";
   let evaluationData = null;
   let lastTrainMetricsFetchMs = 0;
   let lastViewerCameraState = null;
+  let selectedViewerTrajectory = "camera1";
   let initPointcloudPreviewKey = "";
   let initPointcloudViewer = null;
   let rawRgbPointcloudPreviewKey = "";
@@ -705,17 +713,30 @@ import SiteLayout from "../components/SiteLayout.astro";
     return `${number.toFixed(2)} m`;
   }
 
+  function validViewerTrajectory(value) {
+    const camera = String(value || "").trim().toLowerCase();
+    return ["camera1", "camera2", "camera3", "camera4"].includes(camera) ? camera : "camera1";
+  }
+
+  function renderViewerTrajectoryButtons() {
+    const selected = validViewerTrajectory(selectedViewerTrajectory);
+    for (const button of viewerTrajectoryButtons) {
+      button.dataset.selected = button.dataset.threeDgsViewerTrack === selected ? "true" : "false";
+    }
+  }
+
   function viewerUrlFor(pointCloudUrl) {
     if (!pointCloudUrl) return "";
     const state = statusData?.state || {};
+    const trajectoryCamera = validViewerTrajectory(selectedViewerTrajectory);
     const settingsKey = [
       state.dataset?.prepared_at_ms || 0,
       state.viewer?.synced_at_ms || 0,
       state.train?.run_id || "",
-      state.viewer_camera?.manual?.saved_at_ms || 0
+      trajectoryCamera
     ].join("-");
-    const settingsUrl = `/api/three-dgs/viewer/settings?key=${encodeURIComponent(settingsKey)}`;
-    return `/supersplat-viewer/?webgl&noanim&content=${encodeURIComponent(pointCloudUrl)}&settings=${encodeURIComponent(settingsUrl)}`;
+    const settingsUrl = `/api/three-dgs/viewer/settings?key=${encodeURIComponent(settingsKey)}&trajectory_camera=${encodeURIComponent(trajectoryCamera)}`;
+    return `/supersplat-viewer/?webgl&content=${encodeURIComponent(pointCloudUrl)}&settings=${encodeURIComponent(settingsUrl)}`;
   }
 
   function parseViewerVector(text) {
@@ -2439,10 +2460,11 @@ import SiteLayout from "../components/SiteLayout.astro";
     }
 
     const viewer = state.viewer || {};
-    const manualViewerCamera = state.viewer_camera?.manual || null;
+    renderViewerTrajectoryButtons();
     const viewerUrl = viewerUrlFor(viewer.point_cloud_url);
     if (viewerUrl) {
-      viewerStatus.textContent = `${viewer.run_id || train.run_id || "-"} · ${formatSize(viewer.size_bytes)} · 已同步`;
+      const trajectoryCamera = validViewerTrajectory(selectedViewerTrajectory);
+      viewerStatus.textContent = `${viewer.run_id || train.run_id || "-"} · ${formatSize(viewer.size_bytes)} · ${trajectoryCamera} 轨迹`;
       viewerOpen.href = viewerUrl;
       viewerOpen.removeAttribute("aria-disabled");
       const absoluteViewerUrl = new URL(viewerUrl, window.location.origin).href;
@@ -2450,11 +2472,9 @@ import SiteLayout from "../components/SiteLayout.astro";
         viewerFrame.src = viewerUrl;
       }
       viewerFrame.hidden = false;
-      if (!lastViewerCameraState && manualViewerCamera?.position && manualViewerCamera?.focus) {
-        const position = manualViewerCamera.position.map((value) => Number(value).toFixed(3)).join(", ");
-        const focus = manualViewerCamera.focus.map((value) => Number(value).toFixed(3)).join(", ");
-        viewerCameraSummary.textContent = `默认锚点 position [${position}] · focus [${focus}]`;
-        viewerCameraJson.textContent = JSON.stringify(manualViewerCamera, null, 2);
+      if (!lastViewerCameraState) {
+        viewerCameraSummary.textContent = `${trajectoryCamera} COLMAP 相机轨迹`;
+        viewerCameraJson.textContent = "当前 viewer 使用相机轨迹，不再把轨迹锚定到手动默认视角。";
       }
     } else {
       viewerStatus.textContent = train.remote_run_path ? "可同步当前训练结果" : "等待训练输出";
@@ -2790,6 +2810,13 @@ import SiteLayout from "../components/SiteLayout.astro";
   el("three-dgs-reset-viewer-camera").addEventListener("click", () =>
     runAction("清除默认视角", resetViewerCameraState)
   );
+  for (const button of viewerTrajectoryButtons) {
+    button.addEventListener("click", () => {
+      selectedViewerTrajectory = validViewerTrajectory(button.dataset.threeDgsViewerTrack);
+      lastViewerCameraState = null;
+      render();
+    });
+  }
   el("three-dgs-load-prepare-log").addEventListener("click", () => runAction("读取准备日志", () => loadLog(api.prepareLog)));
   el("three-dgs-load-train-log").addEventListener("click", () =>
     runAction("读取训练日志", async () => {
@@ -3463,6 +3490,18 @@ import SiteLayout from "../components/SiteLayout.astro";
     align-items: center;
     justify-content: space-between;
     gap: 14px;
+  }
+
+  .three-dgs-viewer-track-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .three-dgs-viewer-track-controls .three-dgs-button[data-selected="true"] {
+    color: #ccfbf1;
+    border-color: rgba(20, 184, 166, 0.58);
+    background: rgba(13, 148, 136, 0.24);
   }
 
   .three-dgs-viewer-head span {

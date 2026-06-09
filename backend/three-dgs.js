@@ -204,7 +204,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const colmapInitMaxImageSize = Math.max(320, Number(process.env.THREE_DGS_COLMAP_INIT_MAX_IMAGE_SIZE || 1100));
   const colmapInitMaxNumFeatures = Math.max(1000, Number(process.env.THREE_DGS_COLMAP_INIT_MAX_NUM_FEATURES || 10000));
   const defaultCheckpointInterval = Math.max(100, Number(process.env.THREE_DGS_CHECKPOINT_INTERVAL || 1000));
-  const viewerCameraForwardSign = Number(process.env.THREE_DGS_VIEWER_CAMERA_FORWARD_SIGN || -1) >= 0 ? 1 : -1;
+  const viewerCameraForwardSign = Number(process.env.THREE_DGS_VIEWER_CAMERA_FORWARD_SIGN || 1) >= 0 ? 1 : -1;
 
   let state = createInitialState();
   let statePersistTimer = null;
@@ -1452,25 +1452,6 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     };
   }
 
-  function currentManualViewerCamera() {
-    const manual = state.viewer_camera?.manual || null;
-    if (manual?.run_id && state.viewer?.run_id && manual.run_id !== state.viewer.run_id) {
-      return null;
-    }
-    if (manual?.dataset_scene_name && state.dataset?.scene_name && manual.dataset_scene_name !== state.dataset.scene_name) {
-      return null;
-    }
-    const position = finiteViewerVector(manual?.position);
-    const focus = finiteViewerVector(manual?.focus || manual?.target);
-    if (!position || !focus) return null;
-    return {
-      ...manual,
-      position,
-      focus,
-      fov: clampViewerFov(manual?.fov, 68)
-    };
-  }
-
   function makeSuperSplatSettings(initialCamera, source = 'fallback', overrides = {}) {
     return {
       version: 2,
@@ -1528,8 +1509,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   function cameraForwardFromQvec(qvec) {
     const rotation = qvecToRotmat(qvec);
     return normalizeVector([
-      viewerCameraForwardSign * rotation[2][0],
-      viewerCameraForwardSign * rotation[2][1],
+      viewerCameraForwardSign * rotation[0][2],
+      viewerCameraForwardSign * rotation[1][2],
       viewerCameraForwardSign * rotation[2][2]
     ]);
   }
@@ -1563,38 +1544,29 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return [...new Set(indices)];
   }
 
-  function addVectorOffset(vector, offset) {
-    return [
-      vector[0] + offset[0],
-      vector[1] + offset[1],
-      vector[2] + offset[2]
-    ];
+  function normalizeViewerTrajectoryCamera(value, fallback = 'camera1') {
+    const cameraName = String(value || '').trim().toLowerCase();
+    return configuredCameraIds.includes(cameraName) ? cameraName : fallback;
   }
 
-  function makeVehicleTrajectoryTrack(frames, extent, fov = 68, anchorCamera = null) {
+  function orderedViewerTrajectoryCameraNames(preferredCamera, availableCameraNames = []) {
+    const preferred = normalizeViewerTrajectoryCamera(preferredCamera);
+    return uniqueStrings([
+      preferred,
+      ...configuredCameraIds,
+      ...availableCameraNames
+    ]);
+  }
+
+  function makeVehicleTrajectoryTrack(frames, extent, fov = 68, options = {}) {
     const maxKeyframes = Number(process.env.THREE_DGS_VIEWER_ANIM_MAX_KEYFRAMES || 160);
     const indices = sampleFrameIndices(frames.length, maxKeyframes);
     if (indices.length < 2) {
       return null;
     }
     const lookDistance = viewerLookDistanceFromExtent(extent);
-    const firstFrame = frames[indices[0]];
-    const firstTarget = cameraOpticalTarget(firstFrame, lookDistance);
-    const positionOffset = anchorCamera
-      ? [
-          anchorCamera.position[0] - firstFrame.position[0],
-          anchorCamera.position[1] - firstFrame.position[1],
-          anchorCamera.position[2] - firstFrame.position[2]
-        ]
-      : [0, 0, 0];
-    const targetOffset = anchorCamera
-      ? [
-          anchorCamera.focus[0] - firstTarget[0],
-          anchorCamera.focus[1] - firstTarget[1],
-          anchorCamera.focus[2] - firstTarget[2]
-        ]
-      : [0, 0, 0];
-    const trackFov = clampViewerFov(anchorCamera?.fov, fov);
+    const cameraName = String(options.cameraName || 'camera').trim() || 'camera';
+    const trackFov = clampViewerFov(options.fov, fov);
     const duration = Math.max(12, Math.min(45, frames.length / 8));
     const times = indices.map((_, index) => (index / Math.max(1, indices.length - 1)) * duration);
     const positions = [];
@@ -1603,15 +1575,13 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
 
     for (const frameIndex of indices) {
       const frame = frames[frameIndex];
-      const position = addVectorOffset(frame.position, positionOffset);
-      const target = addVectorOffset(cameraOpticalTarget(frame, lookDistance), targetOffset);
-      positions.push(...roundViewerVector(position));
-      targets.push(...roundViewerVector(target));
+      positions.push(...roundViewerVector(frame.position));
+      targets.push(...roundViewerVector(cameraOpticalTarget(frame, lookDistance)));
       fovs.push(trackFov);
     }
 
     return {
-      name: 'vehicle-camera-trajectory',
+      name: `${cameraName}-camera-trajectory`,
       duration: roundViewerNumber(duration),
       frameRate: 1,
       loopMode: 'none',
@@ -1627,19 +1597,21 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       },
       jgzj: {
         source: 'colmap_images_txt',
+        camera_name: cameraName,
+        strict_camera_pose: true,
         original_frame_count: frames.length,
         keyframe_count: indices.length,
         look_distance_m: roundViewerNumber(lookDistance),
         camera_forward_sign: viewerCameraForwardSign,
         camera_forward_axis: viewerCameraForwardSign > 0 ? '+camera_z' : '-camera_z',
-        anchored_to_manual_viewer_camera: Boolean(anchorCamera),
-        position_offset: roundViewerVector(positionOffset),
-        target_offset: roundViewerVector(targetOffset)
+        camera_forward_space: 'world_from_camera_rotation_transpose',
+        first_image_name: frames[indices[0]]?.name || null,
+        last_image_name: frames[indices[indices.length - 1]]?.name || null
       }
     };
   }
 
-  async function buildTrajectoryViewerCamera() {
+  async function buildTrajectoryViewerCamera(options = {}) {
     const datasetPath = resolveCurrentDatasetPath();
     const imagesPath = path.join(datasetPath, 'sparse', '0', 'images.txt');
     const allFrames = parseColmapImagesText(await fsp.readFile(imagesPath, 'utf8')).map((frame) => ({
@@ -1649,9 +1621,28 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     if (!allFrames.length) {
       throw new Error('three_dgs_dataset_has_no_camera_frames');
     }
-    const trajectoryCamera = String(process.env.THREE_DGS_VIEWER_TRAJECTORY_CAMERA || 'camera1').trim() || 'camera1';
-    const selectedFrames = allFrames.filter((frame) => frame.camera_name === trajectoryCamera);
-    const frames = selectedFrames.length >= 2 ? selectedFrames : allFrames;
+    const cameraNamesInDataset = uniqueStrings(allFrames.map((frame) => frame.camera_name).filter(Boolean));
+    const requestedTrajectoryCamera = normalizeViewerTrajectoryCamera(
+      options.trajectoryCamera || process.env.THREE_DGS_VIEWER_TRAJECTORY_CAMERA || 'camera1'
+    );
+    const trajectoryCameraNames = orderedViewerTrajectoryCameraNames(requestedTrajectoryCamera, cameraNamesInDataset);
+    const framesByCamera = new Map();
+    for (const cameraName of cameraNamesInDataset) {
+      const frames = allFrames
+        .filter((frame) => frame.camera_name === cameraName)
+        .sort((a, b) => frameSortValue(a) - frameSortValue(b));
+      if (frames.length >= 2) {
+        framesByCamera.set(cameraName, frames);
+      }
+    }
+    const allFramesOrdered = [...allFrames].sort((a, b) => frameSortValue(a) - frameSortValue(b));
+    const selectedFrames = framesByCamera.get(requestedTrajectoryCamera) || framesByCamera.get(trajectoryCameraNames[0]) || allFramesOrdered;
+    const selectedCameraName = framesByCamera.has(requestedTrajectoryCamera)
+      ? requestedTrajectoryCamera
+      : framesByCamera.has(trajectoryCameraNames[0])
+        ? trajectoryCameraNames[0]
+        : 'all';
+    const frames = selectedFrames.length >= 2 ? selectedFrames : allFramesOrdered;
 
     const positions = frames.map((frame) => frame.position);
     const extent = summarizePreviewPoints(positions);
@@ -1664,7 +1655,6 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const firstFrame = frames[0];
     const lookDistance = viewerLookDistanceFromExtent(extent);
     const firstCameraTarget = cameraOpticalTarget(firstFrame, lookDistance);
-    const manualCamera = currentManualViewerCamera();
     const start = positions[0];
     const end = positions[positions.length - 1];
     let directionX = end[0] - start[0];
@@ -1686,26 +1676,30 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     const sideX = -directionY;
     const sideY = directionX;
     const height = Math.max(3, distance * 0.35, spanZ * 2);
+    const animTracks = [];
+    for (const cameraName of trajectoryCameraNames) {
+      const cameraFrames = framesByCamera.get(cameraName);
+      if (!cameraFrames?.length) continue;
+      const cameraExtent = summarizePreviewPoints(cameraFrames.map((frame) => frame.position));
+      const track = makeVehicleTrajectoryTrack(cameraFrames, cameraExtent, 68, { cameraName });
+      if (track) animTracks.push(track);
+    }
+    if (!animTracks.length) {
+      const track = makeVehicleTrajectoryTrack(frames, extent, 68, { cameraName: selectedCameraName });
+      if (track) animTracks.push(track);
+    }
 
     return {
-      position: roundViewerVector(manualCamera?.position || firstFrame.position),
-      target: roundViewerVector(manualCamera?.focus || firstCameraTarget),
-      fov: clampViewerFov(manualCamera?.fov, 68),
+      position: roundViewerVector(firstFrame.position),
+      target: roundViewerVector(firstCameraTarget),
+      fov: clampViewerFov(null, 68),
       frame_count: frames.length,
       all_frame_count: allFrames.length,
-      trajectory_camera: selectedFrames.length >= 2 ? trajectoryCamera : 'all',
-      anim_track: makeVehicleTrajectoryTrack(frames, extent, 68, manualCamera),
+      trajectory_camera: selectedCameraName,
+      requested_trajectory_camera: requestedTrajectoryCamera,
+      anim_tracks: animTracks,
       first_camera_forward: roundViewerVector(cameraForwardFromQvec(firstFrame.qvec)),
-      manual_camera: manualCamera
-        ? {
-            position: roundViewerVector(manualCamera.position),
-            focus: roundViewerVector(manualCamera.focus),
-            fov: roundViewerNumber(manualCamera.fov),
-            run_id: manualCamera.run_id || null,
-            saved_at_ms: manualCamera.saved_at_ms || null,
-            saved_by: manualCamera.saved_by || null
-          }
-        : null,
+      manual_camera: null,
       overview_camera: {
         position: roundViewerVector([
           target[0] + sideX * distance,
@@ -1725,21 +1719,31 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     };
   }
 
-  async function buildViewerSettings() {
+  async function buildViewerSettings(options = {}) {
     try {
-      const camera = await buildTrajectoryViewerCamera();
+      const camera = await buildTrajectoryViewerCamera(options);
       const settings = makeSuperSplatSettings({
         position: camera.position,
         target: camera.target,
         fov: camera.fov
-      }, 'trajectory', camera.anim_track ? {
-        animTracks: [camera.anim_track],
+      }, 'trajectory', camera.anim_tracks?.length ? {
+        animTracks: camera.anim_tracks,
         startMode: 'animTrack'
       } : {});
       settings.jgzj.frame_count = camera.frame_count;
       settings.jgzj.all_frame_count = camera.all_frame_count;
       settings.jgzj.trajectory_camera = camera.trajectory_camera;
-      settings.jgzj.animation = camera.anim_track?.jgzj || null;
+      settings.jgzj.requested_trajectory_camera = camera.requested_trajectory_camera;
+      settings.jgzj.animation = camera.anim_tracks?.[0]?.jgzj || null;
+      settings.jgzj.trajectory_tracks = (camera.anim_tracks || []).map((track) => ({
+        name: track.name,
+        camera_name: track.jgzj?.camera_name || null,
+        keyframe_count: track.jgzj?.keyframe_count || 0,
+        original_frame_count: track.jgzj?.original_frame_count || 0,
+        strict_camera_pose: Boolean(track.jgzj?.strict_camera_pose),
+        first_image_name: track.jgzj?.first_image_name || null,
+        last_image_name: track.jgzj?.last_image_name || null
+      }));
       settings.jgzj.first_camera_forward = camera.first_camera_forward;
       settings.jgzj.manual_camera = camera.manual_camera;
       settings.jgzj.extent = camera.extent;
@@ -6553,9 +6557,11 @@ if __name__ == "__main__":
     }
   });
 
-  app.get('/api/three-dgs/viewer/settings', requireThreeDgsAuth, async (_req, res) => {
+  app.get('/api/three-dgs/viewer/settings', requireThreeDgsAuth, async (req, res) => {
     try {
-      const settings = await buildViewerSettings();
+      const settings = await buildViewerSettings({
+        trajectoryCamera: req.query.trajectory_camera
+      });
       res.setHeader('Cache-Control', 'no-store');
       return res.json(settings);
     } catch (error) {
