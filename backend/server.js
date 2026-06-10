@@ -5668,14 +5668,9 @@ function loginRedirectUrl(req) {
 
 const privateNavigationItems = [
   {
-    href: '/app/edge-cloud-ai-inspection',
-    label: 'AI检测',
-    permissions: ['ai:detect', 'ai:history:read']
-  },
-  {
-    href: '/app/intelligent-ai-dialogue',
-    label: 'AI对话',
-    permissions: ['ai:chat']
+    href: '/app/robot-ai-workbench',
+    label: 'AI工作台',
+    permissions: ['ai:chat', 'ai:detect', 'ai:history:read']
   },
   {
     href: '/app/cloud-operations',
@@ -5706,16 +5701,6 @@ const privateNavigationItems = [
 
 const gatedSitePages = [
   {
-    paths: ['/edge-cloud-ai-inspection', '/edge-cloud-ai-inspection/'],
-    permissions: ['ai:detect', 'ai:history:read'],
-    redirectTo: '/app/edge-cloud-ai-inspection'
-  },
-  {
-    paths: ['/intelligent-ai-dialogue', '/intelligent-ai-dialogue/'],
-    permissions: ['ai:chat'],
-    redirectTo: '/app/intelligent-ai-dialogue'
-  },
-  {
     paths: ['/cloud-operations', '/cloud-operations/'],
     permissions: ['vehicle:read', 'runtime:read'],
     redirectTo: '/app/cloud-operations'
@@ -5739,6 +5724,17 @@ const gatedSitePages = [
     paths: ['/distributed-map-management', '/distributed-map-management/'],
     permissions: ['vehicle:path:write'],
     redirectTo: '/app/distributed-map-management'
+  }
+];
+
+const publicRedirectPages = [
+  {
+    paths: ['/intelligent-ai-dialogue', '/intelligent-ai-dialogue/'],
+    redirectTo: '/robot-capabilities#ai-dialogue'
+  },
+  {
+    paths: ['/edge-cloud-ai-inspection', '/edge-cloud-ai-inspection/'],
+    redirectTo: '/robot-capabilities#ai-inspection'
   }
 ];
 
@@ -5766,6 +5762,11 @@ app.get('/api/site/private-navigation', async (req, res) => {
 
 const protectedAppPages = [
   {
+    paths: ['/app/robot-ai-workbench', '/app/robot-ai-workbench/'],
+    file: 'app/robot-ai-workbench/index.html',
+    permissions: ['ai:chat', 'ai:detect', 'ai:history:read']
+  },
+  {
     paths: ['/app/cloud-operations', '/app/cloud-operations/'],
     file: 'app/cloud-operations/index.html',
     permissions: ['vehicle:read', 'runtime:read']
@@ -5777,12 +5778,12 @@ const protectedAppPages = [
   },
   {
     paths: ['/app/intelligent-ai-dialogue', '/app/intelligent-ai-dialogue/'],
-    file: 'app/intelligent-ai-dialogue/index.html',
+    file: 'app/robot-ai-workbench/index.html',
     permissions: ['ai:chat']
   },
   {
     paths: ['/app/edge-cloud-ai-inspection', '/app/edge-cloud-ai-inspection/'],
-    file: 'app/edge-cloud-ai-inspection/index.html',
+    file: 'app/robot-ai-workbench/index.html',
     permissions: ['ai:detect', 'ai:history:read']
   },
   {
@@ -5861,6 +5862,12 @@ protectedAppPages.forEach((page) => {
     }
 
     return res.sendFile(path.join(webRoot, page.file));
+  });
+});
+
+publicRedirectPages.forEach((page) => {
+  app.get(page.paths, (_req, res) => {
+    res.redirect(301, page.redirectTo);
   });
 });
 

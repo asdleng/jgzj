@@ -6,6 +6,7 @@ export const siteDescription =
 export const publicNavigationItems = [
   { href: "/", label: "公司首页" },
   { href: "/l4-autonomous-driving", label: "L4级园区自动驾驶" },
+  { href: "/robot-capabilities", label: "机器人能力" },
   { href: "/cases-awards", label: "案例与奖项" },
   { href: "/login", label: "登录" }
 ];
@@ -167,6 +168,105 @@ export const cases = [
     text: "结合导览、播报和互动，强化用户体验。",
     img: "/assets/fallback/case-campus-800.jpg",
     webp: "/assets/optimized/case-campus-800.webp"
+  }
+];
+
+export const sceneCaseGallery = [
+  {
+    title: "福田区委大院",
+    type: "政务机关",
+    text: "机关园区内巡逻、导览和移动信息触达。",
+    img: "/assets/fallback/case-gallery-futian-committee-960.jpg",
+    webp: "/assets/optimized/case-gallery-futian-committee-960.webp",
+    alt: "白泽智 AI 服务机器人在福田区委大院场景"
+  },
+  {
+    title: "市民中心",
+    type: "城市地标",
+    text: "面向公共空间的人流引导与形象展示。",
+    img: "/assets/fallback/case-gallery-civic-center-960.jpg",
+    webp: "/assets/optimized/case-gallery-civic-center-960.webp",
+    alt: "白泽智 AI 服务机器人在深圳市民中心场景"
+  },
+  {
+    title: "世界之窗",
+    type: "文旅景区",
+    text: "景区入口与开放广场的移动宣传服务。",
+    img: "/assets/fallback/case-gallery-window-world-960.jpg",
+    webp: "/assets/optimized/case-gallery-window-world-960.webp",
+    alt: "白泽智 AI 服务机器人在世界之窗场景"
+  },
+  {
+    title: "深圳欢乐谷",
+    type: "文旅景区",
+    text: "主题乐园游客动线上的安全提示与导览。",
+    img: "/assets/fallback/case-gallery-happy-valley-960.jpg",
+    webp: "/assets/optimized/case-gallery-happy-valley-960.webp",
+    alt: "白泽智 AI 服务机器人在深圳欢乐谷场景"
+  },
+  {
+    title: "深圳湾体育中心",
+    type: "大型场馆",
+    text: "大型场馆外场巡逻与活动期间信息触达。",
+    img: "/assets/fallback/case-gallery-bay-sports-center-960.jpg",
+    webp: "/assets/optimized/case-gallery-bay-sports-center-960.webp",
+    alt: "白泽智 AI 服务机器人在深圳湾体育中心场景"
+  },
+  {
+    title: "坪山城投智园",
+    type: "产业园区",
+    text: "园区道路、活动会场和展陈空间服务。",
+    img: "/assets/fallback/case-gallery-chengtou-park-960.jpg",
+    webp: "/assets/optimized/case-gallery-chengtou-park-960.webp",
+    alt: "白泽智 AI 服务机器人在坪山城投智园场景"
+  },
+  {
+    title: "华强科创广场",
+    type: "商业园区",
+    text: "商业街区中的中轴巡游与内容发布。",
+    img: "/assets/fallback/case-gallery-huaqiang-plaza-960.jpg",
+    webp: "/assets/optimized/case-gallery-huaqiang-plaza-960.webp",
+    alt: "白泽智 AI 服务机器人在华强科创广场场景"
+  },
+  {
+    title: "深圳湾公园",
+    type: "城市公园",
+    text: "滨海开放空间的巡逻、提醒与导览服务。",
+    img: "/assets/fallback/case-gallery-shenzhen-bay-park-960.jpg",
+    webp: "/assets/optimized/case-gallery-shenzhen-bay-park-960.webp",
+    alt: "白泽智 AI 服务机器人在深圳湾公园场景"
+  },
+  {
+    title: "深圳人才公园",
+    type: "城市公园",
+    text: "亲子、游客与市民混合场景下的公共服务。",
+    img: "/assets/fallback/case-gallery-talent-park-960.jpg",
+    webp: "/assets/optimized/case-gallery-talent-park-960.webp",
+    alt: "白泽智 AI 服务机器人在深圳人才公园场景"
+  },
+  {
+    title: "深圳莲花山公园",
+    type: "城市公园",
+    text: "热门公园道路上的低速巡游和秩序提醒。",
+    img: "/assets/fallback/case-gallery-lianhuashan-park-960.jpg",
+    webp: "/assets/optimized/case-gallery-lianhuashan-park-960.webp",
+    alt: "白泽智 AI 服务机器人在深圳莲花山公园场景"
+  },
+  {
+    title: "深圳技师学院",
+    type: "校园服务",
+    text: "校园接待、导览与互动展示场景。",
+    img: "/assets/fallback/case-gallery-sz-institute-technology-960.jpg",
+    webp: "/assets/optimized/case-gallery-sz-institute-technology-960.webp",
+    alt: "白泽智 AI 服务机器人在深圳技师学院场景"
+  },
+  {
+    title: "深圳北理莫斯科大学",
+    type: "高校园区",
+    text: "高校开放空间的导览、互动与巡游服务。",
+    img: "/assets/fallback/case-gallery-bit-msu-960.jpg",
+    webp: "/assets/optimized/case-gallery-bit-msu-960.webp",
+    alt: "白泽智 AI 服务机器人在深圳北理莫斯科大学场景"
   }
 ];
 

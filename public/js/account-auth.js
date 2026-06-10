@@ -209,6 +209,7 @@
     }
     if (guestPane) guestPane.hidden = Boolean(user);
     if (userPane) userPane.hidden = !user;
+    if (logoutBtn) logoutBtn.hidden = !user;
     if (adminPane) adminPane.hidden = !user?.super_admin || !user?.email_verified;
     renderEmailState();
     renderOwnPermissions();

@@ -1,0 +1,75 @@
+---
+import EmbeddedAiCheckHistory from "../../components/EmbeddedAiCheckHistory.astro";
+import EmbeddedCloudChat from "../../components/EmbeddedCloudChat.astro";
+import InteractiveScripts from "../../components/InteractiveScripts.astro";
+import OptimizedImage from "../../components/OptimizedImage.astro";
+import SiteLayout from "../../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="机器人 AI 工作台"
+  description="集中提供 AI 对话、AI 检测和历史检测回看能力。"
+  currentPath="/app/robot-ai-workbench"
+  noindex={true}
+>
+  <header class="page-hero robot-ai-workbench-hero">
+    <OptimizedImage
+      src="/assets/fallback/hero-ai-inspection-1600.jpg"
+      webp="/assets/optimized/hero-ai-inspection-1600.webp"
+      alt="机器人 AI 工作台"
+      class="hero-media"
+      data-parallax
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">AI WORKBENCH</p>
+        <h1 class="page-title">机器人 AI 工作台</h1>
+        <p class="page-subtitle">
+          AI 对话、图片检测和历史检测回看集中在这一页操作。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+    <section class="page-section">
+      <nav class="anchor-nav reveal" data-reveal>
+        <a href="#workbench-dialogue" class="anchor-nav-item">AI 对话</a>
+        <a href="#ai-check-panel" class="anchor-nav-item">AI 检测</a>
+        <a href="#ai-history-panel" class="anchor-nav-item">历史记录</a>
+      </nav>
+    </section>
+
+    <section class="page-section" id="workbench-dialogue">
+      <div class="dialogue-chat-shell robot-workbench-chat reveal" data-reveal>
+        <EmbeddedCloudChat />
+      </div>
+    </section>
+
+    <section class="page-section robot-workbench-detection-section" id="workbench-detection">
+      <div class="reveal" data-reveal>
+        <EmbeddedAiCheckHistory />
+      </div>
+    </section>
+  </main>
+
+  <InteractiveScripts />
+</SiteLayout>
+
+<style>
+  .robot-ai-workbench-hero .hero-overlay {
+    background:
+      linear-gradient(100deg, rgba(2, 6, 23, 0.92), rgba(2, 6, 23, 0.56)),
+      radial-gradient(circle at 86% 36%, rgba(251, 146, 60, 0.24), transparent 44%);
+  }
+  .robot-ai-workbench-hero .page-kicker {
+    border-color: rgba(251, 146, 60, 0.38);
+    background: rgba(251, 146, 60, 0.08);
+    color: #fed7aa;
+  }
+  .robot-ai-workbench-hero .page-subtitle {
+    border-left-color: #fb923c;
+  }
+</style>

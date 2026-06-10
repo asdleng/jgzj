@@ -1,0 +1,239 @@
+---
+import OptimizedImage from "../components/OptimizedImage.astro";
+import SiteLayout from "../components/SiteLayout.astro";
+
+const guideScreens = [
+  {
+    title: "深圳湾公园",
+    text: "语音唤醒、连续对话和园区地图导览在同一块屏幕中联动。",
+    src: "/assets/fallback/capability-shenzhen-bay-guide-720.jpg",
+    webp: "/assets/optimized/capability-shenzhen-bay-guide-720.webp",
+    alt: "白泽智机器人在深圳湾公园的 AI 对话与地图导览界面"
+  },
+  {
+    title: "光明科学公园",
+    text: "地图导览、活动信息和事件检测结果形成现场服务闭环。",
+    src: "/assets/fallback/capability-guangming-science-guide-720.jpg",
+    webp: "/assets/optimized/capability-guangming-science-guide-720.webp",
+    alt: "白泽智机器人在光明科学公园的 AI 对话、地图导览与事件检测界面"
+  }
+];
+---
+
+<SiteLayout
+  title="机器人智能能力"
+  description="展示吉光智界白泽智 AI 服务机器人的 AI 对话、地图导览、端云协同 AI 检测与车端屏幕联动能力。"
+  currentPath="/robot-capabilities"
+  ogImage="/assets/fallback/hero-ai-dialogue-1600.jpg"
+>
+  <header class="page-hero robot-capability-hero">
+    <OptimizedImage
+      src="/assets/fallback/hero-ai-dialogue-1600.jpg"
+      webp="/assets/optimized/hero-ai-dialogue-1600.webp"
+      alt="机器人智能能力展示"
+      class="hero-media"
+      data-parallax
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">PAGE 03 · ROBOT CAPABILITIES</p>
+        <h1 class="page-title">机器人智能能力</h1>
+        <p class="page-subtitle">
+          白泽智机器人把 AI 对话、地图导览和端云协同 AI 检测整合到车端屏幕与云端能力中，面向园区、景区、政务和公共空间提供可落地的现场服务。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+    <section class="page-section">
+      <nav class="anchor-nav reveal" data-reveal>
+        <a href="#capability-overview" class="anchor-nav-item">能力矩阵</a>
+        <a href="#ai-dialogue" class="anchor-nav-item">AI 对话</a>
+        <a href="#map-guide" class="anchor-nav-item">地图导览</a>
+        <a href="#ai-inspection" class="anchor-nav-item">AI 检测</a>
+      </nav>
+    </section>
+
+    <section class="page-section" id="capability-overview">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">能力矩阵</p>
+        <h2 class="section-title">车端交互、地图服务和视觉检测统一协同</h2>
+        <div class="page-grid-three">
+          <article class="page-card robot-capability-card">
+            <p class="robot-capability-index">01</p>
+            <h3>AI 对话</h3>
+            <p>支持语音唤醒、连续问答、字幕回显和语音播报，适合迎宾、导览、问询和现场提醒。</p>
+          </article>
+          <article class="page-card robot-capability-card">
+            <p class="robot-capability-index">02</p>
+            <h3>地图导览</h3>
+            <p>把地点问答、路线指引、地图展示和任务状态放在同一屏幕，方便访客直接理解路线。</p>
+          </article>
+          <article class="page-card robot-capability-card">
+            <p class="robot-capability-index">03</p>
+            <h3>AI 检测</h3>
+            <p>车端小模型负责快速触发，云端大模型负责复核归档，形成可追溯、可复盘的数据闭环。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-section" id="ai-dialogue">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">AI 对话</p>
+        <h2 class="section-title">从现场语音到云端理解，再回到车端播报</h2>
+        <p class="section-copy">
+          机器人不是只做固定播报，而是通过车端 ASR、云端 LLM、云端 TTS 和车端回显组成完整交互闭环。现场人员可以用自然语言询问路线、天气、活动信息和服务问题。
+        </p>
+        <div class="dialogue-loop-shell robot-capability-loop">
+          <article class="page-card dialogue-loop-node">
+            <p class="dialogue-loop-index">01</p>
+            <p class="dialogue-stage-label">车端 ASR</p>
+            <h3>拾音、唤醒与实时字幕</h3>
+            <p class="dialogue-stage-copy">车端完成语音采集、降噪、唤醒与实时转写，把现场语音稳定转成文本输入。</p>
+          </article>
+          <div class="dialogue-loop-arrow" aria-hidden="true">→</div>
+          <article class="page-card dialogue-loop-node">
+            <p class="dialogue-loop-index">02</p>
+            <p class="dialogue-stage-label">LLM</p>
+            <h3>语义理解与知识检索</h3>
+            <p class="dialogue-stage-copy">云端结合项目身份、地点知识和上下文进行理解、检索和生成，输出可执行回复。</p>
+          </article>
+          <div class="dialogue-loop-arrow" aria-hidden="true">→</div>
+          <article class="page-card dialogue-loop-node">
+            <p class="dialogue-loop-index">03</p>
+            <p class="dialogue-stage-label">TTS</p>
+            <h3>回复播报与屏幕反馈</h3>
+            <p class="dialogue-stage-copy">生成结果进入语音合成链路，同时驱动车端屏幕展示文字和状态。</p>
+          </article>
+          <div class="dialogue-loop-arrow" aria-hidden="true">→</div>
+          <article class="page-card dialogue-loop-node dialogue-loop-node--accent">
+            <p class="dialogue-loop-index">04</p>
+            <p class="dialogue-stage-label">车端回显</p>
+            <h3>连续追问与任务联动</h3>
+            <p class="dialogue-stage-copy">用户能继续追问，也可以触发导览、提醒、任务提示等现场动作。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-section" id="map-guide">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">地图导览</p>
+        <h2 class="section-title">把问答、位置和路线放在同一块屏幕里</h2>
+        <p class="section-copy">
+          地图导览不是单独的静态地图，而是和 AI 对话、地点知识、活动信息、任务状态一起联动。访客可以问“怎么去停车场”“附近有什么好玩的”，机器人在屏幕上同步给出地图和路线。
+        </p>
+        <div class="capability-guide-grid">
+          <div class="capability-guide-copy">
+            <article class="page-card robot-guide-point">
+              <h3>地点知识</h3>
+              <p>按项目注入公园、景区、园区和校园地点信息，让问答结果贴近现场。</p>
+            </article>
+            <article class="page-card robot-guide-point">
+              <h3>路线指引</h3>
+              <p>在车端屏幕展示路径、站点和目的地，适合开放空间的导览服务。</p>
+            </article>
+            <article class="page-card robot-guide-point">
+              <h3>屏幕联动</h3>
+              <p>AI 回复、地图、天气、时间和任务状态在一屏内统一展示，减少现场解释成本。</p>
+            </article>
+          </div>
+          <div class="capability-phone-grid">
+            {guideScreens.map((item) => (
+              <figure class="capability-phone-frame">
+                <div class="capability-phone-media">
+                  <OptimizedImage src={item.src} webp={item.webp} alt={item.alt} class="capability-phone-image" loading="lazy" decoding="async" />
+                </div>
+                <figcaption>
+                  <strong>{item.title}</strong>
+                  <span>{item.text}</span>
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-section" id="ai-inspection">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">AI 检测</p>
+        <h2 class="section-title">从车端前置感知到云端数据闭环</h2>
+        <p class="section-copy">
+          AI 检测采用车端小模型和云端大模型分工：车端快速发现事件，云端做语义复核、归档和后续统计，适合巡逻、秩序维护、异常识别和数据复盘。
+        </p>
+        <div class="capability-flow-grid">
+          <article class="page-card capability-card">
+            <div class="capability-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <circle cx="12" cy="12" r="3.5" />
+                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+              </svg>
+            </div>
+            <h3>车端小模型</h3>
+            <p>现场做轻量识别和事件触发，减少无效图片、无效流量和无效告警。</p>
+          </article>
+          <div class="capability-arrow" aria-hidden="true">→</div>
+          <article class="page-card capability-card">
+            <div class="capability-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <path d="M7 18a5 5 0 1 1 1.6-9.74A6 6 0 0 1 19 13a4 4 0 0 1 0 8H7z" />
+                <path d="M12 13v4M10 15l2 2 2-2" />
+              </svg>
+            </div>
+            <h3>云端大模型</h3>
+            <p>对复杂事件做语义复核，适合长尾场景、跨场景校验和效果评估。</p>
+          </article>
+          <div class="capability-arrow" aria-hidden="true">→</div>
+          <article class="page-card capability-card">
+            <div class="capability-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <path d="M21 12a9 9 0 1 1-3-6.7" />
+                <polyline points="21 4 21 10 15 10" />
+              </svg>
+            </div>
+            <h3>归档复盘</h3>
+            <p>保留原图、时间、地点和判断结果，用于误报分析、统计复盘和模型迭代。</p>
+          </article>
+        </div>
+        <div class="compare-table-wrap">
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>能力维度</th>
+                <th><span class="compare-tag compare-tag--cyan">车端小模型</span></th>
+                <th><span class="compare-tag compare-tag--purple">云端大模型</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>响应延迟</td><td>毫秒级，本地直出</td><td>秒级，按需上传</td></tr>
+              <tr><td>典型角色</td><td>实时触发、基础告警</td><td>语义复核、复杂判断</td></tr>
+              <tr><td>网络依赖</td><td>断网仍可前置工作</td><td>需要稳定回传</td></tr>
+              <tr><td>数据价值</td><td>筛出有效事件</td><td>沉淀复盘和迭代样本</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</SiteLayout>
+
+<style>
+  .robot-capability-hero .hero-overlay {
+    background:
+      linear-gradient(100deg, rgba(2, 6, 23, 0.92), rgba(2, 6, 23, 0.52)),
+      radial-gradient(circle at 82% 32%, rgba(45, 212, 191, 0.26), transparent 44%);
+  }
+  .robot-capability-hero .page-kicker {
+    border-color: rgba(45, 212, 191, 0.4);
+    background: rgba(45, 212, 191, 0.08);
+    color: #99f6e4;
+  }
+  .robot-capability-hero .page-subtitle {
+    border-left-color: #2dd4bf;
+  }
+</style>

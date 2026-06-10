@@ -10,6 +10,7 @@ const isPageMode = mode === "page";
         <p class="site-auth-kicker">ACCOUNT</p>
         <h2>登录</h2>
       </div>
+      <button id="jgzj-logout" class="site-auth-secondary-button" type="button" hidden>退出登录</button>
     </header>
 
     <p id="jgzj-auth-current" class="site-auth-current">正在检查登录状态...</p>
@@ -60,7 +61,6 @@ const isPageMode = mode === "page";
       </form>
       <div id="jgzj-auth-permissions" class="site-auth-permissions"></div>
       <div class="site-auth-workspaces" data-private-workspace-list hidden></div>
-      <button id="jgzj-logout" class="site-auth-secondary-button" type="button">退出登录</button>
     </div>
 
     <section id="jgzj-auth-admin" class="site-auth-admin" hidden>
@@ -89,4 +89,4 @@ const isPageMode = mode === "page";
   </section>
 ) : null}
 
-<script is:inline src="/js/account-auth.js?v=20260610-1" defer data-auth-mode={mode}></script>
+<script is:inline src="/js/account-auth.js?v=20260610-2" defer data-auth-mode={mode}></script>
