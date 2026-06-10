@@ -1,4 +1,5 @@
 ---
+import OptimizedImage from "../components/OptimizedImage.astro";
 import SiteLayout from "../components/SiteLayout.astro";
 ---
 
@@ -8,8 +9,9 @@ import SiteLayout from "../components/SiteLayout.astro";
   currentPath="/cloud-mapping"
 >
   <header class="page-hero mapping-hero">
-    <img
+    <OptimizedImage
       src="/assets/hero-l4-autonomy.png"
+      webp="/assets/optimized/hero-l4-autonomy-1600.webp"
       alt="大规模云端建图"
       class="hero-media"
       data-parallax

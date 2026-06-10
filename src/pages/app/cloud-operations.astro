@@ -2,6 +2,7 @@
 import EmbeddedCloudOpsConsole from "../../components/EmbeddedCloudOpsConsole.astro";
 import EmbeddedCloudOpsRuntime from "../../components/EmbeddedCloudOpsRuntime.astro";
 import InteractiveScripts from "../../components/InteractiveScripts.astro";
+import OptimizedImage from "../../components/OptimizedImage.astro";
 import SiteLayout from "../../components/SiteLayout.astro";
 ---
 
@@ -12,8 +13,9 @@ import SiteLayout from "../../components/SiteLayout.astro";
   noindex={true}
 >
   <header class="page-hero ops-hero">
-    <img
+    <OptimizedImage
       src="/assets/hero-cloud-ops.png"
+      webp="/assets/optimized/hero-cloud-ops-1600.webp"
       alt="云端智能运维场景"
       class="hero-media"
       data-parallax

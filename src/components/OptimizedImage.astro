@@ -1,0 +1,29 @@
+---
+const {
+  src,
+  alt,
+  webp,
+  webpSrcset,
+  sizes,
+  class: className,
+  loading,
+  decoding = "async",
+  ...attrs
+} = Astro.props;
+---
+
+<picture>
+  {webpSrcset ? (
+    <source type="image/webp" srcset={webpSrcset} sizes={sizes} />
+  ) : webp ? (
+    <source type="image/webp" srcset={webp} />
+  ) : null}
+  <img
+    src={src}
+    alt={alt}
+    class={className}
+    loading={loading}
+    decoding={decoding}
+    {...attrs}
+  />
+</picture>

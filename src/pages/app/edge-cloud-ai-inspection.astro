@@ -1,6 +1,7 @@
 ---
 import EmbeddedAiCheckHistory from "../../components/EmbeddedAiCheckHistory.astro";
 import InteractiveScripts from "../../components/InteractiveScripts.astro";
+import OptimizedImage from "../../components/OptimizedImage.astro";
 import SiteLayout from "../../components/SiteLayout.astro";
 ---
 
@@ -11,8 +12,9 @@ import SiteLayout from "../../components/SiteLayout.astro";
   noindex={true}
 >
   <header class="page-hero inspection-hero">
-    <img
+    <OptimizedImage
       src="/assets/hero-ai-inspection.png"
+      webp="/assets/optimized/hero-ai-inspection-1600.webp"
       alt="端云协同 AI 检测场景"
       class="hero-media"
       data-parallax

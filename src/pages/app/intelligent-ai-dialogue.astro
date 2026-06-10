@@ -1,6 +1,7 @@
 ---
 import EmbeddedCloudChat from "../../components/EmbeddedCloudChat.astro";
 import InteractiveScripts from "../../components/InteractiveScripts.astro";
+import OptimizedImage from "../../components/OptimizedImage.astro";
 import SiteLayout from "../../components/SiteLayout.astro";
 import { visualScenes } from "../../data/site-content.js";
 ---
@@ -12,8 +13,9 @@ import { visualScenes } from "../../data/site-content.js";
   noindex={true}
 >
   <header class="page-hero dialogue-hero">
-    <img
+    <OptimizedImage
       src="/assets/hero-ai-dialogue.png"
+      webp="/assets/optimized/hero-ai-dialogue-1600.webp"
       alt="智能 AI 对话交互场景"
       class="hero-media"
       data-parallax
@@ -127,7 +129,7 @@ import { visualScenes } from "../../data/site-content.js";
           <div class="visual-stack">
             {visualScenes.map((item) => (
               <figure class="visual-scene">
-                <img src={item.src} alt={item.alt} class="visual-scene-image" loading="lazy" decoding="async" />
+                <OptimizedImage src={item.src} webp={item.webp} alt={item.alt} class="visual-scene-image" loading="lazy" decoding="async" />
                 <figcaption class="visual-scene-caption">{item.title}</figcaption>
               </figure>
             ))}

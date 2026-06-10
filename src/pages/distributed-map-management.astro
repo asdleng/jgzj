@@ -1,4 +1,5 @@
 ---
+import OptimizedImage from "../components/OptimizedImage.astro";
 import SiteLayout from "../components/SiteLayout.astro";
 ---
 
@@ -8,8 +9,9 @@ import SiteLayout from "../components/SiteLayout.astro";
   currentPath="/distributed-map-management"
 >
   <header class="page-hero distributed-map-hero">
-    <img
+    <OptimizedImage
       src="/assets/hero-l4-autonomy.png"
+      webp="/assets/optimized/hero-l4-autonomy-1600.webp"
       alt="分布地图云端统一管理"
       class="hero-media"
       data-parallax
