@@ -257,22 +257,28 @@
   function getQwenCheckWsUrl() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.hostname || "127.0.0.1";
-    const port = host === "127.0.0.1" || host === "localhost" ? "8794" : "7789";
-    return `${protocol}//${host}:${port}${QWEN_CHECK_PATH}`;
+    if (host === "127.0.0.1" || host === "localhost") {
+      return `${protocol}//${host}:8794${QWEN_CHECK_PATH}`;
+    }
+    return `${protocol}//${window.location.host}${QWEN_CHECK_PATH}`;
   }
 
   function getCloudChatWsUrl() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.hostname || "127.0.0.1";
-    const port = host === "127.0.0.1" || host === "localhost" ? "8050" : "7790";
-    return `${protocol}//${host}:${port}${CLOUD_CHAT_WS_PATH}`;
+    if (host === "127.0.0.1" || host === "localhost") {
+      return `${protocol}//${host}:8050${CLOUD_CHAT_WS_PATH}`;
+    }
+    return `${protocol}//${window.location.host}${CLOUD_CHAT_WS_PATH}`;
   }
 
   function getCloudOpsWsUrl() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.hostname || "127.0.0.1";
-    const port = host === "127.0.0.1" || host === "localhost" ? "8000" : "7788";
-    return `${protocol}//${host}:${port}${CLOUD_OPS_WS_PATH}`;
+    if (host === "127.0.0.1" || host === "localhost") {
+      return `${protocol}//${host}:8000${CLOUD_OPS_WS_PATH}`;
+    }
+    return `${protocol}//${window.location.host}${CLOUD_OPS_WS_PATH}`;
   }
 
   function createNode(tagName, className, text) {
@@ -6653,6 +6659,44 @@
     };
   }
 
+  function formatQwenCooldown(ms) {
+    const value = Math.max(0, Number(ms || 0));
+    if (value >= 60000) {
+      return `${Math.ceil(value / 60000)}分钟`;
+    }
+    return `${Math.ceil(value / 1000)}秒`;
+  }
+
+  function getQwenProtection(data, key = "text") {
+    const protection = data?.protection || null;
+    if (!protection) return null;
+    return protection[key] || protection;
+  }
+
+  function formatQwenServiceMessage(data, fallback = "服务暂不可用", key = "text") {
+    const protection = getQwenProtection(data, key);
+    const errorCode = String(data?.error || "");
+    if (protection?.circuit_open || errorCode.includes("circuit_open")) {
+      return `A100保护已暂停，${formatQwenCooldown(protection?.cooldown_remaining_ms)}后再试`;
+    }
+    if (errorCode.includes("busy")) {
+      return `A100正忙，当前 ${protection?.in_flight ?? "-"} / ${protection?.max_concurrent ?? "-"} 个任务`;
+    }
+    if (data?.detail) {
+      return String(data.detail);
+    }
+    return fallback;
+  }
+
+  async function readQwenErrorMessage(response, key = "text") {
+    const text = await response.text();
+    try {
+      return formatQwenServiceMessage(JSON.parse(text), `HTTP ${response.status}`, key);
+    } catch (_error) {
+      return text || `HTTP ${response.status}`;
+    }
+  }
+
   async function refreshQwen36Health() {
     if (!qwen36Status) return;
 
@@ -6661,11 +6705,18 @@
         headers: { Accept: "application/json" }
       });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new Error(await readQwenErrorMessage(response, "text"));
       }
       const data = await response.json();
       const model = Array.isArray(data.models) && data.models[0] ? data.models[0] : data.model || "Qwen3.6-27B";
-      setQwen36Status(model, "ok");
+      const protection = getQwenProtection(data, "text");
+      if (protection?.circuit_open) {
+        setQwen36Status(formatQwenServiceMessage(data, "A100保护已暂停", "text"), "error");
+      } else if (protection && protection.in_flight >= protection.max_concurrent) {
+        setQwen36Status(`A100正忙 ${protection.in_flight}/${protection.max_concurrent}`, "loading");
+      } else {
+        setQwen36Status(model, "ok");
+      }
     } catch (error) {
       setQwen36Status(`连接异常：${error?.message || "未知错误"}`, "error");
     }
@@ -6712,8 +6763,7 @@
       });
 
       if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail || `HTTP ${response.status}`);
+        throw new Error(await readQwenErrorMessage(response, "text"));
       }
 
       const result = await readQwen36StreamingReply(response, botHandle);
@@ -6741,6 +6791,33 @@
     }
   }
 
+  async function runCloudChatTextTurn(message, botMessage) {
+    const response = await fetch(cloudChatUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream"
+      },
+      body: JSON.stringify({
+        message,
+        session_id: sessionId,
+        reset: firstTurn,
+        vehicle_id: vehicleId,
+        enable_thinking: Boolean(chatThinking?.checked)
+      })
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `HTTP ${response.status}`);
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    return contentType.includes("text/event-stream")
+      ? await readStreamingReply(response, botMessage)
+      : await readJsonReply(response, botMessage);
+  }
+
   async function handleCloudChatSubmit(event) {
     event.preventDefault();
     if (!chatInput || !chatSend) return;
@@ -6759,33 +6836,23 @@
     try {
       let reply = "";
       if (chatVoiceEnabled) {
-        await ensureCloudOpsAudioContext();
-        reply = await runCloudChatVoiceTurn(message, botMessage);
-      } else {
-        const response = await fetch(cloudChatUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json, text/event-stream"
-          },
-          body: JSON.stringify({
-            message,
-            session_id: sessionId,
-            reset: firstTurn,
-            vehicle_id: vehicleId,
-            enable_thinking: Boolean(chatThinking?.checked)
-          })
-        });
-
-        if (!response.ok) {
-          const detail = await response.text();
-          throw new Error(detail || `HTTP ${response.status}`);
+        try {
+          await ensureCloudOpsAudioContext();
+          reply = await runCloudChatVoiceTurn(message, botMessage);
+        } catch (voiceError) {
+          chatVoiceEnabled = false;
+          disconnectCloudChatVoiceSocket({ manual: true, stopPlayback: true });
+          updateChatVoiceToggle();
+          if (botMessage) {
+            botMessage.answerText = "";
+            botMessage.reasoningText = "";
+            updateCloudChatBotMessage(botMessage, { streaming: true });
+          }
+          setChatStatus("语音不可用，已切换文字...", "loading");
+          reply = await runCloudChatTextTurn(message, botMessage);
         }
-
-        const contentType = response.headers.get("content-type") || "";
-        reply = contentType.includes("text/event-stream")
-          ? await readStreamingReply(response, botMessage)
-          : await readJsonReply(response, botMessage);
+      } else {
+        reply = await runCloudChatTextTurn(message, botMessage);
       }
 
       messageHistory.push({ role: "user", text: message });
@@ -7634,7 +7701,7 @@
 
       const data = await response.json();
       if (!data.ok) {
-        throw new Error(data.detail || data.error || "检测失败");
+        throw new Error(formatQwenServiceMessage(data, "检测失败", "mm"));
       }
 
       const answer = String(data.answer || "").toUpperCase();
@@ -7696,7 +7763,7 @@
         });
         const data = await response.json();
         if (!data.ok) {
-          throw new Error(data.detail || data.error || "检测失败");
+          throw new Error(formatQwenServiceMessage(data, "检测失败", "mm"));
         }
         const rawReply = (data.raw_reply || "").trim();
         const answer = String(data.answer || "").toUpperCase();
@@ -7761,7 +7828,7 @@
       return;
     }
 
-    // No custom prompt: try qwen3.6-27b-mm first via WebSocket, fallback to qwen3-vl-2b
+    // No custom prompt: use protected Qwen3.6-MM HTTP first, fallback to local checker.
     setAiCheckStatus("检测中（Qwen3.6-27B）...", "loading");
     setAiCheckResult("检测中", "正在连接 Qwen3.6-27B 模型服务，请稍候。", "loading");
 
@@ -7781,30 +7848,43 @@
         ]
       };
 
-      let response;
+      let answer = "";
+      let pass = null;
+      let rawText = "";
       let usedModel = "Qwen3.6-27B";
 
       try {
-        response = await runAiCheckRequest({ ...basePayload, model: "qwen3.6-27b-mm" });
-        const primaryError = getAiCheckResponseError(response);
-        if (primaryError) {
-          throw new Error(primaryError);
+        const qwenResponse = await fetch(QWEN36_MM_CHECK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image: imagePayload,
+            event_name: eventName,
+            prompt_text: ""
+          }),
+          signal: AbortSignal.timeout(120000)
+        });
+        const data = await qwenResponse.json();
+        if (!data.ok) {
+          throw new Error(formatQwenServiceMessage(data, "Qwen3.6 检测失败", "mm"));
         }
-        usedModel = resolveAiCheckModelLabel(response, usedModel);
+        usedModel = data.model || usedModel;
+        answer = String(data.answer || "").toUpperCase();
+        rawText = String(data.raw_reply || "").trim();
       } catch (_primaryErr) {
         setAiCheckStatus("Qwen3.6 不可用，切换备用模型...", "loading");
         usedModel = "Qwen3-VL-2B";
-        response = await runAiCheckRequest({ ...basePayload, request_id: `web-${createNonce()}` });
+        const response = await runAiCheckRequest({ ...basePayload, request_id: `web-${createNonce()}` });
         const fallbackError = getAiCheckResponseError(response);
         if (fallbackError) {
           throw new Error(fallbackError);
         }
+        usedModel = resolveAiCheckModelLabel(response, usedModel);
+        const result = Array.isArray(response?.results) ? response.results[0] : null;
+        answer = String(result?.answer || "").toUpperCase();
+        pass = result?.pass;
+        rawText = String(result?.raw_text || "").trim();
       }
-      usedModel = resolveAiCheckModelLabel(response, usedModel);
-
-      const result = Array.isArray(response?.results) ? response.results[0] : null;
-      const answer = String(result?.answer || "").toUpperCase();
-      const pass = result?.pass;
 
       if (answer === "YES" || pass === true) {
         setAiCheckStatus(`检测完成（${usedModel}）`, "ok");
@@ -7813,7 +7893,6 @@
         setAiCheckStatus(`检测完成（${usedModel}）`, "ok");
         setAiCheckResult("否", `事件“${eventName}”检测结果为 NO。`, "no");
       } else {
-        const rawText = result?.raw_text || "";
         setAiCheckStatus("结果不明", "error");
         setAiCheckResult("无法判断", rawText ? `模型原始回复：${rawText}` : "检测服务没有返回有效结果。", "error");
       }

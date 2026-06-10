@@ -2,6 +2,7 @@ const fs = require('fs/promises');
 const fsSync = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const net = require('net');
 const { pathToFileURL } = require('url');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
@@ -55,11 +56,17 @@ const qwen36ChatUrl = new URL('chat/completions', qwen36BaseUrlWithSlash).toStri
 const qwen36ModelsUrl = new URL('models', qwen36BaseUrlWithSlash).toString();
 const qwen36Model = process.env.QWEN36_MODEL || 'Qwen3.6-27B';
 const qwen36TimeoutMs = Number(process.env.QWEN36_TIMEOUT_MS || 300000);
+const qwen36HealthCacheTtlMs = Number(process.env.QWEN36_HEALTH_CACHE_TTL_MS || 30000);
+const qwen36MaxConcurrent = Number(process.env.QWEN36_MAX_CONCURRENT || 1);
 const qwen36MmBaseUrl = process.env.QWEN36_MM_BASE_URL || 'http://127.0.0.1:18001/v1';
 const qwen36MmBaseUrlWithSlash = qwen36MmBaseUrl.endsWith('/') ? qwen36MmBaseUrl : `${qwen36MmBaseUrl}/`;
 const qwen36MmChatUrl = new URL('chat/completions', qwen36MmBaseUrlWithSlash).toString();
 const qwen36MmModel = process.env.QWEN36_MM_MODEL || 'Qwen3.6-27B-MM';
 const qwen36MmTimeoutMs = Number(process.env.QWEN36_MM_TIMEOUT_MS || 120000);
+const qwen36MmMaxConcurrent = Number(process.env.QWEN36_MM_MAX_CONCURRENT || 1);
+const qwen36CircuitFailureThreshold = Number(process.env.QWEN36_CIRCUIT_FAILURE_THRESHOLD || 3);
+const qwen36CircuitCooldownMs = Number(process.env.QWEN36_CIRCUIT_COOLDOWN_MS || 120000);
+const qwen36MmMaxImageBytes = Number(process.env.QWEN36_MM_MAX_IMAGE_BYTES || 4 * 1024 * 1024);
 const openClawConfigPath = path.resolve(
   process.env.OPENCLAW_CONFIG_PATH || '/home/admin1/.openclaw/openclaw.json'
 );
@@ -1026,29 +1033,170 @@ function normalizeQwen36Messages(inputMessages, message) {
   return normalized;
 }
 
-async function probeQwen36() {
-  try {
-    const response = await fetch(qwen36ModelsUrl, {
-      signal: AbortSignal.timeout(5000)
-    });
-    const text = await response.text();
-    const payload = parseJsonField(text, null);
-    return {
-      ok: response.ok,
-      status: response.status,
-      base_url: qwen36BaseUrl,
-      model: qwen36Model,
-      models: Array.isArray(payload?.data) ? payload.data.map((item) => item.id).filter(Boolean) : []
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      status: 502,
-      base_url: qwen36BaseUrl,
-      model: qwen36Model,
-      detail: error.message
-    };
+function createQwen36ProtectionState(name, maxConcurrent) {
+  return {
+    name,
+    in_flight: 0,
+    max_concurrent: Math.max(1, Number(maxConcurrent) || 1),
+    consecutive_failures: 0,
+    failure_threshold: Math.max(1, Number(qwen36CircuitFailureThreshold) || 3),
+    circuit_opened_at_ms: 0,
+    circuit_cooldown_ms: Math.max(1000, Number(qwen36CircuitCooldownMs) || 120000),
+    last_success_at_ms: 0,
+    last_failure_at_ms: 0,
+    last_error: ''
+  };
+}
+
+const qwen36Protection = createQwen36ProtectionState('qwen36-text', qwen36MaxConcurrent);
+const qwen36MmProtection = createQwen36ProtectionState('qwen36-mm', qwen36MmMaxConcurrent);
+const qwen36HealthCache = {
+  result: null,
+  expires_at_ms: 0,
+  promise: null
+};
+
+function qwen36ProtectionSnapshot(state) {
+  const now = Date.now();
+  const circuitOpen =
+    state.circuit_opened_at_ms > 0 &&
+    now - state.circuit_opened_at_ms < state.circuit_cooldown_ms;
+  return {
+    name: state.name,
+    in_flight: state.in_flight,
+    max_concurrent: state.max_concurrent,
+    consecutive_failures: state.consecutive_failures,
+    failure_threshold: state.failure_threshold,
+    circuit_open: circuitOpen,
+    circuit_opened_at_ms: state.circuit_opened_at_ms || null,
+    cooldown_remaining_ms: circuitOpen
+      ? Math.max(0, state.circuit_cooldown_ms - (now - state.circuit_opened_at_ms))
+      : 0,
+    last_success_at_ms: state.last_success_at_ms || null,
+    last_failure_at_ms: state.last_failure_at_ms || null,
+    last_error: state.last_error || null
+  };
+}
+
+function qwen36ProtectionErrorPayload(error, state) {
+  return {
+    ok: false,
+    error: error.code || 'qwen36_unavailable',
+    detail: error.message || 'Qwen3.6 service unavailable',
+    protection: qwen36ProtectionSnapshot(state)
+  };
+}
+
+function createQwen36ProtectionError(code, message, status) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = status;
+  return error;
+}
+
+function beginQwen36Request(state) {
+  const snapshot = qwen36ProtectionSnapshot(state);
+  if (snapshot.circuit_open) {
+    throw createQwen36ProtectionError(
+      `${state.name}_circuit_open`,
+      'A100 protection circuit is open; retry later.',
+      503
+    );
   }
+
+  if (state.in_flight >= state.max_concurrent) {
+    throw createQwen36ProtectionError(
+      `${state.name}_busy`,
+      'A100 request queue is full; retry later.',
+      429
+    );
+  }
+
+  state.in_flight += 1;
+  let released = false;
+  return {
+    success() {
+      state.consecutive_failures = 0;
+      state.circuit_opened_at_ms = 0;
+      state.last_error = '';
+      state.last_success_at_ms = Date.now();
+    },
+    failure(error) {
+      state.consecutive_failures += 1;
+      state.last_failure_at_ms = Date.now();
+      state.last_error = String(error?.message || error?.code || 'qwen36_request_failed').slice(0, 240);
+      if (state.consecutive_failures >= state.failure_threshold) {
+        state.circuit_opened_at_ms = Date.now();
+      }
+    },
+    release() {
+      if (released) return;
+      released = true;
+      state.in_flight = Math.max(0, state.in_flight - 1);
+    }
+  };
+}
+
+function attachQwen36Protection(payload = {}) {
+  return {
+    ...payload,
+    protection: {
+      text: qwen36ProtectionSnapshot(qwen36Protection),
+      mm: qwen36ProtectionSnapshot(qwen36MmProtection)
+    }
+  };
+}
+
+async function probeQwen36(options = {}) {
+  const now = Date.now();
+  if (!options.force && qwen36HealthCache.result && qwen36HealthCache.expires_at_ms > now) {
+    return attachQwen36Protection({
+      ...qwen36HealthCache.result,
+      cached: true,
+      cache_expires_in_ms: qwen36HealthCache.expires_at_ms - now
+    });
+  }
+
+  if (!options.force && qwen36HealthCache.promise) {
+    return qwen36HealthCache.promise;
+  }
+
+  qwen36HealthCache.promise = (async () => {
+    let result;
+    try {
+      const response = await fetch(qwen36ModelsUrl, {
+        signal: AbortSignal.timeout(5000)
+      });
+      const text = await response.text();
+      const payload = parseJsonField(text, null);
+      result = {
+        ok: response.ok,
+        status: response.status,
+        base_url: qwen36BaseUrl,
+        model: qwen36Model,
+        models: Array.isArray(payload?.data) ? payload.data.map((item) => item.id).filter(Boolean) : []
+      };
+    } catch (error) {
+      result = {
+        ok: false,
+        status: 502,
+        base_url: qwen36BaseUrl,
+        model: qwen36Model,
+        detail: error.message
+      };
+    }
+
+    qwen36HealthCache.result = result;
+    qwen36HealthCache.expires_at_ms = Date.now() + qwen36HealthCacheTtlMs;
+    qwen36HealthCache.promise = null;
+    return attachQwen36Protection({
+      ...result,
+      cached: false,
+      cache_ttl_ms: qwen36HealthCacheTtlMs
+    });
+  })();
+
+  return qwen36HealthCache.promise;
 }
 
 async function probeUpstream() {
@@ -5459,6 +5607,24 @@ app.post('/api/qwen36-chat', authStore.requirePermission('ai:chat'), async (req,
     }
   };
 
+  let guard;
+  try {
+    guard = beginQwen36Request(qwen36Protection);
+  } catch (error) {
+    const status = error.status || 503;
+    const errorPayload = qwen36ProtectionErrorPayload(error, qwen36Protection);
+    if (wantsStream) {
+      res.status(status);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      writeSseEvent(res, { type: 'error', ...errorPayload });
+      return res.end();
+    }
+    return res.status(status).json(errorPayload);
+  }
+
   try {
     const upstreamResponse = await fetch(qwen36ChatUrl, {
       method: 'POST',
@@ -5472,11 +5638,14 @@ app.post('/api/qwen36-chat', authStore.requirePermission('ai:chat'), async (req,
 
     if (!upstreamResponse.ok || !upstreamResponse.body) {
       const detail = normalizeReply(await upstreamResponse.text());
+      const upstreamError = new Error(detail || `qwen36 upstream ${upstreamResponse.status}`);
+      guard.failure(upstreamError);
       const errorPayload = {
         ok: false,
         error: 'qwen36_request_failed',
         status: upstreamResponse.status,
-        detail: detail || null
+        detail: detail || null,
+        protection: qwen36ProtectionSnapshot(qwen36Protection)
       };
 
       if (wantsStream) {
@@ -5513,25 +5682,31 @@ app.post('/api/qwen36-chat', authStore.requirePermission('ai:chat'), async (req,
         finish_reason: result.finish_reason,
         usage: result.usage,
         model: qwen36Model,
-        thinking: enableThinking
+        thinking: enableThinking,
+        protection: qwen36ProtectionSnapshot(qwen36Protection)
       });
+      guard.success();
       return res.end();
     }
 
     const result = await readQwen36Stream(upstreamResponse.body);
+    guard.success();
     return res.json({
       ok: true,
       model: qwen36Model,
       thinking: enableThinking,
+      protection: qwen36ProtectionSnapshot(qwen36Protection),
       ...result
     });
   } catch (error) {
+    guard.failure(error);
     const isAbort = error.name === 'TimeoutError' || error.name === 'AbortError';
     const status = isAbort ? 504 : 502;
     const errorPayload = {
       ok: false,
       error: isAbort ? 'qwen36_timeout' : 'qwen36_unavailable',
-      detail: error.message
+      detail: error.message,
+      protection: qwen36ProtectionSnapshot(qwen36Protection)
     };
 
     if (wantsStream) {
@@ -5547,6 +5722,8 @@ app.post('/api/qwen36-chat', authStore.requirePermission('ai:chat'), async (req,
     }
 
     return res.status(status).json(errorPayload);
+  } finally {
+    guard.release();
   }
 });
 
@@ -5555,6 +5732,18 @@ app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async
   const image = req.body?.image;
   if (!image?.mime_type || !image?.data_base64) {
     return res.status(400).json({ ok: false, error: 'image_required' });
+  }
+
+  const imageSizeBytes = Buffer.byteLength(String(image.data_base64 || ''), 'base64');
+  if (imageSizeBytes > qwen36MmMaxImageBytes) {
+    return res.status(413).json({
+      ok: false,
+      error: 'image_too_large',
+      detail: `图片过大，请压缩到 ${Math.floor(qwen36MmMaxImageBytes / 1024 / 1024)}MB 以内。`,
+      max_image_bytes: qwen36MmMaxImageBytes,
+      image_size_bytes: imageSizeBytes,
+      protection: qwen36ProtectionSnapshot(qwen36MmProtection)
+    });
   }
 
   const eventName = String(req.body?.event_name || '').trim() || '异常事件';
@@ -5581,6 +5770,13 @@ app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async
     chat_template_kwargs: { enable_thinking: false }
   };
 
+  let guard;
+  try {
+    guard = beginQwen36Request(qwen36MmProtection);
+  } catch (error) {
+    return res.status(error.status || 503).json(qwen36ProtectionErrorPayload(error, qwen36MmProtection));
+  }
+
   try {
     const upstreamResponse = await fetch(qwen36MmChatUrl, {
       method: 'POST',
@@ -5591,6 +5787,8 @@ app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async
 
     if (!upstreamResponse.ok) {
       const detail = normalizeReply(await upstreamResponse.text());
+      const upstreamError = new Error(detail || `qwen36-mm upstream ${upstreamResponse.status}`);
+      guard.failure(upstreamError);
       console.info('qwen36_mm_check_result', JSON.stringify({
         event_name: eventName, ok: false,
         error: 'upstream_error', status: upstreamResponse.status,
@@ -5600,7 +5798,8 @@ app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async
         ok: false,
         error: 'qwen36_mm_request_failed',
         status: upstreamResponse.status,
-        detail: detail || null
+        detail: detail || null,
+        protection: qwen36ProtectionSnapshot(qwen36MmProtection)
       });
     }
 
@@ -5615,6 +5814,7 @@ app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async
       event_name: eventName, answer, finish_reason: data?.choices?.[0]?.finish_reason,
       raw_reply: raw.slice(0, 80), duration_ms: durationMs, model: qwen36MmModel
     }));
+    guard.success();
 
     const imageBuffer = Buffer.from(image.data_base64, 'base64');
     const requestId = `req_${startMs}_${crypto.randomBytes(4).toString('hex')}`;
@@ -5631,9 +5831,11 @@ app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async
       model: qwen36MmModel,
       event_name: eventName,
       answer,
-      raw_reply: raw
+      raw_reply: raw,
+      protection: qwen36ProtectionSnapshot(qwen36MmProtection)
     });
   } catch (error) {
+    guard.failure(error);
     const isAbort = error.name === 'TimeoutError' || error.name === 'AbortError';
     console.info('qwen36_mm_check_result', JSON.stringify({
       event_name: eventName, ok: false,
@@ -5643,8 +5845,11 @@ app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async
     return res.status(isAbort ? 504 : 502).json({
       ok: false,
       error: isAbort ? 'qwen36_mm_timeout' : 'qwen36_mm_unavailable',
-      detail: error.message
+      detail: error.message,
+      protection: qwen36ProtectionSnapshot(qwen36MmProtection)
     });
+  } finally {
+    guard.release();
   }
 });
 
@@ -5968,6 +6173,145 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(webRoot, 'index.html'));
 });
 
+function writeUpgradeError(socket, statusCode, reason) {
+  if (!socket || socket.destroyed) {
+    return;
+  }
+  const statusText = `${statusCode} ${reason}`;
+  socket.write(
+    [
+      `HTTP/1.1 ${statusText}`,
+      'Connection: close',
+      'Content-Length: 0',
+      '',
+      ''
+    ].join('\r\n')
+  );
+  socket.destroy();
+}
+
+function buildWebSocketProxyRequest(req, targetUrl) {
+  const pathWithQuery = `${targetUrl.pathname || '/'}${targetUrl.search || ''}`;
+  const lines = [
+    `GET ${pathWithQuery} HTTP/1.1`,
+    `Host: ${targetUrl.host}`,
+    'Upgrade: websocket',
+    'Connection: Upgrade'
+  ];
+  const skipHeaders = new Set(['host', 'upgrade', 'connection', 'proxy-connection']);
+
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    const name = req.rawHeaders[i];
+    const value = req.rawHeaders[i + 1];
+    if (!name || skipHeaders.has(String(name).toLowerCase())) {
+      continue;
+    }
+    lines.push(`${name}: ${value}`);
+  }
+
+  const remoteAddress = req.socket?.remoteAddress;
+  if (remoteAddress) {
+    lines.push(`X-Forwarded-For: ${remoteAddress}`);
+  }
+
+  lines.push('', '');
+  return lines.join('\r\n');
+}
+
+function proxyWebSocketUpgrade(req, socket, head, targetUrl) {
+  const targetPort = Number(targetUrl.port || (targetUrl.protocol === 'wss:' ? 443 : 80));
+  const upstreamSocket = net.connect(
+    {
+      host: targetUrl.hostname,
+      port: targetPort
+    },
+    () => {
+      upstreamSocket.write(buildWebSocketProxyRequest(req, targetUrl));
+      if (head?.length) {
+        upstreamSocket.write(head);
+      }
+      socket.pipe(upstreamSocket);
+      upstreamSocket.pipe(socket);
+    }
+  );
+
+  upstreamSocket.on('error', (error) => {
+    console.warn(`websocket upstream error path=${req.url} target=${targetUrl.href}: ${error.message}`);
+    writeUpgradeError(socket, 502, 'Bad Gateway');
+  });
+
+  socket.on('error', () => {
+    upstreamSocket.destroy();
+  });
+
+  socket.on('close', () => {
+    upstreamSocket.destroy();
+  });
+}
+
+function getWebSocketUpgradeTarget(pathname) {
+  if (pathname === '/ws/chat') {
+    return {
+      permission: 'ai:chat',
+      baseUrl: upstreamBaseUrl,
+      path: process.env.UPSTREAM_CHAT_WS_PATH || '/ws/chat'
+    };
+  }
+
+  if (pathname === '/ws/qwen/check') {
+    return {
+      permission: 'ai:detect',
+      baseUrl: process.env.QWEN_CHECK_WS_BASE_URL || 'http://127.0.0.1:8794',
+      path: process.env.QWEN_CHECK_WS_PATH || '/ws/qwen/check'
+    };
+  }
+
+  if (pathname === '/ws/ops') {
+    return {
+      permission: 'vehicle:read',
+      baseUrl: process.env.CLOUD_OPS_WS_BASE_URL || cloudAgentBaseUrl,
+      path: process.env.CLOUD_OPS_WS_PATH || '/ws/ops'
+    };
+  }
+
+  return null;
+}
+
+async function handleWebSocketUpgrade(req, socket, head) {
+  let pathname = '';
+  try {
+    pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+  } catch (_error) {
+    writeUpgradeError(socket, 400, 'Bad Request');
+    return;
+  }
+
+  const target = getWebSocketUpgradeTarget(pathname);
+  if (!target) {
+    writeUpgradeError(socket, 404, 'Not Found');
+    return;
+  }
+
+  try {
+    const auth = await authStore.getAuthFromRequest(req);
+    if (!auth) {
+      writeUpgradeError(socket, 401, 'Unauthorized');
+      return;
+    }
+    if (!authStore.hasPermission(auth.user, target.permission)) {
+      writeUpgradeError(socket, 403, 'Forbidden');
+      return;
+    }
+
+    const targetUrl = new URL(target.path, target.baseUrl);
+    targetUrl.protocol = targetUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    proxyWebSocketUpgrade(req, socket, head, targetUrl);
+  } catch (error) {
+    console.warn(`websocket auth/proxy error path=${req.url}: ${error.message}`);
+    writeUpgradeError(socket, 500, 'Internal Server Error');
+  }
+}
+
 const server = app.listen(port, () => {
   console.log(`backend listening on ${port}`);
   console.log(`proxying cloud chat to ${upstreamStreamUrl}`);
@@ -5975,3 +6319,6 @@ const server = app.listen(port, () => {
 server.requestTimeout = httpServerRequestTimeoutMs;
 server.headersTimeout = httpServerHeadersTimeoutMs;
 server.keepAliveTimeout = httpServerKeepAliveTimeoutMs;
+server.on('upgrade', (req, socket, head) => {
+  void handleWebSocketUpgrade(req, socket, head);
+});

@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs/promises');
+const net = require('net');
 const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 
@@ -265,6 +266,70 @@ async function probeHttp(url, options = {}) {
   }
 }
 
+async function probeTcp(options = {}) {
+  const startedAt = Date.now();
+  const host = options.host || '127.0.0.1';
+  const port = Number(options.port);
+  const timeoutMs = Number(options.timeoutMs || 2500);
+
+  if (!Number.isFinite(port) || port <= 0) {
+    return {
+      label: options.label || `${host}:${options.port}`,
+      kind: 'tcp',
+      host,
+      port: options.port,
+      ok: false,
+      state: 'error',
+      latency_ms: 0,
+      summary: 'invalid_port',
+      error: 'invalid_port'
+    };
+  }
+
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    let settled = false;
+    const finish = (payload) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve({
+        label: options.label || `${host}:${port}`,
+        kind: 'tcp',
+        host,
+        port,
+        latency_ms: Date.now() - startedAt,
+        ...payload
+      });
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.on('connect', () => {
+      finish({
+        ok: true,
+        state: 'ok',
+        summary: `tcp ok · ${Date.now() - startedAt}ms`
+      });
+    });
+    socket.on('timeout', () => {
+      finish({
+        ok: false,
+        state: 'error',
+        summary: 'tcp timeout',
+        error: 'timeout'
+      });
+    });
+    socket.on('error', (error) => {
+      finish({
+        ok: false,
+        state: 'error',
+        summary: error?.message || 'tcp_failed',
+        error: error?.message || 'tcp_failed'
+      });
+    });
+  });
+}
+
 async function readSystemdService(serviceName, options = {}) {
   const args = [
     ...(options.user ? ['--user'] : []),
@@ -404,8 +469,8 @@ function buildTargets() {
         timeout_ms: 90000
       },
       checks: [
-        { label: '18000 Qwen3.6 text /v1/models', url: 'http://127.0.0.1:18000/v1/models', required: true },
-        { label: '18001 Qwen3.6 MM /v1/models', url: 'http://127.0.0.1:18001/v1/models', required: true }
+        { label: '18000 Qwen3.6 text tunnel TCP', type: 'tcp', host: '127.0.0.1', port: 18000, required: true },
+        { label: '18001 Qwen3.6 MM tunnel TCP', type: 'tcp', host: '127.0.0.1', port: 18001, required: true }
       ]
     },
     {
@@ -423,7 +488,7 @@ function buildTargets() {
         timeout_ms: 600000
       },
       checks: [
-        { label: 'A100 8000 via 18000 /v1/models', url: 'http://127.0.0.1:18000/v1/models', required: true }
+        { label: 'A100 8000 via 18000 TCP', type: 'tcp', host: '127.0.0.1', port: 18000, required: true }
       ]
     },
     {
@@ -441,7 +506,7 @@ function buildTargets() {
         timeout_ms: 600000
       },
       checks: [
-        { label: 'A100 8001 via 18001 /v1/models', url: 'http://127.0.0.1:18001/v1/models', required: true }
+        { label: 'A100 8001 via 18001 TCP', type: 'tcp', host: '127.0.0.1', port: 18001, required: true }
       ]
     },
     {
@@ -791,6 +856,8 @@ async function sampleTarget(target) {
       ...item,
       ...(item.type === 'weather-cache'
         ? await sampleWeatherCacheStatus(item)
+        : item.type === 'tcp'
+          ? await probeTcp(item)
         : await probeHttp(item.url, { label: item.label }))
     }))
   );
