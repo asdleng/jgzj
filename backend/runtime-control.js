@@ -543,7 +543,7 @@ function buildTargets() {
         timeout_ms: 900000
       },
       checks: [
-        { label: '8043 failover /healthz', url: 'http://127.0.0.1:8043/healthz', required: true },
+        { label: '8043 failover /health/detail', url: 'http://127.0.0.1:8043/health/detail', required: true },
         { label: '8022 intent /healthz', url: 'http://127.0.0.1:8022/healthz', required: true },
         { label: '8050 bridge /healthz', url: 'http://127.0.0.1:8050/healthz', required: true },
         {
@@ -555,7 +555,7 @@ function buildTargets() {
         },
         { label: '8041 Qwen3.5 compat /healthz', url: 'http://127.0.0.1:8041/healthz', required: true },
         { label: '8040 Qwen3.5 fallback /v1/models', url: 'http://127.0.0.1:8040/v1/models', required: false },
-        { label: '18000 Qwen3.6 text /v1/models', url: 'http://127.0.0.1:18000/v1/models', required: false },
+        { label: '18000 Qwen3.6 text tunnel TCP', type: 'tcp', host: '127.0.0.1', port: 18000, required: false },
         {
           label: '8804 TTS worker gpu3',
           url: 'http://127.0.0.1:8804/healthz',

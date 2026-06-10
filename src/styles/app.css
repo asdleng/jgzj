@@ -3139,11 +3139,18 @@
 .ai-history-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 120;
+  z-index: 1000;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(14px, 3vh, 28px) clamp(12px, 4vw, 28px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .ai-history-lightbox-backdrop {
-  position: absolute;
+  position: fixed;
   inset: 0;
   background: rgba(2, 6, 23, 0.84);
   backdrop-filter: blur(6px);
@@ -3152,13 +3159,12 @@
 .ai-history-lightbox-dialog {
   position: relative;
   width: min(92vw, 1200px);
-  max-height: 90vh;
-  margin: 5vh auto;
+  margin: auto 0;
   border-radius: 18px;
   border: 1px solid rgba(71, 85, 105, 0.6);
   background: rgba(2, 6, 23, 0.96);
   box-shadow: 0 20px 60px rgba(2, 6, 23, 0.65);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .ai-history-lightbox-close {
@@ -3176,7 +3182,7 @@
 
 .ai-history-lightbox-body img {
   width: 100%;
-  max-height: calc(90vh - 110px);
+  max-height: calc(100vh - 150px);
   object-fit: contain;
   background: #020617;
   border-radius: 14px;
@@ -3213,4 +3219,3 @@
     opacity: 0.55;
   }
 }
-

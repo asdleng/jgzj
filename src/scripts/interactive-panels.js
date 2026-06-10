@@ -150,6 +150,7 @@
   const aiHistoryLightboxCaption = document.getElementById("ai-history-lightbox-caption");
   const aiHistoryLightboxLink = document.getElementById("ai-history-lightbox-link");
   const aiHistoryLightboxClose = document.getElementById("ai-history-lightbox-close");
+  let aiHistoryPreviousBodyOverflow = null;
 
   const cloudChatUrl = window.CLOUD_CHAT_URL || PROXY_URL;
   const cloudChatWsUrl = window.CLOUD_CHAT_WS_URL || getCloudChatWsUrl();
@@ -7454,13 +7455,20 @@
 
   function openAiHistoryLightbox(imageUrl, caption) {
     if (!aiHistoryLightbox || !aiHistoryLightboxImage || !aiHistoryLightboxLink) return;
+    if (aiHistoryLightbox.parentElement !== document.body) {
+      document.body.appendChild(aiHistoryLightbox);
+    }
     aiHistoryLightboxImage.src = imageUrl;
     aiHistoryLightboxImage.alt = caption || "AI检测放大图片";
     aiHistoryLightboxLink.href = imageUrl;
     if (aiHistoryLightboxCaption) {
       aiHistoryLightboxCaption.textContent = caption || "AI检测图片";
     }
+    if (aiHistoryPreviousBodyOverflow === null) {
+      aiHistoryPreviousBodyOverflow = document.body.style.overflow;
+    }
     aiHistoryLightbox.hidden = false;
+    aiHistoryLightbox.scrollTop = 0;
     document.body.style.overflow = "hidden";
   }
 
@@ -7469,7 +7477,8 @@
     aiHistoryLightbox.hidden = true;
     aiHistoryLightboxImage.removeAttribute("src");
     aiHistoryLightboxLink.href = "#";
-    document.body.style.overflow = "";
+    document.body.style.overflow = aiHistoryPreviousBodyOverflow || "";
+    aiHistoryPreviousBodyOverflow = null;
   }
 
   function renderAiHistoryDetail(request) {
