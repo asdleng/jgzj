@@ -10,7 +10,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 >
   <header class="page-hero three-dgs-hero">
     <OptimizedImage
-      src="/assets/hero-cloud-ops.png"
+      src="/assets/fallback/hero-cloud-ops-1600.jpg"
       webp="/assets/optimized/hero-cloud-ops-1600.webp"
       alt="三维高斯泼溅场景渲染"
       class="hero-media"
@@ -23,7 +23,7 @@ import SiteLayout from "../components/SiteLayout.astro";
         <p class="page-kicker">PAGE 09 · 3D GAUSSIAN SPLATTING</p>
         <h1 class="page-title">三维高斯泼溅场景渲染</h1>
         <p class="page-subtitle">
-          通过车端标定相机和 /ndt_pose 采集图像-位姿关键帧，结合 GlobalMap.pcd 初始化高斯点，并在云端完成规整、训练和查看。公开页面展示链路；采集、上传和训练进入私有工作台后按权限开放。
+          通过车端标定相机和 /ndt_pose 采集图像-位姿关键帧，结合 GlobalMap.pcd 初始化高斯点，并在云端完成规整、训练和查看。
         </p>
       </div>
     </div>
@@ -50,8 +50,6 @@ import SiteLayout from "../components/SiteLayout.astro";
         </div>
         <div class="chip-list">
           <a class="chip-item" href="/app/three-dgs">进入 3DGS 工作台</a>
-          <span class="chip-item">需要 3DGS 权限</span>
-          <span class="chip-item">服务端先鉴权</span>
         </div>
       </div>
     </section>

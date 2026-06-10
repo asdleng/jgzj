@@ -10,7 +10,7 @@ import SiteLayout from "../components/SiteLayout.astro";
 >
   <header class="page-hero ops-hero">
     <OptimizedImage
-      src="/assets/hero-cloud-ops.png"
+      src="/assets/fallback/hero-cloud-ops-1600.jpg"
       webp="/assets/optimized/hero-cloud-ops-1600.webp"
       alt="云端智能运维场景"
       class="hero-media"
@@ -23,7 +23,7 @@ import SiteLayout from "../components/SiteLayout.astro";
         <p class="page-kicker">PAGE 06 · CLOUD OPS</p>
         <h1 class="page-title">云端智能运维</h1>
         <p class="page-subtitle">
-          面向多车现场和云端节点的运维体系。公开页面只展示能力说明；车辆状态、工具调用、服务器重启等工作台能力进入私有入口后按账号权限开放。
+          面向多车现场和云端节点的运维体系，涵盖车辆状态、车端工具、服务器节点和统一运维链路。
         </p>
       </div>
     </div>
@@ -32,10 +32,10 @@ import SiteLayout from "../components/SiteLayout.astro";
   <main class="page-main grid-bg">
     <section class="page-section">
       <div class="glass-card section-card reveal" data-reveal>
-        <p class="section-kicker">分层访问</p>
-        <h2 class="section-title">公开介绍与私有运维工作台分离</h2>
+        <p class="section-kicker">运维体系</p>
+        <h2 class="section-title">车辆、工具与服务器节点统一管理</h2>
         <p class="section-copy">
-          公开页面用于搜索引擎收录和能力展示，不加载车辆列表、工具面板或服务器拓扑。运维工作台在服务端完成登录和权限检查后才返回页面。
+          把车辆状态、工具调用、服务器节点和现场任务纳入统一视图，减少跨系统排查和人工沟通成本。
         </p>
         <div class="page-grid-three">
           <article class="page-card">
@@ -53,8 +53,6 @@ import SiteLayout from "../components/SiteLayout.astro";
         </div>
         <div class="chip-list">
           <a class="chip-item" href="/app/cloud-operations">进入运维工作台</a>
-          <span class="chip-item">需要车辆或运维权限</span>
-          <span class="chip-item">服务端先鉴权</span>
         </div>
       </div>
     </section>

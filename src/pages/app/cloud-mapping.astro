@@ -106,7 +106,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
             <div class="mapping-auth-copy">
               <p class="mapping-auth-kicker">访问控制</p>
               <h3 class="mapping-auth-title">使用全局账号授权云端建图</h3>
-              <p class="mapping-auth-hint" id="mapping-auth-hint">当前未登录，仅可查看全局建图状态；请从右上角账号入口登录。</p>
+              <p class="mapping-auth-hint" id="mapping-auth-hint">等待授权状态。</p>
             </div>
           </div>
 
@@ -118,7 +118,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
               </div>
               <span class="mapping-status-badge" id="mapping-status-badge">空闲</span>
             </div>
-            <p class="mapping-status-copy" id="mapping-status-copy">登录后上传 bag，并手动开始建图。</p>
+            <p class="mapping-status-copy" id="mapping-status-copy">上传 bag，并手动开始建图。</p>
             <div class="mapping-progress" id="mapping-progress" hidden>
               <div class="mapping-progress-track">
                 <span class="mapping-progress-fill" id="mapping-progress-fill"></span>
@@ -453,7 +453,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
       authHint.textContent = `已登录：${statusData.auth.username}`;
       authHint.dataset.state = "success";
     } else {
-      authHint.textContent = "当前未登录，仅可查看全局建图状态；请从右上角账号入口登录。";
+      authHint.textContent = "等待授权状态。";
       authHint.dataset.state = "idle";
     }
   }
@@ -516,7 +516,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
       statusTitle.textContent = "等待上传";
       statusBadge.textContent = "空闲";
       statusBadge.dataset.state = "idle";
-      statusCopy.textContent = "登录后上传 bag，并手动开始建图。";
+      statusCopy.textContent = "上传 bag，并手动开始建图。";
       hideProgress();
     }
   }

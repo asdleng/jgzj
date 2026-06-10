@@ -106,7 +106,7 @@
 
       const title = document.createElement("p");
       title.className = "site-auth-muted";
-      title.textContent = items.length ? "当前账号可访问" : "当前账号暂无可访问的内部页面。";
+      title.textContent = items.length ? "快捷入口" : "暂无可用入口。";
       container.appendChild(title);
 
       if (items.length) {
@@ -124,7 +124,7 @@
     });
 
     document.querySelectorAll('a[href="/login"]').forEach((link) => {
-      link.textContent = authState.user ? "账号中心" : "登录";
+      link.textContent = authState.user ? "个人中心" : "登录";
     });
   }
 
@@ -172,10 +172,10 @@
     const title = document.createElement("p");
     title.className = "site-auth-muted";
     title.textContent = !authState.user?.email_verified
-      ? "邮箱未验证，当前账号暂无有效权限。"
+      ? "邮箱未验证。"
       : authState.user?.super_admin
-        ? "当前账号是超级管理员，拥有全部权限。"
-        : "当前账号权限";
+        ? "管理员"
+        : "已开通功能";
     permissionsNode.appendChild(title);
 
     const effective = new Set(authState.permissions || []);
@@ -192,7 +192,7 @@
       const empty = document.createElement("p");
       empty.className = "site-auth-muted";
       empty.textContent = authState.user?.email_verified
-        ? "暂无互动权限，请联系超级管理员分配。"
+        ? "暂无可用功能。"
         : "请先完成邮箱验证。";
       permissionsNode.appendChild(empty);
       return;
@@ -205,7 +205,7 @@
     if (current) {
       current.textContent = user
         ? `已登录：${user.username}${user.super_admin ? "（超级管理员）" : ""}${user.email_verified ? "" : "（邮箱未验证）"}`
-        : "未登录。注册后必须完成邮箱验证，互动能力再由超级管理员分配。";
+        : "请登录或创建账号。";
     }
     if (guestPane) guestPane.hidden = Boolean(user);
     if (userPane) userPane.hidden = !user;
@@ -223,7 +223,7 @@
     emailInput.disabled = !user;
     emailSend.disabled = !user;
     if (!user) {
-      emailState.textContent = "登录后可验证邮箱。";
+      emailState.textContent = "请先登录。";
       emailState.dataset.state = "idle";
       return;
     }
@@ -234,8 +234,8 @@
       return;
     }
     emailState.textContent = user.email
-      ? `未验证：${user.email}。未验证账号暂不具备任何权限。`
-      : "未填写邮箱。未验证账号暂不具备任何权限。";
+      ? `未验证：${user.email}。`
+      : "未填写邮箱。";
     emailState.dataset.state = "error";
     emailSend.textContent = "发送验证邮件";
   }
@@ -269,7 +269,7 @@
           ? authState.user.email_verified
             ? `当前账号缺少权限：${label}`
             : `邮箱验证后可申请使用：${label}`
-          : `登录后可使用：${label}`;
+          : `暂不可用：${label}`;
       } else if (note) {
         note.remove();
       }
@@ -308,7 +308,7 @@
     const username = document.getElementById("jgzj-login-username")?.value.trim() || "";
     const password = document.getElementById("jgzj-login-password")?.value || "";
     if (!username || !password) {
-      setStatus("请输入用户名和密码。", "error");
+      setStatus("请输入用户名或邮箱和密码。", "error");
       return;
     }
     setStatus("登录中...", "loading");
@@ -348,7 +348,7 @@
       });
       document.getElementById("jgzj-register-password").value = "";
       await refreshMe();
-      setStatus("注册成功，已发送邮箱验证。验证完成前账号暂无有效权限。", "ok");
+      setStatus("注册成功，已发送邮箱验证。", "ok");
     } catch (error) {
       setStatus(error?.message || "注册失败。", "error");
     }
@@ -472,7 +472,7 @@
       adminUsers = adminUsers.map((item) => (item.username === data.user.username ? data.user : item));
       renderAdminUsers();
       selectAdminUser(data.user.username);
-      setStatus("权限已保存。", "ok");
+      setStatus("设置已保存。", "ok");
     } catch (error) {
       setStatus(error?.message || "保存失败。", "error");
     }

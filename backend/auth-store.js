@@ -499,9 +499,21 @@ class AuthStore {
   }
 
   async login(usernameRaw, password, meta = {}) {
-    const username = normalizeUsername(usernameRaw);
+    const identifier = String(usernameRaw || '').trim();
+    const normalizedUsername = normalizeUsername(identifier);
+    const normalizedEmail = normalizeEmail(identifier);
     const state = await this.ensureLoaded();
-    const user = state.users[username];
+    let username = normalizedUsername;
+    let user = state.users[username];
+    if (!user && normalizedEmail && identifier.includes('@')) {
+      const emailMatches = Object.values(state.users || {}).filter(
+        (item) => normalizeEmail(item?.email) === normalizedEmail
+      );
+      if (emailMatches.length === 1) {
+        user = emailMatches[0];
+        username = user.username;
+      }
+    }
     if (!user || user.active === false || !verifyPassword(password, user.password_hash)) {
       const error = new Error('login_failed');
       error.status = 401;
@@ -513,7 +525,7 @@ class AuthStore {
     const expiresAt = Date.now() + this.sessionTtlMs;
     await this.withWriteLock((lockedState) => {
       const lockedUser = lockedState.users[username];
-      if (!lockedUser || lockedUser.active === false) {
+      if (!lockedUser || lockedUser.active === false || !verifyPassword(password, lockedUser.password_hash)) {
         const error = new Error('login_failed');
         error.status = 401;
         throw error;

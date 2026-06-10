@@ -5897,7 +5897,27 @@ app.use(
     maxAge: '1h'
   })
 );
-app.use(express.static(webRoot));
+
+function setWebStaticCacheHeaders(res, filePath) {
+  const relativePath = path.relative(webRoot, filePath).split(path.sep).join('/');
+  if (relativePath.endsWith('.html')) {
+    res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+    return;
+  }
+  if (relativePath.startsWith('_astro/')) {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    return;
+  }
+  if (relativePath.startsWith('assets/optimized/') || relativePath.startsWith('assets/fallback/')) {
+    res.setHeader('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400');
+    return;
+  }
+  if (relativePath.startsWith('js/')) {
+    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+  }
+}
+
+app.use(express.static(webRoot, { setHeaders: setWebStaticCacheHeaders }));
 app.get('*', (_req, res) => {
   res.sendFile(path.join(webRoot, 'index.html'));
 });

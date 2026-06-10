@@ -11,7 +11,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
 >
   <header class="page-hero three-dgs-hero">
     <OptimizedImage
-      src="/assets/hero-cloud-ops.png"
+      src="/assets/fallback/hero-cloud-ops-1600.jpg"
       webp="/assets/optimized/hero-cloud-ops-1600.webp"
       alt="三维高斯泼溅场景渲染"
       class="hero-media"
@@ -37,7 +37,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
           <div>
             <p class="section-kicker">3DGS 工作台</p>
             <h2 class="section-title">采集、上传、规整和训练</h2>
-            <p id="three-dgs-auth-hint" class="section-copy">当前未登录，仅可查看状态；请从右上角账号入口登录。</p>
+            <p id="three-dgs-auth-hint" class="section-copy">等待状态更新。</p>
           </div>
           <button id="three-dgs-refresh" class="three-dgs-button three-dgs-button--ghost" type="button">刷新状态</button>
         </div>
@@ -1192,7 +1192,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
       return;
     }
     if (!isAuthed() || !hasRunPermission()) {
-      if (rawRgbPointcloudStatus) rawRgbPointcloudStatus.textContent = "登录后显示原始 RGB 点云";
+      if (rawRgbPointcloudStatus) rawRgbPointcloudStatus.textContent = "等待显示原始 RGB 点云";
       return;
     }
     const key = `${pointcloud.path}:${pointcloud.size_bytes}:${pointcloud.updated_at_ms}`;
@@ -1229,7 +1229,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
       return;
     }
     if (!isAuthed() || !hasRunPermission()) {
-      if (recolorPointcloudStatus) recolorPointcloudStatus.textContent = "登录后显示重上色点云";
+      if (recolorPointcloudStatus) recolorPointcloudStatus.textContent = "等待显示重上色点云";
       return;
     }
     const colorization = dataset.summary?.colorization || {};
@@ -1353,7 +1353,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
 
   async function loadInitPointcloudPreview(force = false) {
     if (!isAuthed() || !hasRunPermission()) {
-      if (initPointcloudStatus) initPointcloudStatus.textContent = "登录后显示点云对比";
+      if (initPointcloudStatus) initPointcloudStatus.textContent = "等待显示点云对比";
       return;
     }
     if (initPointcloudStatus) initPointcloudStatus.textContent = "正在加载三种点云...";
@@ -1947,7 +1947,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
       return;
     }
     if (!isAuthed() || !hasRunPermission()) {
-      if (pointcloudPreviewStatus) pointcloudPreviewStatus.textContent = "登录后显示点云预览";
+      if (pointcloudPreviewStatus) pointcloudPreviewStatus.textContent = "等待显示点云预览";
       return;
     }
     const key = `${pointcloud.path}:${pointcloud.size_bytes}:${pointcloud.updated_at_ms}`;
@@ -2396,7 +2396,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
     statusBadge.dataset.state = phase;
     authHint.textContent = isAuthed()
       ? `已登录：${statusData.auth.username}${hasRunPermission() ? "" : "，但缺少 3DGS 场景训练权限。"}`
-      : "当前未登录，仅可查看状态；请从右上角账号入口登录。";
+      : "等待状态更新。";
     authHint.dataset.state = isAuthed() && hasRunPermission() ? "success" : "idle";
 
     const capture = state.capture || {};

@@ -4,11 +4,11 @@ const isPageMode = mode === "page";
 ---
 
 {isPageMode ? (
-  <section id="jgzj-auth-panel" class="site-auth-dialog site-auth-dialog--page" aria-label="账号与权限">
+  <section id="jgzj-auth-panel" class="site-auth-dialog site-auth-dialog--page" aria-label="登录">
     <header class="site-auth-head">
       <div>
         <p class="site-auth-kicker">ACCOUNT</p>
-        <h2>登录与权限</h2>
+        <h2>登录</h2>
       </div>
     </header>
 
@@ -18,8 +18,8 @@ const isPageMode = mode === "page";
       <form id="jgzj-login-form" class="site-auth-form">
         <h3>登录</h3>
         <label>
-          <span>用户名</span>
-          <input id="jgzj-login-username" type="text" autocomplete="username" maxlength="64" />
+          <span>用户名或邮箱</span>
+          <input id="jgzj-login-username" type="text" autocomplete="username" maxlength="254" placeholder="用户名或邮箱" />
         </label>
         <label>
           <span>密码</span>
@@ -29,7 +29,7 @@ const isPageMode = mode === "page";
       </form>
 
       <form id="jgzj-register-form" class="site-auth-form">
-        <h3>注册新账号</h3>
+        <h3>创建账号</h3>
         <label>
           <span>用户名</span>
           <input id="jgzj-register-username" type="text" autocomplete="username" maxlength="32" placeholder="3-32 位字母数字" />
@@ -50,7 +50,7 @@ const isPageMode = mode === "page";
       <form id="jgzj-email-form" class="site-auth-email-form">
         <div>
           <p class="site-auth-muted">邮箱验证</p>
-          <p id="jgzj-email-state" class="site-auth-email-state">未验证账号暂不具备任何权限。</p>
+          <p id="jgzj-email-state" class="site-auth-email-state">用于接收验证邮件。</p>
         </div>
         <label>
           <span>邮箱</span>
@@ -67,26 +67,26 @@ const isPageMode = mode === "page";
       <div class="site-auth-admin-head">
         <div>
           <p class="site-auth-kicker">ADMIN</p>
-          <h3>账号权限管理</h3>
+          <h3>成员设置</h3>
         </div>
         <button id="jgzj-admin-refresh" class="site-auth-secondary-button" type="button">刷新</button>
       </div>
       <div class="site-auth-admin-grid">
         <div id="jgzj-admin-user-list" class="site-auth-user-list"></div>
         <form id="jgzj-admin-form" class="site-auth-admin-form">
-          <p id="jgzj-admin-selected" class="site-auth-muted">选择一个账号后分配权限。</p>
+          <p id="jgzj-admin-selected" class="site-auth-muted">选择成员后保存设置。</p>
           <label class="site-auth-active-row">
             <input id="jgzj-admin-active" type="checkbox" />
-            <span>账号启用</span>
+            <span>启用</span>
           </label>
           <div id="jgzj-admin-permission-list" class="site-auth-permission-list"></div>
-          <button id="jgzj-admin-save" type="submit" disabled>保存权限</button>
+          <button id="jgzj-admin-save" type="submit" disabled>保存设置</button>
         </form>
       </div>
     </section>
 
-    <p id="jgzj-auth-status" class="site-auth-status" data-state="idle">新注册账号默认只能查看非公开页面，具体互动权限由超级管理员分配。</p>
+    <p id="jgzj-auth-status" class="site-auth-status" data-state="idle">准备就绪。</p>
   </section>
 ) : null}
 
-<script is:inline src="/js/account-auth.js" defer data-auth-mode={mode}></script>
+<script is:inline src="/js/account-auth.js?v=20260610-1" defer data-auth-mode={mode}></script>

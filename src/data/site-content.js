@@ -106,19 +106,19 @@ export const autonomousDrivingHighlights = [
 export const visualScenes = [
   {
     title: "红岗公园",
-    src: "/assets/visual-honggang-park.bmp",
+    src: "/assets/fallback/visual-honggang-park-1200.jpg",
     webp: "/assets/optimized/visual-honggang-park-1200.webp",
     alt: "红岗公园车端 AI 可视化界面"
   },
   {
     title: "万达广场",
-    src: "/assets/visual-wanda-plaza.bmp",
+    src: "/assets/fallback/visual-wanda-plaza-1200.jpg",
     webp: "/assets/optimized/visual-wanda-plaza-1200.webp",
     alt: "万达广场车端 AI 可视化界面"
   },
   {
     title: "西丽街道",
-    src: "/assets/visual-xili-street.bmp",
+    src: "/assets/fallback/visual-xili-street-1200.jpg",
     webp: "/assets/optimized/visual-xili-street-1200.webp",
     alt: "西丽街道车端 AI 可视化界面"
   }
@@ -147,7 +147,7 @@ export const cases = [
   {
     title: "场馆活动服务",
     text: "在大型场馆提供接待引导与现场信息触达。",
-    img: "/assets/s20_3634d8e375c5.jpg",
+    img: "/assets/fallback/case-venue-800.jpg",
     webp: "/assets/optimized/case-venue-800.webp"
   },
   {
@@ -165,7 +165,7 @@ export const cases = [
   {
     title: "校园与商业综合体",
     text: "结合导览、播报和互动，强化用户体验。",
-    img: "/assets/s20_a32837c09c93.png",
+    img: "/assets/fallback/case-campus-800.jpg",
     webp: "/assets/optimized/case-campus-800.webp"
   }
 ];
