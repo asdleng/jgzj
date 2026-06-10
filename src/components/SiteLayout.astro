@@ -8,7 +8,8 @@ const {
   description = siteDescription,
   currentPath = "/",
   ogImage = "/assets/s03_04142025eb07.jpg",
-  pageBackdrop = ""
+  pageBackdrop = "",
+  noindex = false
 } = Astro.props;
 
 const canonicalUrl = new URL(currentPath, siteUrl).toString();
@@ -29,6 +30,7 @@ const fullTitle = `${title} | ${siteName}`;
     <meta name="viewport" content="width=device-width" />
     <meta name="generator" content={Astro.generator} />
     <meta name="description" content={description} />
+    {noindex ? <meta name="robots" content="noindex,nofollow" /> : null}
     <meta property="og:type" content="website" />
     <meta property="og:title" content={fullTitle} />
     <meta property="og:url" content={canonicalUrl} />

@@ -1,12 +1,10 @@
 ---
-import EmbeddedVehicleDevOpsConsole from "../components/EmbeddedVehicleDevOpsConsole.astro";
-import InteractiveScripts from "../components/InteractiveScripts.astro";
 import SiteLayout from "../components/SiteLayout.astro";
 ---
 
 <SiteLayout
   title="车辆代码维护"
-  description="面向无人车辆的集中代码维护页面，支持按车辆选择 Repo、分支和 Commit，执行 Git 更新、编译、任务日志查看和自然语言追问。"
+  description="展示吉光智界面向无人车辆的集中代码维护体系，覆盖 Repo、分支、Commit、编译和日志追踪。"
   currentPath="/vehicle-devops"
 >
   <header class="page-hero ops-hero vehicle-devops-hero">
@@ -23,26 +21,37 @@ import SiteLayout from "../components/SiteLayout.astro";
         <p class="page-kicker">PAGE 07 · CODE MAINTENANCE</p>
         <h1 class="page-title">车辆代码维护</h1>
         <p class="page-subtitle">
-          独立于控车操作的代码维护入口。按车辆选择车端 Repo、编译目标、分支和 Commit，执行更新、编译、任务状态与实时日志查看，并在同一屏用自然语言继续分析。
+          车辆代码维护能力用于按车辆选择仓库、分支、Commit 和编译目标。公开页面只展示能力边界，实际更新、编译和日志操作进入私有入口后按权限开放。
         </p>
       </div>
     </div>
   </header>
 
   <main class="page-main grid-bg">
-    <section class="page-section vehicle-devops-section">
-      <div class="glass-card section-card vehicle-devops-card">
-        <p class="section-kicker">车辆代码维护工作台</p>
-        <h2 class="section-title">代码更新、编译、日志和 OpenClaw 追问放在同一屏</h2>
-        <p class="section-copy">
-          这里不放车身、相机、路线等控车按钮，只保留代码维护相关工具。执行结果会自动进入右侧对话上下文，方便继续让 OpenClaw 判断失败原因或给出下一步处理。
-        </p>
-        <div class="ops-openclaw-shell vehicle-devops-openclaw-shell">
-          <EmbeddedVehicleDevOpsConsole />
+    <section class="page-section">
+      <div class="glass-card section-card reveal" data-reveal>
+        <p class="section-kicker">代码维护</p>
+        <h2 class="section-title">高风险代码操作必须先完成账号鉴权</h2>
+        <div class="page-grid-three">
+          <article class="page-card">
+            <h3>版本选择</h3>
+            <p>按车辆、仓库、分支和 Commit 定位代码版本，避免现场车辆误更新。</p>
+          </article>
+          <article class="page-card">
+            <h3>编译执行</h3>
+            <p>受控触发车端编译任务，并保留状态、日志和失败分析入口。</p>
+          </article>
+          <article class="page-card">
+            <h3>上下文追问</h3>
+            <p>把执行结果带入运维助手，继续定位编译失败、依赖缺失或环境异常。</p>
+          </article>
+        </div>
+        <div class="chip-list">
+          <a class="chip-item" href="/app/vehicle-devops">进入代码维护工作台</a>
+          <span class="chip-item">需要代码权限</span>
+          <span class="chip-item">服务端先鉴权</span>
         </div>
       </div>
     </section>
   </main>
-
-  <InteractiveScripts />
 </SiteLayout>

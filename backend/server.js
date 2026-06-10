@@ -5661,6 +5661,112 @@ registerRuntimeControlRoutes(app, {
   rootDir: path.resolve(__dirname, '..')
 });
 
+const protectedAppPages = [
+  {
+    paths: ['/app/cloud-operations', '/app/cloud-operations/'],
+    file: 'app/cloud-operations/index.html',
+    permissions: ['vehicle:read', 'runtime:read']
+  },
+  {
+    paths: ['/app/vehicle-devops', '/app/vehicle-devops/'],
+    file: 'app/vehicle-devops/index.html',
+    permissions: ['vehicle:code:read', 'vehicle:code:write']
+  },
+  {
+    paths: ['/app/intelligent-ai-dialogue', '/app/intelligent-ai-dialogue/'],
+    file: 'app/intelligent-ai-dialogue/index.html',
+    permissions: ['ai:chat']
+  },
+  {
+    paths: ['/app/edge-cloud-ai-inspection', '/app/edge-cloud-ai-inspection/'],
+    file: 'app/edge-cloud-ai-inspection/index.html',
+    permissions: ['ai:detect', 'ai:history:read']
+  },
+  {
+    paths: ['/app/cloud-mapping', '/app/cloud-mapping/'],
+    file: 'app/cloud-mapping/index.html',
+    permissions: ['mapping:run']
+  },
+  {
+    paths: ['/app/three-dgs', '/app/three-dgs/'],
+    file: 'app/three-dgs/index.html',
+    permissions: ['three-dgs:run']
+  },
+  {
+    paths: ['/app/distributed-map-management', '/app/distributed-map-management/'],
+    file: 'app/distributed-map-management/index.html',
+    permissions: ['vehicle:path:write']
+  }
+];
+
+function renderProtectedAppGate({ title, detail, status }) {
+  const safeTitle = String(title || '访问受限')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const safeDetail = String(detail || '请先登录。')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>${safeTitle} | 吉光智界</title>
+    <style>
+      body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07111f;color:#e5edf8;font-family:Arial,"Noto Sans SC",sans-serif}
+      main{width:min(560px,calc(100vw - 32px));padding:28px;border:1px solid rgba(125,211,252,.22);background:rgba(15,23,42,.82)}
+      h1{margin:0 0 12px;font-size:24px;line-height:1.35}
+      p{margin:0 0 20px;color:#b8c4d6;line-height:1.8}
+      a{display:inline-flex;padding:10px 14px;border:1px solid rgba(103,232,249,.38);color:#a5f3fc;text-decoration:none;font-weight:700}
+      small{display:block;margin-top:16px;color:#7890aa}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${safeTitle}</h1>
+      <p>${safeDetail}</p>
+      <a href="/">返回公开站点登录</a>
+      <small>HTTP ${status}</small>
+    </main>
+  </body>
+</html>`;
+}
+
+protectedAppPages.forEach((page) => {
+  app.get(page.paths, async (req, res) => {
+    const auth = await authStore.getAuthFromRequest(req);
+    res.setHeader('Cache-Control', 'private, no-store');
+
+    if (!auth) {
+      authStore.clearSessionCookie(res);
+      return res.status(401).type('html').send(
+        renderProtectedAppGate({
+          status: 401,
+          title: '请先登录',
+          detail: '这个工作台是私有入口。请先回到公开站点，通过右上角账号入口登录后再访问。'
+        })
+      );
+    }
+
+    if (!authStore.hasAnyPermission(auth.user, page.permissions)) {
+      return res.status(403).type('html').send(
+        renderProtectedAppGate({
+          status: 403,
+          title: '当前账号没有权限',
+          detail: auth.user.email_verified
+            ? '当前账号没有访问这个工作台所需的权限。'
+            : '请先完成邮箱验证，未验证账号暂不具备任何工作台权限。'
+        })
+      );
+    }
+
+    return res.sendFile(path.join(webRoot, page.file));
+  });
+});
+
 app.use(
   '/supersplat-viewer',
   express.static(superSplatViewerRoot, {
