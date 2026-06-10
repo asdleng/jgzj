@@ -5661,6 +5661,109 @@ registerRuntimeControlRoutes(app, {
   rootDir: path.resolve(__dirname, '..')
 });
 
+function loginRedirectUrl(req) {
+  const next = encodeURIComponent(req.originalUrl || req.url || '/');
+  return `/login?next=${next}`;
+}
+
+const privateNavigationItems = [
+  {
+    href: '/app/edge-cloud-ai-inspection',
+    label: 'AI检测',
+    permissions: ['ai:detect', 'ai:history:read']
+  },
+  {
+    href: '/app/intelligent-ai-dialogue',
+    label: 'AI对话',
+    permissions: ['ai:chat']
+  },
+  {
+    href: '/app/cloud-operations',
+    label: '云端运维',
+    permissions: ['vehicle:read', 'runtime:read']
+  },
+  {
+    href: '/app/vehicle-devops',
+    label: '车辆代码',
+    permissions: ['vehicle:code:read', 'vehicle:code:write']
+  },
+  {
+    href: '/app/cloud-mapping',
+    label: '云端建图',
+    permissions: ['mapping:run']
+  },
+  {
+    href: '/app/three-dgs',
+    label: '3DGS',
+    permissions: ['three-dgs:run']
+  },
+  {
+    href: '/app/distributed-map-management',
+    label: '地图管理',
+    permissions: ['vehicle:path:write']
+  }
+];
+
+const gatedSitePages = [
+  {
+    paths: ['/edge-cloud-ai-inspection', '/edge-cloud-ai-inspection/'],
+    permissions: ['ai:detect', 'ai:history:read'],
+    redirectTo: '/app/edge-cloud-ai-inspection'
+  },
+  {
+    paths: ['/intelligent-ai-dialogue', '/intelligent-ai-dialogue/'],
+    permissions: ['ai:chat'],
+    redirectTo: '/app/intelligent-ai-dialogue'
+  },
+  {
+    paths: ['/cloud-operations', '/cloud-operations/'],
+    permissions: ['vehicle:read', 'runtime:read'],
+    redirectTo: '/app/cloud-operations'
+  },
+  {
+    paths: ['/vehicle-devops', '/vehicle-devops/'],
+    permissions: ['vehicle:code:read', 'vehicle:code:write'],
+    redirectTo: '/app/vehicle-devops'
+  },
+  {
+    paths: ['/cloud-mapping', '/cloud-mapping/'],
+    permissions: ['mapping:run'],
+    redirectTo: '/app/cloud-mapping'
+  },
+  {
+    paths: ['/three-dgs', '/three-dgs/'],
+    permissions: ['three-dgs:run'],
+    redirectTo: '/app/three-dgs'
+  },
+  {
+    paths: ['/distributed-map-management', '/distributed-map-management/'],
+    permissions: ['vehicle:path:write'],
+    redirectTo: '/app/distributed-map-management'
+  }
+];
+
+app.get('/api/site/private-navigation', async (req, res) => {
+  const auth = await authStore.getAuthFromRequest(req);
+  res.setHeader('Cache-Control', 'private, no-store');
+
+  if (!auth?.user?.email_verified) {
+    if (!auth) {
+      authStore.clearSessionCookie(res);
+    }
+    return res.json({ ok: true, items: [] });
+  }
+
+  const items = privateNavigationItems
+    .filter((item) => authStore.hasAnyPermission(auth.user, item.permissions))
+    .map((item) => ({
+      href: item.href,
+      label: item.label,
+      permissions: item.permissions
+    }));
+
+  return res.json({ ok: true, items });
+});
+
 const protectedAppPages = [
   {
     paths: ['/app/cloud-operations', '/app/cloud-operations/'],
@@ -5728,7 +5831,7 @@ function renderProtectedAppGate({ title, detail, status }) {
     <main>
       <h1>${safeTitle}</h1>
       <p>${safeDetail}</p>
-      <a href="/">返回公开站点登录</a>
+      <a href="/login">前往登录页</a>
       <small>HTTP ${status}</small>
     </main>
   </body>
@@ -5742,13 +5845,7 @@ protectedAppPages.forEach((page) => {
 
     if (!auth) {
       authStore.clearSessionCookie(res);
-      return res.status(401).type('html').send(
-        renderProtectedAppGate({
-          status: 401,
-          title: '请先登录',
-          detail: '这个工作台是私有入口。请先回到公开站点，通过右上角账号入口登录后再访问。'
-        })
-      );
+      return res.redirect(302, loginRedirectUrl(req));
     }
 
     if (!authStore.hasAnyPermission(auth.user, page.permissions)) {
@@ -5764,6 +5861,32 @@ protectedAppPages.forEach((page) => {
     }
 
     return res.sendFile(path.join(webRoot, page.file));
+  });
+});
+
+gatedSitePages.forEach((page) => {
+  app.get(page.paths, async (req, res) => {
+    const auth = await authStore.getAuthFromRequest(req);
+    res.setHeader('Cache-Control', 'private, no-store');
+
+    if (!auth) {
+      authStore.clearSessionCookie(res);
+      return res.redirect(302, loginRedirectUrl(req));
+    }
+
+    if (!authStore.hasAnyPermission(auth.user, page.permissions)) {
+      return res.status(403).type('html').send(
+        renderProtectedAppGate({
+          status: 403,
+          title: '当前账号没有权限',
+          detail: auth.user.email_verified
+            ? '当前账号没有访问这个内部页面所需的权限。'
+            : '请先完成邮箱验证，未验证账号暂不具备任何内部页面权限。'
+        })
+      );
+    }
+
+    return res.redirect(302, page.redirectTo);
   });
 });
 

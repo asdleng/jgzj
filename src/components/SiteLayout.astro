@@ -1,7 +1,13 @@
 ---
 import "../styles/global.css";
 import AccountAuth from "./AccountAuth.astro";
-import { contactInfo, navigationItems, siteDescription, siteName, siteUrl } from "../data/site-content.js";
+import {
+  contactInfo,
+  publicNavigationItems,
+  siteDescription,
+  siteName,
+  siteUrl
+} from "../data/site-content.js";
 
 const {
   title,
@@ -9,11 +15,12 @@ const {
   currentPath = "/",
   ogImage = "/assets/s03_04142025eb07.jpg",
   pageBackdrop = "",
-  noindex = false
+  noindex = false,
+  authMode = "controller"
 } = Astro.props;
 
 const canonicalUrl = new URL(currentPath, siteUrl).toString();
-const fullTitle = `${title} | ${siteName}`;
+const fullTitle = title === siteName ? siteName : `${title} | ${siteName}`;
 ---
 
 <html lang="zh-CN">
@@ -57,13 +64,14 @@ const fullTitle = `${title} | ${siteName}`;
           吉光智界
         </a>
         <div class="site-nav-links">
-          {navigationItems.map((item) => (
+          {publicNavigationItems.map((item) => (
             <a href={item.href} class:list={{ "is-active": currentPath === item.href }}>
               {item.label}
             </a>
           ))}
         </div>
-        <AccountAuth />
+        <div class="site-nav-links site-nav-links--private" data-private-nav hidden></div>
+        {authMode !== "none" ? <AccountAuth mode={authMode} /> : null}
       </div>
     </nav>
 

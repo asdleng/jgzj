@@ -2,13 +2,14 @@
 import SiteLayout from "../components/SiteLayout.astro";
 import {
   securityDrivers,
-  securityPainPoints
+  securityPainPoints,
+  siteName
 } from "../data/site-content.js";
 ---
 
 <SiteLayout
-  title="安防巡逻行业爆发"
-  description="聚焦安防巡逻行业爆发背景下的场景痛点、增长驱动力与机器人落地方向。"
+  title={siteName}
+  description="深圳吉光智界科技有限公司专注安防巡逻、园区自动驾驶、端云协同 AI 检测、智能交互与云端运维的一体化机器人方案。"
   currentPath="/"
 >
   <header class="page-hero">
@@ -22,10 +23,10 @@ import {
     <div class="hero-grid"></div>
     <div class="page-hero-shell">
       <div class="page-hero-copy reveal" data-reveal>
-        <p class="page-kicker">PAGE 01 · INDUSTRY</p>
-        <h1 class="page-title">安防巡逻行业爆发</h1>
+        <p class="page-kicker">PAGE 01 · COMPANY</p>
+        <h1 class="page-title">深圳吉光智界科技有限公司</h1>
         <p class="page-subtitle">
-          安防巡逻正在从"人工值守"进入"机器人 + 平台 + AI"的系统升级阶段。对覆盖率、实时响应、可追溯与运营联动的要求同步抬升，推动行业进入真正的爆发窗口。
+          面向安防巡逻行业爆发窗口，吉光智界正在把"机器人 + 平台 + AI"带入园区、景区、政务和城市公共空间。系统围绕覆盖率、实时响应、可追溯与运营联动持续升级。
         </p>
       </div>
     </div>

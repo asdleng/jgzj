@@ -1,19 +1,13 @@
-export const siteUrl = "https://jiguangzhijie.top";
+export const siteUrl = "https://jgzj.dev";
 export const siteName = "深圳吉光智界科技有限公司";
 export const siteDescription =
   "吉光智界专注安防巡逻、园区自动驾驶、端云协同 AI 检测、智能交互与云端运维的一体化机器人方案。";
 
-export const navigationItems = [
-  { href: "/", label: "安防巡逻行业爆发" },
+export const publicNavigationItems = [
+  { href: "/", label: "公司首页" },
   { href: "/l4-autonomous-driving", label: "L4级园区自动驾驶" },
   { href: "/cases-awards", label: "案例与奖项" },
-  { href: "/edge-cloud-ai-inspection", label: "端云协同AI检测" },
-  { href: "/intelligent-ai-dialogue", label: "智能AI对话交互" },
-  { href: "/cloud-operations", label: "云端智能运维" },
-  { href: "/vehicle-devops", label: "车辆代码维护" },
-  { href: "/cloud-mapping", label: "大规模云端建图" },
-  { href: "/three-dgs", label: "三维高斯泼溅场景渲染" },
-  { href: "/distributed-map-management", label: "分布地图云端统一管理" }
+  { href: "/login", label: "登录" }
 ];
 
 export const contactInfo = {
