@@ -1,7 +1,7 @@
 ---
 import OptimizedImage from "../components/OptimizedImage.astro";
 import SiteLayout from "../components/SiteLayout.astro";
-import { baizeModes, baizeSpecs } from "../data/site-content.js";
+import { baizeModes, baizeSpecs, siteName, siteUrl } from "../data/site-content.js";
 
 const autonomyCards = [
   {
@@ -106,12 +106,36 @@ const cloudOpsScreens = [
     ]
   }
 ];
+
+const autonomyStructuredData = {
+  "@context": "https://schema.org",
+  "@type": "Product",
+  name: "白泽智 AI 服务机器人 L4级园区自动驾驶平台",
+  brand: {
+    "@type": "Brand",
+    name: siteName
+  },
+  manufacturer: {
+    "@type": "Organization",
+    name: siteName,
+    url: siteUrl
+  },
+  url: new URL("/l4-autonomous-driving", siteUrl).toString(),
+  category: "低速自动驾驶机器人",
+  description: "面向园区、公园、街区和场馆等场景的感知、融合定位、决策规划和跟踪控制一体化自动驾驶平台。",
+  additionalProperty: baizeSpecs.map((spec) => ({
+    "@type": "PropertyValue",
+    name: spec.item,
+    value: spec.value
+  }))
+};
 ---
 
 <SiteLayout
   title="L4级园区自动驾驶"
   description="面向园区、公园、街区和场馆等低速复杂场景，展示白泽机器人在感知、融合定位、决策规划和跟踪控制上的自动驾驶能力。"
   currentPath="/l4-autonomous-driving"
+  structuredData={autonomyStructuredData}
 >
   <header class="page-hero autonomy-hero">
     <OptimizedImage
@@ -120,6 +144,9 @@ const cloudOpsScreens = [
       sizes="100vw"
       alt="L4级园区自动驾驶场景"
       class="hero-media"
+      width="1447"
+      height="1086"
+      fetchpriority="high"
       data-parallax
     />
     <div class="hero-overlay"></div>

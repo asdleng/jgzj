@@ -5865,6 +5865,41 @@ protectedAppPages.forEach((page) => {
   });
 });
 
+app.get('/app/*', async (req, res, next) => {
+  const normalizedPath = req.path
+    .replace(/\/index\.html$/, '')
+    .replace(/\/$/, '') || '/';
+  const page = protectedAppPages.find((item) =>
+    item.paths.some((pagePath) => (pagePath.replace(/\/$/, '') || '/') === normalizedPath)
+  );
+
+  if (!page) {
+    return next();
+  }
+
+  const auth = await authStore.getAuthFromRequest(req);
+  res.setHeader('Cache-Control', 'private, no-store');
+
+  if (!auth) {
+    authStore.clearSessionCookie(res);
+    return res.redirect(302, loginRedirectUrl(req));
+  }
+
+  if (!authStore.hasAnyPermission(auth.user, page.permissions)) {
+    return res.status(403).type('html').send(
+      renderProtectedAppGate({
+        status: 403,
+        title: '当前账号没有权限',
+        detail: auth.user.email_verified
+          ? '当前账号没有访问这个工作台所需的权限。'
+          : '请先完成邮箱验证，未验证账号暂不具备任何工作台权限。'
+      })
+    );
+  }
+
+  return res.sendFile(path.join(webRoot, page.file));
+});
+
 publicRedirectPages.forEach((page) => {
   app.get(page.paths, (_req, res) => {
     res.redirect(301, page.redirectTo);
@@ -5908,7 +5943,11 @@ app.use(
 function setWebStaticCacheHeaders(res, filePath) {
   const relativePath = path.relative(webRoot, filePath).split(path.sep).join('/');
   if (relativePath.endsWith('.html')) {
-    res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+    if (relativePath === 'login/index.html' || relativePath.startsWith('app/')) {
+      res.setHeader('Cache-Control', 'private, no-store');
+      return;
+    }
+    res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
     return;
   }
   if (relativePath.startsWith('_astro/')) {

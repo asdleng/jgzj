@@ -715,6 +715,11 @@ a {
   padding: 0 16px;
 }
 
+body:not(.is-app-page) .page-main > .page-section {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 560px;
+}
+
 body.has-page-backdrop .page-hero-shell {
   padding: 72px 16px 40px;
 }
@@ -2496,7 +2501,12 @@ body::after {
   height: 100%;
   object-fit: cover;
   object-position: center center;
-  will-change: transform;
+}
+
+@media (min-width: 900px) and (prefers-reduced-motion: no-preference) {
+  .hero-media[data-parallax] {
+    will-change: transform;
+  }
 }
 
 .hero-overlay {

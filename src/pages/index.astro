@@ -2,16 +2,59 @@
 import OptimizedImage from "../components/OptimizedImage.astro";
 import SiteLayout from "../components/SiteLayout.astro";
 import {
+  contactInfo,
   securityDrivers,
   securityPainPoints,
-  siteName
+  siteDescription,
+  siteName,
+  siteUrl
 } from "../data/site-content.js";
+
+const homeStructuredData = [
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: siteName,
+    url: siteUrl,
+    logo: new URL("/assets/s19_91432e393d0c.png", siteUrl).toString(),
+    email: contactInfo.email,
+    address: {
+      "@type": "PostalAddress",
+      addressCountry: "CN",
+      addressRegion: "广东省",
+      addressLocality: "深圳市",
+      streetAddress: "坪山区新能源汽车产业园区2期"
+    }
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: siteName,
+    url: siteUrl,
+    inLanguage: "zh-CN",
+    description: siteDescription
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    name: "安防巡逻与园区自动驾驶机器人方案",
+    provider: {
+      "@type": "Organization",
+      name: siteName,
+      url: siteUrl
+    },
+    areaServed: "中国",
+    serviceType: ["安防巡逻机器人", "园区自动驾驶", "AI 导览", "端云协同 AI 检测"],
+    description: "面向园区、景区、政务和城市公共空间的机器人、平台与 AI 一体化服务。"
+  }
+];
 ---
 
 <SiteLayout
   title={siteName}
   description="深圳吉光智界科技有限公司专注安防巡逻、园区自动驾驶、端云协同 AI 检测、智能交互与云端运维的一体化机器人方案。"
   currentPath="/"
+  structuredData={homeStructuredData}
 >
   <header class="page-hero">
     <OptimizedImage
@@ -20,6 +63,9 @@ import {
       sizes="100vw"
       alt="安防巡逻行业场景"
       class="hero-media"
+      width="1920"
+      height="882"
+      fetchpriority="high"
       data-parallax
     />
     <div class="hero-overlay"></div>
@@ -80,6 +126,8 @@ import {
               alt="安防巡逻行业四大痛点"
               loading="lazy"
               decoding="async"
+              width="1440"
+              height="810"
             />
           </div>
         </div>
@@ -109,6 +157,8 @@ import {
               alt="安防市场规模与人机协同消费层级分析"
               loading="lazy"
               decoding="async"
+              width="1000"
+              height="562"
             />
             <figcaption>人机协同的蓝海市场 · 安防市场规模与城镇居民可支配收入消费层级</figcaption>
           </figure>
@@ -119,6 +169,8 @@ import {
               alt="全球安防市场规模与增长趋势"
               loading="lazy"
               decoding="async"
+              width="1000"
+              height="562"
             />
             <figcaption>全球安防市场 · 中国仍有巨大增长空间，整体市场约 1 万亿人民币</figcaption>
           </figure>
@@ -151,6 +203,8 @@ import {
                 alt="深圳湾公园 AI 对话与地图导览界面"
                 loading="lazy"
                 decoding="async"
+                width="720"
+                height="1280"
               />
               <figcaption>深圳湾公园</figcaption>
             </figure>
@@ -161,6 +215,8 @@ import {
                 alt="光明科学公园 AI 对话、地图导览与事件检测界面"
                 loading="lazy"
                 decoding="async"
+                width="720"
+                height="1280"
               />
               <figcaption>光明科学公园</figcaption>
             </figure>
@@ -183,6 +239,8 @@ import {
                 alt="福田区委大院 机器人落地"
                 loading="lazy"
                 decoding="async"
+                width="800"
+                height="600"
               />
             </div>
             <h3>福田区委大院</h3>
@@ -196,6 +254,8 @@ import {
                 alt="市民中心 智慧安防机器人"
                 loading="lazy"
                 decoding="async"
+                width="1911"
+                height="1125"
               />
             </div>
             <h3>市民中心</h3>
@@ -209,6 +269,8 @@ import {
                 alt="世界之窗 景区安防巡逻"
                 loading="lazy"
                 decoding="async"
+                width="800"
+                height="600"
               />
             </div>
             <h3>世界之窗</h3>

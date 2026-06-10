@@ -494,9 +494,28 @@
     });
   }
 
+  function scheduleBootAuthUi() {
+    const path = window.location.pathname || "/";
+    const shouldDelay = componentMode === "controller" && !path.startsWith("/app/");
+    if (!shouldDelay) {
+      bootAuthUi();
+      return;
+    }
+
+    const run = () => {
+      if ("requestIdleCallback" in window) {
+        window.requestIdleCallback(() => bootAuthUi(), { timeout: 1800 });
+      } else {
+        window.setTimeout(bootAuthUi, 700);
+      }
+    };
+
+    run();
+  }
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bootAuthUi, { once: true });
+    document.addEventListener("DOMContentLoaded", scheduleBootAuthUi, { once: true });
   } else {
-    bootAuthUi();
+    scheduleBootAuthUi();
   }
 })();

@@ -16,11 +16,18 @@ const {
   ogImage = "/assets/fallback/home-hero-1920.jpg",
   pageBackdrop = "",
   noindex = false,
-  authMode = "controller"
+  authMode = "controller",
+  structuredData = []
 } = Astro.props;
 
 const canonicalUrl = new URL(currentPath, siteUrl).toString();
 const fullTitle = title === siteName ? siteName : `${title} | ${siteName}`;
+const jsonLdItems = Array.isArray(structuredData)
+  ? structuredData
+  : structuredData
+    ? [structuredData]
+    : [];
+const isAppPage = String(currentPath).startsWith("/app/");
 ---
 
 <html lang="zh-CN">
@@ -28,7 +35,7 @@ const fullTitle = title === siteName ? siteName : `${title} | ${siteName}`;
     <meta charset="utf-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="canonical" href={canonicalUrl} />
-    <meta name="viewport" content="width=device-width" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="generator" content={Astro.generator} />
     <meta name="description" content={description} />
     {noindex ? <meta name="robots" content="noindex,nofollow" /> : null}
@@ -37,9 +44,12 @@ const fullTitle = title === siteName ? siteName : `${title} | ${siteName}`;
     <meta property="og:url" content={canonicalUrl} />
     <meta property="og:image" content={new URL(ogImage, siteUrl).toString()} />
     <meta property="og:description" content={description} />
+    {jsonLdItems.map((item) => (
+      <script is:inline type="application/ld+json" set:html={JSON.stringify(item)} />
+    ))}
     <title>{fullTitle}</title>
   </head>
-  <body class:list={{ "has-page-backdrop": Boolean(pageBackdrop) }}>
+  <body class:list={{ "has-page-backdrop": Boolean(pageBackdrop), "is-app-page": isAppPage }}>
     {pageBackdrop ? (
       <div
         class="page-backdrop"
@@ -54,7 +64,7 @@ const fullTitle = title === siteName ? siteName : `${title} | ${siteName}`;
     <nav class="site-nav">
       <div class="site-nav-shell">
         <a href="/" class="site-brand">
-          <img src="/assets/s19_91432e393d0c.png" alt="吉光智界 logo" class="h-8 w-8 rounded" />
+          <img src="/assets/s19_91432e393d0c.png" alt="吉光智界 logo" class="h-8 w-8 rounded" width="32" height="32" decoding="async" />
           吉光智界
         </a>
         <div class="site-nav-links">
@@ -108,6 +118,6 @@ const fullTitle = title === siteName ? siteName : `${title} | ${siteName}`;
       © {new Date().getFullYear()} {siteName}. All Rights Reserved.
     </footer>
 
-    <script is:inline src="/js/site-ui.js?v=20260610-2" defer></script>
+    <script is:inline data-cfasync="false" src="/js/site-ui.js?v=20260610-3" defer></script>
   </body>
 </html>

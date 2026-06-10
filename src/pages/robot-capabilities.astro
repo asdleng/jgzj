@@ -1,6 +1,7 @@
 ---
 import OptimizedImage from "../components/OptimizedImage.astro";
 import SiteLayout from "../components/SiteLayout.astro";
+import { siteName, siteUrl } from "../data/site-content.js";
 
 const guideScreens = [
   {
@@ -18,6 +19,48 @@ const guideScreens = [
     alt: "白泽智机器人在光明科学公园的 AI 对话、地图导览与事件检测界面"
   }
 ];
+
+const capabilityStructuredData = [
+  {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    name: "机器人智能能力",
+    url: new URL("/robot-capabilities", siteUrl).toString(),
+    provider: {
+      "@type": "Organization",
+      name: siteName,
+      url: siteUrl
+    },
+    serviceType: ["AI 对话", "地图导览", "端云协同 AI 检测", "车端屏幕交互"],
+    areaServed: "中国",
+    description: "吉光智界白泽智 AI 服务机器人的车端对话、地图导览、事件检测和云端复盘能力。"
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    name: "机器人能力矩阵",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "AI 对话",
+        url: new URL("/robot-capabilities#ai-dialogue", siteUrl).toString()
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "地图导览",
+        url: new URL("/robot-capabilities#map-guide", siteUrl).toString()
+      },
+      {
+        "@type": "ListItem",
+        position: 3,
+        name: "AI 检测",
+        url: new URL("/robot-capabilities#ai-inspection", siteUrl).toString()
+      }
+    ]
+  }
+];
 ---
 
 <SiteLayout
@@ -25,6 +68,7 @@ const guideScreens = [
   description="展示吉光智界白泽智 AI 服务机器人的 AI 对话、地图导览、端云协同 AI 检测与车端屏幕联动能力。"
   currentPath="/robot-capabilities"
   ogImage="/assets/fallback/hero-ai-dialogue-1600.jpg"
+  structuredData={capabilityStructuredData}
 >
   <header class="page-hero robot-capability-hero">
     <OptimizedImage
@@ -32,6 +76,9 @@ const guideScreens = [
       webp="/assets/optimized/hero-ai-dialogue-1600.webp"
       alt="机器人智能能力展示"
       class="hero-media"
+      width="1536"
+      height="1024"
+      fetchpriority="high"
       data-parallax
     />
     <div class="hero-overlay"></div>
@@ -146,7 +193,16 @@ const guideScreens = [
             {guideScreens.map((item) => (
               <figure class="capability-phone-frame">
                 <div class="capability-phone-media">
-                  <OptimizedImage src={item.src} webp={item.webp} alt={item.alt} class="capability-phone-image" loading="lazy" decoding="async" />
+                  <OptimizedImage
+                    src={item.src}
+                    webp={item.webp}
+                    alt={item.alt}
+                    class="capability-phone-image"
+                    loading="lazy"
+                    decoding="async"
+                    width="720"
+                    height="1280"
+                  />
                 </div>
                 <figcaption>
                   <strong>{item.title}</strong>

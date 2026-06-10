@@ -1,13 +1,37 @@
 ---
 import OptimizedImage from "../components/OptimizedImage.astro";
 import SiteLayout from "../components/SiteLayout.astro";
-import { awards, cases, sceneCaseGallery } from "../data/site-content.js";
+import { awards, cases, sceneCaseGallery, siteName, siteUrl } from "../data/site-content.js";
+
+const casesStructuredData = {
+  "@context": "https://schema.org",
+  "@type": "ItemList",
+  name: "吉光智界机器人应用案例",
+  url: new URL("/cases-awards", siteUrl).toString(),
+  itemListElement: sceneCaseGallery.map((item, index) => ({
+    "@type": "ListItem",
+    position: index + 1,
+    item: {
+      "@type": "CreativeWork",
+      name: item.title,
+      description: item.text,
+      about: item.type,
+      provider: {
+        "@type": "Organization",
+        name: siteName,
+        url: siteUrl
+      },
+      image: new URL(item.img, siteUrl).toString()
+    }
+  }))
+};
 ---
 
 <SiteLayout
   title="案例与奖项"
   description="展示吉光智界的场景案例与奖项认可。"
   currentPath="/cases-awards"
+  structuredData={casesStructuredData}
 >
   <header class="page-hero awards-hero">
     <OptimizedImage
@@ -16,6 +40,9 @@ import { awards, cases, sceneCaseGallery } from "../data/site-content.js";
       sizes="100vw"
       alt="案例与奖项"
       class="hero-media"
+      width="1600"
+      height="1068"
+      fetchpriority="high"
       data-parallax
     />
     <div class="hero-overlay"></div>
@@ -65,7 +92,16 @@ import { awards, cases, sceneCaseGallery } from "../data/site-content.js";
             <article class="scene-case-card">
               <div class="scene-case-media">
                 <span class="scene-case-type">{item.type}</span>
-                <OptimizedImage src={item.img} webp={item.webp} alt={item.alt} class="scene-case-image" loading="lazy" decoding="async" />
+                <OptimizedImage
+                  src={item.img}
+                  webp={item.webp}
+                  alt={item.alt}
+                  class="scene-case-image"
+                  loading="lazy"
+                  decoding="async"
+                  width="960"
+                  height="540"
+                />
               </div>
               <div class="scene-case-body">
                 <h3>{item.title}</h3>
@@ -86,7 +122,7 @@ import { awards, cases, sceneCaseGallery } from "../data/site-content.js";
             <article class="page-card case-card">
               <div class="case-card-img-wrap">
                 <span class="case-status-tag">已交付</span>
-                <OptimizedImage src={item.img} webp={item.webp} alt={item.title} class="case-card-img" loading="lazy" decoding="async" />
+                <OptimizedImage src={item.img} webp={item.webp} alt={item.title} class="case-card-img" loading="lazy" decoding="async" width="800" height="534" />
               </div>
               <div class="case-card-body">
                 <h3>{item.title}</h3>
@@ -104,11 +140,11 @@ import { awards, cases, sceneCaseGallery } from "../data/site-content.js";
         <h2 class="section-title">权威设计与产品奖项证书</h2>
         <div class="cert-grid">
           <figure class="cert-frame">
-            <OptimizedImage src="/assets/fallback/cert-muse-1000.jpg" webp="/assets/optimized/cert-muse-1000.webp" alt="国际设计奖项证书" loading="lazy" decoding="async" />
+            <OptimizedImage src="/assets/fallback/cert-muse-1000.jpg" webp="/assets/optimized/cert-muse-1000.webp" alt="国际设计奖项证书" loading="lazy" decoding="async" width="652" height="928" />
             <figcaption>国际设计奖项证书</figcaption>
           </figure>
           <figure class="cert-frame">
-            <OptimizedImage src="/assets/fallback/cert-product-1000.jpg" webp="/assets/optimized/cert-product-1000.webp" alt="产品设计奖项海报" loading="lazy" decoding="async" />
+            <OptimizedImage src="/assets/fallback/cert-product-1000.jpg" webp="/assets/optimized/cert-product-1000.webp" alt="产品设计奖项海报" loading="lazy" decoding="async" width="828" height="1176" />
             <figcaption>产品设计奖项海报</figcaption>
           </figure>
         </div>
