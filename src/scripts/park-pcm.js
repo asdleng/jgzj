@@ -6,9 +6,17 @@
   const CROWD_VEHICLES_URL = "/api/park-pcm/crowd/vehicles";
   const CROWD_SAMPLES_URL = "/api/park-pcm/crowd/samples";
   const CROWD_CAPTURE_URL = "/api/park-pcm/crowd/demo-capture";
+  const CROWD_PATROLS_URL = "/api/park-pcm/crowd/patrols";
 
+  const AMAP_KEY = root.getAttribute("data-amap-key") || "";
   const statusEl = root.querySelector("[data-park-pcm-status]");
   const authEl = root.querySelector("[data-park-pcm-auth]");
+  const patrolRefreshBtn = root.querySelector("[data-park-pcm-patrol-refresh]");
+  const patrolSummaryEl = root.querySelector("[data-park-pcm-patrol-summary]");
+  const patrolListEl = root.querySelector("[data-park-pcm-patrol-list]");
+  const mapEl = root.querySelector("[data-park-pcm-map]");
+  const mapFallbackEl = root.querySelector("[data-park-pcm-map-fallback]");
+  const mapStatusEl = root.querySelector("[data-park-pcm-map-status]");
   const crowdVehicleSelect = root.querySelector("[data-park-pcm-crowd-vehicle]");
   const crowdDistanceInput = root.querySelector("[data-park-pcm-crowd-distance]");
   const crowdQualityInput = root.querySelector("[data-park-pcm-crowd-quality]");
@@ -20,6 +28,9 @@
 
   let authenticated = false;
   let busy = false;
+  let amapLoadPromise = null;
+  let amapMap = null;
+  let amapMarkers = [];
 
   function setStatus(text, state) {
     if (!statusEl) return;
@@ -30,6 +41,7 @@
   function setBusy(nextBusy) {
     busy = Boolean(nextBusy);
     if (crowdCaptureBtn) crowdCaptureBtn.disabled = busy || !authenticated;
+    if (patrolRefreshBtn) patrolRefreshBtn.disabled = busy || !authenticated;
   }
 
   async function fetchJson(url, options) {
@@ -125,8 +137,175 @@
     if (crowdStatusEl) crowdStatusEl.textContent = text;
   }
 
+  function setMapStatus(text) {
+    if (mapStatusEl) mapStatusEl.textContent = text;
+  }
+
+  function setMapFallback(text, hidden) {
+    if (!mapFallbackEl) return;
+    mapFallbackEl.textContent = text || "";
+    mapFallbackEl.hidden = Boolean(hidden);
+  }
+
+  function renderPatrolSummary(counts) {
+    if (!patrolSummaryEl) return;
+    const data = counts || {};
+    clearElement(patrolSummaryEl);
+    [
+      `扫描 ${formatNumber(data.scanned, "0")}`,
+      `巡逻 ${formatNumber(data.patrol, "0")}`,
+      `有定位 ${formatNumber(data.with_position, "0")}`
+    ].forEach((text) => patrolSummaryEl.appendChild(textNode("span", "", text)));
+  }
+
+  function renderPatrolRows(patrols) {
+    if (!patrolListEl) return;
+    clearElement(patrolListEl);
+    const rows = Array.isArray(patrols) ? patrols : [];
+    if (!rows.length) {
+      patrolListEl.appendChild(textNode("p", "park-pcm-empty", "当前没有确认巡逻车辆。"));
+      return;
+    }
+    rows.forEach((row) => {
+      const item = document.createElement("article");
+      item.className = "park-pcm-patrol-row";
+      const patrol = row.patrol_state || {};
+      const fields = patrol.fields || {};
+      const position = row.position || {};
+      const data = row.crowd_data || {};
+      const latest = data.latest_sample || null;
+      item.appendChild(textNode("strong", "", `${row.vehicle_id || "-"} · ${patrolStateLabel(patrol.state)}`));
+      item.appendChild(
+        textNode(
+          "span",
+          "",
+          [
+            `速度 ${formatNumber(fields.speed_kph)} km/h`,
+            `路线 ${formatNumber(fields.current_loop_index)}/${formatNumber(fields.total_loop_sum)} · ${formatNumber(fields.current_refline_index)}/${formatNumber(fields.total_refline_sum)}`,
+            `24h ${formatNumber(data.sample_count_24h, "0")} 次 ${formatNumber(data.frame_count_24h, "0")} 张`
+          ].join(" · ")
+        )
+      );
+      item.appendChild(
+        textNode(
+          "span",
+          "",
+          [
+            `高德 ${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}`,
+            latest ? `最近 ${formatTime(latest.collected_at)} ${formatBytes(latest.total_image_bytes)}` : "暂无采样"
+          ].join(" · ")
+        )
+      );
+      patrolListEl.appendChild(item);
+    });
+  }
+
+  function renderPatrolVehicleOptions(patrols) {
+    if (!crowdVehicleSelect) return false;
+    const rows = Array.isArray(patrols) ? patrols.filter((row) => row.capture_eligible) : [];
+    if (!rows.length) return false;
+    clearElement(crowdVehicleSelect);
+    rows.forEach((row) => {
+      const option = document.createElement("option");
+      option.value = row.vehicle_id || "";
+      const data = row.crowd_data || {};
+      option.textContent = `${row.vehicle_id} · ${patrolStateLabel(row.patrol_state && row.patrol_state.state)} · 24h ${formatNumber(data.sample_count_24h, "0")} 次`;
+      crowdVehicleSelect.appendChild(option);
+    });
+    return true;
+  }
+
+  function loadAmap() {
+    if (!AMAP_KEY) return Promise.reject(new Error("amap_key_missing"));
+    const existingAmap = window["AMap"];
+    if (existingAmap && existingAmap.Map) return Promise.resolve(existingAmap);
+    if (amapLoadPromise) return amapLoadPromise;
+    amapLoadPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(AMAP_KEY)}`;
+      script.async = true;
+      script.onload = () => {
+        const loadedAmap = window["AMap"];
+        if (loadedAmap && loadedAmap.Map) resolve(loadedAmap);
+        else reject(new Error("amap_load_failed"));
+      };
+      script.onerror = () => reject(new Error("amap_load_failed"));
+      document.head.appendChild(script);
+    });
+    return amapLoadPromise;
+  }
+
+  async function renderAmapPoints(points) {
+    const list = Array.isArray(points) ? points.filter((point) => Number.isFinite(Number(point.longitude)) && Number.isFinite(Number(point.latitude))) : [];
+    if (!mapEl) return;
+    if (!list.length) {
+      setMapStatus("暂无巡逻定位");
+      setMapFallback("等待确认巡逻车辆定位", false);
+      if (amapMap) {
+        amapMap.remove(amapMarkers);
+        amapMarkers = [];
+      }
+      return;
+    }
+    try {
+      const AMap = await loadAmap();
+      setMapFallback("", true);
+      const center = [Number(list[0].longitude), Number(list[0].latitude)];
+      if (!amapMap) {
+        amapMap = new AMap.Map(mapEl, {
+          zoom: 17,
+          center,
+          viewMode: "2D",
+          resizeEnable: true
+        });
+      }
+      if (amapMarkers.length) {
+        amapMap.remove(amapMarkers);
+        amapMarkers = [];
+      }
+      amapMarkers = list.map((point) => {
+        const marker = new AMap.Marker({
+          position: [Number(point.longitude), Number(point.latitude)],
+          title: point.vehicle_id || "",
+          label: {
+            content: `${point.vehicle_id || "-"} · ${formatNumber(point.sample_count_24h, "0")}次`,
+            direction: "top"
+          }
+        });
+        const circle = new AMap.Circle({
+          center: [Number(point.longitude), Number(point.latitude)],
+          radius: Math.max(12, Math.min(80, 18 + Number(point.sample_count_24h || 0) * 8)),
+          strokeColor: "#22d3ee",
+          strokeOpacity: 0.65,
+          strokeWeight: 1,
+          fillColor: "#14b8a6",
+          fillOpacity: 0.24
+        });
+        return [circle, marker];
+      }).flat();
+      amapMap.add(amapMarkers);
+      amapMap.setFitView(amapMarkers, false, [44, 44, 44, 44], 18);
+      setMapStatus(`定位点 ${list.length}`);
+    } catch (error) {
+      setMapStatus("地图加载失败");
+      setMapFallback(`高德地图加载失败：${error.message || "amap_failed"}`, false);
+    }
+  }
+
+  async function loadCrowdPatrols() {
+    const data = await fetchJson(`${CROWD_PATROLS_URL}?max_vehicles=60`);
+    renderPatrolSummary(data.counts);
+    renderPatrolRows(data.patrols || []);
+    renderPatrolVehicleOptions(data.patrols || []);
+    await renderAmapPoints(data.map_points || []);
+    return data;
+  }
+
   function renderCrowdVehicles(data) {
     if (!crowdVehicleSelect) return;
+    if (crowdVehicleSelect.options.length && Array.from(crowdVehicleSelect.options).some((option) => !option.disabled && option.value)) {
+      return;
+    }
     clearElement(crowdVehicleSelect);
     const vehicles = Array.isArray(data && data.vehicles) ? data.vehicles : [];
     if (!vehicles.length) {
@@ -259,7 +438,7 @@
         body: payload
       });
       renderCrowdLast(sample);
-      await Promise.all([loadCrowdVehicles(), loadCrowdSamples()]);
+      await Promise.all([loadCrowdPatrols(), loadCrowdVehicles(), loadCrowdSamples()]);
       setCrowdStatus(sample.skipped ? `跳过：${sample.reason || "-"}` : `完成 ${sample.frame_count || 0} 路 · ${formatBytes(sample.total_image_bytes)}`);
     } catch (error) {
       setCrowdStatus(`失败：${error.message || "capture_failed"}`);
@@ -291,6 +470,9 @@
       if (authEl) authEl.hidden = true;
       setStatus("加载中", "warn");
       await Promise.all([
+        loadCrowdPatrols().catch((error) => {
+          setMapStatus(`巡逻加载失败：${error.message || "-"}`);
+        }),
         loadCrowdVehicles().catch((error) => {
           setCrowdStatus(`车辆加载失败：${error.message || "-"}`);
         }),
@@ -311,5 +493,20 @@
   }
 
   if (crowdCaptureBtn) crowdCaptureBtn.addEventListener("click", captureCrowdDemo);
+  if (patrolRefreshBtn) {
+    patrolRefreshBtn.addEventListener("click", async () => {
+      if (!authenticated || busy) return;
+      setBusy(true);
+      setMapStatus("刷新中");
+      try {
+        await loadCrowdPatrols();
+        setStatus("已更新", "ok");
+      } catch (error) {
+        setMapStatus(`刷新失败：${error.message || "-"}`);
+      } finally {
+        setBusy(false);
+      }
+    });
+  }
   void init();
 })();

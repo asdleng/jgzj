@@ -1,4 +1,4 @@
-<section class="park-pcm-shell" data-park-pcm data-authenticated="false">
+<section class="park-pcm-shell" data-park-pcm data-authenticated="false" data-amap-key="8c2f9f3401e8d0ddfd619074c5f034ef">
   <header class="park-pcm-head">
     <div>
       <p class="section-kicker">PARK PCM</p>
@@ -10,6 +10,39 @@
   </header>
 
   <div class="park-pcm-auth" data-park-pcm-auth hidden></div>
+
+  <section class="park-pcm-layout">
+    <section class="park-pcm-band park-pcm-patrols">
+      <div class="park-pcm-band-head">
+        <div>
+          <p class="section-kicker">PATROL VEHICLES</p>
+          <h2>当前巡逻车辆</h2>
+        </div>
+        <button type="button" class="park-pcm-button park-pcm-button--compact" data-park-pcm-patrol-refresh>刷新</button>
+      </div>
+      <div class="park-pcm-patrol-summary" data-park-pcm-patrol-summary>
+        <span>扫描 -</span>
+        <span>巡逻 -</span>
+        <span>有定位 -</span>
+      </div>
+      <div class="park-pcm-patrol-list" data-park-pcm-patrol-list>
+        <p class="park-pcm-empty">等待巡逻状态。</p>
+      </div>
+    </section>
+
+    <section class="park-pcm-band park-pcm-map-band">
+      <div class="park-pcm-band-head">
+        <div>
+          <p class="section-kicker">AMAP</p>
+          <h2>巡逻人流地图</h2>
+        </div>
+        <p data-park-pcm-map-status>等待定位点</p>
+      </div>
+      <div class="park-pcm-map" data-park-pcm-map>
+        <div class="park-pcm-map-fallback" data-park-pcm-map-fallback>高德地图加载中</div>
+      </div>
+    </section>
+  </section>
 
   <section class="park-pcm-band park-pcm-crowd-demo">
     <div class="park-pcm-band-head">
@@ -149,6 +182,84 @@
     opacity: 0.55;
   }
 
+  .park-pcm-button--compact {
+    min-height: 34px;
+    padding: 0 12px;
+  }
+
+  .park-pcm-layout {
+    display: grid;
+    grid-template-columns: minmax(360px, 0.78fr) minmax(0, 1.22fr);
+    gap: 18px;
+    align-items: stretch;
+  }
+
+  .park-pcm-patrol-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .park-pcm-patrol-summary span {
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(2, 6, 23, 0.34);
+    color: #dbeafe;
+    font-weight: 800;
+  }
+
+  .park-pcm-patrol-list {
+    display: grid;
+    gap: 8px;
+    max-height: 438px;
+    overflow: auto;
+    padding-right: 4px;
+  }
+
+  .park-pcm-patrol-row {
+    display: grid;
+    gap: 6px;
+    padding: 10px 12px;
+    border: 1px solid rgba(45, 212, 191, 0.2);
+    background: rgba(15, 23, 42, 0.55);
+  }
+
+  .park-pcm-patrol-row strong {
+    color: #f8fafc;
+  }
+
+  .park-pcm-patrol-row span {
+    color: #9fb0c7;
+    line-height: 1.5;
+  }
+
+  .park-pcm-map-band {
+    min-height: 520px;
+  }
+
+  .park-pcm-map {
+    position: relative;
+    min-height: 452px;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: #07121f;
+  }
+
+  .park-pcm-map-fallback {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    color: #b8c7da;
+    text-align: center;
+    z-index: 1;
+  }
+
   .park-pcm-crowd-demo {
     border-color: rgba(45, 212, 191, 0.24);
   }
@@ -268,6 +379,18 @@
     .park-pcm-status {
       width: 100%;
       text-align: left;
+    }
+
+    .park-pcm-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .park-pcm-map-band {
+      min-height: 420px;
+    }
+
+    .park-pcm-map {
+      min-height: 350px;
     }
 
     .park-pcm-crowd-gallery {

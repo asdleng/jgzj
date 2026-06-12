@@ -11,6 +11,8 @@ const DEFAULT_REPORT_BOOT_DELAY_MS = 60 * 1000;
 const DEFAULT_CROWD_CAPTURE_TIMEOUT_S = 45;
 const DEFAULT_CROWD_CAPTURE_DISTANCE_M = 60;
 const DEFAULT_CROWD_CAPTURE_COOLDOWN_MS = 90 * 1000;
+const DEFAULT_PATROL_STATUS_TIMEOUT_S = 6;
+const DEFAULT_PATROL_STATUS_CONCURRENCY = 4;
 
 function nowIso() {
   return new Date().toISOString();
@@ -970,6 +972,45 @@ function haversineDistanceM(left, right) {
   return 2 * radiusM * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function sampleCollectedAtMs(sample) {
+  const direct = Number(sample?.collected_at_ms);
+  if (Number.isFinite(direct)) {
+    return direct;
+  }
+  const parsed = Date.parse(sample?.collected_at || '');
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function summarizeVehicleCrowdSamples(samples, vehicleId, nowMs) {
+  const dayAgoMs = nowMs - 24 * 60 * 60 * 1000;
+  const vehicleSamples = samples
+    .filter((sample) => sample && !sample.skipped)
+    .filter((sample) => String(sample.vehicle_id || '') === String(vehicleId))
+    .filter((sample) => sample.patrol_state && sample.patrol_state.capture_eligible === true);
+  const recentSamples = vehicleSamples.filter((sample) => {
+    const collectedAtMs = sampleCollectedAtMs(sample);
+    return collectedAtMs != null && collectedAtMs >= dayAgoMs;
+  });
+  const latestSample = vehicleSamples
+    .slice()
+    .sort((left, right) => (sampleCollectedAtMs(right) || 0) - (sampleCollectedAtMs(left) || 0))[0] || null;
+  return {
+    sample_count_24h: recentSamples.length,
+    frame_count_24h: recentSamples.reduce((sum, sample) => sum + (Number(sample.frame_count) || 0), 0),
+    total_image_bytes_24h: recentSamples.reduce((sum, sample) => sum + (Number(sample.total_image_bytes) || 0), 0),
+    latest_sample: latestSample
+      ? {
+          sample_id: latestSample.sample_id,
+          collected_at: latestSample.collected_at,
+          frame_count: latestSample.frame_count,
+          total_image_bytes: latestSample.total_image_bytes,
+          position: latestSample.position || null,
+          frames: Array.isArray(latestSample.frames) ? latestSample.frames.slice(0, 4) : []
+        }
+      : null
+  };
+}
+
 module.exports = function registerParkPcmRoutes(app, options) {
   options = options || {};
   const requirePermission = options.requirePermission;
@@ -1029,6 +1070,16 @@ module.exports = function registerParkPcmRoutes(app, options) {
     process.env.PARK_PCM_CROWD_CAPTURE_COOLDOWN_MS,
     DEFAULT_CROWD_CAPTURE_COOLDOWN_MS,
     { min: 10 * 1000, max: 60 * 60 * 1000 }
+  );
+  const patrolStatusTimeoutS = toFiniteNumber(
+    process.env.PARK_PCM_PATROL_STATUS_TIMEOUT_S,
+    DEFAULT_PATROL_STATUS_TIMEOUT_S,
+    { min: 3, max: 15 }
+  );
+  const patrolStatusConcurrency = toFiniteInteger(
+    process.env.PARK_PCM_PATROL_STATUS_CONCURRENCY,
+    DEFAULT_PATROL_STATUS_CONCURRENCY,
+    { min: 1, max: 8 }
   );
   const feishuWebhookUrl = String(
     process.env.PARK_PCM_FEISHU_WEBHOOK_URL ||
@@ -1228,6 +1279,103 @@ module.exports = function registerParkPcmRoutes(app, options) {
     } catch (_error) {
       return [];
     }
+  }
+
+  async function buildCrowdPatrolStatus(params) {
+    params = params || {};
+    const startedAt = Date.now();
+    const maxVehicles = toFiniteInteger(params.max_vehicles, 60, { min: 1, max: 120 });
+    const includeUnknown = params.include_unknown === true;
+    const nowMs = Date.now();
+    const [vehiclesRaw, samples, state] = await Promise.all([
+      listVehicles(),
+      readRecentCrowdSamples(100),
+      readCrowdState()
+    ]);
+    const vehicles = vehiclesRaw
+      .filter((vehicle) => vehicle && vehicle.vehicle_id)
+      .filter((vehicle) => {
+        const lastSeenMs = Date.parse(vehicle.last_seen || '');
+        return Number.isFinite(lastSeenMs) && nowMs - lastSeenMs <= freshVehicleMs;
+      })
+      .sort((left, right) => String(left.vehicle_id).localeCompare(String(right.vehicle_id), 'zh-CN'))
+      .slice(0, maxVehicles);
+
+    const rows = await mapWithConcurrency(vehicles, patrolStatusConcurrency, async (vehicle) => {
+      const vehicleId = String(vehicle.vehicle_id);
+      const lastSeenMs = Date.parse(vehicle.last_seen || '');
+      const lastSeenAgeS = Number.isFinite(lastSeenMs) ? Math.max(0, Math.round((nowMs - lastSeenMs) / 1000)) : null;
+      const [planning, routing, can] = await Promise.all([
+        callVehicleTool(vehicleId, 'status.planning', {}, patrolStatusTimeoutS),
+        callVehicleTool(vehicleId, 'status.routing', {}, patrolStatusTimeoutS),
+        callVehicleTool(vehicleId, 'status.can', {}, patrolStatusTimeoutS)
+      ]);
+      const patrolState = classifyCrowdPatrolCaptureState(
+        vehicle,
+        { planning, routing, can },
+        {
+          now_ms: nowMs,
+          fresh_vehicle_ms: freshVehicleMs
+        }
+      );
+      let position = null;
+      if (patrolState.capture_eligible) {
+        const localization = await callVehicleTool(vehicleId, 'status.localization', {}, Math.max(patrolStatusTimeoutS, 12));
+        if (localization.ok) {
+          position = extractLocalizationPosition(localization);
+        }
+      }
+      return {
+        vehicle_id: vehicleId,
+        plate_number: vehicle.plate_number || null,
+        last_seen: vehicle.last_seen || null,
+        last_seen_age_s: lastSeenAgeS,
+        fresh: patrolState.fields.fresh === true,
+        capture_eligible: patrolState.capture_eligible,
+        patrol_state: patrolState,
+        position,
+        telemetry: {
+          speed_kph: patrolState.fields.speed_kph,
+          battery_soc: numberValue(vehicle?.telemetry?.vehicle?.battery_soc),
+          running_mode: patrolState.fields.running_mode
+        },
+        crowd_data: summarizeVehicleCrowdSamples(samples, vehicleId, nowMs),
+        last_crowd_capture: state.last_capture_by_vehicle[vehicleId] || null
+      };
+    });
+
+    const eligibleRows = rows.filter((row) => row.capture_eligible);
+    const visibleRows = includeUnknown ? rows : eligibleRows;
+    const mapPoints = visibleRows
+      .filter((row) => row.position && Number.isFinite(row.position.gaode_longitude) && Number.isFinite(row.position.gaode_latitude))
+      .map((row) => ({
+        vehicle_id: row.vehicle_id,
+        longitude: row.position.gaode_longitude,
+        latitude: row.position.gaode_latitude,
+        state: row.patrol_state.state,
+        sample_count_24h: row.crowd_data.sample_count_24h,
+        frame_count_24h: row.crowd_data.frame_count_24h
+      }));
+
+    return {
+      ok: true,
+      generated_at: nowIso(),
+      elapsed_ms: Date.now() - startedAt,
+      counts: {
+        scanned: rows.length,
+        patrol: eligibleRows.length,
+        with_position: mapPoints.length,
+        unknown_or_not_patrol: rows.length - eligibleRows.length
+      },
+      config: {
+        max_vehicles: maxVehicles,
+        include_unknown: includeUnknown,
+        patrol_status_timeout_s: patrolStatusTimeoutS,
+        patrol_status_concurrency: patrolStatusConcurrency
+      },
+      patrols: visibleRows,
+      map_points: mapPoints
+    };
   }
 
   async function saveCrowdCaptureImage(image, context) {
@@ -1982,6 +2130,21 @@ module.exports = function registerParkPcmRoutes(app, options) {
       return res.status(error.status || 502).json({
         ok: false,
         error: error.message || 'park_pcm_crowd_samples_failed'
+      });
+    }
+  });
+
+  app.get('/api/park-pcm/crowd/patrols', requirePermission('vehicle:read'), async (req, res) => {
+    try {
+      const status = await buildCrowdPatrolStatus({
+        max_vehicles: req.query?.max_vehicles,
+        include_unknown: String(req.query?.include_unknown || '').toLowerCase() === 'true'
+      });
+      return res.json(status);
+    } catch (error) {
+      return res.status(error.status || 502).json({
+        ok: false,
+        error: error.message || 'park_pcm_crowd_patrol_status_failed'
       });
     }
   });
