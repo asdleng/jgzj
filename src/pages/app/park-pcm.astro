@@ -1,0 +1,18 @@
+---
+import "../../styles/app.css";
+import EmbeddedParkPcmConsole from "../../components/EmbeddedParkPcmConsole.astro";
+import SiteLayout from "../../components/SiteLayout.astro";
+import scriptText from "../../scripts/park-pcm.js?raw";
+---
+
+<SiteLayout
+  title="园区流量 PCM"
+  description="园区多车流量 PCM 管理工作台。"
+  currentPath="/app/park-pcm"
+  noindex={true}
+>
+  <main class="park-pcm-page">
+    <EmbeddedParkPcmConsole />
+  </main>
+  <script is:inline set:html={scriptText}></script>
+</SiteLayout>

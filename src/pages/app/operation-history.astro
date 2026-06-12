@@ -1,0 +1,258 @@
+---
+import "../../styles/app.css";
+import EmbeddedOperationHistory from "../../components/EmbeddedOperationHistory.astro";
+import InteractiveScripts from "../../components/InteractiveScripts.astro";
+import OptimizedImage from "../../components/OptimizedImage.astro";
+import SiteLayout from "../../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="操作记录"
+  description="查看账号、云端运维、服务器、AI 和地图编辑等后台操作记录。"
+  currentPath="/app/operation-history"
+  noindex={true}
+>
+  <header class="page-hero ops-hero">
+    <OptimizedImage
+      src="/assets/fallback/hero-cloud-ops-1600.jpg"
+      webp="/assets/optimized/hero-cloud-ops-1600.webp"
+      alt="云端运维操作记录"
+      class="hero-media"
+      data-parallax
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">ADMIN · AUDIT</p>
+        <h1 class="page-title">操作记录</h1>
+        <p class="page-subtitle">
+          按账号、车辆、模块和结果追踪后台关键操作，云端智能运维、服务器重启、地图编辑、AI 调用和账号权限修改统一归档。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+    <section class="page-section">
+      <div class="glass-card section-card">
+        <EmbeddedOperationHistory />
+      </div>
+    </section>
+  </main>
+
+  <InteractiveScripts />
+</SiteLayout>
+
+<style is:global>
+  .operation-history-panel {
+    display: grid;
+    gap: 18px;
+  }
+
+  .operation-history-head,
+  .operation-history-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .operation-history-head .section-title {
+    margin-bottom: 0;
+  }
+
+  .operation-history-button {
+    min-height: 38px;
+    border: 1px solid rgba(125, 211, 252, 0.26);
+    border-radius: 10px;
+    padding: 0 14px;
+    color: #e0f2fe;
+    background: rgba(14, 165, 233, 0.13);
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .operation-history-button:hover:not(:disabled) {
+    border-color: rgba(103, 232, 249, 0.54);
+    background: rgba(14, 165, 233, 0.2);
+  }
+
+  .operation-history-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .operation-history-filters {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(130px, 1fr)) minmax(180px, 1.4fr) auto;
+    gap: 12px;
+    align-items: end;
+  }
+
+  .operation-history-filters label {
+    display: grid;
+    gap: 7px;
+    color: #cbd5e1;
+    font-size: 0.88rem;
+    font-weight: 800;
+  }
+
+  .operation-history-filters input,
+  .operation-history-filters select {
+    min-height: 40px;
+    width: 100%;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 10px;
+    padding: 0 11px;
+    color: #e5edf8;
+    background: rgba(15, 23, 42, 0.68);
+  }
+
+  .operation-history-meta p,
+  .operation-history-pager {
+    margin: 0;
+    color: #a7b4c7;
+  }
+
+  .operation-history-meta p[data-state="ok"] {
+    color: #86efac;
+  }
+
+  .operation-history-meta p[data-state="error"] {
+    color: #fecaca;
+  }
+
+  .operation-history-pager {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+  }
+
+  .operation-history-table-wrap {
+    overflow-x: auto;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 12px;
+    background: rgba(2, 6, 23, 0.28);
+  }
+
+  .operation-history-table {
+    width: 100%;
+    min-width: 960px;
+    border-collapse: collapse;
+  }
+
+  .operation-history-table th,
+  .operation-history-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    color: #dbeafe;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .operation-history-table th {
+    color: #93c5fd;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: rgba(15, 23, 42, 0.72);
+  }
+
+  .operation-history-table tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .operation-history-action {
+    display: grid;
+    gap: 5px;
+  }
+
+  .operation-history-action strong {
+    color: #fff;
+    word-break: break-word;
+  }
+
+  .operation-history-action small,
+  .operation-history-muted {
+    color: #94a3b8;
+    line-height: 1.55;
+  }
+
+  .operation-history-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 26px;
+    width: fit-content;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 999px;
+    padding: 3px 9px;
+    color: #dbeafe;
+    background: rgba(15, 23, 42, 0.6);
+    font-size: 0.82rem;
+    font-weight: 800;
+  }
+
+  .operation-history-chip.is-ok {
+    color: #bbf7d0;
+    border-color: rgba(52, 211, 153, 0.3);
+    background: rgba(16, 185, 129, 0.12);
+  }
+
+  .operation-history-chip.is-error {
+    color: #fecaca;
+    border-color: rgba(248, 113, 113, 0.34);
+    background: rgba(239, 68, 68, 0.12);
+  }
+
+  .operation-history-detail {
+    margin-top: 6px;
+  }
+
+  .operation-history-detail summary {
+    color: #7dd3fc;
+    cursor: pointer;
+    font-weight: 800;
+  }
+
+  .operation-history-detail pre {
+    max-height: 260px;
+    overflow: auto;
+    margin: 8px 0 0;
+    padding: 10px;
+    border-radius: 10px;
+    color: #dbeafe;
+    background: rgba(15, 23, 42, 0.76);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  @media (max-width: 980px) {
+    .operation-history-head,
+    .operation-history-meta {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .operation-history-filters {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .operation-history-search,
+    .operation-history-filters button {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .operation-history-filters {
+      grid-template-columns: 1fr;
+    }
+
+    .operation-history-pager {
+      justify-content: space-between;
+      width: 100%;
+    }
+  }
+</style>

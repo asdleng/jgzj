@@ -9,10 +9,12 @@ const { promisify } = require('util');
 const express = require('express');
 const { createAuthStore } = require('./auth-store');
 const { createMailer } = require('./mailer');
+const { createOperationAuditStore, normalizeRecord } = require('./operation-audit-store');
 const registerCloudMappingRoutes = require('./cloud-mapping');
 const registerRuntimeControlRoutes = require('./runtime-control');
 const registerThreeDgsRoutes = require('./three-dgs');
 const registerCrowdCpmRoutes = require('./crowd-cpm');
+const registerParkPcmRoutes = require('./park-pcm');
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -155,6 +157,10 @@ const authStore = createAuthStore({
   cookieName: process.env.JGZJ_AUTH_COOKIE_NAME || 'jgzj_session',
   sessionTtlMs: Number(process.env.JGZJ_AUTH_TTL_MS || 7 * 24 * 60 * 60 * 1000),
   secureCookie: String(process.env.JGZJ_AUTH_COOKIE_SECURE || '').toLowerCase() === 'true'
+});
+const operationAuditStore = createOperationAuditStore({
+  rootDir: projectRoot,
+  filePath: process.env.JGZJ_OPERATION_AUDIT_PATH || undefined
 });
 const mailer = createMailer({ rootDir: projectRoot });
 
@@ -4092,6 +4098,7 @@ async function runOpenClawOpsTurn(message, sessionId, options = {}) {
   const startedAt = Date.now();
   const rawMessage = normalizeReply(message);
   const selectedVehicleId = normalizeReply(options?.vehicle_id || '');
+  const authUser = options?.auth_user || null;
   const contextItems = normalizeOpenClawContextItems(options?.context_items);
   const effectiveMessage = buildOpenClawContextMessage(rawMessage, {
     vehicle_id: selectedVehicleId,
@@ -4135,6 +4142,23 @@ async function runOpenClawOpsTurn(message, sessionId, options = {}) {
 
   if (!plan.vehicle_id && vehicles.length === 1) {
     plan.vehicle_id = String(vehicles[0]?.vehicle_id || vehicles[0]?.plate_number || '').trim();
+  }
+
+  const requiredPermission = cloudOpsPermissionForPlan(plan);
+  if (authUser && !authStore.hasPermission(authUser, requiredPermission)) {
+    return {
+      reply: `当前账号可以查看车辆状态，但没有执行该运维动作所需的 ${requiredPermission} 权限。`,
+      latency_ms: Date.now() - startedAt,
+      provider: 'openclaw-cloud-ops',
+      model: null,
+      cloud_ops: {
+        enabled: true,
+        used: false,
+        denied: true,
+        required_permission: requiredPermission,
+        plan
+      }
+    };
   }
 
   const execution = await executeCloudOpsAction(plan, vehicles);
@@ -4589,6 +4613,269 @@ function cloudOpsPermissionForPlan(plan) {
   return 'vehicle:read';
 }
 
+function auditBodySummary(req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const requestPath = req.path || '';
+
+  if (requestPath === '/api/qwen36-mm-check') {
+    const image = body.image && typeof body.image === 'object' ? body.image : {};
+    return {
+      event_name: String(body.event_name || '').trim(),
+      prompt_text: String(body.prompt_text || '').trim().slice(0, 500),
+      image_mime_type: image.mime_type || null,
+      image_size_bytes: image.data_base64 ? Buffer.byteLength(String(image.data_base64), 'base64') : null
+    };
+  }
+
+  if (requestPath === '/api/qwen36-chat' || requestPath === '/api/cloud-chat' || requestPath === '/api/openclaw-chat') {
+    return {
+      message: String(body.message || '').trim().slice(0, 800),
+      session_id: String(body.session_id || '').trim(),
+      vehicle_id: String(body.vehicle_id || '').trim(),
+      context_count: Array.isArray(body.context_items) ? body.context_items.length : undefined
+    };
+  }
+
+  if (requestPath === '/api/auth/login') {
+    return {
+      username: String(body.username || '').trim()
+    };
+  }
+
+  if (requestPath === '/api/auth/register') {
+    return {
+      username: String(body.username || '').trim(),
+      email: String(body.email || '').trim()
+    };
+  }
+
+  if (requestPath.startsWith('/api/cloud-ops/')) {
+    return sanitizeCloudOpsPayload(body);
+  }
+
+  return sanitizeCloudOpsPayload(body);
+}
+
+function classifyOperationAuditRequest(req) {
+  const method = String(req.method || '').toUpperCase();
+  const requestPath = req.path || '';
+
+  if (requestPath.startsWith('/api/operation-audit')) {
+    return null;
+  }
+  if (requestPath.startsWith('/api/auth/')) {
+    return null;
+  }
+
+  if (requestPath === '/api/cloud-ops/execute' && method === 'POST') {
+    const plan = validateCloudOpsPlan(req.body) || {};
+    const toolName = String(plan.tool_name || '').trim();
+    return {
+      category: 'cloud_ops',
+      action: toolName ? `cloud_ops.tool_call.${toolName}` : `cloud_ops.${plan.action || 'execute'}`,
+      target_type: toolName ? 'vehicle_tool' : 'vehicle',
+      target_id: toolName || plan.action || null,
+      vehicle_id: String(plan.vehicle_id || '').trim(),
+      permission: cloudOpsPermissionForPlan(plan),
+      detail: {
+        plan: auditBodySummary(req)
+      }
+    };
+  }
+
+  const deployMatch = requestPath.match(/^\/api\/cloud-ops\/deploy\/([^/]+)$/);
+  if (deployMatch && method === 'POST') {
+    return {
+      category: 'cloud_ops',
+      action: `cloud_ops.deploy.${deployMatch[1]}`,
+      target_type: 'deploy',
+      target_id: String(req.body?.repo || req.body?.controller || deployMatch[1] || '').trim(),
+      vehicle_id: String(req.body?.vehicle_id || '').trim(),
+      permission: requestPath.endsWith('/build') || requestPath.endsWith('/git-update') ? 'vehicle:code:write' : 'vehicle:code:read',
+      detail: auditBodySummary(req)
+    };
+  }
+
+  if (requestPath === '/api/cloud-ops/runtime/restart' && method === 'POST') {
+    return {
+      category: 'runtime',
+      action: 'runtime.restart',
+      target_type: 'runtime_target',
+      target_id: String(req.body?.target_id || '').trim(),
+      permission: 'runtime:restart',
+      detail: auditBodySummary(req)
+    };
+  }
+
+  const mapApiMatch = requestPath.match(/^\/api\/map-editor\/([^/]+)\/(start|stop|status)$/);
+  if (mapApiMatch && (method === 'POST' || method === 'GET')) {
+    return {
+      category: 'map_editor',
+      action: `map_editor.${mapApiMatch[2]}`,
+      target_type: 'vehicle',
+      target_id: mapApiMatch[1],
+      vehicle_id: mapApiMatch[1],
+      permission: 'vehicle:path:write',
+      detail: auditBodySummary(req)
+    };
+  }
+
+  const mapProxyMatch = requestPath.match(/^\/vehicles\/([^/]+)\/map-editor(?:\/.*)?$/);
+  if (mapProxyMatch && method === 'POST') {
+    return {
+      category: 'map_editor',
+      action: 'map_editor.proxy.post',
+      target_type: 'vehicle',
+      target_id: mapProxyMatch[1],
+      vehicle_id: mapProxyMatch[1],
+      permission: 'vehicle:path:write',
+      detail: {
+        editor_path: req.path.replace(`/vehicles/${mapProxyMatch[1]}/map-editor`, '') || '/',
+        body: auditBodySummary(req)
+      }
+    };
+  }
+
+  if (requestPath === '/api/openclaw-chat' && method === 'POST') {
+    return {
+      category: 'cloud_ops',
+      action: 'cloud_ops.openclaw_chat',
+      target_type: 'vehicle',
+      target_id: String(req.body?.vehicle_id || '').trim(),
+      vehicle_id: String(req.body?.vehicle_id || '').trim(),
+      permission: 'vehicle:read',
+      detail: auditBodySummary(req)
+    };
+  }
+
+  if (requestPath === '/api/cloud-chat' && method === 'POST') {
+    return {
+      category: 'ai',
+      action: 'ai.cloud_chat',
+      target_type: 'vehicle',
+      target_id: String(req.body?.vehicle_id || '').trim(),
+      vehicle_id: String(req.body?.vehicle_id || '').trim(),
+      permission: 'ai:chat',
+      detail: auditBodySummary(req)
+    };
+  }
+
+  if (requestPath === '/api/qwen36-chat' && method === 'POST') {
+    return {
+      category: 'ai',
+      action: 'ai.qwen36_chat',
+      target_type: 'model',
+      target_id: qwen36Model,
+      permission: 'ai:chat',
+      detail: auditBodySummary(req)
+    };
+  }
+
+  if (requestPath === '/api/qwen36-mm-check' && method === 'POST') {
+    return {
+      category: 'ai',
+      action: 'ai.qwen36_mm_check',
+      target_type: 'model',
+      target_id: qwen36MmModel,
+      permission: 'ai:detect',
+      detail: auditBodySummary(req)
+    };
+  }
+
+  const aiHistoryMatch = requestPath.match(/^\/api\/ai-check-history(?:\/(\d+))?$/);
+  if (aiHistoryMatch && method === 'GET') {
+    return {
+      category: 'ai',
+      action: aiHistoryMatch[1] ? 'ai.history.detail.read' : 'ai.history.list.read',
+      target_type: aiHistoryMatch[1] ? 'ai_check_request' : 'ai_check_history',
+      target_id: aiHistoryMatch[1] || null,
+      permission: 'ai:history:read',
+      detail: {
+        query: sanitizeCloudOpsPayload(req.query || {})
+      }
+    };
+  }
+
+  const moduleMatch = requestPath.match(/^\/api\/(cloud-mapping|three-dgs|crowd-cpm|park-pcm)(?:\/([^/?]+))?/);
+  if (moduleMatch && ['POST', 'PATCH', 'DELETE'].includes(method)) {
+    const categoryMap = {
+      'cloud-mapping': 'mapping',
+      'three-dgs': 'three_dgs',
+      'crowd-cpm': 'crowd_cpm',
+      'park-pcm': 'park_pcm'
+    };
+    return {
+      category: categoryMap[moduleMatch[1]] || moduleMatch[1],
+      action: `${moduleMatch[1]}.${method.toLowerCase()}.${moduleMatch[2] || 'request'}`,
+      target_type: moduleMatch[1],
+      target_id: String(req.body?.id || req.body?.target_id || req.body?.vehicle_id || moduleMatch[2] || '').trim(),
+      vehicle_id: String(req.body?.vehicle_id || '').trim(),
+      detail: auditBodySummary(req)
+    };
+  }
+
+  return null;
+}
+
+function legacyAuthAuditRecords(items = []) {
+  return (Array.isArray(items) ? items : []).map((item) => normalizeRecord({
+    id: `legacy_auth_${crypto
+      .createHash('sha1')
+      .update(`${item?.at || ''}|${item?.actor || ''}|${item?.action || ''}|${item?.target || ''}`)
+      .digest('hex')
+      .slice(0, 18)}`,
+    at: item?.at || null,
+    actor: item?.actor || null,
+    actor_name: item?.actor || null,
+    category: 'auth',
+    action: item?.action || 'auth.operation',
+    target_type: 'user',
+    target_id: item?.target || null,
+    ok: true,
+    source: 'auth-store',
+    detail: item?.detail || {}
+  }));
+}
+
+function installOperationAuditMiddleware() {
+  app.use((req, res, next) => {
+    const startedAt = Date.now();
+    const classification = classifyOperationAuditRequest(req);
+    if (!classification) {
+      return next();
+    }
+
+    res.on('finish', () => {
+      const meta = requestMeta(req);
+      const actor =
+        req.jgzjAuth?.user?.username ||
+        classification.actor ||
+        (classification.category === 'auth' ? classification.target_id : null);
+
+      operationAuditStore
+        .record({
+          ...classification,
+          actor,
+          actor_name: req.jgzjAuth?.user?.display_name || actor,
+          ok: res.statusCode >= 200 && res.statusCode < 400,
+          status: res.statusCode,
+          duration_ms: Date.now() - startedAt,
+          method: req.method,
+          path: req.originalUrl || req.url,
+          ip: meta.ip,
+          user_agent: meta.user_agent
+        })
+        .catch((error) => {
+          console.info('operation_audit_write_failed', JSON.stringify({ error: error.message }));
+        });
+    });
+
+    return next();
+  });
+}
+
+installOperationAuditMiddleware();
+
 app.get('/healthz', (_req, res) => {
   res.type('text/plain').send('ok');
 });
@@ -4668,6 +4955,9 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.post('/api/auth/logout', async (req, res) => {
   const auth = await authStore.getAuthFromRequest(req, { touch: false });
+  if (auth) {
+    req.jgzjAuth = auth;
+  }
   await authStore.logout(req, auth?.username || null);
   authStore.clearSessionCookie(res);
   clearOpenClawAuthCookie(res);
@@ -4687,6 +4977,7 @@ app.post('/api/auth/request-email-verification', async (req, res) => {
       detail: '请先登录。'
     });
   }
+  req.jgzjAuth = auth;
   try {
     let user = auth.user;
     if (typeof req.body?.email === 'string' && req.body.email.trim()) {
@@ -4807,6 +5098,25 @@ app.patch('/api/auth/users/:username', (req, res, next) => authStore.requireSupe
   }
 });
 
+app.get('/api/operation-audit', authStore.requirePermission('audit:read'), async (req, res) => {
+  try {
+    const legacyRecords = legacyAuthAuditRecords(await authStore.listAudit());
+    const history = await operationAuditStore.query(req.query || {}, legacyRecords);
+    const categories = [...new Set(history.items.map((item) => item.category).filter(Boolean))].sort();
+    return res.json({
+      ok: true,
+      ...history,
+      categories
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: 'operation_audit_unavailable',
+      detail: error?.message || 'operation_audit_unavailable'
+    });
+  }
+});
+
 app.get('/api/health', async (_req, res) => {
   const upstream = await probeUpstream();
   const status = upstream.ok ? 200 : 502;
@@ -4844,6 +5154,7 @@ app.get('/api/openclaw-auth-status', (req, res) => {
     return res.json({
       ok: true,
       authenticated: true,
+      auth_mode: 'jgzj_session',
       username: auth.user.username,
       expires_at_ms: auth.session.expires_at_ms,
       permissions: auth.user.effective_permissions
@@ -5523,7 +5834,7 @@ app.post('/api/cloud-chat', authStore.requirePermission('ai:chat'), async (req, 
   }
 });
 
-app.post('/api/openclaw-chat', authStore.requirePermission('vehicle:control'), async (req, res) => {
+app.post('/api/openclaw-chat', authStore.requirePermission('vehicle:read'), async (req, res) => {
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
   const sessionId =
     typeof req.body?.session_id === 'string' && req.body.session_id.trim()
@@ -5542,7 +5853,8 @@ app.post('/api/openclaw-chat', authStore.requirePermission('vehicle:control'), a
   try {
     const result = await runOpenClawOpsTurn(message, sessionId, {
       vehicle_id: vehicleId,
-      context_items: contextItems
+      context_items: contextItems,
+      auth_user: req.jgzjAuth?.user || null
     });
     return res.json({
       ok: true,
@@ -5871,6 +6183,11 @@ registerCrowdCpmRoutes(app, {
   cloudAgentBaseUrl,
   rootDir: path.resolve(__dirname, '..')
 });
+registerParkPcmRoutes(app, {
+  requirePermission: (permission) => authStore.requirePermission(permission),
+  cloudAgentBaseUrl,
+  rootDir: path.resolve(__dirname, '..')
+});
 
 function loginRedirectUrl(req) {
   const next = encodeURIComponent(req.originalUrl || req.url || '/');
@@ -5889,19 +6206,24 @@ const privateNavigationItems = [
     permissions: ['vehicle:read', 'runtime:read']
   },
   {
+    href: '/app/park-pcm',
+    label: '园区PCM',
+    permissions: ['vehicle:read']
+  },
+  {
     href: '/app/vehicle-devops',
     label: '车辆代码',
     permissions: ['vehicle:code:read', 'vehicle:code:write']
   },
   {
-    href: '/app/cloud-mapping',
-    label: '云端建图',
-    permissions: ['mapping:run']
-  },
-  {
     href: '/app/three-dgs',
     label: '3DGS',
     permissions: ['three-dgs:run']
+  },
+  {
+    href: '/app/operation-history',
+    label: '操作记录',
+    permissions: ['audit:read']
   },
   {
     href: '/app/distributed-map-management',
@@ -5983,6 +6305,11 @@ const protectedAppPages = [
     permissions: ['vehicle:read', 'runtime:read']
   },
   {
+    paths: ['/app/park-pcm', '/app/park-pcm/'],
+    file: 'app/park-pcm/index.html',
+    permissions: ['vehicle:read']
+  },
+  {
     paths: ['/app/vehicle-devops', '/app/vehicle-devops/'],
     file: 'app/vehicle-devops/index.html',
     permissions: ['vehicle:code:read', 'vehicle:code:write']
@@ -6006,6 +6333,11 @@ const protectedAppPages = [
     paths: ['/app/three-dgs', '/app/three-dgs/'],
     file: 'app/three-dgs/index.html',
     permissions: ['three-dgs:run']
+  },
+  {
+    paths: ['/app/operation-history', '/app/operation-history/'],
+    file: 'app/operation-history/index.html',
+    permissions: ['audit:read']
   },
   {
     paths: ['/app/distributed-map-management', '/app/distributed-map-management/'],

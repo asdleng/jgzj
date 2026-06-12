@@ -15,12 +15,13 @@ const PERMISSIONS = [
   { id: 'mapping:run', label: '云端建图', group: '地图' },
   { id: 'three-dgs:run', label: '3DGS 场景训练', group: '地图' },
   { id: 'runtime:read', label: '查看服务器节点', group: '运维' },
-  { id: 'runtime:restart', label: '重启服务器节点', group: '运维' }
+  { id: 'runtime:restart', label: '重启服务器节点', group: '运维' },
+  { id: 'audit:read', label: '查看操作记录', group: '审计' }
 ];
 
 const ALL_PERMISSION_IDS = PERMISSIONS.map((item) => item.id);
 const REGISTERED_DEFAULT_PERMISSIONS = ['site:private:view'];
-const OPERATOR_ALL_PERMISSIONS = [...ALL_PERMISSION_IDS];
+const OPERATOR_ALL_PERMISSIONS = ALL_PERMISSION_IDS.filter((permission) => permission !== 'audit:read');
 const SESSION_COOKIE_NAME = 'jgzj_session';
 const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -292,8 +293,6 @@ class AuthStore {
     }
     if (options.super_admin) {
       existing.permissions = [];
-    } else if (normalized === 'jgauto402') {
-      existing.permissions = OPERATOR_ALL_PERMISSIONS;
     } else {
       existing.permissions = sanitizePermissions(existing.permissions);
     }
@@ -777,6 +776,17 @@ class AuthStore {
     return Object.values(state.users)
       .map(publicUser)
       .sort((a, b) => a.username.localeCompare(b.username));
+  }
+
+  async listAudit() {
+    const state = await this.ensureLoaded();
+    return (Array.isArray(state.audit) ? state.audit : []).map((item) => ({
+      at: item?.at || null,
+      actor: item?.actor || null,
+      action: item?.action || '',
+      target: item?.target || null,
+      detail: item?.detail && typeof item.detail === 'object' ? { ...item.detail } : {}
+    }));
   }
 
   async updateUser(actor, usernameRaw, patch = {}) {

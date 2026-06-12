@@ -1,0 +1,533 @@
+<section class="park-pcm-shell" data-park-pcm data-authenticated="false">
+  <header class="park-pcm-head">
+    <div>
+      <p class="section-kicker">PARK PCM</p>
+      <h1>园区人流 PCM</h1>
+    </div>
+    <div class="park-pcm-head-actions">
+      <p class="park-pcm-status" data-park-pcm-status data-state="idle">初始化</p>
+      <button type="button" class="park-pcm-button" data-park-pcm-refresh>刷新快照</button>
+      <button type="button" class="park-pcm-button park-pcm-button--secondary" data-park-pcm-report>发送报告</button>
+    </div>
+  </header>
+
+  <div class="park-pcm-controls">
+    <label>
+      <span>车辆上限</span>
+      <input type="number" min="1" max="500" value="200" data-park-pcm-max-vehicles />
+    </label>
+    <label class="park-pcm-check">
+      <input type="checkbox" checked data-park-pcm-include-obstacle />
+      <span>障碍处理</span>
+    </label>
+    <label class="park-pcm-check">
+      <input type="checkbox" data-park-pcm-include-perception />
+      <span>感知状态</span>
+    </label>
+    <p data-park-pcm-report-state>报告状态待加载</p>
+  </div>
+
+  <div class="park-pcm-auth" data-park-pcm-auth hidden></div>
+
+  <div class="park-pcm-metrics" data-park-pcm-metrics>
+    <article>
+      <span>纳管车辆</span>
+      <strong data-park-pcm-metric="total">-</strong>
+    </article>
+    <article>
+      <span>新鲜在线</span>
+      <strong data-park-pcm-metric="fresh">-</strong>
+    </article>
+    <article>
+      <span>告警车辆</span>
+      <strong data-park-pcm-metric="warnings">-</strong>
+    </article>
+    <article>
+      <span>人流拥挤</span>
+      <strong data-park-pcm-metric="crowded">-</strong>
+    </article>
+  </div>
+
+  <section class="park-pcm-band park-pcm-crowd-demo">
+    <div class="park-pcm-band-head">
+      <div>
+        <p class="section-kicker">CROWD CAPTURE DEMO</p>
+        <h2>4 路相机人流采样</h2>
+      </div>
+      <p data-park-pcm-crowd-status>等待车辆列表</p>
+    </div>
+
+    <div class="park-pcm-crowd-controls">
+      <label>
+        <span>车辆</span>
+        <select data-park-pcm-crowd-vehicle>
+          <option value="">加载中...</option>
+        </select>
+      </label>
+      <label>
+        <span>距离门槛 m</span>
+        <input type="number" min="5" max="1000" value="60" data-park-pcm-crowd-distance />
+      </label>
+      <label>
+        <span>质量</span>
+        <input type="number" min="20" max="90" value="45" data-park-pcm-crowd-quality />
+      </label>
+      <label>
+        <span>宽度</span>
+        <input type="number" min="160" max="1280" value="480" data-park-pcm-crowd-width />
+      </label>
+      <button type="button" class="park-pcm-button" data-park-pcm-crowd-capture>4 路抓拍</button>
+    </div>
+
+    <div class="park-pcm-crowd-last" data-park-pcm-crowd-last>
+      <p class="park-pcm-empty">还没有采样记录。</p>
+    </div>
+
+    <div class="park-pcm-crowd-gallery" data-park-pcm-crowd-samples>
+      <p class="park-pcm-empty">等待采样图片。</p>
+    </div>
+  </section>
+
+  <section class="park-pcm-band">
+    <div class="park-pcm-band-head">
+      <div>
+        <p class="section-kicker">ALERTS</p>
+        <h2>重点告警</h2>
+      </div>
+      <p data-park-pcm-updated>暂无快照</p>
+    </div>
+    <div class="park-pcm-alerts" data-park-pcm-alerts>
+      <p class="park-pcm-empty">等待快照。</p>
+    </div>
+  </section>
+
+  <section class="park-pcm-band">
+    <div class="park-pcm-band-head">
+      <div>
+        <p class="section-kicker">VEHICLES</p>
+        <h2>全车 PCM 明细</h2>
+      </div>
+      <p data-park-pcm-elapsed>-</p>
+    </div>
+    <div class="park-pcm-table" data-park-pcm-table>
+      <div class="park-pcm-table-head">
+        <span>车辆</span>
+        <span>心跳</span>
+        <span>任务</span>
+        <span>流量</span>
+        <span>健康</span>
+        <span>关键数据</span>
+      </div>
+      <div data-park-pcm-rows>
+        <p class="park-pcm-empty">等待快照。</p>
+      </div>
+    </div>
+  </section>
+</section>
+
+<style is:global>
+  .park-pcm-page {
+    min-height: 100vh;
+    padding: 112px 16px 56px;
+    background:
+      linear-gradient(135deg, rgba(8, 47, 73, 0.68), rgba(12, 25, 44, 0.72) 42%, rgba(7, 20, 18, 0.74)),
+      url("/assets/fallback/hero-cloud-ops-1600.jpg") center / cover fixed;
+  }
+
+  .park-pcm-shell {
+    width: min(1440px, 100%);
+    margin: 0 auto;
+    display: grid;
+    gap: 18px;
+    color: #e5edf8;
+  }
+
+  .park-pcm-head,
+  .park-pcm-controls,
+  .park-pcm-band,
+  .park-pcm-auth {
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: rgba(7, 18, 31, 0.86);
+    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(18px);
+  }
+
+  .park-pcm-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 22px;
+  }
+
+  .park-pcm-head h1,
+  .park-pcm-band h2 {
+    margin: 0;
+    line-height: 1.2;
+    letter-spacing: 0;
+  }
+
+  .park-pcm-head h1 {
+    font-size: clamp(2rem, 4vw, 3.8rem);
+  }
+
+  .park-pcm-band h2 {
+    font-size: 1.2rem;
+  }
+
+  .park-pcm-head-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .park-pcm-status,
+  .park-pcm-controls p,
+  .park-pcm-band-head p,
+  .park-pcm-empty {
+    margin: 0;
+    color: #b8c7da;
+    line-height: 1.6;
+  }
+
+  .park-pcm-status {
+    min-width: 88px;
+    text-align: right;
+  }
+
+  .park-pcm-status[data-state="ok"] {
+    color: #6ee7b7;
+  }
+
+  .park-pcm-status[data-state="warn"] {
+    color: #fbbf24;
+  }
+
+  .park-pcm-status[data-state="error"] {
+    color: #fca5a5;
+  }
+
+  .park-pcm-button {
+    min-height: 40px;
+    border: 1px solid rgba(103, 232, 249, 0.38);
+    background: rgba(8, 145, 178, 0.22);
+    color: #e0faff;
+    font-weight: 800;
+    cursor: pointer;
+    padding: 0 14px;
+  }
+
+  .park-pcm-button--secondary {
+    border-color: rgba(167, 243, 208, 0.34);
+    background: rgba(22, 101, 52, 0.22);
+  }
+
+  .park-pcm-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .park-pcm-controls {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+  }
+
+  .park-pcm-controls label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #cbd5e1;
+    font-weight: 700;
+  }
+
+  .park-pcm-controls input[type="number"] {
+    width: 86px;
+    min-height: 36px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: rgba(2, 6, 23, 0.48);
+    color: #f8fafc;
+    padding: 0 10px;
+  }
+
+  .park-pcm-check input {
+    width: 16px;
+    height: 16px;
+  }
+
+  .park-pcm-crowd-demo {
+    border-color: rgba(45, 212, 191, 0.24);
+  }
+
+  .park-pcm-crowd-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+
+  .park-pcm-crowd-controls label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #cbd5e1;
+    font-weight: 800;
+  }
+
+  .park-pcm-crowd-controls select,
+  .park-pcm-crowd-controls input {
+    min-height: 38px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: rgba(2, 6, 23, 0.52);
+    color: #f8fafc;
+    padding: 0 10px;
+  }
+
+  .park-pcm-crowd-controls select {
+    min-width: 160px;
+  }
+
+  .park-pcm-crowd-controls input {
+    width: 86px;
+  }
+
+  .park-pcm-crowd-last {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 14px;
+    padding: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    background: rgba(15, 23, 42, 0.5);
+  }
+
+  .park-pcm-crowd-last strong {
+    color: #f8fafc;
+  }
+
+  .park-pcm-crowd-last span {
+    color: #9fb0c7;
+  }
+
+  .park-pcm-crowd-gallery {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .park-pcm-crowd-frame {
+    min-width: 0;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(2, 6, 23, 0.46);
+  }
+
+  .park-pcm-crowd-frame img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    background: #020617;
+  }
+
+  .park-pcm-crowd-frame figcaption {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px;
+    color: #cbd5e1;
+    font-size: 0.82rem;
+  }
+
+  .park-pcm-auth {
+    padding: 18px;
+    color: #fecaca;
+  }
+
+  .park-pcm-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .park-pcm-metrics article {
+    min-height: 116px;
+    display: grid;
+    align-content: center;
+    gap: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: rgba(7, 18, 31, 0.82);
+    padding: 18px;
+  }
+
+  .park-pcm-metrics span {
+    color: #94a3b8;
+    font-weight: 700;
+  }
+
+  .park-pcm-metrics strong {
+    color: #fff;
+    font-size: clamp(2rem, 4vw, 3.5rem);
+    line-height: 1;
+  }
+
+  .park-pcm-band {
+    padding: 18px;
+  }
+
+  .park-pcm-band-head {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+
+  .park-pcm-alerts {
+    display: grid;
+    gap: 8px;
+  }
+
+  .park-pcm-alert {
+    display: grid;
+    grid-template-columns: minmax(90px, 0.18fr) minmax(0, 1fr) minmax(120px, 0.2fr);
+    align-items: center;
+    gap: 12px;
+    min-height: 54px;
+    padding: 10px 12px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(15, 23, 42, 0.66);
+  }
+
+  .park-pcm-alert strong,
+  .park-pcm-cell-main {
+    color: #f8fafc;
+  }
+
+  .park-pcm-alert span,
+  .park-pcm-cell-sub {
+    color: #9fb0c7;
+  }
+
+  .park-pcm-alert[data-severity="error"],
+  .park-pcm-row[data-severity="error"] {
+    border-color: rgba(248, 113, 113, 0.4);
+  }
+
+  .park-pcm-alert[data-severity="warn"],
+  .park-pcm-row[data-severity="warn"] {
+    border-color: rgba(251, 191, 36, 0.36);
+  }
+
+  .park-pcm-alert[data-severity="stale"],
+  .park-pcm-row[data-severity="stale"] {
+    border-color: rgba(148, 163, 184, 0.34);
+  }
+
+  .park-pcm-table {
+    overflow-x: auto;
+  }
+
+  .park-pcm-table-head,
+  .park-pcm-row {
+    display: grid;
+    grid-template-columns: minmax(120px, 0.9fr) minmax(96px, 0.55fr) minmax(150px, 1fr) minmax(140px, 0.85fr) minmax(140px, 0.85fr) minmax(260px, 1.5fr);
+    gap: 12px;
+    min-width: 980px;
+  }
+
+  .park-pcm-table-head {
+    color: #93c5fd;
+    font-weight: 800;
+    padding: 0 12px 8px;
+  }
+
+  .park-pcm-row {
+    align-items: center;
+    min-height: 68px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    background: rgba(15, 23, 42, 0.58);
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+
+  .park-pcm-cell {
+    min-width: 0;
+  }
+
+  .park-pcm-cell-main,
+  .park-pcm-cell-sub {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .park-pcm-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 26px;
+    padding: 0 8px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    color: #dbeafe;
+    font-weight: 800;
+  }
+
+  .park-pcm-pill[data-tone="ok"] {
+    color: #bbf7d0;
+    border-color: rgba(74, 222, 128, 0.34);
+  }
+
+  .park-pcm-pill[data-tone="warn"] {
+    color: #fde68a;
+    border-color: rgba(251, 191, 36, 0.36);
+  }
+
+  .park-pcm-pill[data-tone="error"] {
+    color: #fecaca;
+    border-color: rgba(248, 113, 113, 0.42);
+  }
+
+  @media (max-width: 860px) {
+    .park-pcm-page {
+      padding-top: 88px;
+    }
+
+    .park-pcm-head,
+    .park-pcm-band-head {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .park-pcm-head-actions {
+      justify-content: flex-start;
+    }
+
+    .park-pcm-status {
+      width: 100%;
+      text-align: left;
+    }
+
+    .park-pcm-metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .park-pcm-crowd-gallery {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 560px) {
+    .park-pcm-metrics {
+      grid-template-columns: 1fr;
+    }
+
+    .park-pcm-crowd-gallery {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

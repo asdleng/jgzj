@@ -1,0 +1,79 @@
+<section class="operation-history-panel" data-requires-permission="audit:read">
+  <div class="operation-history-head">
+    <div>
+      <p class="section-kicker">OPERATION AUDIT</p>
+      <h2 class="section-title">操作记录</h2>
+    </div>
+    <button id="operation-history-refresh" class="operation-history-button" type="button">刷新</button>
+  </div>
+
+  <form id="operation-history-filters" class="operation-history-filters">
+    <label>
+      账号
+      <input id="operation-history-actor" name="actor" type="text" autocomplete="off" placeholder="全部账号" />
+    </label>
+    <label>
+      分类
+      <select id="operation-history-category" name="category">
+        <option value="">全部分类</option>
+        <option value="auth">账号</option>
+        <option value="cloud_ops">云端运维</option>
+        <option value="runtime">服务器</option>
+        <option value="map_editor">地图编辑</option>
+        <option value="ai">AI</option>
+        <option value="mapping">云端建图</option>
+        <option value="three_dgs">3DGS</option>
+        <option value="crowd_cpm">众包采集</option>
+      </select>
+    </label>
+    <label>
+      车辆
+      <input id="operation-history-vehicle" name="vehicle_id" type="text" autocomplete="off" placeholder="全部车辆" />
+    </label>
+    <label>
+      结果
+      <select id="operation-history-ok" name="ok">
+        <option value="">全部结果</option>
+        <option value="true">成功</option>
+        <option value="false">失败</option>
+      </select>
+    </label>
+    <label class="operation-history-search">
+      关键词
+      <input id="operation-history-query" name="q" type="search" autocomplete="off" placeholder="动作、目标、接口" />
+    </label>
+    <button class="operation-history-button" type="submit">筛选</button>
+  </form>
+
+  <div class="operation-history-meta">
+    <p id="operation-history-status" data-state="idle">等待加载</p>
+    <div class="operation-history-pager">
+      <button id="operation-history-prev" class="operation-history-button" type="button">上一页</button>
+      <span id="operation-history-page">1 / 1</span>
+      <button id="operation-history-next" class="operation-history-button" type="button">下一页</button>
+    </div>
+  </div>
+
+  <div class="operation-history-table-wrap">
+    <table class="operation-history-table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>账号</th>
+          <th>分类</th>
+          <th>动作</th>
+          <th>目标</th>
+          <th>车辆</th>
+          <th>结果</th>
+        </tr>
+      </thead>
+      <tbody id="operation-history-body">
+        <tr>
+          <td colspan="7">暂无记录</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script is:inline src="/js/operation-history.js?v=20260612-1" defer></script>
