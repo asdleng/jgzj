@@ -12,6 +12,7 @@ const { createMailer } = require('./mailer');
 const registerCloudMappingRoutes = require('./cloud-mapping');
 const registerRuntimeControlRoutes = require('./runtime-control');
 const registerThreeDgsRoutes = require('./three-dgs');
+const registerCrowdCpmRoutes = require('./crowd-cpm');
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -5863,6 +5864,11 @@ registerThreeDgsRoutes(app, {
 registerRuntimeControlRoutes(app, {
   requireOpenClawAuth,
   requirePermission: (permission) => authStore.requirePermission(permission),
+  rootDir: path.resolve(__dirname, '..')
+});
+registerCrowdCpmRoutes(app, {
+  requirePermission: (permission) => authStore.requirePermission(permission),
+  cloudAgentBaseUrl,
   rootDir: path.resolve(__dirname, '..')
 });
 
