@@ -7,6 +7,9 @@
   const CROWD_SAMPLES_URL = "/api/park-pcm/crowd/samples";
   const CROWD_CAPTURE_URL = "/api/park-pcm/crowd/demo-capture";
   const CROWD_PATROLS_URL = "/api/park-pcm/crowd/patrols";
+  const CROWD_VEHICLE_DETAIL_URL = (vehicleId) => `/api/park-pcm/crowd/vehicles/${encodeURIComponent(vehicleId)}/detail`;
+  const PATROL_MAX_VEHICLES = 24;
+  const PATROL_REFRESH_MS = 90 * 1000;
 
   const AMAP_KEY = root.getAttribute("data-amap-key") || "";
   const statusEl = root.querySelector("[data-park-pcm-status]");
@@ -17,6 +20,8 @@
   const mapEl = root.querySelector("[data-park-pcm-map]");
   const mapFallbackEl = root.querySelector("[data-park-pcm-map-fallback]");
   const mapStatusEl = root.querySelector("[data-park-pcm-map-status]");
+  const vehicleSummaryEl = root.querySelector("[data-park-pcm-vehicle-summary]");
+  const vehicleDetailEl = root.querySelector("[data-park-pcm-vehicle-detail]");
   const crowdVehicleSelect = root.querySelector("[data-park-pcm-crowd-vehicle]");
   const crowdDistanceInput = root.querySelector("[data-park-pcm-crowd-distance]");
   const crowdQualityInput = root.querySelector("[data-park-pcm-crowd-quality]");
@@ -28,9 +33,13 @@
 
   let authenticated = false;
   let busy = false;
+  let patrolRefreshInFlight = false;
   let amapLoadPromise = null;
   let amapMap = null;
   let amapMarkers = [];
+  let selectedVehicleId = "";
+  let vehicleDetailRequestId = 0;
+  let latestPatrolMapPoints = [];
 
   function setStatus(text, state) {
     if (!statusEl) return;
@@ -112,6 +121,9 @@
       patrol_active_moving: "巡逻移动",
       patrol_active_stopped: "巡逻暂停",
       patrol_task_stopped_or_waiting: "巡逻等待",
+      patrol_task_long_stopped: "任务长停",
+      patrol_task_loaded_unverified: "任务待确认",
+      patrol_unverified_can_unavailable: "底盘未确认",
       patrol_completed_or_idle: "巡逻完成/空闲",
       charging_or_charging_area: "充电/充电区",
       safety_stop: "安全停",
@@ -147,6 +159,57 @@
     mapFallbackEl.hidden = Boolean(hidden);
   }
 
+  function setVehicleSummary(text) {
+    if (vehicleSummaryEl) vehicleSummaryEl.textContent = text || "";
+  }
+
+  function detailCell(label, value) {
+    const cell = document.createElement("div");
+    cell.className = "park-pcm-detail-cell";
+    cell.appendChild(textNode("span", "", label));
+    cell.appendChild(textNode("strong", "", value == null || value === "" ? "-" : value));
+    return cell;
+  }
+
+  function renderVehicleDetail(vehicle) {
+    if (!vehicleDetailEl) return;
+    clearElement(vehicleDetailEl);
+    if (!vehicle) {
+      vehicleDetailEl.appendChild(textNode("p", "park-pcm-empty", "选择车辆后显示定位、巡逻任务和采样统计。"));
+      return;
+    }
+    const patrol = vehicle.patrol_state || {};
+    const fields = patrol.fields || {};
+    const telemetry = vehicle.telemetry || {};
+    const position = vehicle.position || {};
+    const data = vehicle.crowd_data || {};
+    const latest = data.latest_sample || vehicle.last_crowd_capture || null;
+    const grid = document.createElement("div");
+    grid.className = "park-pcm-detail-grid";
+    grid.appendChild(detailCell("巡逻状态", patrolStateLabel(patrol.state)));
+    grid.appendChild(detailCell("抓拍资格", vehicle.capture_eligible ? "确认巡逻，可自动采集" : "未确认巡逻"));
+    grid.appendChild(detailCell("心跳", vehicle.fresh ? `${formatNumber(vehicle.last_seen_age_s, "0")}s 前` : "过期/未知"));
+    grid.appendChild(detailCell("速度", `${formatNumber(telemetry.speed_kph)} km/h`));
+    grid.appendChild(detailCell("电量", `${formatNumber(telemetry.battery_soc)}%`));
+    grid.appendChild(detailCell("规划", `run ${formatNumber(telemetry.planner_running)} · idle ${formatNumber(telemetry.vehicle_idle_status)}`));
+    grid.appendChild(detailCell("路线进度", `${formatNumber(fields.current_loop_index)}/${formatNumber(fields.total_loop_sum)} · ${formatNumber(fields.current_refline_index)}/${formatNumber(fields.total_refline_sum)}`));
+    grid.appendChild(detailCell("定位", position && Number.isFinite(Number(position.gaode_longitude)) ? `${position.reliable ? "可靠" : "未确认"} · ${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}` : "无可用坐标"));
+    grid.appendChild(detailCell("24h 采样", `${formatNumber(data.sample_count_24h, "0")} 次 · ${formatNumber(data.frame_count_24h, "0")} 张 · ${formatBytes(data.total_image_bytes_24h)}`));
+    vehicleDetailEl.appendChild(grid);
+    const reasons = Array.isArray(patrol.reasons) ? patrol.reasons.slice(0, 4).join(" · ") : "";
+    vehicleDetailEl.appendChild(
+      textNode(
+        "p",
+        "park-pcm-detail-note",
+        [
+          latest ? `最近采样 ${formatTime(latest.collected_at)}，${formatBytes(latest.total_image_bytes)}` : "最近采样 暂无",
+          reasons ? `判断依据 ${reasons}` : "",
+          vehicle.localization && vehicle.localization.error ? `定位接口 ${vehicle.localization.error}` : ""
+        ].filter(Boolean).join(" · ")
+      )
+    );
+  }
+
   function renderPatrolSummary(counts) {
     if (!patrolSummaryEl) return;
     const data = counts || {};
@@ -169,6 +232,9 @@
     rows.forEach((row) => {
       const item = document.createElement("article");
       item.className = "park-pcm-patrol-row";
+      item.dataset.vehicleId = row.vehicle_id || "";
+      item.tabIndex = 0;
+      item.setAttribute("role", "button");
       const patrol = row.patrol_state || {};
       const fields = patrol.fields || {};
       const position = row.position || {};
@@ -196,23 +262,76 @@
           ].join(" · ")
         )
       );
+      item.addEventListener("click", () => {
+        void selectVehicle(row.vehicle_id).catch((error) => {
+          setMapStatus(`车辆详情失败：${error.message || "-"}`);
+        });
+      });
+      item.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          item.click();
+        }
+      });
       patrolListEl.appendChild(item);
     });
   }
 
-  function renderPatrolVehicleOptions(patrols) {
-    if (!crowdVehicleSelect) return false;
-    const rows = Array.isArray(patrols) ? patrols.filter((row) => row.capture_eligible) : [];
-    if (!rows.length) return false;
-    clearElement(crowdVehicleSelect);
-    rows.forEach((row) => {
-      const option = document.createElement("option");
-      option.value = row.vehicle_id || "";
-      const data = row.crowd_data || {};
-      option.textContent = `${row.vehicle_id} · ${patrolStateLabel(row.patrol_state && row.patrol_state.state)} · 24h ${formatNumber(data.sample_count_24h, "0")} 次`;
-      crowdVehicleSelect.appendChild(option);
+  function mapPointFromVehicle(vehicle) {
+    if (!vehicle) return null;
+    const direct = vehicle.map_point || null;
+    const position = vehicle.position || {};
+    const longitude = direct ? direct.longitude : position.gaode_longitude;
+    const latitude = direct ? direct.latitude : position.gaode_latitude;
+    if (!Number.isFinite(Number(longitude)) || !Number.isFinite(Number(latitude))) {
+      return null;
+    }
+    const data = vehicle.crowd_data || {};
+    return {
+      vehicle_id: vehicle.vehicle_id,
+      longitude: Number(longitude),
+      latitude: Number(latitude),
+      state: vehicle.patrol_state && vehicle.patrol_state.state,
+      reliable: direct ? direct.reliable === true : position.reliable === true,
+      selected: true,
+      sample_count_24h: data.sample_count_24h || 0,
+      frame_count_24h: data.frame_count_24h || 0
+    };
+  }
+
+  async function renderSelectedVehicleMap(vehicle) {
+    const point = mapPointFromVehicle(vehicle);
+    if (!point) {
+      if (amapMap && amapMarkers.length) {
+        amapMap.remove(amapMarkers);
+        amapMarkers = [];
+      }
+      setMapStatus("定位不可用");
+      setMapFallback(`${vehicle && vehicle.vehicle_id ? vehicle.vehicle_id : "当前车辆"} 暂未返回可用高德坐标`, false);
+      return;
+    }
+    await renderAmapPoints([point], {
+      statusText: `${point.vehicle_id} 定位${point.reliable ? "" : "未确认可靠性"}`,
+      emptyText: `${point.vehicle_id} 暂未返回可用高德坐标`
     });
-    return true;
+  }
+
+  async function selectVehicle(vehicleId) {
+    const nextVehicleId = String(vehicleId || "").trim();
+    selectedVehicleId = nextVehicleId;
+    if (crowdVehicleSelect && crowdVehicleSelect.value !== nextVehicleId) {
+      crowdVehicleSelect.value = nextVehicleId;
+    }
+    if (!nextVehicleId) {
+      setVehicleSummary("选择车辆查看定位、巡逻状态和采样统计。");
+      renderVehicleDetail(null);
+      await renderAmapPoints(latestPatrolMapPoints, {
+        emptyText: "等待确认巡逻车辆定位"
+      });
+      return null;
+    }
+    setVehicleSummary(`${nextVehicleId} 定位和巡逻状态加载中`);
+    return loadVehicleDetail(nextVehicleId);
   }
 
   function loadAmap() {
@@ -235,12 +354,13 @@
     return amapLoadPromise;
   }
 
-  async function renderAmapPoints(points) {
+  async function renderAmapPoints(points, options) {
+    const opts = options || {};
     const list = Array.isArray(points) ? points.filter((point) => Number.isFinite(Number(point.longitude)) && Number.isFinite(Number(point.latitude))) : [];
     if (!mapEl) return;
     if (!list.length) {
-      setMapStatus("暂无巡逻定位");
-      setMapFallback("等待确认巡逻车辆定位", false);
+      setMapStatus(opts.emptyStatus || "暂无定位");
+      setMapFallback(opts.emptyText || "等待定位点", false);
       if (amapMap) {
         amapMap.remove(amapMarkers);
         amapMarkers = [];
@@ -264,28 +384,36 @@
         amapMarkers = [];
       }
       amapMarkers = list.map((point) => {
+        const selected = point.selected === true;
+        const reliable = point.reliable !== false;
+        const strokeColor = selected ? "#f59e0b" : "#22d3ee";
+        const fillColor = selected ? "#f97316" : "#14b8a6";
         const marker = new AMap.Marker({
           position: [Number(point.longitude), Number(point.latitude)],
           title: point.vehicle_id || "",
           label: {
-            content: `${point.vehicle_id || "-"} · ${formatNumber(point.sample_count_24h, "0")}次`,
+            content: `${point.vehicle_id || "-"} · ${selected ? patrolStateLabel(point.state) : `${formatNumber(point.sample_count_24h, "0")}次`}${reliable ? "" : " · 未确认"}`,
             direction: "top"
           }
         });
         const circle = new AMap.Circle({
           center: [Number(point.longitude), Number(point.latitude)],
-          radius: Math.max(12, Math.min(80, 18 + Number(point.sample_count_24h || 0) * 8)),
-          strokeColor: "#22d3ee",
+          radius: selected ? 34 : Math.max(12, Math.min(80, 18 + Number(point.sample_count_24h || 0) * 8)),
+          strokeColor,
           strokeOpacity: 0.65,
           strokeWeight: 1,
-          fillColor: "#14b8a6",
-          fillOpacity: 0.24
+          fillColor,
+          fillOpacity: selected ? 0.3 : 0.24
         });
         return [circle, marker];
       }).flat();
       amapMap.add(amapMarkers);
-      amapMap.setFitView(amapMarkers, false, [44, 44, 44, 44], 18);
-      setMapStatus(`定位点 ${list.length}`);
+      if (list.length === 1) {
+        amapMap.setZoomAndCenter(17, center);
+      } else {
+        amapMap.setFitView(amapMarkers, false, [44, 44, 44, 44], 18);
+      }
+      setMapStatus(opts.statusText || `定位点 ${list.length}`);
     } catch (error) {
       setMapStatus("地图加载失败");
       setMapFallback(`高德地图加载失败：${error.message || "amap_failed"}`, false);
@@ -293,19 +421,26 @@
   }
 
   async function loadCrowdPatrols() {
-    const data = await fetchJson(`${CROWD_PATROLS_URL}?max_vehicles=60`);
-    renderPatrolSummary(data.counts);
-    renderPatrolRows(data.patrols || []);
-    renderPatrolVehicleOptions(data.patrols || []);
-    await renderAmapPoints(data.map_points || []);
-    return data;
+    if (patrolRefreshInFlight) return null;
+    patrolRefreshInFlight = true;
+    try {
+      const data = await fetchJson(`${CROWD_PATROLS_URL}?max_vehicles=${PATROL_MAX_VEHICLES}`);
+      renderPatrolSummary(data.counts);
+      renderPatrolRows(data.patrols || []);
+      latestPatrolMapPoints = data.map_points || [];
+      if (!selectedVehicleId) {
+        await renderAmapPoints(latestPatrolMapPoints, {
+          emptyText: "等待确认巡逻车辆定位"
+        });
+      }
+      return data;
+    } finally {
+      patrolRefreshInFlight = false;
+    }
   }
 
   function renderCrowdVehicles(data) {
-    if (!crowdVehicleSelect) return;
-    if (crowdVehicleSelect.options.length && Array.from(crowdVehicleSelect.options).some((option) => !option.disabled && option.value)) {
-      return;
-    }
+    if (!crowdVehicleSelect) return "";
     clearElement(crowdVehicleSelect);
     const vehicles = Array.isArray(data && data.vehicles) ? data.vehicles : [];
     if (!vehicles.length) {
@@ -313,16 +448,29 @@
       option.value = "";
       option.textContent = "暂无车辆";
       crowdVehicleSelect.appendChild(option);
-      return;
+      selectedVehicleId = "";
+      renderVehicleDetail(null);
+      setVehicleSummary("暂无车辆。");
+      return "";
+    }
+    const previousVehicleId = selectedVehicleId || crowdVehicleSelect.value || "";
+    let nextVehicleId = vehicles.some((vehicle) => vehicle.vehicle_id === previousVehicleId)
+      ? previousVehicleId
+      : "";
+    if (!nextVehicleId) {
+      const freshVehicle = vehicles.find((vehicle) => vehicle.fresh);
+      nextVehicleId = (freshVehicle || vehicles[0]).vehicle_id || "";
     }
     vehicles.slice(0, 80).forEach((vehicle) => {
       const option = document.createElement("option");
       option.value = vehicle.vehicle_id || "";
       const age = vehicle.last_seen_age_s == null ? "-" : `${vehicle.last_seen_age_s}s`;
       option.textContent = `${vehicle.vehicle_id}${vehicle.fresh ? "" : " 过期"} · ${age} · 电量 ${formatNumber(vehicle.telemetry && vehicle.telemetry.battery_soc)}%`;
-      if (!vehicle.fresh) option.disabled = true;
       crowdVehicleSelect.appendChild(option);
     });
+    crowdVehicleSelect.value = nextVehicleId;
+    selectedVehicleId = nextVehicleId;
+    return nextVehicleId;
   }
 
   function renderCrowdLast(sample) {
@@ -395,14 +543,47 @@
     });
   }
 
+  async function loadVehicleDetail(vehicleId) {
+    const normalizedVehicleId = String(vehicleId || "").trim();
+    if (!normalizedVehicleId) {
+      renderVehicleDetail(null);
+      setVehicleSummary("选择车辆查看定位、巡逻状态和采样统计。");
+      return null;
+    }
+    const requestId = vehicleDetailRequestId + 1;
+    vehicleDetailRequestId = requestId;
+    setMapStatus(`${normalizedVehicleId} 定位加载中`);
+    setMapFallback(`${normalizedVehicleId} 定位加载中`, false);
+    const data = await fetchJson(CROWD_VEHICLE_DETAIL_URL(normalizedVehicleId));
+    if (requestId !== vehicleDetailRequestId) return data;
+    const vehicle = data.vehicle || null;
+    selectedVehicleId = vehicle && vehicle.vehicle_id ? vehicle.vehicle_id : normalizedVehicleId;
+    renderVehicleDetail(vehicle);
+    if (vehicle) {
+      const patrol = vehicle.patrol_state || {};
+      const crowd = vehicle.crowd_data || {};
+      setVehicleSummary(
+        `${selectedVehicleId} · ${patrolStateLabel(patrol.state)} · 24h ${formatNumber(crowd.sample_count_24h, "0")} 次/${formatNumber(crowd.frame_count_24h, "0")} 张`
+      );
+      await renderSelectedVehicleMap(vehicle);
+    }
+    return data;
+  }
+
   async function loadCrowdVehicles() {
     const data = await fetchJson(CROWD_VEHICLES_URL);
-    renderCrowdVehicles(data);
+    const nextVehicleId = renderCrowdVehicles(data);
     const defaults = data.defaults || {};
     if (crowdDistanceInput && defaults.distance_m) crowdDistanceInput.value = defaults.distance_m;
     if (crowdQualityInput && defaults.quality) crowdQualityInput.value = defaults.quality;
     if (crowdWidthInput && defaults.max_width) crowdWidthInput.value = defaults.max_width;
     setCrowdStatus(data.in_flight ? "采样进行中" : `车辆 ${Array.isArray(data.vehicles) ? data.vehicles.length : 0} 台`);
+    if (nextVehicleId) {
+      await loadVehicleDetail(nextVehicleId).catch((error) => {
+        setVehicleSummary(`${nextVehicleId} 详情加载失败：${error.message || "-"}`);
+        setMapStatus("车辆详情失败");
+      });
+    }
     return data;
   }
 
@@ -485,13 +666,21 @@
       setStatus("不可用", "error");
       if (authEl) {
         authEl.hidden = false;
-        authEl.textContent = error.message || "PCM 服务不可用。";
+        authEl.textContent = error.message || "人流采集服务不可用。";
       }
     } finally {
       setBusy(false);
     }
   }
 
+  if (crowdVehicleSelect) {
+    crowdVehicleSelect.addEventListener("change", () => {
+      void selectVehicle(crowdVehicleSelect.value).catch((error) => {
+        setVehicleSummary(`车辆详情加载失败：${error.message || "-"}`);
+        setMapStatus("车辆详情失败");
+      });
+    });
+  }
   if (crowdCaptureBtn) crowdCaptureBtn.addEventListener("click", captureCrowdDemo);
   if (patrolRefreshBtn) {
     patrolRefreshBtn.addEventListener("click", async () => {
@@ -500,6 +689,9 @@
       setMapStatus("刷新中");
       try {
         await loadCrowdPatrols();
+        if (selectedVehicleId) {
+          await loadVehicleDetail(selectedVehicleId);
+        }
         setStatus("已更新", "ok");
       } catch (error) {
         setMapStatus(`刷新失败：${error.message || "-"}`);
@@ -508,5 +700,13 @@
       }
     });
   }
+  window.setInterval(() => {
+    if (!authenticated || busy) return;
+    void loadCrowdPatrols()
+      .then(() => (selectedVehicleId ? loadVehicleDetail(selectedVehicleId) : null))
+      .catch((error) => {
+        setMapStatus(`巡逻刷新失败：${error.message || "-"}`);
+      });
+  }, PATROL_REFRESH_MS);
   void init();
 })();

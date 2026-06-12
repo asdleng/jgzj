@@ -11,8 +11,17 @@ const DEFAULT_REPORT_BOOT_DELAY_MS = 60 * 1000;
 const DEFAULT_CROWD_CAPTURE_TIMEOUT_S = 45;
 const DEFAULT_CROWD_CAPTURE_DISTANCE_M = 60;
 const DEFAULT_CROWD_CAPTURE_COOLDOWN_MS = 90 * 1000;
-const DEFAULT_PATROL_STATUS_TIMEOUT_S = 6;
+const DEFAULT_PATROL_STATUS_TIMEOUT_S = 8;
 const DEFAULT_PATROL_STATUS_CONCURRENCY = 4;
+const DEFAULT_CROWD_MONITOR_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_CROWD_MONITOR_BOOT_DELAY_MS = 90 * 1000;
+const DEFAULT_CROWD_MONITOR_MAX_VEHICLES = 16;
+const DEFAULT_CROWD_MONITOR_MAX_CAPTURES = 1;
+const DEFAULT_CROWD_MONITOR_MAX_ATTEMPTS = 2;
+const DEFAULT_CROWD_MONITOR_DISTANCE_M = 80;
+const DEFAULT_CROWD_MONITOR_COOLDOWN_MS = 10 * 60 * 1000;
+const DEFAULT_CROWD_MONITOR_QUALITY = 40;
+const DEFAULT_CROWD_MONITOR_MAX_WIDTH = 480;
 
 function nowIso() {
   return new Date().toISOString();
@@ -380,13 +389,17 @@ function classifyCrowdPatrolCaptureState(vehicle, toolResults, options) {
     (longTimeStop === true || vehicleIdleStatus === 1) &&
     currentLoop >= totalLoop &&
     currentRefline >= totalRefline;
+  const longIdleStopped =
+    !plannerActive &&
+    longTimeStop === true &&
+    vehicleIdleStatus === 1;
   const charging = inChargerZone === true || (batteryChargeState != null && batteryChargeState > 0) || chargeLampOn;
   const hardSafetyStop = emergencyStop === true || collisionStop === true;
 
   const reasons = [];
   if (!fresh) reasons.push(lastSeenAgeS == null ? 'vehicle_last_seen_unknown' : `vehicle_last_seen_${lastSeenAgeS}s`);
   if (!toolResults.planning?.ok) reasons.push(`planning_unavailable:${toolResults.planning?.error || 'unavailable'}`);
-  if (!toolResults.routing?.ok) reasons.push(`routing_unavailable:${toolResults.routing?.error || 'unavailable'}`);
+  if (toolResults.routing && !toolResults.routing.ok) reasons.push(`routing_unavailable:${toolResults.routing.error || 'unavailable'}`);
   if (!toolResults.can?.ok) reasons.push(`can_unavailable:${toolResults.can?.error || 'unavailable'}`);
   if (plannerActive) reasons.push(`planner_running=${plannerRunning}`);
   if (routePathIds.length) reasons.push(`path_ids=${routePathIds.slice(0, 3).join('|')}`);
@@ -402,6 +415,12 @@ function classifyCrowdPatrolCaptureState(vehicle, toolResults, options) {
   if (!fresh) {
     state = 'stale_vehicle';
     confidence = 'high';
+  } else if (!toolResults.planning?.ok) {
+    state = 'unknown';
+    confidence = 'low';
+  } else if (!toolResults.can?.ok) {
+    state = 'patrol_unverified_can_unavailable';
+    confidence = 'low';
   } else if (charging) {
     state = 'charging_or_charging_area';
     confidence = 'high';
@@ -414,14 +433,20 @@ function classifyCrowdPatrolCaptureState(vehicle, toolResults, options) {
   } else if (completedLike) {
     state = 'patrol_completed_or_idle';
     confidence = 'medium';
+  } else if (longIdleStopped) {
+    state = 'patrol_task_long_stopped';
+    confidence = 'medium';
   } else if (plannerActive && moving) {
     state = 'patrol_active_moving';
     confidence = 'high';
   } else if (plannerActive) {
     state = 'patrol_active_stopped';
     confidence = 'high';
-  } else {
+  } else if (moving || vehicleIdleStatus === 0 || longTimeStop === false) {
     state = 'patrol_task_stopped_or_waiting';
+    confidence = routeProgress || routePathIds.length ? 'medium' : 'low';
+  } else {
+    state = 'patrol_task_loaded_unverified';
     confidence = routeProgress || routePathIds.length ? 'medium' : 'low';
   }
 
@@ -442,7 +467,7 @@ function classifyCrowdPatrolCaptureState(vehicle, toolResults, options) {
     reasons: reasons.slice(0, 12),
     tool_ok: {
       planning: toolResults.planning?.ok === true,
-      routing: toolResults.routing?.ok === true,
+      routing: toolResults.routing ? toolResults.routing.ok === true : null,
       can: toolResults.can?.ok === true
     },
     tool_elapsed_ms: {
@@ -477,7 +502,8 @@ function classifyCrowdPatrolCaptureState(vehicle, toolResults, options) {
       current_path_string_ids: routePathIds,
       route_location_valid: routeLocationValid,
       route_task_evidence: routeTaskEvidence,
-      route_completed_like: completedLike
+      route_completed_like: completedLike,
+      long_idle_stopped: longIdleStopped
     }
   };
 }
@@ -777,7 +803,7 @@ function formatCrowdReportText(report) {
   const capture = report.capture || {};
   const latest = Array.isArray(report.latest_samples) ? report.latest_samples.slice(0, 5) : [];
   const lines = [
-    `园区人流 PCM 小时报告 ${formatLocalTime(report.generated_at)}`,
+    `园区人流采集小时报告 ${formatLocalTime(report.generated_at)}`,
     `车辆：纳管 ${vehicle.total || 0}，新鲜在线 ${vehicle.fresh || 0}，过期/未知 ${vehicle.stale || 0}`,
     `采样：近 24 小时 ${capture.sample_count_24h || 0} 次，图片 ${capture.frame_count_24h || 0} 张，数据 ${formatByteCount(capture.total_image_bytes_24h)}`,
     `覆盖：近 24 小时车辆 ${capture.vehicle_count_24h || 0} 台，当前采样任务 ${report.in_flight ? '进行中' : '空闲'}`,
@@ -1023,13 +1049,14 @@ module.exports = function registerParkPcmRoutes(app, options) {
   ).replace(/\/+$/, '');
   const rootDir = path.resolve(options.rootDir || path.resolve(__dirname, '..'));
   const runtimeRoot = path.resolve(
-    process.env.PARK_PCM_RUNTIME_ROOT || path.join(rootDir, '.runtime/park-pcm')
+    process.env.PARK_CROWD_RUNTIME_ROOT || process.env.PARK_PCM_RUNTIME_ROOT || path.join(rootDir, '.runtime/park-pcm')
   );
   const snapshotPath = path.join(runtimeRoot, 'last-snapshot.json');
   const reportStatePath = path.join(runtimeRoot, 'report-state.json');
   const crowdFramesRoot = path.join(runtimeRoot, 'crowd-frames');
   const crowdIndexLogPath = path.join(runtimeRoot, 'crowd-samples.jsonl');
   const crowdStatePath = path.join(runtimeRoot, 'crowd-capture-state.json');
+  const crowdMonitorStatePath = path.join(runtimeRoot, 'crowd-monitor-state.json');
   const statusToolTimeoutS = toFiniteNumber(
     process.env.PARK_PCM_STATUS_TOOL_TIMEOUT_S,
     DEFAULT_STATUS_TOOL_TIMEOUT_S,
@@ -1081,6 +1108,54 @@ module.exports = function registerParkPcmRoutes(app, options) {
     DEFAULT_PATROL_STATUS_CONCURRENCY,
     { min: 1, max: 8 }
   );
+  const crowdMonitorEnabled = String(
+    process.env.PARK_CROWD_MONITOR_ENABLED || process.env.PARK_PCM_CROWD_MONITOR_ENABLED || 'true'
+  ).toLowerCase() !== 'false';
+  const crowdMonitorIntervalMs = toFiniteInteger(
+    process.env.PARK_CROWD_MONITOR_INTERVAL_MS || process.env.PARK_PCM_CROWD_MONITOR_INTERVAL_MS,
+    DEFAULT_CROWD_MONITOR_INTERVAL_MS,
+    { min: 60 * 1000, max: 60 * 60 * 1000 }
+  );
+  const crowdMonitorBootDelayMs = toFiniteInteger(
+    process.env.PARK_CROWD_MONITOR_BOOT_DELAY_MS || process.env.PARK_PCM_CROWD_MONITOR_BOOT_DELAY_MS,
+    DEFAULT_CROWD_MONITOR_BOOT_DELAY_MS,
+    { min: 10 * 1000, max: 60 * 60 * 1000 }
+  );
+  const crowdMonitorMaxVehicles = toFiniteInteger(
+    process.env.PARK_CROWD_MONITOR_MAX_VEHICLES || process.env.PARK_PCM_CROWD_MONITOR_MAX_VEHICLES,
+    DEFAULT_CROWD_MONITOR_MAX_VEHICLES,
+    { min: 1, max: 80 }
+  );
+  const crowdMonitorMaxCaptures = toFiniteInteger(
+    process.env.PARK_CROWD_MONITOR_MAX_CAPTURES || process.env.PARK_PCM_CROWD_MONITOR_MAX_CAPTURES,
+    DEFAULT_CROWD_MONITOR_MAX_CAPTURES,
+    { min: 1, max: 4 }
+  );
+  const crowdMonitorMaxAttempts = toFiniteInteger(
+    process.env.PARK_CROWD_MONITOR_MAX_ATTEMPTS || process.env.PARK_PCM_CROWD_MONITOR_MAX_ATTEMPTS,
+    DEFAULT_CROWD_MONITOR_MAX_ATTEMPTS,
+    { min: 1, max: 8 }
+  );
+  const crowdMonitorDistanceM = toFiniteNumber(
+    process.env.PARK_CROWD_MONITOR_DISTANCE_M || process.env.PARK_PCM_CROWD_MONITOR_DISTANCE_M,
+    DEFAULT_CROWD_MONITOR_DISTANCE_M,
+    { min: 10, max: 1000 }
+  );
+  const crowdMonitorCooldownMs = toFiniteInteger(
+    process.env.PARK_CROWD_MONITOR_COOLDOWN_MS || process.env.PARK_PCM_CROWD_MONITOR_COOLDOWN_MS,
+    DEFAULT_CROWD_MONITOR_COOLDOWN_MS,
+    { min: 60 * 1000, max: 24 * 60 * 60 * 1000 }
+  );
+  const crowdMonitorQuality = toFiniteInteger(
+    process.env.PARK_CROWD_MONITOR_QUALITY || process.env.PARK_PCM_CROWD_MONITOR_QUALITY,
+    DEFAULT_CROWD_MONITOR_QUALITY,
+    { min: 20, max: 80 }
+  );
+  const crowdMonitorMaxWidth = toFiniteInteger(
+    process.env.PARK_CROWD_MONITOR_MAX_WIDTH || process.env.PARK_PCM_CROWD_MONITOR_MAX_WIDTH,
+    DEFAULT_CROWD_MONITOR_MAX_WIDTH,
+    { min: 160, max: 960 }
+  );
   const feishuWebhookUrl = String(
     process.env.PARK_PCM_FEISHU_WEBHOOK_URL ||
       process.env.FEISHU_WEBHOOK_URL ||
@@ -1093,7 +1168,9 @@ module.exports = function registerParkPcmRoutes(app, options) {
   let snapshotInFlight = false;
   let reportInFlight = false;
   let crowdCaptureInFlight = false;
+  let crowdMonitorInFlight = false;
   let reportTimer = null;
+  let crowdMonitorTimer = null;
 
   async function ensureRuntimeDir() {
     await fsp.mkdir(runtimeRoot, { recursive: true });
@@ -1189,6 +1266,30 @@ module.exports = function registerParkPcmRoutes(app, options) {
     }
   }
 
+  async function classifyCrowdPatrolForVehicle(vehicle, nowMs, timeoutS) {
+    const vehicleId = String(vehicle.vehicle_id);
+    const planning = await callVehicleTool(vehicleId, 'status.planning', {}, timeoutS);
+    const can = await callVehicleTool(vehicleId, 'status.can', {}, timeoutS);
+    const toolResults = { planning, can };
+    let patrolState = classifyCrowdPatrolCaptureState(vehicle, toolResults, {
+      now_ms: nowMs,
+      fresh_vehicle_ms: freshVehicleMs
+    });
+
+    if (patrolState.state === 'not_patrol') {
+      toolResults.routing = await callVehicleTool(vehicleId, 'status.routing', {}, timeoutS);
+      patrolState = classifyCrowdPatrolCaptureState(vehicle, toolResults, {
+        now_ms: nowMs,
+        fresh_vehicle_ms: freshVehicleMs
+      });
+    }
+
+    return {
+      toolResults,
+      patrolState
+    };
+  }
+
   function crowdFrameUrl(relativePath) {
     return `/api/park-pcm/crowd/files/${relativePath
       .split('/')
@@ -1225,6 +1326,22 @@ module.exports = function registerParkPcmRoutes(app, options) {
       updated_at: nowIso()
     };
     await atomicWriteJson(crowdStatePath, nextState);
+  }
+
+  async function readCrowdMonitorState() {
+    const parsed = await readJsonFile(crowdMonitorStatePath);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    return null;
+  }
+
+  async function writeCrowdMonitorState(state) {
+    await atomicWriteJson(crowdMonitorStatePath, {
+      version: 1,
+      ...(state || {}),
+      updated_at: nowIso()
+    });
   }
 
   function extractLocalizationPosition(localizationResult) {
@@ -1305,19 +1422,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
       const vehicleId = String(vehicle.vehicle_id);
       const lastSeenMs = Date.parse(vehicle.last_seen || '');
       const lastSeenAgeS = Number.isFinite(lastSeenMs) ? Math.max(0, Math.round((nowMs - lastSeenMs) / 1000)) : null;
-      const [planning, routing, can] = await Promise.all([
-        callVehicleTool(vehicleId, 'status.planning', {}, patrolStatusTimeoutS),
-        callVehicleTool(vehicleId, 'status.routing', {}, patrolStatusTimeoutS),
-        callVehicleTool(vehicleId, 'status.can', {}, patrolStatusTimeoutS)
-      ]);
-      const patrolState = classifyCrowdPatrolCaptureState(
-        vehicle,
-        { planning, routing, can },
-        {
-          now_ms: nowMs,
-          fresh_vehicle_ms: freshVehicleMs
-        }
-      );
+      const { patrolState } = await classifyCrowdPatrolForVehicle(vehicle, nowMs, patrolStatusTimeoutS);
       let position = null;
       if (patrolState.capture_eligible) {
         const localization = await callVehicleTool(vehicleId, 'status.localization', {}, Math.max(patrolStatusTimeoutS, 12));
@@ -1347,7 +1452,12 @@ module.exports = function registerParkPcmRoutes(app, options) {
     const eligibleRows = rows.filter((row) => row.capture_eligible);
     const visibleRows = includeUnknown ? rows : eligibleRows;
     const mapPoints = visibleRows
-      .filter((row) => row.position && Number.isFinite(row.position.gaode_longitude) && Number.isFinite(row.position.gaode_latitude))
+      .filter((row) => (
+        row.position &&
+        row.position.reliable === true &&
+        Number.isFinite(row.position.gaode_longitude) &&
+        Number.isFinite(row.position.gaode_latitude)
+      ))
       .map((row) => ({
         vehicle_id: row.vehicle_id,
         longitude: row.position.gaode_longitude,
@@ -1375,6 +1485,112 @@ module.exports = function registerParkPcmRoutes(app, options) {
       },
       patrols: visibleRows,
       map_points: mapPoints
+    };
+  }
+
+  async function buildCrowdVehicleDetail(params) {
+    params = params || {};
+    const startedAt = Date.now();
+    const requestedVehicleId = String(params.vehicle_id || '').trim();
+    if (!requestedVehicleId) {
+      const error = new Error('vehicle_id_required');
+      error.status = 400;
+      throw error;
+    }
+
+    const nowMs = Date.now();
+    const [vehicles, samples, state] = await Promise.all([
+      listVehicles(),
+      readRecentCrowdSamples(100),
+      readCrowdState()
+    ]);
+    const vehicle = vehicles.find((item) => String(item?.vehicle_id || '') === requestedVehicleId);
+    if (!vehicle?.vehicle_id) {
+      const error = new Error('vehicle_not_found');
+      error.status = 404;
+      throw error;
+    }
+
+    const vehicleId = String(vehicle.vehicle_id);
+    const lastSeenMs = Date.parse(vehicle.last_seen || '');
+    const lastSeenAgeS = Number.isFinite(lastSeenMs) ? Math.max(0, Math.round((nowMs - lastSeenMs) / 1000)) : null;
+    const { toolResults, patrolState } = await classifyCrowdPatrolForVehicle(vehicle, nowMs, patrolStatusTimeoutS);
+    const localization = await callVehicleTool(vehicleId, 'status.localization', {}, Math.max(patrolStatusTimeoutS, 12));
+    const position = localization.ok ? extractLocalizationPosition(localization) : null;
+    const planningSummary = compactToolResult(toolResults.planning?.result)?.summary || {};
+    const canSummary = compactToolResult(toolResults.can?.result)?.summary || {};
+    const routingSummary = compactToolResult(toolResults.routing?.result)?.summary || {};
+    const mapPoint =
+      position &&
+      Number.isFinite(position.gaode_longitude) &&
+      Number.isFinite(position.gaode_latitude)
+        ? {
+            vehicle_id: vehicleId,
+            longitude: position.gaode_longitude,
+            latitude: position.gaode_latitude,
+            reliable: position.reliable === true,
+            state: patrolState.state
+          }
+        : null;
+
+    return {
+      ok: true,
+      generated_at: nowIso(),
+      elapsed_ms: Date.now() - startedAt,
+      vehicle: {
+        vehicle_id: vehicleId,
+        plate_number: vehicle.plate_number || null,
+        last_seen: vehicle.last_seen || null,
+        last_seen_age_s: lastSeenAgeS,
+        fresh: lastSeenAgeS != null && lastSeenAgeS * 1000 <= freshVehicleMs,
+        capture_eligible: patrolState.capture_eligible,
+        patrol_state: patrolState,
+        position,
+        map_point: mapPoint,
+        localization: {
+          ok: localization.ok,
+          elapsed_ms: localization.elapsed_ms,
+          error: localization.ok ? null : localization.error || 'status.localization_unavailable',
+          status: localization.status || null
+        },
+        route: {
+          route_count: numberValue(routingSummary.route_count ?? routingSummary.available_route_count),
+          current_route_id: routingSummary.current_route_id || routingSummary.active_route_id || null,
+          route_location: routingSummary.current_route_location || routingSummary.route_location || null,
+          current_path_string_ids: Array.isArray(routingSummary.current_path_string_ids)
+            ? routingSummary.current_path_string_ids
+            : []
+        },
+        telemetry: {
+          speed_kph: patrolState.fields.speed_kph,
+          battery_soc: numberValue(vehicle?.telemetry?.vehicle?.battery_soc),
+          running_mode: patrolState.fields.running_mode,
+          battery_charge_state: patrolState.fields.battery_charge_state,
+          planner_running: numberValue(planningSummary.planner_running),
+          vehicle_idle_status: numberValue(planningSummary.vehicle_idle_status),
+          long_time_stop: booleanValue(planningSummary.long_time_stop),
+          in_charger_zone: patrolState.fields.in_charger_zone,
+          can_health: toolResults.can?.ok ? canSummary.health || null : null
+        },
+        crowd_data: summarizeVehicleCrowdSamples(samples, vehicleId, nowMs),
+        last_crowd_capture: state.last_capture_by_vehicle[vehicleId] || null,
+        tool_elapsed_ms: {
+          planning: toolResults.planning?.elapsed_ms ?? null,
+          can: toolResults.can?.elapsed_ms ?? null,
+          routing: toolResults.routing?.elapsed_ms ?? null,
+          localization: localization.elapsed_ms ?? null
+        },
+        tool_errors: {
+          planning: toolResults.planning?.ok ? null : toolResults.planning?.error || 'unavailable',
+          can: toolResults.can?.ok ? null : toolResults.can?.error || 'unavailable',
+          routing: toolResults.routing
+            ? toolResults.routing.ok
+              ? null
+              : toolResults.routing.error || 'unavailable'
+            : null,
+          localization: localization.ok ? null : localization.error || 'unavailable'
+        }
+      }
     };
   }
 
@@ -1421,7 +1637,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
         scene_tags: []
       },
       business: {
-        kind: 'park_people_flow_pcm',
+        kind: 'park_people_flow_collection',
         note: '4-camera patrol capture for crowd analytics and ad traffic planning'
       }
     };
@@ -1469,19 +1685,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
       const maxWidth = toFiniteInteger(params?.max_width, 480, { min: 160, max: 1280 });
       const force = params?.force !== false;
       const patrolToolTimeoutS = Math.max(statusToolTimeoutS, 12);
-      const [planning, routing, can] = await Promise.all([
-        callVehicleTool(vehicleId, 'status.planning', {}, patrolToolTimeoutS),
-        callVehicleTool(vehicleId, 'status.routing', {}, patrolToolTimeoutS),
-        callVehicleTool(vehicleId, 'status.can', {}, patrolToolTimeoutS)
-      ]);
-      const patrolState = classifyCrowdPatrolCaptureState(
-        vehicle,
-        { planning, routing, can },
-        {
-          now_ms: nowMs,
-          fresh_vehicle_ms: freshVehicleMs
-        }
-      );
+      const { patrolState } = await classifyCrowdPatrolForVehicle(vehicle, nowMs, patrolToolTimeoutS);
       if (!patrolState.capture_eligible) {
         return {
           ok: true,
@@ -1637,6 +1841,152 @@ module.exports = function registerParkPcmRoutes(app, options) {
       return sample;
     } finally {
       crowdCaptureInFlight = false;
+    }
+  }
+
+  async function runCrowdMonitorTick(trigger) {
+    if (!crowdMonitorEnabled) {
+      await writeCrowdMonitorState({
+        enabled: false,
+        last_trigger: trigger,
+        last_result: {
+          ok: true,
+          skipped: true,
+          detail: 'crowd_monitor_disabled'
+        }
+      }).catch(() => {});
+      return null;
+    }
+    if (crowdMonitorInFlight || crowdCaptureInFlight) {
+      const skipped = {
+        enabled: true,
+        last_trigger: trigger,
+        last_attempt_at: nowIso(),
+        last_result: {
+          ok: true,
+          skipped: true,
+          reason: crowdMonitorInFlight ? 'monitor_in_flight' : 'capture_in_flight'
+        }
+      };
+      await writeCrowdMonitorState(skipped).catch(() => {});
+      return skipped;
+    }
+
+    crowdMonitorInFlight = true;
+    const startedAt = Date.now();
+    const startedIso = nowIso();
+    try {
+      await writeCrowdMonitorState({
+        enabled: true,
+        last_trigger: trigger,
+        last_attempt_at: startedIso,
+        last_result: {
+          ok: true,
+          in_progress: true,
+          skipped: false
+        }
+      }).catch(() => {});
+      const patrolStatus = await buildCrowdPatrolStatus({
+        max_vehicles: crowdMonitorMaxVehicles,
+        include_unknown: false
+      });
+      const eligibleRows = Array.isArray(patrolStatus.patrols) ? patrolStatus.patrols : [];
+      const eligible = eligibleRows.map((row) => ({
+        vehicle_id: row.vehicle_id,
+        state: row.patrol_state && row.patrol_state.state,
+        reasons: row.patrol_state && Array.isArray(row.patrol_state.reasons) ? row.patrol_state.reasons : []
+      }));
+      const attempts = [];
+      let captured = 0;
+      let attemptedCaptures = 0;
+      for (const row of eligibleRows) {
+        const vehicleId = String(row.vehicle_id || '');
+        if (!vehicleId) continue;
+        if (captured >= crowdMonitorMaxCaptures || attemptedCaptures >= crowdMonitorMaxAttempts) {
+          continue;
+        }
+        attemptedCaptures += 1;
+        try {
+          const sample = await runCrowdDemoCapture({
+            vehicle_id: vehicleId,
+            distance_m: crowdMonitorDistanceM,
+            cooldown_ms: crowdMonitorCooldownMs,
+            quality: crowdMonitorQuality,
+            max_width: crowdMonitorMaxWidth,
+            camera_ids: ['camera1', 'camera2', 'camera3', 'camera4'],
+            force: false
+          });
+          if (!sample.skipped) {
+            captured += 1;
+          }
+          attempts.push({
+            vehicle_id: vehicleId,
+            ok: sample.ok === true,
+            skipped: sample.skipped === true,
+            reason: sample.reason || null,
+            frame_count: sample.frame_count || 0,
+            total_image_bytes: sample.total_image_bytes || 0,
+            elapsed_ms: sample.elapsed_ms || null
+          });
+        } catch (error) {
+          attempts.push({
+            vehicle_id: vehicleId,
+            ok: false,
+            skipped: false,
+            error: error.message || 'crowd_monitor_capture_failed',
+            status: error.status || null
+          });
+        }
+      }
+
+      const result = {
+        enabled: true,
+        last_trigger: trigger,
+        last_attempt_at: startedIso,
+        last_finished_at: nowIso(),
+        last_result: {
+          ok: true,
+          skipped: false,
+          elapsed_ms: Date.now() - startedAt,
+          scanned: patrolStatus.counts?.scanned || 0,
+          eligible_count: eligible.length,
+          capture_attempt_count: attempts.length,
+          captured_count: captured,
+          eligible: eligible.slice(0, 12),
+          attempts
+        },
+        config: {
+          interval_ms: crowdMonitorIntervalMs,
+          max_vehicles: crowdMonitorMaxVehicles,
+          max_captures: crowdMonitorMaxCaptures,
+          max_attempts: crowdMonitorMaxAttempts,
+          distance_m: crowdMonitorDistanceM,
+          cooldown_ms: crowdMonitorCooldownMs,
+          quality: crowdMonitorQuality,
+          max_width: crowdMonitorMaxWidth,
+          camera_ids: ['camera1', 'camera2', 'camera3', 'camera4']
+        }
+      };
+      await writeCrowdMonitorState(result);
+      return result;
+    } catch (error) {
+      const result = {
+        enabled: true,
+        last_trigger: trigger,
+        last_attempt_at: startedIso,
+        last_finished_at: nowIso(),
+        last_result: {
+          ok: false,
+          skipped: false,
+          error: error.message || 'crowd_monitor_failed',
+          status: error.status || null,
+          elapsed_ms: Date.now() - startedAt
+        }
+      };
+      await writeCrowdMonitorState(result).catch(() => {});
+      return result;
+    } finally {
+      crowdMonitorInFlight = false;
     }
   }
 
@@ -1894,7 +2244,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     try {
       const result = await sendFeishuText(text);
       await writeReportState({
-        report_kind: 'park_people_flow_pcm',
+        report_kind: 'park_people_flow_collection',
         last_trigger: trigger,
         last_attempt_at: nowIso(),
         last_snapshot_at: report.generated_at,
@@ -1914,7 +2264,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
         status: error.status || null
       };
       await writeReportState({
-        report_kind: 'park_people_flow_pcm',
+        report_kind: 'park_people_flow_collection',
         last_trigger: trigger,
         last_attempt_at: nowIso(),
         last_snapshot_at: report.generated_at,
@@ -1996,10 +2346,28 @@ module.exports = function registerParkPcmRoutes(app, options) {
     }
   }
 
+  function scheduleNextCrowdMonitor(delayMs) {
+    if (!crowdMonitorEnabled) {
+      return;
+    }
+    if (crowdMonitorTimer) {
+      clearTimeout(crowdMonitorTimer);
+    }
+    crowdMonitorTimer = setTimeout(() => {
+      void runCrowdMonitorTick('timer').finally(() => {
+        scheduleNextCrowdMonitor(crowdMonitorIntervalMs);
+      });
+    }, delayMs);
+    if (typeof crowdMonitorTimer.unref === 'function') {
+      crowdMonitorTimer.unref();
+    }
+  }
+
   app.get('/api/park-pcm/status', requirePermission('vehicle:read'), async (_req, res) => {
-    const [snapshot, reportState] = await Promise.all([
+    const [snapshot, reportState, monitorState] = await Promise.all([
       readJsonFile(snapshotPath),
-      readJsonFile(reportStatePath)
+      readJsonFile(reportStatePath),
+      readCrowdMonitorState()
     ]);
     return res.json({
       ok: true,
@@ -2011,6 +2379,23 @@ module.exports = function registerParkPcmRoutes(app, options) {
         interval_ms: reportIntervalMs,
         in_flight: reportInFlight,
         state: reportState
+      },
+      crowd_monitor: {
+        enabled: crowdMonitorEnabled,
+        interval_ms: crowdMonitorIntervalMs,
+        boot_delay_ms: crowdMonitorBootDelayMs,
+        in_flight: crowdMonitorInFlight,
+        config: {
+          max_vehicles: crowdMonitorMaxVehicles,
+          max_captures: crowdMonitorMaxCaptures,
+          max_attempts: crowdMonitorMaxAttempts,
+          distance_m: crowdMonitorDistanceM,
+          cooldown_ms: crowdMonitorCooldownMs,
+          quality: crowdMonitorQuality,
+          max_width: crowdMonitorMaxWidth,
+          camera_ids: ['camera1', 'camera2', 'camera3', 'camera4']
+        },
+        state: monitorState
       },
       snapshot: snapshot
         ? {
@@ -2044,7 +2429,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
         return res.status(404).json({
           ok: false,
           error: 'park_pcm_snapshot_not_found',
-          detail: '尚未生成园区 PCM 快照。'
+          detail: '尚未生成园区巡检快照。'
         });
       }
       return res.json(snapshot);
@@ -2107,7 +2492,17 @@ module.exports = function registerParkPcmRoutes(app, options) {
           quality: 45,
           max_width: 480,
           distance_m: crowdCaptureDistanceM,
-          cooldown_ms: crowdCaptureCooldownMs
+          cooldown_ms: crowdCaptureCooldownMs,
+          monitor: {
+            enabled: crowdMonitorEnabled,
+            interval_ms: crowdMonitorIntervalMs,
+            max_vehicles: crowdMonitorMaxVehicles,
+            max_captures: crowdMonitorMaxCaptures,
+            distance_m: crowdMonitorDistanceM,
+            cooldown_ms: crowdMonitorCooldownMs,
+            quality: crowdMonitorQuality,
+            max_width: crowdMonitorMaxWidth
+          }
         },
         in_flight: crowdCaptureInFlight
       });
@@ -2115,6 +2510,20 @@ module.exports = function registerParkPcmRoutes(app, options) {
       return res.status(error.status || 502).json({
         ok: false,
         error: error.message || 'park_pcm_crowd_vehicle_list_failed'
+      });
+    }
+  });
+
+  app.get('/api/park-pcm/crowd/vehicles/:vehicle_id/detail', requirePermission('vehicle:read'), async (req, res) => {
+    try {
+      const detail = await buildCrowdVehicleDetail({
+        vehicle_id: req.params?.vehicle_id
+      });
+      return res.json(detail);
+    } catch (error) {
+      return res.status(error.status || 502).json({
+        ok: false,
+        error: error.message || 'park_crowd_vehicle_detail_failed'
       });
     }
   });
@@ -2202,4 +2611,5 @@ module.exports = function registerParkPcmRoutes(app, options) {
   });
 
   scheduleNextReport(reportBootDelayMs);
+  scheduleNextCrowdMonitor(crowdMonitorBootDelayMs);
 };

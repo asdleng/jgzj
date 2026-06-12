@@ -1,8 +1,8 @@
 <section class="park-pcm-shell" data-park-pcm data-authenticated="false" data-amap-key="8c2f9f3401e8d0ddfd619074c5f034ef">
   <header class="park-pcm-head">
     <div>
-      <p class="section-kicker">PARK PCM</p>
-      <h1>园区人流 PCM</h1>
+      <p class="section-kicker">PARK PEOPLE FLOW</p>
+      <h1>园区人流采集</h1>
     </div>
     <div class="park-pcm-head-actions">
       <p class="park-pcm-status" data-park-pcm-status data-state="idle">初始化</p>
@@ -10,6 +10,16 @@
   </header>
 
   <div class="park-pcm-auth" data-park-pcm-auth hidden></div>
+
+  <section class="park-pcm-band park-pcm-vehicle-bar">
+    <label class="park-pcm-vehicle-picker">
+      <span>车辆</span>
+      <select data-park-pcm-crowd-vehicle>
+        <option value="">加载中...</option>
+      </select>
+    </label>
+    <p class="park-pcm-vehicle-summary" data-park-pcm-vehicle-summary>选择车辆查看定位、巡逻状态和采样统计。</p>
+  </section>
 
   <section class="park-pcm-layout">
     <section class="park-pcm-band park-pcm-patrols">
@@ -41,25 +51,22 @@
       <div class="park-pcm-map" data-park-pcm-map>
         <div class="park-pcm-map-fallback" data-park-pcm-map-fallback>高德地图加载中</div>
       </div>
+      <div class="park-pcm-vehicle-detail" data-park-pcm-vehicle-detail>
+        <p class="park-pcm-empty">选择车辆后显示定位、巡逻任务和采样统计。</p>
+      </div>
     </section>
   </section>
 
   <section class="park-pcm-band park-pcm-crowd-demo">
     <div class="park-pcm-band-head">
       <div>
-        <p class="section-kicker">CROWD CAPTURE DEMO</p>
+        <p class="section-kicker">CROWD CAPTURE</p>
         <h2>4 路相机人流采样</h2>
       </div>
       <p data-park-pcm-crowd-status>等待车辆列表</p>
     </div>
 
     <div class="park-pcm-crowd-controls">
-      <label>
-        <span>车辆</span>
-        <select data-park-pcm-crowd-vehicle>
-          <option value="">加载中...</option>
-        </select>
-      </label>
       <label>
         <span>距离门槛 m</span>
         <input type="number" min="5" max="1000" value="60" data-park-pcm-crowd-distance />
@@ -187,6 +194,37 @@
     padding: 0 12px;
   }
 
+  .park-pcm-vehicle-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  .park-pcm-vehicle-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: #dbeafe;
+    font-weight: 800;
+  }
+
+  .park-pcm-vehicle-picker select {
+    min-width: 220px;
+    min-height: 40px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: rgba(2, 6, 23, 0.52);
+    color: #f8fafc;
+    padding: 0 10px;
+  }
+
+  .park-pcm-vehicle-summary {
+    margin: 0;
+    color: #b8c7da;
+    line-height: 1.5;
+  }
+
   .park-pcm-layout {
     display: grid;
     grid-template-columns: minmax(360px, 0.78fr) minmax(0, 1.22fr);
@@ -226,6 +264,12 @@
     padding: 10px 12px;
     border: 1px solid rgba(45, 212, 191, 0.2);
     background: rgba(15, 23, 42, 0.55);
+    cursor: pointer;
+  }
+
+  .park-pcm-patrol-row:focus-visible {
+    outline: 2px solid rgba(103, 232, 249, 0.75);
+    outline-offset: 2px;
   }
 
   .park-pcm-patrol-row strong {
@@ -243,7 +287,7 @@
 
   .park-pcm-map {
     position: relative;
-    min-height: 452px;
+    min-height: 360px;
     overflow: hidden;
     border: 1px solid rgba(148, 163, 184, 0.16);
     background: #07121f;
@@ -258,6 +302,46 @@
     color: #b8c7da;
     text-align: center;
     z-index: 1;
+  }
+
+  .park-pcm-vehicle-detail {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .park-pcm-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .park-pcm-detail-cell {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    background: rgba(15, 23, 42, 0.48);
+  }
+
+  .park-pcm-detail-cell span {
+    display: block;
+    color: #94a3b8;
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+
+  .park-pcm-detail-cell strong {
+    display: block;
+    margin-top: 4px;
+    color: #f8fafc;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .park-pcm-detail-note {
+    margin: 0;
+    color: #9fb0c7;
+    line-height: 1.55;
   }
 
   .park-pcm-crowd-demo {
@@ -393,12 +477,20 @@
       min-height: 350px;
     }
 
+    .park-pcm-detail-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .park-pcm-crowd-gallery {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
 
   @media (max-width: 560px) {
+    .park-pcm-detail-grid {
+      grid-template-columns: 1fr;
+    }
+
     .park-pcm-crowd-gallery {
       grid-template-columns: 1fr;
     }

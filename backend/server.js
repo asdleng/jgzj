@@ -6206,8 +6206,8 @@ const privateNavigationItems = [
     permissions: ['vehicle:read', 'runtime:read']
   },
   {
-    href: '/app/park-pcm',
-    label: '园区PCM',
+    href: '/app/park-crowd',
+    label: '园区人流',
     permissions: ['vehicle:read']
   },
   {
@@ -6303,6 +6303,11 @@ const protectedAppPages = [
     paths: ['/app/cloud-operations', '/app/cloud-operations/'],
     file: 'app/cloud-operations/index.html',
     permissions: ['vehicle:read', 'runtime:read']
+  },
+  {
+    paths: ['/app/park-crowd', '/app/park-crowd/'],
+    file: 'app/park-crowd/index.html',
+    permissions: ['vehicle:read']
   },
   {
     paths: ['/app/park-pcm', '/app/park-pcm/'],
