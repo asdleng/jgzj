@@ -3,25 +3,12 @@
   if (!root) return;
 
   const AUTH_URL = "/api/auth/me";
-  const STATUS_URL = "/api/park-pcm/status";
-  const SNAPSHOT_URL = "/api/park-pcm/snapshot";
-  const REPORT_URL = "/api/park-pcm/report/send";
   const CROWD_VEHICLES_URL = "/api/park-pcm/crowd/vehicles";
   const CROWD_SAMPLES_URL = "/api/park-pcm/crowd/samples";
   const CROWD_CAPTURE_URL = "/api/park-pcm/crowd/demo-capture";
 
   const statusEl = root.querySelector("[data-park-pcm-status]");
   const authEl = root.querySelector("[data-park-pcm-auth]");
-  const refreshBtn = root.querySelector("[data-park-pcm-refresh]");
-  const reportBtn = root.querySelector("[data-park-pcm-report]");
-  const maxVehiclesInput = root.querySelector("[data-park-pcm-max-vehicles]");
-  const includeObstacleInput = root.querySelector("[data-park-pcm-include-obstacle]");
-  const includePerceptionInput = root.querySelector("[data-park-pcm-include-perception]");
-  const reportStateEl = root.querySelector("[data-park-pcm-report-state]");
-  const updatedEl = root.querySelector("[data-park-pcm-updated]");
-  const elapsedEl = root.querySelector("[data-park-pcm-elapsed]");
-  const alertsEl = root.querySelector("[data-park-pcm-alerts]");
-  const rowsEl = root.querySelector("[data-park-pcm-rows]");
   const crowdVehicleSelect = root.querySelector("[data-park-pcm-crowd-vehicle]");
   const crowdDistanceInput = root.querySelector("[data-park-pcm-crowd-distance]");
   const crowdQualityInput = root.querySelector("[data-park-pcm-crowd-quality]");
@@ -30,12 +17,6 @@
   const crowdStatusEl = root.querySelector("[data-park-pcm-crowd-status]");
   const crowdLastEl = root.querySelector("[data-park-pcm-crowd-last]");
   const crowdSamplesEl = root.querySelector("[data-park-pcm-crowd-samples]");
-  const metricEls = new Map(
-    Array.from(root.querySelectorAll("[data-park-pcm-metric]")).map((item) => [
-      item.getAttribute("data-park-pcm-metric"),
-      item
-    ])
-  );
 
   let authenticated = false;
   let busy = false;
@@ -48,8 +29,6 @@
 
   function setBusy(nextBusy) {
     busy = Boolean(nextBusy);
-    if (refreshBtn) refreshBtn.disabled = busy || !authenticated;
-    if (reportBtn) reportBtn.disabled = busy || !authenticated;
     if (crowdCaptureBtn) crowdCaptureBtn.disabled = busy || !authenticated;
   }
 
@@ -103,48 +82,31 @@
     return Number.isFinite(num) ? String(num) : fallback || "-";
   }
 
-  function missionLabel(value) {
+  function formatBytes(value) {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes)) return "-";
+    if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${bytes} B`;
+  }
+
+  function formatCoord(value) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num.toFixed(6) : "-";
+  }
+
+  function patrolStateLabel(value) {
     return {
       patrol_active_moving: "巡逻移动",
-      patrol_active_stopped: "巡逻停止",
-      patrol_long_stop_or_completed: "长停/完成",
-      charging_or_charging_area: "充电区",
-      stopped_idle_or_long_stop: "空闲长停",
-      stopped_unknown: "停止未知",
-      moving_not_confirmed_patrol: "移动未确认",
+      patrol_active_stopped: "巡逻暂停",
+      patrol_task_stopped_or_waiting: "巡逻等待",
+      patrol_completed_or_idle: "巡逻完成/空闲",
+      charging_or_charging_area: "充电/充电区",
+      safety_stop: "安全停",
+      stale_vehicle: "心跳过期",
+      not_patrol: "非巡逻",
       unknown: "未知"
     }[value] || value || "未知";
-  }
-
-  function trafficLabel(value) {
-    return {
-      clear: "通畅",
-      watch: "关注",
-      crowded: "拥挤",
-      blocked: "阻塞",
-      unknown: "未知"
-    }[value] || value || "未知";
-  }
-
-  function healthLabel(value) {
-    return {
-      ok: "正常",
-      warn: "告警",
-      error: "严重",
-      stale: "心跳过期"
-    }[value] || value || "未知";
-  }
-
-  function toneForTraffic(level) {
-    if (level === "blocked") return "error";
-    if (level === "crowded" || level === "watch") return "warn";
-    if (level === "clear") return "ok";
-    return "idle";
-  }
-
-  function setMetric(name, value) {
-    const el = metricEls.get(name);
-    if (el) el.textContent = formatNumber(value);
   }
 
   function clearElement(el) {
@@ -159,195 +121,151 @@
     return el;
   }
 
-  function pill(text, tone) {
-    const el = textNode("span", "park-pcm-pill", text);
-    if (tone) el.dataset.tone = tone;
-    return el;
+  function setCrowdStatus(text) {
+    if (crowdStatusEl) crowdStatusEl.textContent = text;
   }
 
-  function cell(main, sub) {
-    const el = document.createElement("div");
-    el.className = "park-pcm-cell";
-    el.appendChild(textNode("span", "park-pcm-cell-main", main));
-    if (sub) el.appendChild(textNode("span", "park-pcm-cell-sub", sub));
-    return el;
-  }
-
-  function renderAlerts(alerts) {
-    clearElement(alertsEl);
-    if (!alertsEl) return;
-    if (!Array.isArray(alerts) || !alerts.length) {
-      alertsEl.appendChild(textNode("p", "park-pcm-empty", "当前暂无重点告警。"));
+  function renderCrowdVehicles(data) {
+    if (!crowdVehicleSelect) return;
+    clearElement(crowdVehicleSelect);
+    const vehicles = Array.isArray(data && data.vehicles) ? data.vehicles : [];
+    if (!vehicles.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "暂无车辆";
+      crowdVehicleSelect.appendChild(option);
       return;
     }
-    alerts.slice(0, 12).forEach((alert) => {
-      const item = document.createElement("article");
-      item.className = "park-pcm-alert";
-      item.dataset.severity = alert.severity || "warn";
-      item.appendChild(textNode("strong", "", alert.vehicle_id || "-"));
-      item.appendChild(textNode("span", "", alert.message || "-"));
-      item.appendChild(pill(healthLabel(alert.severity), alert.severity === "error" ? "error" : alert.severity === "warn" ? "warn" : ""));
-      alertsEl.appendChild(item);
+    vehicles.slice(0, 80).forEach((vehicle) => {
+      const option = document.createElement("option");
+      option.value = vehicle.vehicle_id || "";
+      const age = vehicle.last_seen_age_s == null ? "-" : `${vehicle.last_seen_age_s}s`;
+      option.textContent = `${vehicle.vehicle_id}${vehicle.fresh ? "" : " 过期"} · ${age} · 电量 ${formatNumber(vehicle.telemetry && vehicle.telemetry.battery_soc)}%`;
+      if (!vehicle.fresh) option.disabled = true;
+      crowdVehicleSelect.appendChild(option);
     });
   }
 
-  function sortRows(rows) {
-    const severityOrder = { error: 0, stale: 1, warn: 2, ok: 3 };
-    const rank = (severity) =>
-      Object.prototype.hasOwnProperty.call(severityOrder, severity) ? severityOrder[severity] : 9;
-    return rows.slice().sort((left, right) => {
-      const severityDelta =
-        rank(left.health && left.health.severity) -
-        rank(right.health && right.health.severity);
-      if (severityDelta) return severityDelta;
-      return Number(right.traffic && right.traffic.pcm_score) - Number(left.traffic && left.traffic.pcm_score);
+  function renderCrowdLast(sample) {
+    clearElement(crowdLastEl);
+    if (!crowdLastEl) return;
+    if (!sample) {
+      crowdLastEl.appendChild(textNode("p", "park-pcm-empty", "还没有采样记录。"));
+      return;
+    }
+    if (sample.skipped) {
+      const patrolState = sample.patrol_state || {};
+      crowdLastEl.appendChild(textNode("strong", "", `${sample.vehicle_id || "-"} · 已跳过`));
+      crowdLastEl.appendChild(
+        textNode(
+          "span",
+          "",
+          [
+            `原因 ${sample.reason || "-"}`,
+            `巡逻 ${patrolStateLabel(patrolState.state)}`,
+            (patrolState.reasons || []).slice(0, 3).join(" · ")
+          ].filter(Boolean).join(" · ")
+        )
+      );
+      return;
+    }
+    const position = sample.position || {};
+    const patrolState = sample.patrol_state || {};
+    crowdLastEl.appendChild(textNode("strong", "", `${sample.vehicle_id || "-"} · ${formatTime(sample.collected_at)} · ${sample.frame_count || 0} 路`));
+    crowdLastEl.appendChild(
+      textNode(
+        "span",
+        "",
+        [
+          `图片 ${formatBytes(sample.total_image_bytes)}`,
+          `耗时 ${formatNumber(sample.elapsed_ms, "0")} ms`,
+          `巡逻 ${patrolStateLabel(patrolState.state)}`,
+          `距上次 ${sample.distance_from_last_m == null ? "-" : `${sample.distance_from_last_m} m`}`,
+          `高德 ${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}`
+        ].join(" · ")
+      )
+    );
+  }
+
+  function renderCrowdSamples(samples) {
+    clearElement(crowdSamplesEl);
+    if (!crowdSamplesEl) return;
+    const list = Array.isArray(samples) ? samples.filter((item) => !item.skipped) : [];
+    if (!list.length) {
+      crowdSamplesEl.appendChild(textNode("p", "park-pcm-empty", "等待巡逻采样图片。"));
+      renderCrowdLast(null);
+      return;
+    }
+    const latest = list[0];
+    renderCrowdLast(latest);
+    const frames = Array.isArray(latest.frames) ? latest.frames : [];
+    frames.forEach((frame) => {
+      const figure = document.createElement("figure");
+      figure.className = "park-pcm-crowd-frame";
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.alt = `${latest.vehicle_id || ""} ${frame.camera_id || "camera"}`;
+      img.src = frame.image_url || "";
+      const caption = document.createElement("figcaption");
+      caption.appendChild(textNode("span", "", frame.camera_id || "camera"));
+      caption.appendChild(textNode("span", "", formatBytes(frame.image_size_bytes)));
+      figure.appendChild(img);
+      figure.appendChild(caption);
+      crowdSamplesEl.appendChild(figure);
     });
   }
 
-  function renderRows(rows) {
-    clearElement(rowsEl);
-    if (!rowsEl) return;
-    if (!Array.isArray(rows) || !rows.length) {
-      rowsEl.appendChild(textNode("p", "park-pcm-empty", "没有车辆数据。"));
-      return;
-    }
-    sortRows(rows).forEach((row) => {
-      const item = document.createElement("article");
-      item.className = "park-pcm-row";
-      item.dataset.severity = row.health && row.health.severity ? row.health.severity : "ok";
-
-      const ageText =
-        row.last_seen_age_s == null
-          ? "未知"
-          : row.last_seen_age_s < 60
-            ? `${row.last_seen_age_s}s`
-            : `${Math.round(row.last_seen_age_s / 60)}min`;
-      const route = row.route || {};
-      const mission = row.mission || {};
-      const traffic = row.traffic || {};
-      const health = row.health || {};
-      const telemetry = row.telemetry || {};
-      const keyData = [
-        `电量 ${formatNumber(telemetry.battery_soc)}%`,
-        `速度 ${formatNumber(telemetry.speed_kph)} km/h`,
-        `障碍 ${formatNumber(traffic.object_count)}`,
-        `路线 ${formatNumber(route.route_count)}`
-      ].join(" · ");
-
-      item.appendChild(cell(row.vehicle_id || "-", row.plate_number || ""));
-      item.appendChild(cell(row.fresh ? "新鲜" : "过期", ageText));
-      item.appendChild(cell(missionLabel(mission.state), (mission.reasons || []).slice(0, 2).join(" · ")));
-      const trafficCell = document.createElement("div");
-      trafficCell.className = "park-pcm-cell";
-      trafficCell.appendChild(pill(`${trafficLabel(traffic.level)} ${formatNumber(traffic.pcm_score, "0")}`, toneForTraffic(traffic.level)));
-      trafficCell.appendChild(textNode("span", "park-pcm-cell-sub", (traffic.risk_factors || []).slice(0, 2).join(" · ")));
-      item.appendChild(trafficCell);
-      item.appendChild(cell(healthLabel(health.severity), (health.issues || []).slice(0, 2).join(" · ")));
-      item.appendChild(cell(keyData, route.route_location || route.current_route_id || ""));
-      rowsEl.appendChild(item);
-    });
+  async function loadCrowdVehicles() {
+    const data = await fetchJson(CROWD_VEHICLES_URL);
+    renderCrowdVehicles(data);
+    const defaults = data.defaults || {};
+    if (crowdDistanceInput && defaults.distance_m) crowdDistanceInput.value = defaults.distance_m;
+    if (crowdQualityInput && defaults.quality) crowdQualityInput.value = defaults.quality;
+    if (crowdWidthInput && defaults.max_width) crowdWidthInput.value = defaults.max_width;
+    setCrowdStatus(data.in_flight ? "采样进行中" : `车辆 ${Array.isArray(data.vehicles) ? data.vehicles.length : 0} 台`);
+    return data;
   }
 
-  function renderSnapshot(snapshot) {
-    const counts = snapshot && snapshot.counts ? snapshot.counts : {};
-    const health = counts.health || {};
-    const traffic = counts.traffic || {};
-    setMetric("total", counts.total || 0);
-    setMetric("fresh", counts.fresh || 0);
-    setMetric("warnings", (health.warn || 0) + (health.error || 0) + (health.stale || 0));
-    setMetric("crowded", (traffic.crowded || 0) + (traffic.blocked || 0));
-    if (updatedEl) updatedEl.textContent = snapshot ? `更新 ${formatTime(snapshot.generated_at)}` : "暂无快照";
-    if (elapsedEl) elapsedEl.textContent = snapshot ? `${formatNumber(snapshot.elapsed_ms, "0")} ms` : "-";
-    renderAlerts(snapshot && snapshot.alerts);
-    renderRows(snapshot && snapshot.rows);
+  async function loadCrowdSamples() {
+    const data = await fetchJson(`${CROWD_SAMPLES_URL}?limit=12`);
+    renderCrowdSamples(data.samples || []);
+    return data;
   }
 
-  function renderReportState(status) {
-    if (!reportStateEl) return;
-    const report = status && status.report ? status.report : {};
-    if (!report.enabled) {
-      reportStateEl.textContent = "小时报告已关闭";
-      return;
-    }
-    if (!report.webhook_configured) {
-      reportStateEl.textContent = "飞书 webhook 未配置";
-      return;
-    }
-    const state = report.state || {};
-    const result = state.last_result || {};
-    if (result.sent) {
-      reportStateEl.textContent = `上次发送 ${formatTime(state.last_attempt_at)}`;
-    } else if (result.error) {
-      reportStateEl.textContent = `上次发送失败：${result.error}`;
-    } else {
-      reportStateEl.textContent = "小时报告等待首次发送";
-    }
-  }
-
-  async function loadStatus() {
-    const status = await fetchJson(STATUS_URL);
-    renderReportState(status);
-    if (status.snapshot) {
-      try {
-        renderSnapshot(await fetchJson(SNAPSHOT_URL));
-      } catch (_error) {
-        renderSnapshot(null);
-      }
-    }
-    return status;
-  }
-
-  function snapshotPayload() {
+  function crowdCapturePayload() {
     return {
-      max_vehicles: Number(maxVehiclesInput && maxVehiclesInput.value) || 200,
-      include_obstacle: includeObstacleInput ? includeObstacleInput.checked : true,
-      include_perception: includePerceptionInput ? includePerceptionInput.checked : false
+      vehicle_id: crowdVehicleSelect ? crowdVehicleSelect.value : "",
+      distance_m: Number(crowdDistanceInput && crowdDistanceInput.value) || 60,
+      quality: Number(crowdQualityInput && crowdQualityInput.value) || 45,
+      max_width: Number(crowdWidthInput && crowdWidthInput.value) || 480,
+      camera_ids: ["camera1", "camera2", "camera3", "camera4"],
+      force: true
     };
   }
 
-  async function refreshSnapshot() {
+  async function captureCrowdDemo() {
     if (!authenticated || busy) return;
-    setBusy(true);
-    setStatus("采集中", "warn");
-    try {
-      const snapshot = await fetchJson(SNAPSHOT_URL, {
-        method: "POST",
-        body: snapshotPayload()
-      });
-      renderSnapshot(snapshot);
-      await loadStatus();
-      setStatus("已更新", "ok");
-    } catch (error) {
-      setStatus("失败", "error");
-      if (authEl) {
-        authEl.hidden = false;
-        authEl.textContent = error.message || "PCM 快照生成失败。";
-      }
-    } finally {
-      setBusy(false);
+    const payload = crowdCapturePayload();
+    if (!payload.vehicle_id) {
+      setCrowdStatus("请选择车辆");
+      return;
     }
-  }
-
-  async function sendReport() {
-    if (!authenticated || busy) return;
     setBusy(true);
-    setStatus("发送中", "warn");
+    setCrowdStatus("确认巡逻状态");
     try {
-      const result = await fetchJson(REPORT_URL, {
+      const sample = await fetchJson(CROWD_CAPTURE_URL, {
         method: "POST",
-        body: { ...snapshotPayload(), use_last: true }
+        body: payload
       });
-      if (result.report && result.report.skipped) {
-        setStatus("未配置", "warn");
-      } else {
-        setStatus("已发送", "ok");
-      }
-      await loadStatus();
+      renderCrowdLast(sample);
+      await Promise.all([loadCrowdVehicles(), loadCrowdSamples()]);
+      setCrowdStatus(sample.skipped ? `跳过：${sample.reason || "-"}` : `完成 ${sample.frame_count || 0} 路 · ${formatBytes(sample.total_image_bytes)}`);
     } catch (error) {
-      setStatus("发送失败", "error");
+      setCrowdStatus(`失败：${error.message || "capture_failed"}`);
       if (authEl) {
         authEl.hidden = false;
-        authEl.textContent = error.message || "飞书报告发送失败。";
+        authEl.textContent = error.message || "人流采样失败。";
       }
     } finally {
       setBusy(false);
@@ -372,12 +290,15 @@
       }
       if (authEl) authEl.hidden = true;
       setStatus("加载中", "warn");
-      const status = await loadStatus();
-      if (!status.snapshot) {
-        await refreshSnapshot();
-      } else {
-        setStatus("已就绪", "ok");
-      }
+      await Promise.all([
+        loadCrowdVehicles().catch((error) => {
+          setCrowdStatus(`车辆加载失败：${error.message || "-"}`);
+        }),
+        loadCrowdSamples().catch((error) => {
+          setCrowdStatus(`采样加载失败：${error.message || "-"}`);
+        })
+      ]);
+      setStatus("已就绪", "ok");
     } catch (error) {
       setStatus("不可用", "error");
       if (authEl) {
@@ -389,7 +310,6 @@
     }
   }
 
-  if (refreshBtn) refreshBtn.addEventListener("click", refreshSnapshot);
-  if (reportBtn) reportBtn.addEventListener("click", sendReport);
+  if (crowdCaptureBtn) crowdCaptureBtn.addEventListener("click", captureCrowdDemo);
   void init();
 })();
