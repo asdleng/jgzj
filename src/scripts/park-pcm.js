@@ -45,7 +45,6 @@
   let sampleLoadRequestId = 0;
   let latestPatrolMapPoints = [];
   let latestCrowdSamples = [];
-  let latestVehicles = [];
 
   function setStatus(text, state) {
     if (!statusEl) return;
@@ -310,7 +309,7 @@
         selectedSampleId = sample.sample_id || "";
         renderTrackSamples();
         renderSampleDetail(sample);
-        void renderTrackMap(null, { focus_sample_id: selectedSampleId }).catch((error) => {
+        void renderTrackMap({ focus_sample_id: selectedSampleId }).catch((error) => {
           setMapStatus(`轨迹刷新失败：${error.message || "-"}`);
         });
       });
@@ -358,45 +357,6 @@
         selectedVehicleId
           ? "当前地图和四路图片来自该车已经上传并落盘到服务器的历史采集点。"
           : "当前地图展示所有车辆已经上传并落盘到服务器的历史采集点。"
-      )
-    );
-  }
-
-  function renderVehicleDetail(vehicle) {
-    if (!vehicleDetailEl) return;
-    clearElement(vehicleDetailEl);
-    if (!vehicle) {
-      vehicleDetailEl.appendChild(textNode("p", "park-pcm-empty", "选择车辆后显示定位、巡逻任务和采样统计。"));
-      return;
-    }
-    const patrol = vehicle.patrol_state || {};
-    const fields = patrol.fields || {};
-    const telemetry = vehicle.telemetry || {};
-    const position = vehicle.position || {};
-    const data = vehicle.crowd_data || {};
-    const latest = data.latest_sample || vehicle.last_crowd_capture || null;
-    const grid = document.createElement("div");
-    grid.className = "park-pcm-detail-grid";
-    grid.appendChild(detailCell("巡逻状态", patrolStateLabel(patrol.state)));
-    grid.appendChild(detailCell("抓拍资格", vehicle.capture_eligible ? "确认巡逻，可自动采集" : "未确认巡逻"));
-    grid.appendChild(detailCell("心跳", vehicle.fresh ? `${formatNumber(vehicle.last_seen_age_s, "0")}s 前` : "过期/未知"));
-    grid.appendChild(detailCell("速度", `${formatNumber(telemetry.speed_kph)} km/h`));
-    grid.appendChild(detailCell("电量", `${formatNumber(telemetry.battery_soc)}%`));
-    grid.appendChild(detailCell("规划", `run ${formatNumber(telemetry.planner_running)} · idle ${formatNumber(telemetry.vehicle_idle_status)}`));
-    grid.appendChild(detailCell("路线进度", `${formatNumber(fields.current_loop_index)}/${formatNumber(fields.total_loop_sum)} · ${formatNumber(fields.current_refline_index)}/${formatNumber(fields.total_refline_sum)}`));
-    grid.appendChild(detailCell("定位", position && Number.isFinite(Number(position.gaode_longitude)) ? `${position.reliable ? "可靠" : "未确认"} · ${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}` : "无可用坐标"));
-    grid.appendChild(detailCell("24h 采样", `${formatNumber(data.sample_count_24h, "0")} 次 · ${formatNumber(data.frame_count_24h, "0")} 张 · ${formatBytes(data.total_image_bytes_24h)}`));
-    vehicleDetailEl.appendChild(grid);
-    const reasons = Array.isArray(patrol.reasons) ? patrol.reasons.slice(0, 4).join(" · ") : "";
-    vehicleDetailEl.appendChild(
-      textNode(
-        "p",
-        "park-pcm-detail-note",
-        [
-          latest ? `最近采样 ${formatTime(latest.collected_at)}，${formatBytes(latest.total_image_bytes)}` : "最近采样 暂无",
-          reasons ? `判断依据 ${reasons}` : "",
-          vehicle.localization && vehicle.localization.error ? `定位接口 ${vehicle.localization.error}` : ""
-        ].filter(Boolean).join(" · ")
       )
     );
   }
@@ -468,42 +428,6 @@
     });
   }
 
-  function mapPointFromVehicle(vehicle) {
-    if (!vehicle) return null;
-    const direct = vehicle.map_point || null;
-    const position = vehicle.position || {};
-    const longitude = direct ? direct.longitude : position.gaode_longitude;
-    const latitude = direct ? direct.latitude : position.gaode_latitude;
-    if (!Number.isFinite(Number(longitude)) || !Number.isFinite(Number(latitude))) {
-      return null;
-    }
-    const data = vehicle.crowd_data || {};
-    return {
-      vehicle_id: vehicle.vehicle_id,
-      longitude: Number(longitude),
-      latitude: Number(latitude),
-      state: vehicle.patrol_state && vehicle.patrol_state.state,
-      reliable: direct ? direct.reliable === true : position.reliable === true,
-      selected: true,
-      sample_count_24h: data.sample_count_24h || 0,
-      frame_count_24h: data.frame_count_24h || 0
-    };
-  }
-
-  async function renderSelectedVehicleMap(vehicle) {
-    const point = mapPointFromVehicle(vehicle);
-    if (!point) {
-      clearMapOverlays();
-      setMapStatus("定位不可用");
-      setMapFallback(`${vehicle && vehicle.vehicle_id ? vehicle.vehicle_id : "当前车辆"} 暂未返回可用高德坐标`, false);
-      return;
-    }
-    await renderAmapPoints([point], {
-      statusText: `${point.vehicle_id} 定位${point.reliable ? "" : "未确认可靠性"}`,
-      emptyText: `${point.vehicle_id} 暂未返回可用高德坐标`
-    });
-  }
-
   async function selectVehicle(vehicleId) {
     const nextVehicleId = String(vehicleId || "").trim();
     selectedVehicleId = nextVehicleId;
@@ -571,7 +495,7 @@
     };
   }
 
-  async function renderTrackMap(vehicle, options) {
+  async function renderTrackMap(options) {
     const opts = options || {};
     const samples = visibleCrowdSamples();
     const samplePoints = samples
@@ -641,7 +565,7 @@
           selectedSampleId = point.sample_id;
           renderTrackSamples();
           renderSampleDetail(point.sample);
-          void renderTrackMap(null, { focus_sample_id: selectedSampleId }).catch((error) => {
+          void renderTrackMap({ focus_sample_id: selectedSampleId }).catch((error) => {
             setMapStatus(`轨迹刷新失败：${error.message || "-"}`);
           });
         });
@@ -737,7 +661,7 @@
       latestPatrolMapPoints = data.map_points || [];
       if (!selectedVehicleId) {
         if (latestCrowdSamples.length) {
-          await renderTrackMap(null);
+          await renderTrackMap();
         } else {
           await renderAmapPoints(latestPatrolMapPoints, {
             emptyText: "等待确认巡逻车辆定位"
@@ -753,7 +677,6 @@
   function renderCrowdVehicles(data) {
     if (!crowdVehicleSelect) return "";
     clearElement(crowdVehicleSelect);
-    latestVehicles = Array.isArray(data && data.vehicles) ? data.vehicles : [];
     const allOption = document.createElement("option");
     allOption.value = "";
     allOption.textContent = "全部车辆历史";
@@ -837,7 +760,7 @@
       renderHistoryDetail();
       renderTrackSamples();
       renderSampleDetail(null);
-      void renderTrackMap(null).catch((error) => {
+      void renderTrackMap().catch((error) => {
         setMapStatus(`轨迹刷新失败：${error.message || "-"}`);
       });
       return;
@@ -846,7 +769,7 @@
     renderHistoryDetail();
     renderTrackSamples();
     renderSampleDetail(selectedCrowdSample());
-    void renderTrackMap(null).catch((error) => {
+    void renderTrackMap().catch((error) => {
       setMapStatus(`轨迹刷新失败：${error.message || "-"}`);
     });
   }

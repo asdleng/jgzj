@@ -1,6 +1,10 @@
 const fsp = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_STATUS_TOOL_TIMEOUT_S = 8;
 const DEFAULT_HTTP_EXTRA_TIMEOUT_MS = 5000;
@@ -26,6 +30,8 @@ const DEFAULT_CROWD_ANALYSIS_INTERVAL_MS = 2 * 60 * 1000;
 const DEFAULT_CROWD_ANALYSIS_BOOT_DELAY_MS = 45 * 1000;
 const DEFAULT_CROWD_ANALYSIS_TIMEOUT_MS = 90 * 1000;
 const DEFAULT_CROWD_ANALYSIS_MAX_SAMPLES = 1;
+const DEFAULT_CROWD_ANALYSIS_IDLE_GPU_UTIL_MAX = 25;
+const DEFAULT_CROWD_ANALYSIS_IDLE_CHECK_TIMEOUT_MS = 3000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -1191,6 +1197,19 @@ module.exports = function registerParkPcmRoutes(app, options) {
     DEFAULT_CROWD_ANALYSIS_MAX_SAMPLES,
     { min: 1, max: 8 }
   );
+  const crowdAnalysisIdleOnly = String(
+    process.env.PARK_CROWD_ANALYSIS_IDLE_ONLY || process.env.PARK_PCM_CROWD_ANALYSIS_IDLE_ONLY || 'true'
+  ).toLowerCase() !== 'false';
+  const crowdAnalysisIdleGpuUtilMax = toFiniteNumber(
+    process.env.PARK_CROWD_ANALYSIS_IDLE_GPU_UTIL_MAX || process.env.PARK_PCM_CROWD_ANALYSIS_IDLE_GPU_UTIL_MAX,
+    DEFAULT_CROWD_ANALYSIS_IDLE_GPU_UTIL_MAX,
+    { min: 0, max: 100 }
+  );
+  const crowdAnalysisIdleCheckTimeoutMs = toFiniteInteger(
+    process.env.PARK_CROWD_ANALYSIS_IDLE_CHECK_TIMEOUT_MS || process.env.PARK_PCM_CROWD_ANALYSIS_IDLE_CHECK_TIMEOUT_MS,
+    DEFAULT_CROWD_ANALYSIS_IDLE_CHECK_TIMEOUT_MS,
+    { min: 500, max: 10000 }
+  );
   const feishuWebhookUrl = String(
     process.env.PARK_PCM_FEISHU_WEBHOOK_URL ||
       process.env.FEISHU_WEBHOOK_URL ||
@@ -2218,6 +2237,61 @@ module.exports = function registerParkPcmRoutes(app, options) {
     };
   }
 
+  async function getCrowdAnalysisIdleStatus() {
+    if (!crowdAnalysisIdleOnly) {
+      return {
+        idle: true,
+        checked: false,
+        reason: 'idle_check_disabled'
+      };
+    }
+    try {
+      const { stdout } = await execFileAsync(
+        'nvidia-smi',
+        ['--query-gpu=index,utilization.gpu', '--format=csv,noheader,nounits'],
+        {
+          timeout: crowdAnalysisIdleCheckTimeoutMs,
+          maxBuffer: 16 * 1024
+        }
+      );
+      const rows = String(stdout || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [indexText, utilText] = line.split(',').map((item) => item.trim());
+          return {
+            index: Number(indexText),
+            util_pct: Number(utilText)
+          };
+        })
+        .filter((row) => Number.isFinite(row.index) && Number.isFinite(row.util_pct));
+      if (!rows.length) {
+        return {
+          idle: false,
+          checked: true,
+          reason: 'gpu_util_unavailable',
+          threshold_pct: crowdAnalysisIdleGpuUtilMax
+        };
+      }
+      const maxGpuUtilPct = Math.max(...rows.map((row) => row.util_pct));
+      return {
+        idle: maxGpuUtilPct <= crowdAnalysisIdleGpuUtilMax,
+        checked: true,
+        max_gpu_util_pct: maxGpuUtilPct,
+        threshold_pct: crowdAnalysisIdleGpuUtilMax,
+        gpu_count: rows.length
+      };
+    } catch (error) {
+      return {
+        idle: false,
+        checked: false,
+        reason: error.message || 'gpu_idle_check_failed',
+        threshold_pct: crowdAnalysisIdleGpuUtilMax
+      };
+    }
+  }
+
   async function runCrowdAnalysisTick(trigger) {
     if (!crowdAnalysisEnabled) {
       return null;
@@ -2228,9 +2302,39 @@ module.exports = function registerParkPcmRoutes(app, options) {
     crowdAnalysisInFlight = true;
     const startedAt = Date.now();
     try {
+      const idleStatus = await getCrowdAnalysisIdleStatus();
+      if (trigger !== 'manual' && !idleStatus.idle) {
+        const state = await readCrowdAnalysisState();
+        const nextState = {
+          ...state,
+          last_trigger: trigger,
+          last_attempt_at: nowIso(),
+          last_result: {
+            ok: true,
+            skipped: true,
+            reason: 'gpu_not_idle',
+            idle_status: idleStatus,
+            analyzed_count: 0,
+            attempts: [],
+            elapsed_ms: Date.now() - startedAt
+          },
+          config: {
+            enabled: crowdAnalysisEnabled,
+            interval_ms: crowdAnalysisIntervalMs,
+            max_samples_per_tick: crowdAnalysisMaxSamples,
+            model: crowdAnalysisModel,
+            base_url: crowdAnalysisBaseUrl,
+            timeout_ms: crowdAnalysisTimeoutMs,
+            idle_only: crowdAnalysisIdleOnly,
+            idle_gpu_util_max_pct: crowdAnalysisIdleGpuUtilMax
+          }
+        };
+        await writeCrowdAnalysisState(nextState);
+        return nextState;
+      }
       const [state, samples] = await Promise.all([
         readCrowdAnalysisState(),
-        readCrowdSampleLog(100)
+        readCrowdSampleLog(1000)
       ]);
       let analyzed = 0;
       const attempts = [];
@@ -2268,6 +2372,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
           ok: true,
           analyzed_count: analyzed,
           attempts,
+          idle_status: idleStatus,
           elapsed_ms: Date.now() - startedAt
         },
         config: {
@@ -2276,7 +2381,9 @@ module.exports = function registerParkPcmRoutes(app, options) {
           max_samples_per_tick: crowdAnalysisMaxSamples,
           model: crowdAnalysisModel,
           base_url: crowdAnalysisBaseUrl,
-          timeout_ms: crowdAnalysisTimeoutMs
+          timeout_ms: crowdAnalysisTimeoutMs,
+          idle_only: crowdAnalysisIdleOnly,
+          idle_gpu_util_max_pct: crowdAnalysisIdleGpuUtilMax
         }
       };
       await writeCrowdAnalysisState(nextState);
