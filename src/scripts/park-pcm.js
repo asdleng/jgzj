@@ -9,6 +9,9 @@
   const CROWD_PATROLS_URL = "/api/park-pcm/crowd/patrols";
   const PATROL_MAX_VEHICLES = 24;
   const PATROL_REFRESH_MS = 90 * 1000;
+  const HEAT_SEGMENT_STEP_M = 28;
+  const HEAT_SEGMENT_MAX_DISTANCE_M = 750;
+  const HEAT_SEGMENT_MAX_INTERPOLATED_POINTS = 640;
 
   const AMAP_KEY = root.getAttribute("data-amap-key") || "";
   const statusEl = root.querySelector("[data-park-pcm-status]");
@@ -18,6 +21,7 @@
   const patrolListEl = root.querySelector("[data-park-pcm-patrol-list]");
   const mapEl = root.querySelector("[data-park-pcm-map]");
   const mapFallbackEl = root.querySelector("[data-park-pcm-map-fallback]");
+  const heatLegendEl = root.querySelector("[data-park-pcm-heat-legend]");
   const mapStatusEl = root.querySelector("[data-park-pcm-map-status]");
   const vehicleSummaryEl = root.querySelector("[data-park-pcm-vehicle-summary]");
   const vehicleDetailEl = root.querySelector("[data-park-pcm-vehicle-detail]");
@@ -39,11 +43,11 @@
   let amapMap = null;
   let amapMarkers = [];
   let amapTrackLine = null;
+  let amapHeatmap = null;
   let amapControlsReady = false;
   let selectedVehicleId = "";
   let selectedSampleId = "";
   let sampleLoadRequestId = 0;
-  let latestPatrolMapPoints = [];
   let latestCrowdSamples = [];
 
   function setStatus(text, state) {
@@ -190,6 +194,15 @@
 
   function clearMapOverlays() {
     if (!amapMap) return;
+    if (amapHeatmap) {
+      if (typeof amapHeatmap.setMap === "function") {
+        amapHeatmap.setMap(null);
+      } else if (typeof amapHeatmap.hide === "function") {
+        amapHeatmap.hide();
+      }
+      amapHeatmap = null;
+    }
+    if (heatLegendEl) heatLegendEl.hidden = true;
     if (amapMarkers.length) {
       amapMap.remove(amapMarkers);
       amapMarkers = [];
@@ -214,8 +227,18 @@
 
   function visibleCrowdSamples() {
     const rows = latestCrowdSamples.filter((sample) => samplePosition(sample));
-    if (!selectedVehicleId) return rows;
+    if (!selectedVehicleId) return [];
     return rows.filter((sample) => sample.vehicle_id === selectedVehicleId);
+  }
+
+  function ensureVehicleOption(vehicleId) {
+    if (!crowdVehicleSelect || !vehicleId) return;
+    const value = String(vehicleId);
+    if ([...crowdVehicleSelect.options].some((option) => option.value === value)) return;
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = `${value} · 历史采集`;
+    crowdVehicleSelect.appendChild(option);
   }
 
   function selectedCrowdSample() {
@@ -293,7 +316,7 @@
     const rows = visibleCrowdSamples();
     const active = selectedCrowdSample();
     if (!rows.length) {
-      trackSamplesEl.appendChild(textNode("p", "park-pcm-empty", selectedVehicleId ? `${selectedVehicleId} 暂无采集点。` : "暂无采集点。"));
+      trackSamplesEl.appendChild(textNode("p", "park-pcm-empty", selectedVehicleId ? `${selectedVehicleId} 暂无采集点。` : "请先选择一台车辆。"));
       renderSampleDetail(null);
       return;
     }
@@ -327,7 +350,7 @@
         textNode(
           "p",
           "park-pcm-empty",
-          selectedVehicleId ? `${selectedVehicleId} 还没有服务器落盘采集点。` : "还没有服务器落盘采集点。"
+          selectedVehicleId ? `${selectedVehicleId} 还没有服务器落盘采集点。` : "请先选择一台车辆查看服务器落盘历史。"
         )
       );
       return;
@@ -338,6 +361,8 @@
       .map((sample) => samplePeopleCount(sample))
       .filter((count) => Number.isFinite(Number(count)));
     const totalPeople = counts.reduce((sum, count) => sum + Number(count), 0);
+    const positiveCounts = counts.filter((count) => Number(count) > 0);
+    const maxPeople = positiveCounts.length ? Math.max(...positiveCounts.map((count) => Number(count))) : 0;
     const latest = rows[0];
     const oldest = rows[rows.length - 1];
     const position = latest.position || {};
@@ -346,6 +371,7 @@
     grid.appendChild(detailCell("落盘采集点", `${rows.length} 个`));
     grid.appendChild(detailCell("四路图片", `${frames} 张 · ${formatBytes(bytes)}`));
     grid.appendChild(detailCell("已识别人数", counts.length ? `${totalPeople} 人 · ${counts.length}/${rows.length} 点` : "等待识别"));
+    grid.appendChild(detailCell("热力点", positiveCounts.length ? `${positiveCounts.length} 个 · 峰值 ${maxPeople} 人` : "暂无人群热区"));
     grid.appendChild(detailCell("最近采集", `${latest.vehicle_id || "-"} · ${formatTime(latest.collected_at)}`));
     grid.appendChild(detailCell("采集区间", `${formatTime(oldest.collected_at)} - ${formatTime(latest.collected_at)}`));
     grid.appendChild(detailCell("最近坐标", `${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}`));
@@ -354,9 +380,7 @@
       textNode(
         "p",
         "park-pcm-detail-note",
-        selectedVehicleId
-          ? "当前地图和四路图片来自该车已经上传并落盘到服务器的历史采集点。"
-          : "当前地图展示所有车辆已经上传并落盘到服务器的历史采集点。"
+        "当前地图和四路图片只来自该车已经上传并落盘到服务器的历史采集点。"
       )
     );
   }
@@ -436,7 +460,7 @@
       crowdVehicleSelect.value = nextVehicleId;
     }
     if (!nextVehicleId) {
-      setVehicleSummary("全部车辆历史采集点加载中。");
+      setVehicleSummary("请先选择一台车辆查看历史采集点。");
       return loadCrowdSamples("");
     }
     setVehicleSummary(`${nextVehicleId} 历史采集点加载中。`);
@@ -479,6 +503,18 @@
     amapControlsReady = true;
   }
 
+  function enableMapInteraction() {
+    if (!amapMap || typeof amapMap.setStatus !== "function") return;
+    amapMap.setStatus({
+      dragEnable: true,
+      zoomEnable: true,
+      doubleClickZoom: true,
+      keyboardEnable: true,
+      scrollWheel: true,
+      touchZoom: true
+    });
+  }
+
   function sampleMapPoint(sample) {
     const position = samplePosition(sample);
     if (!position) return null;
@@ -489,10 +525,120 @@
       longitude: position.longitude,
       latitude: position.latitude,
       people_count: peopleCount,
-      heat_count: peopleCount == null ? Math.max(1, Number(sample.frame_count) || 1) : Math.max(1, peopleCount),
+      heat_count: peopleCount == null ? null : Math.max(0, peopleCount),
       collected_at: sample.collected_at,
       sample
     };
+  }
+
+  function heatWeight(point) {
+    const count = Number(point && point.heat_count);
+    return Number.isFinite(count) && count > 0 ? count : null;
+  }
+
+  function distanceMeters(left, right) {
+    const leftLng = Number(left && left.longitude);
+    const leftLat = Number(left && left.latitude);
+    const rightLng = Number(right && right.longitude);
+    const rightLat = Number(right && right.latitude);
+    if (![leftLng, leftLat, rightLng, rightLat].every(Number.isFinite)) return null;
+    const toRad = (value) => (value * Math.PI) / 180;
+    const earthRadiusM = 6371000;
+    const dLat = toRad(rightLat - leftLat);
+    const dLng = toRad(rightLng - leftLng);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(leftLat)) * Math.cos(toRad(rightLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * earthRadiusM * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function heatDataFromPoints(points) {
+    const directPoints = points
+      .map((point) => ({
+        lng: Number(point.longitude),
+        lat: Number(point.latitude),
+        count: heatWeight(point)
+      }))
+      .filter((point) => Number.isFinite(point.lng) && Number.isFinite(point.lat) && Number.isFinite(point.count) && point.count > 0);
+    const interpolatedPoints = [];
+    for (let index = 1; index < points.length; index += 1) {
+      if (interpolatedPoints.length >= HEAT_SEGMENT_MAX_INTERPOLATED_POINTS) break;
+      const start = points[index - 1];
+      const end = points[index];
+      const distanceM = distanceMeters(start, end);
+      if (!Number.isFinite(distanceM) || distanceM < HEAT_SEGMENT_STEP_M || distanceM > HEAT_SEGMENT_MAX_DISTANCE_M) {
+        continue;
+      }
+      const startWeight = heatWeight(start);
+      const endWeight = heatWeight(end);
+      if (startWeight == null && endWeight == null) continue;
+      const safeStartWeight = startWeight == null ? endWeight : startWeight;
+      const safeEndWeight = endWeight == null ? startWeight : endWeight;
+      const steps = Math.max(2, Math.min(32, Math.ceil(distanceM / HEAT_SEGMENT_STEP_M)));
+      for (let step = 1; step < steps; step += 1) {
+        if (interpolatedPoints.length >= HEAT_SEGMENT_MAX_INTERPOLATED_POINTS) break;
+        const ratio = step / steps;
+        const count = safeStartWeight + (safeEndWeight - safeStartWeight) * ratio;
+        if (!Number.isFinite(count) || count <= 0) continue;
+        interpolatedPoints.push({
+          lng: Number(start.longitude) + (Number(end.longitude) - Number(start.longitude)) * ratio,
+          lat: Number(start.latitude) + (Number(end.latitude) - Number(start.latitude)) * ratio,
+          count
+        });
+      }
+    }
+    return [...directPoints, ...interpolatedPoints];
+  }
+
+  async function renderPeopleHeatmap(AMap, samplePoints) {
+    const heatData = heatDataFromPoints(samplePoints);
+    if (!heatData.length) {
+      if (heatLegendEl) heatLegendEl.hidden = true;
+      return {
+        count: 0,
+        max: 0
+      };
+    }
+    try {
+      await loadAmapPlugins(AMap, ["AMap.HeatMap"]);
+      if (!AMap.HeatMap) {
+        if (heatLegendEl) heatLegendEl.hidden = true;
+        return {
+          count: 0,
+          max: 0,
+          unavailable: true
+        };
+      }
+      const maxCount = Math.max(...heatData.map((point) => point.count), 1);
+      amapHeatmap = new AMap.HeatMap(amapMap, {
+        radius: 76,
+        opacity: [0, 0.86],
+        zIndex: 70,
+        gradient: {
+          0.16: "#22c55e",
+          0.38: "#a3e635",
+          0.58: "#facc15",
+          0.78: "#fb923c",
+          1: "#ef4444"
+        }
+      });
+      amapHeatmap.setDataSet({
+        data: heatData,
+        max: maxCount
+      });
+      if (heatLegendEl) heatLegendEl.hidden = false;
+      return {
+        count: heatData.length,
+        max: maxCount
+      };
+    } catch (_error) {
+      if (heatLegendEl) heatLegendEl.hidden = true;
+      return {
+        count: 0,
+        max: 0,
+        unavailable: true
+      };
+    }
   }
 
   async function renderTrackMap(options) {
@@ -502,6 +648,13 @@
       .map((sample) => sampleMapPoint(sample))
       .filter(Boolean)
       .sort((left, right) => Date.parse(left.collected_at || "") - Date.parse(right.collected_at || ""));
+    if (!selectedVehicleId) {
+      renderTrackSamples();
+      clearMapOverlays();
+      setMapStatus("请选择车辆");
+      setMapFallback("请选择一台车辆查看该车历史轨迹和四路采集图片", false);
+      return;
+    }
     if (!samplePoints.length) {
       renderTrackSamples();
       clearMapOverlays();
@@ -528,7 +681,9 @@
         });
       }
       await ensureAmapControls(AMap);
+      enableMapInteraction();
       clearMapOverlays();
+      const heatStats = await renderPeopleHeatmap(AMap, samplePoints);
       if (samplePoints.length >= 2) {
         amapTrackLine = new AMap.Polyline({
           path: samplePoints.map((point) => [point.longitude, point.latitude]),
@@ -536,118 +691,27 @@
           strokeWeight: 4,
           strokeOpacity: 0.78,
           lineJoin: "round",
-          zIndex: 80
+          zIndex: 80,
+          bubble: true
         });
         amapMap.add(amapTrackLine);
       }
-      amapMarkers = samplePoints.map((point) => {
-        const active = point.sample_id === selectedSampleId;
-        const marker = new AMap.Marker({
-          position: [point.longitude, point.latitude],
-          title: `${point.vehicle_id} ${formatTime(point.collected_at)}`,
-          zIndex: active ? 130 : 110,
-          label: {
-            content: `${point.vehicle_id} · ${samplePeopleText(point.sample)}`,
-            direction: "top"
-          }
-        });
-        const circle = new AMap.Circle({
-          center: [point.longitude, point.latitude],
-          radius: active ? 42 : 28,
-          strokeColor: active ? "#fbbf24" : "#22d3ee",
-          strokeOpacity: 0.72,
-          strokeWeight: active ? 2 : 1,
-          fillColor: active ? "#f97316" : "#14b8a6",
-          fillOpacity: active ? 0.38 : 0.24,
-          zIndex: active ? 120 : 90
-        });
-        marker.on("click", () => {
-          selectedSampleId = point.sample_id;
-          renderTrackSamples();
-          renderSampleDetail(point.sample);
-          void renderTrackMap({ focus_sample_id: selectedSampleId }).catch((error) => {
-            setMapStatus(`轨迹刷新失败：${error.message || "-"}`);
-          });
-        });
-        return [circle, marker];
-      }).flat();
-      amapMap.add(amapMarkers);
-      const fitTargets = amapTrackLine ? [...amapMarkers, amapTrackLine] : amapMarkers;
-      if (fitTargets.length > 1) {
+      amapMarkers = [];
+      const fitTargets = amapTrackLine ? [amapTrackLine] : [];
+      if (fitTargets.length) {
         amapMap.setFitView(fitTargets, false, [46, 46, 46, 46], 18);
       } else {
         amapMap.setZoomAndCenter(17, center);
       }
-      setMapStatus(`${selectedVehicleId || "全部车辆"} 采集点 ${samplePoints.length} · 轨迹`);
+      enableMapInteraction();
+      setMapStatus(
+        heatStats.count
+          ? `${selectedVehicleId} 采集点 ${samplePoints.length} · 热力栅格 ${heatStats.count} · 峰值 ${heatStats.max} 人`
+          : `${selectedVehicleId} 采集点 ${samplePoints.length} · 暂无可用人数热力`
+      );
     } catch (error) {
       setMapStatus("轨迹地图加载失败");
       setMapFallback(`轨迹地图加载失败：${error.message || "amap_failed"}`, false);
-    }
-  }
-
-  async function renderAmapPoints(points, options) {
-    const opts = options || {};
-    const list = Array.isArray(points) ? points.filter((point) => Number.isFinite(Number(point.longitude)) && Number.isFinite(Number(point.latitude))) : [];
-    if (!mapEl) return;
-    if (!list.length) {
-      setMapStatus(opts.emptyStatus || "暂无定位");
-      setMapFallback(opts.emptyText || "等待定位点", false);
-      clearMapOverlays();
-      return;
-    }
-    try {
-      const AMap = await loadAmap();
-      setMapFallback("", true);
-      const center = [Number(list[0].longitude), Number(list[0].latitude)];
-      if (!amapMap) {
-        amapMap = new AMap.Map(mapEl, {
-          zoom: 17,
-          center,
-          viewMode: "2D",
-          resizeEnable: true,
-          zoomEnable: true,
-          dragEnable: true,
-          doubleClickZoom: true,
-          keyboardEnable: true,
-          scrollWheel: true
-        });
-      }
-      await ensureAmapControls(AMap);
-      clearMapOverlays();
-      amapMarkers = list.map((point) => {
-        const selected = point.selected === true;
-        const reliable = point.reliable !== false;
-        const strokeColor = selected ? "#f59e0b" : "#22d3ee";
-        const fillColor = selected ? "#f97316" : "#14b8a6";
-        const marker = new AMap.Marker({
-          position: [Number(point.longitude), Number(point.latitude)],
-          title: point.vehicle_id || "",
-          label: {
-            content: `${point.vehicle_id || "-"} · ${selected ? patrolStateLabel(point.state) : `${formatNumber(point.sample_count_24h, "0")}次`}${reliable ? "" : " · 未确认"}`,
-            direction: "top"
-          }
-        });
-        const circle = new AMap.Circle({
-          center: [Number(point.longitude), Number(point.latitude)],
-          radius: selected ? 34 : Math.max(12, Math.min(80, 18 + Number(point.sample_count_24h || 0) * 8)),
-          strokeColor,
-          strokeOpacity: 0.65,
-          strokeWeight: 1,
-          fillColor,
-          fillOpacity: selected ? 0.3 : 0.24
-        });
-        return [circle, marker];
-      }).flat();
-      amapMap.add(amapMarkers);
-      if (list.length === 1) {
-        amapMap.setZoomAndCenter(17, center);
-      } else {
-        amapMap.setFitView(amapMarkers, false, [44, 44, 44, 44], 18);
-      }
-      setMapStatus(opts.statusText || `定位点 ${list.length}`);
-    } catch (error) {
-      setMapStatus("地图加载失败");
-      setMapFallback(`高德地图加载失败：${error.message || "amap_failed"}`, false);
     }
   }
 
@@ -658,15 +722,10 @@
       const data = await fetchJson(`${CROWD_PATROLS_URL}?max_vehicles=${PATROL_MAX_VEHICLES}`);
       renderPatrolSummary(data.counts);
       renderPatrolRows(data.patrols || []);
-      latestPatrolMapPoints = data.map_points || [];
       if (!selectedVehicleId) {
-        if (latestCrowdSamples.length) {
-          await renderTrackMap();
-        } else {
-          await renderAmapPoints(latestPatrolMapPoints, {
-            emptyText: "等待确认巡逻车辆定位"
-          });
-        }
+        clearMapOverlays();
+        setMapStatus("请选择车辆");
+        setMapFallback("选择一台车辆后显示该车历史采集轨迹", false);
       }
       return data;
     } finally {
@@ -677,21 +736,23 @@
   function renderCrowdVehicles(data) {
     if (!crowdVehicleSelect) return "";
     clearElement(crowdVehicleSelect);
-    const allOption = document.createElement("option");
-    allOption.value = "";
-    allOption.textContent = "全部车辆历史";
-    crowdVehicleSelect.appendChild(allOption);
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "选择车辆";
+    placeholder.disabled = true;
+    crowdVehicleSelect.appendChild(placeholder);
     const vehicles = Array.isArray(data && data.vehicles) ? data.vehicles : [];
     if (!vehicles.length) {
-      selectedVehicleId = "";
+      if (selectedVehicleId) {
+        ensureVehicleOption(selectedVehicleId);
+        crowdVehicleSelect.value = selectedVehicleId;
+      }
       renderHistoryDetail();
-      setVehicleSummary("暂无车辆列表。");
-      return "";
+      setVehicleSummary(selectedVehicleId ? `${selectedVehicleId} · 使用服务器历史采集记录` : "暂无车辆列表。");
+      return selectedVehicleId;
     }
     const previousVehicleId = selectedVehicleId || crowdVehicleSelect.value || "";
-    let nextVehicleId = vehicles.some((vehicle) => vehicle.vehicle_id === previousVehicleId)
-      ? previousVehicleId
-      : "";
+    let nextVehicleId = previousVehicleId;
     vehicles.slice(0, 80).forEach((vehicle) => {
       const option = document.createElement("option");
       option.value = vehicle.vehicle_id || "";
@@ -699,6 +760,9 @@
       option.textContent = `${vehicle.vehicle_id}${vehicle.fresh ? "" : " 过期"} · ${age} · 电量 ${formatNumber(vehicle.telemetry && vehicle.telemetry.battery_soc)}%`;
       crowdVehicleSelect.appendChild(option);
     });
+    if (nextVehicleId) {
+      ensureVehicleOption(nextVehicleId);
+    }
     crowdVehicleSelect.value = nextVehicleId;
     selectedVehicleId = nextVehicleId;
     return nextVehicleId;
@@ -748,14 +812,23 @@
   function renderCrowdSamples(samples) {
     const list = Array.isArray(samples) ? samples.filter((item) => !item.skipped) : [];
     latestCrowdSamples = list;
-    const rowsWithCount = list.filter((sample) => samplePeopleCount(sample) != null);
+    if (!selectedVehicleId && list.length) {
+      const firstVehicleId = String(list.find((sample) => sample && sample.vehicle_id)?.vehicle_id || "").trim();
+      if (firstVehicleId) {
+        selectedVehicleId = firstVehicleId;
+        ensureVehicleOption(firstVehicleId);
+        if (crowdVehicleSelect) crowdVehicleSelect.value = firstVehicleId;
+      }
+    }
+    const rows = visibleCrowdSamples();
+    const rowsWithCount = rows.filter((sample) => samplePeopleCount(sample) != null);
     const totalPeople = rowsWithCount.reduce((sum, sample) => sum + Number(samplePeopleCount(sample) || 0), 0);
     setVehicleSummary(
       selectedVehicleId
-        ? `${selectedVehicleId} · 历史采集点 ${list.length} · 已识别 ${rowsWithCount.length} 点/${totalPeople} 人`
-        : `全部车辆历史采集点 ${list.length} · 已识别 ${rowsWithCount.length} 点/${totalPeople} 人`
+        ? `${selectedVehicleId} · 历史采集点 ${rows.length} · 已识别 ${rowsWithCount.length} 点/${totalPeople} 人`
+        : "请选择一台车辆查看历史采集点。"
     );
-    if (!list.length) {
+    if (!rows.length) {
       renderCrowdLast(null);
       renderHistoryDetail();
       renderTrackSamples();
@@ -765,7 +838,7 @@
       });
       return;
     }
-    renderCrowdLast(list[0]);
+    renderCrowdLast(rows[0]);
     renderHistoryDetail();
     renderTrackSamples();
     renderSampleDetail(selectedCrowdSample());
@@ -823,7 +896,7 @@
         body: payload
       });
       renderCrowdLast(sample);
-      await Promise.all([loadCrowdPatrols(), loadCrowdVehicles(), loadCrowdSamples()]);
+      await Promise.all([loadCrowdPatrols(), loadCrowdVehicles(), loadCrowdSamples(selectedVehicleId)]);
       setCrowdStatus(sample.skipped ? `跳过：${sample.reason || "-"}` : `完成 ${sample.frame_count || 0} 路 · ${formatBytes(sample.total_image_bytes)}`);
     } catch (error) {
       setCrowdStatus(`失败：${error.message || "capture_failed"}`);

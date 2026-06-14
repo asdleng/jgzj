@@ -18,7 +18,7 @@
         <option value="">加载中...</option>
       </select>
     </label>
-    <p class="park-pcm-vehicle-summary" data-park-pcm-vehicle-summary>选择车辆查看服务器落盘的历史采集点、图片和识别统计。</p>
+    <p class="park-pcm-vehicle-summary" data-park-pcm-vehicle-summary>每次只显示一台车的服务器落盘历史采集点、图片和识别统计。</p>
   </section>
 
   <section class="park-pcm-layout">
@@ -44,12 +44,17 @@
       <div class="park-pcm-band-head">
         <div>
           <p class="section-kicker">AMAP</p>
-          <h2>采集轨迹地图</h2>
+          <h2>轨迹与人数热力</h2>
         </div>
         <p data-park-pcm-map-status>等待历史采集点</p>
       </div>
       <div class="park-pcm-map" data-park-pcm-map>
         <div class="park-pcm-map-fallback" data-park-pcm-map-fallback>高德地图加载中</div>
+        <div class="park-pcm-heat-legend" data-park-pcm-heat-legend hidden>
+          <span>人数热力</span>
+          <i aria-hidden="true"></i>
+          <span>高</span>
+        </div>
       </div>
       <div class="park-pcm-track-panel">
         <div class="park-pcm-track-list" data-park-pcm-track-samples>
@@ -320,6 +325,38 @@
     color: #b8c7da;
     text-align: center;
     z-index: 1;
+  }
+
+  .park-pcm-map-fallback[hidden] {
+    display: none;
+  }
+
+  .park-pcm-heat-legend {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(2, 6, 23, 0.72);
+    color: #e5edf8;
+    font-size: 0.78rem;
+    font-weight: 800;
+    pointer-events: none;
+  }
+
+  .park-pcm-heat-legend[hidden] {
+    display: none;
+  }
+
+  .park-pcm-heat-legend i {
+    width: 88px;
+    height: 10px;
+    display: block;
+    background: linear-gradient(90deg, #22c55e, #facc15, #fb923c, #ef4444);
   }
 
   .park-pcm-vehicle-detail {
