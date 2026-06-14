@@ -11,8 +11,12 @@ import scriptText from "../../scripts/park-pcm.js?raw";
   currentPath="/app/park-crowd"
   noindex={true}
 >
-  <main class="park-pcm-page">
-    <EmbeddedParkPcmConsole />
+  <main class="page-main grid-bg park-crowd-main">
+    <section class="page-section">
+      <div class="glass-card section-card park-crowd-card">
+        <EmbeddedParkPcmConsole />
+      </div>
+    </section>
   </main>
   <script is:inline set:html={scriptText}></script>
 </SiteLayout>

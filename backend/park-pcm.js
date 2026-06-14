@@ -22,6 +22,10 @@ const DEFAULT_CROWD_MONITOR_DISTANCE_M = 80;
 const DEFAULT_CROWD_MONITOR_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_CROWD_MONITOR_QUALITY = 40;
 const DEFAULT_CROWD_MONITOR_MAX_WIDTH = 480;
+const DEFAULT_CROWD_ANALYSIS_INTERVAL_MS = 2 * 60 * 1000;
+const DEFAULT_CROWD_ANALYSIS_BOOT_DELAY_MS = 45 * 1000;
+const DEFAULT_CROWD_ANALYSIS_TIMEOUT_MS = 90 * 1000;
+const DEFAULT_CROWD_ANALYSIS_MAX_SAMPLES = 1;
 
 function nowIso() {
   return new Date().toISOString();
@@ -1057,6 +1061,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   const crowdIndexLogPath = path.join(runtimeRoot, 'crowd-samples.jsonl');
   const crowdStatePath = path.join(runtimeRoot, 'crowd-capture-state.json');
   const crowdMonitorStatePath = path.join(runtimeRoot, 'crowd-monitor-state.json');
+  const crowdAnalysisStatePath = path.join(runtimeRoot, 'crowd-analysis-state.json');
   const statusToolTimeoutS = toFiniteNumber(
     process.env.PARK_PCM_STATUS_TOOL_TIMEOUT_S,
     DEFAULT_STATUS_TOOL_TIMEOUT_S,
@@ -1156,6 +1161,36 @@ module.exports = function registerParkPcmRoutes(app, options) {
     DEFAULT_CROWD_MONITOR_MAX_WIDTH,
     { min: 160, max: 960 }
   );
+  const crowdAnalysisEnabled = String(
+    process.env.PARK_CROWD_ANALYSIS_ENABLED || process.env.PARK_PCM_CROWD_ANALYSIS_ENABLED || 'true'
+  ).toLowerCase() !== 'false';
+  const crowdAnalysisBaseUrl = String(
+    process.env.PARK_CROWD_ANALYSIS_BASE_URL || process.env.PARK_PCM_CROWD_ANALYSIS_BASE_URL || 'http://127.0.0.1:8012/v1'
+  ).replace(/\/+$/, '');
+  const crowdAnalysisModel = String(
+    process.env.PARK_CROWD_ANALYSIS_MODEL || process.env.PARK_PCM_CROWD_ANALYSIS_MODEL || 'qwen3-vl-2b-checker'
+  );
+  const crowdAnalysisChatUrl = new URL('chat/completions', `${crowdAnalysisBaseUrl}/`).toString();
+  const crowdAnalysisIntervalMs = toFiniteInteger(
+    process.env.PARK_CROWD_ANALYSIS_INTERVAL_MS || process.env.PARK_PCM_CROWD_ANALYSIS_INTERVAL_MS,
+    DEFAULT_CROWD_ANALYSIS_INTERVAL_MS,
+    { min: 30 * 1000, max: 60 * 60 * 1000 }
+  );
+  const crowdAnalysisBootDelayMs = toFiniteInteger(
+    process.env.PARK_CROWD_ANALYSIS_BOOT_DELAY_MS || process.env.PARK_PCM_CROWD_ANALYSIS_BOOT_DELAY_MS,
+    DEFAULT_CROWD_ANALYSIS_BOOT_DELAY_MS,
+    { min: 10 * 1000, max: 60 * 60 * 1000 }
+  );
+  const crowdAnalysisTimeoutMs = toFiniteInteger(
+    process.env.PARK_CROWD_ANALYSIS_TIMEOUT_MS || process.env.PARK_PCM_CROWD_ANALYSIS_TIMEOUT_MS,
+    DEFAULT_CROWD_ANALYSIS_TIMEOUT_MS,
+    { min: 10 * 1000, max: 5 * 60 * 1000 }
+  );
+  const crowdAnalysisMaxSamples = toFiniteInteger(
+    process.env.PARK_CROWD_ANALYSIS_MAX_SAMPLES || process.env.PARK_PCM_CROWD_ANALYSIS_MAX_SAMPLES,
+    DEFAULT_CROWD_ANALYSIS_MAX_SAMPLES,
+    { min: 1, max: 8 }
+  );
   const feishuWebhookUrl = String(
     process.env.PARK_PCM_FEISHU_WEBHOOK_URL ||
       process.env.FEISHU_WEBHOOK_URL ||
@@ -1169,8 +1204,10 @@ module.exports = function registerParkPcmRoutes(app, options) {
   let reportInFlight = false;
   let crowdCaptureInFlight = false;
   let crowdMonitorInFlight = false;
+  let crowdAnalysisInFlight = false;
   let reportTimer = null;
   let crowdMonitorTimer = null;
+  let crowdAnalysisTimer = null;
 
   async function ensureRuntimeDir() {
     await fsp.mkdir(runtimeRoot, { recursive: true });
@@ -1344,6 +1381,32 @@ module.exports = function registerParkPcmRoutes(app, options) {
     });
   }
 
+  async function readCrowdAnalysisState() {
+    const parsed = await readJsonFile(crowdAnalysisStatePath);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return {
+        version: 1,
+        samples: {},
+        ...parsed,
+        samples: parsed.samples && typeof parsed.samples === 'object' ? parsed.samples : {}
+      };
+    }
+    return {
+      version: 1,
+      samples: {},
+      updated_at: nowIso()
+    };
+  }
+
+  async function writeCrowdAnalysisState(state) {
+    await atomicWriteJson(crowdAnalysisStatePath, {
+      version: 1,
+      samples: {},
+      ...(state || {}),
+      updated_at: nowIso()
+    });
+  }
+
   function extractLocalizationPosition(localizationResult) {
     const result = localizationResult?.result || {};
     const summary = result.summary || {};
@@ -1382,20 +1445,58 @@ module.exports = function registerParkPcmRoutes(app, options) {
     await fsp.appendFile(crowdIndexLogPath, `${JSON.stringify(entry)}\n`, 'utf8');
   }
 
-  async function readRecentCrowdSamples(limit) {
-    const normalizedLimit = toFiniteInteger(limit, 20, { min: 1, max: 100 });
+  function mergeCrowdAnalysisIntoSample(sample, analysisState) {
+    if (!sample || sample.skipped) return sample;
+    const sampleAnalysis = analysisState?.samples?.[sample.sample_id];
+    if (!sampleAnalysis) return sample;
+    const framesByCaptureId = sampleAnalysis.frames && typeof sampleAnalysis.frames === 'object'
+      ? sampleAnalysis.frames
+      : {};
+    return {
+      ...sample,
+      analysis: {
+        ...(sample.analysis || {}),
+        ...sampleAnalysis.aggregate
+      },
+      frames: Array.isArray(sample.frames)
+        ? sample.frames.map((frame) => ({
+            ...frame,
+            analysis: {
+              ...(frame.analysis || {}),
+              ...(framesByCaptureId[frame.capture_id] || framesByCaptureId[frame.camera_id] || {})
+            }
+          }))
+        : sample.frames
+    };
+  }
+
+  async function readCrowdSampleLog(limit, filters) {
+    const normalizedLimit = toFiniteInteger(limit, 20, { min: 1, max: 1000 });
+    const vehicleId = String(filters?.vehicle_id || '').trim();
     try {
       const text = await fsp.readFile(crowdIndexLogPath, 'utf8');
-      return text
+      const rows = text
         .split('\n')
         .filter(Boolean)
-        .slice(-normalizedLimit)
         .map((line) => safeJsonParse(line, null))
-        .filter(Boolean)
+        .filter(Boolean);
+      const filteredRows = vehicleId
+        ? rows.filter((sample) => String(sample?.vehicle_id || '') === vehicleId)
+        : rows;
+      return filteredRows
+        .slice(-normalizedLimit)
         .reverse();
     } catch (_error) {
       return [];
     }
+  }
+
+  async function readRecentCrowdSamples(limit, filters) {
+    const [samples, analysisState] = await Promise.all([
+      readCrowdSampleLog(limit, filters),
+      readCrowdAnalysisState()
+    ]);
+    return samples.map((sample) => mergeCrowdAnalysisIntoSample(sample, analysisState));
   }
 
   async function buildCrowdPatrolStatus(params) {
@@ -1990,6 +2091,215 @@ module.exports = function registerParkPcmRoutes(app, options) {
     }
   }
 
+  function parseCrowdAnalysisJson(text) {
+    const raw = String(text || '').trim();
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    const body = fenced ? fenced[1].trim() : raw;
+    try {
+      return JSON.parse(body);
+    } catch (_error) {
+      const match = raw.match(/"?people_count"?\s*[:：]\s*"?(\d+)"?/i);
+      return match ? { people_count: Number(match[1]), raw_reply: raw.slice(0, 500) } : { raw_reply: raw.slice(0, 500) };
+    }
+  }
+
+  function normalizePeopleCount(value) {
+    const num = Number(value);
+    return Number.isFinite(num) && num >= 0 ? Math.round(num) : null;
+  }
+
+  function imageMimeFromPath(imagePath) {
+    const ext = path.extname(String(imagePath || '')).toLowerCase();
+    if (ext === '.png') return 'image/png';
+    if (ext === '.webp') return 'image/webp';
+    return 'image/jpeg';
+  }
+
+  async function analyzeCrowdFrame(frame) {
+    const imageRelPath = String(frame?.image_path || '').trim();
+    const imageAbsPath = path.resolve(crowdFramesRoot, imageRelPath);
+    const framesRootResolved = path.resolve(crowdFramesRoot);
+    if (!imageAbsPath.startsWith(`${framesRootResolved}${path.sep}`)) {
+      throw new Error('invalid_crowd_frame_path');
+    }
+    const imageBuffer = await fsp.readFile(imageAbsPath);
+    const imageBase64 = imageBuffer.toString('base64');
+    const prompt =
+      '你在做园区巡逻人流统计。请统计这张单路相机图片中可见的真实行人数量，只数真实人体，不数雕塑、海报、倒影。' +
+      '只输出紧凑 JSON，不要 Markdown，不要解释。格式：{"people_count":0,"confidence":"low|medium|high","note":"中文简短说明"}。' +
+      '看不清时给最佳估计并把 confidence 设为 low。';
+    const response = await fetch(crowdAnalysisChatUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: crowdAnalysisModel,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${imageMimeFromPath(imageRelPath)};base64,${imageBase64}`
+                }
+              },
+              {
+                type: 'text',
+                text: prompt
+              }
+            ]
+          }
+        ],
+        max_tokens: 160,
+        temperature: 0,
+        stream: false,
+        chat_template_kwargs: {
+          enable_thinking: false
+        }
+      }),
+      signal: AbortSignal.timeout(crowdAnalysisTimeoutMs)
+    });
+    const rawText = await response.text();
+    const payload = safeJsonParse(rawText, null);
+    if (!response.ok) {
+      const error = new Error(rawText.slice(0, 240) || `crowd_analysis_http_${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    const reply = String(payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.message?.reasoning || '').trim();
+    const parsed = parseCrowdAnalysisJson(reply);
+    const peopleCount = normalizePeopleCount(parsed.people_count);
+    return {
+      status: peopleCount == null ? 'needs_review' : 'done',
+      people_count: peopleCount,
+      confidence: String(parsed.confidence || 'low').toLowerCase(),
+      note: String(parsed.note || parsed.raw_reply || '').slice(0, 300),
+      model: crowdAnalysisModel,
+      analyzed_at: nowIso()
+    };
+  }
+
+  async function analyzeCrowdSample(sample) {
+    const frames = Array.isArray(sample?.frames) ? sample.frames.slice(0, 4) : [];
+    const frameResults = {};
+    for (const frame of frames) {
+      const frameKey = frame.capture_id || frame.camera_id || `frame_${Object.keys(frameResults).length + 1}`;
+      try {
+        frameResults[frameKey] = await analyzeCrowdFrame(frame);
+      } catch (error) {
+        frameResults[frameKey] = {
+          status: 'error',
+          people_count: null,
+          confidence: 'low',
+          note: error.message || 'crowd_frame_analysis_failed',
+          model: crowdAnalysisModel,
+          analyzed_at: nowIso()
+        };
+      }
+    }
+    const counts = Object.values(frameResults)
+      .map((item) => normalizePeopleCount(item.people_count))
+      .filter((value) => value != null);
+    const allDone = frames.length > 0 && counts.length === frames.length;
+    return {
+      frames: frameResults,
+      aggregate: {
+        status: allDone ? 'done' : counts.length ? 'partial' : 'needs_review',
+        people_count: counts.length ? counts.reduce((sum, value) => sum + value, 0) : null,
+        max_single_camera_people: counts.length ? Math.max(...counts) : null,
+        frame_count_analyzed: Object.keys(frameResults).length,
+        model: crowdAnalysisModel,
+        analyzed_at: nowIso(),
+        note: 'people_count 为四路相机可见人数合计；max_single_camera_people 为单路最大值，供重叠视角保守参考。'
+      }
+    };
+  }
+
+  async function runCrowdAnalysisTick(trigger) {
+    if (!crowdAnalysisEnabled) {
+      return null;
+    }
+    if (crowdAnalysisInFlight) {
+      return null;
+    }
+    crowdAnalysisInFlight = true;
+    const startedAt = Date.now();
+    try {
+      const [state, samples] = await Promise.all([
+        readCrowdAnalysisState(),
+        readCrowdSampleLog(100)
+      ]);
+      let analyzed = 0;
+      const attempts = [];
+      for (const sample of samples) {
+        if (analyzed >= crowdAnalysisMaxSamples) break;
+        if (!sample || sample.skipped || !sample.sample_id || !Array.isArray(sample.frames) || !sample.frames.length) {
+          continue;
+        }
+        const existing = state.samples[sample.sample_id];
+        if (existing?.aggregate?.status === 'done') {
+          continue;
+        }
+        const sampleAnalysis = await analyzeCrowdSample(sample);
+        state.samples[sample.sample_id] = {
+          sample_id: sample.sample_id,
+          vehicle_id: sample.vehicle_id || null,
+          collected_at: sample.collected_at || null,
+          position: sample.position || null,
+          ...sampleAnalysis
+        };
+        attempts.push({
+          sample_id: sample.sample_id,
+          vehicle_id: sample.vehicle_id || null,
+          people_count: sampleAnalysis.aggregate.people_count,
+          max_single_camera_people: sampleAnalysis.aggregate.max_single_camera_people,
+          status: sampleAnalysis.aggregate.status
+        });
+        analyzed += 1;
+      }
+      const nextState = {
+        ...state,
+        last_trigger: trigger,
+        last_attempt_at: nowIso(),
+        last_result: {
+          ok: true,
+          analyzed_count: analyzed,
+          attempts,
+          elapsed_ms: Date.now() - startedAt
+        },
+        config: {
+          enabled: crowdAnalysisEnabled,
+          interval_ms: crowdAnalysisIntervalMs,
+          max_samples_per_tick: crowdAnalysisMaxSamples,
+          model: crowdAnalysisModel,
+          base_url: crowdAnalysisBaseUrl,
+          timeout_ms: crowdAnalysisTimeoutMs
+        }
+      };
+      await writeCrowdAnalysisState(nextState);
+      return nextState;
+    } catch (error) {
+      const state = await readCrowdAnalysisState().catch(() => ({ version: 1, samples: {} }));
+      await writeCrowdAnalysisState({
+        ...state,
+        last_trigger: trigger,
+        last_attempt_at: nowIso(),
+        last_result: {
+          ok: false,
+          error: error.message || 'crowd_analysis_failed',
+          status: error.status || null,
+          elapsed_ms: Date.now() - startedAt
+        }
+      }).catch(() => {});
+      return null;
+    } finally {
+      crowdAnalysisInFlight = false;
+    }
+  }
+
   async function mapWithConcurrency(items, limit, worker) {
     const normalizedLimit = Math.max(1, Math.min(Number(limit) || 1, items.length || 1));
     const results = new Array(items.length);
@@ -2363,11 +2673,29 @@ module.exports = function registerParkPcmRoutes(app, options) {
     }
   }
 
+  function scheduleNextCrowdAnalysis(delayMs) {
+    if (!crowdAnalysisEnabled) {
+      return;
+    }
+    if (crowdAnalysisTimer) {
+      clearTimeout(crowdAnalysisTimer);
+    }
+    crowdAnalysisTimer = setTimeout(() => {
+      void runCrowdAnalysisTick('timer').finally(() => {
+        scheduleNextCrowdAnalysis(crowdAnalysisIntervalMs);
+      });
+    }, delayMs);
+    if (typeof crowdAnalysisTimer.unref === 'function') {
+      crowdAnalysisTimer.unref();
+    }
+  }
+
   app.get('/api/park-pcm/status', requirePermission('vehicle:read'), async (_req, res) => {
-    const [snapshot, reportState, monitorState] = await Promise.all([
+    const [snapshot, reportState, monitorState, analysisState] = await Promise.all([
       readJsonFile(snapshotPath),
       readJsonFile(reportStatePath),
-      readCrowdMonitorState()
+      readCrowdMonitorState(),
+      readCrowdAnalysisState()
     ]);
     return res.json({
       ok: true,
@@ -2396,6 +2724,27 @@ module.exports = function registerParkPcmRoutes(app, options) {
           camera_ids: ['camera1', 'camera2', 'camera3', 'camera4']
         },
         state: monitorState
+      },
+      crowd_analysis: {
+        enabled: crowdAnalysisEnabled,
+        interval_ms: crowdAnalysisIntervalMs,
+        boot_delay_ms: crowdAnalysisBootDelayMs,
+        in_flight: crowdAnalysisInFlight,
+        config: {
+          model: crowdAnalysisModel,
+          base_url: crowdAnalysisBaseUrl,
+          max_samples_per_tick: crowdAnalysisMaxSamples,
+          timeout_ms: crowdAnalysisTimeoutMs
+        },
+        state: analysisState
+          ? {
+              updated_at: analysisState.updated_at,
+              last_trigger: analysisState.last_trigger,
+              last_attempt_at: analysisState.last_attempt_at,
+              last_result: analysisState.last_result,
+              analyzed_sample_count: analysisState.samples ? Object.keys(analysisState.samples).length : 0
+            }
+          : null
       },
       snapshot: snapshot
         ? {
@@ -2530,15 +2879,39 @@ module.exports = function registerParkPcmRoutes(app, options) {
 
   app.get('/api/park-pcm/crowd/samples', requirePermission('vehicle:read'), async (req, res) => {
     try {
-      const samples = await readRecentCrowdSamples(req.query?.limit);
+      const samples = await readRecentCrowdSamples(req.query?.limit, {
+        vehicle_id: req.query?.vehicle_id
+      });
       return res.json({
         ok: true,
+        vehicle_id: req.query?.vehicle_id ? String(req.query.vehicle_id) : null,
         samples
       });
     } catch (error) {
       return res.status(error.status || 502).json({
         ok: false,
         error: error.message || 'park_pcm_crowd_samples_failed'
+      });
+    }
+  });
+
+  app.post('/api/park-pcm/crowd/analyze/run', requirePermission('vehicle:read'), async (_req, res) => {
+    try {
+      const state = await runCrowdAnalysisTick('manual');
+      return res.json({
+        ok: true,
+        analysis: state
+          ? {
+              updated_at: state.updated_at,
+              last_result: state.last_result,
+              analyzed_sample_count: state.samples ? Object.keys(state.samples).length : 0
+            }
+          : null
+      });
+    } catch (error) {
+      return res.status(error.status || 502).json({
+        ok: false,
+        error: error.message || 'park_crowd_analysis_failed'
       });
     }
   });
@@ -2612,4 +2985,5 @@ module.exports = function registerParkPcmRoutes(app, options) {
 
   scheduleNextReport(reportBootDelayMs);
   scheduleNextCrowdMonitor(crowdMonitorBootDelayMs);
+  scheduleNextCrowdAnalysis(crowdAnalysisBootDelayMs);
 };

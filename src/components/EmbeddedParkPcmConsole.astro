@@ -44,12 +44,20 @@
       <div class="park-pcm-band-head">
         <div>
           <p class="section-kicker">AMAP</p>
-          <h2>巡逻人流地图</h2>
+          <h2>采集轨迹地图</h2>
         </div>
         <p data-park-pcm-map-status>等待定位点</p>
       </div>
       <div class="park-pcm-map" data-park-pcm-map>
         <div class="park-pcm-map-fallback" data-park-pcm-map-fallback>高德地图加载中</div>
+      </div>
+      <div class="park-pcm-track-panel">
+        <div class="park-pcm-track-list" data-park-pcm-track-samples>
+          <p class="park-pcm-empty">等待采集点。</p>
+        </div>
+        <div class="park-pcm-track-detail" data-park-pcm-track-detail>
+          <p class="park-pcm-empty">等待采集点四路图片。</p>
+        </div>
       </div>
       <div class="park-pcm-vehicle-detail" data-park-pcm-vehicle-detail>
         <p class="park-pcm-empty">选择车辆后显示定位、巡逻任务和采样统计。</p>
@@ -101,8 +109,16 @@
       url("/assets/fallback/hero-cloud-ops-1600.jpg") center / cover fixed;
   }
 
+  .park-crowd-main {
+    padding-top: 96px;
+  }
+
+  .park-crowd-card {
+    overflow: visible;
+  }
+
   .park-pcm-shell {
-    width: min(1440px, 100%);
+    width: 100%;
     margin: 0 auto;
     display: grid;
     gap: 18px;
@@ -113,9 +129,9 @@
   .park-pcm-band,
   .park-pcm-auth {
     border: 1px solid rgba(148, 163, 184, 0.2);
-    background: rgba(7, 18, 31, 0.86);
-    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.28);
-    backdrop-filter: blur(18px);
+    background: rgba(15, 23, 42, 0.54);
+    box-shadow: none;
+    backdrop-filter: none;
   }
 
   .park-pcm-head {
@@ -123,7 +139,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 18px;
-    padding: 22px;
+    padding: 0 0 4px;
+    border: 0;
+    background: transparent;
   }
 
   .park-pcm-head h1,
@@ -134,7 +152,7 @@
   }
 
   .park-pcm-head h1 {
-    font-size: clamp(2rem, 4vw, 3.8rem);
+    font-size: clamp(1.75rem, 3vw, 2.45rem);
   }
 
   .park-pcm-band h2 {
@@ -310,6 +328,81 @@
     margin-top: 12px;
   }
 
+  .park-pcm-track-panel {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.34fr) minmax(0, 0.66fr);
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .park-pcm-track-list,
+  .park-pcm-track-detail {
+    min-width: 0;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    background: rgba(15, 23, 42, 0.48);
+  }
+
+  .park-pcm-track-list {
+    display: grid;
+    gap: 6px;
+    max-height: 280px;
+    overflow: auto;
+    padding: 8px;
+  }
+
+  .park-pcm-track-detail {
+    padding: 10px;
+  }
+
+  .park-pcm-track-point {
+    width: 100%;
+    min-height: 52px;
+    border: 1px solid rgba(45, 212, 191, 0.16);
+    background: rgba(2, 6, 23, 0.42);
+    color: #dbeafe;
+    text-align: left;
+    cursor: pointer;
+    padding: 8px 10px;
+  }
+
+  .park-pcm-track-point[data-active="true"] {
+    border-color: rgba(251, 191, 36, 0.78);
+    background: rgba(120, 53, 15, 0.34);
+  }
+
+  .park-pcm-track-point strong,
+  .park-pcm-track-point span {
+    display: block;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  .park-pcm-track-point span {
+    color: #9fb0c7;
+    font-size: 0.82rem;
+  }
+
+  .park-pcm-track-head {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+
+  .park-pcm-track-head strong {
+    color: #f8fafc;
+  }
+
+  .park-pcm-track-head span {
+    color: #9fb0c7;
+    line-height: 1.5;
+  }
+
+  .park-pcm-track-frames {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
   .park-pcm-detail-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -477,6 +570,10 @@
       min-height: 350px;
     }
 
+    .park-pcm-track-panel {
+      grid-template-columns: 1fr;
+    }
+
     .park-pcm-detail-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -489,6 +586,10 @@
   @media (max-width: 560px) {
     .park-pcm-detail-grid {
       grid-template-columns: 1fr;
+    }
+
+    .park-pcm-track-frames {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .park-pcm-crowd-gallery {
