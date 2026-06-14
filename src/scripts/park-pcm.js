@@ -38,6 +38,12 @@
   const crowdStatusEl = root.querySelector("[data-park-pcm-crowd-status]");
   const crowdLastEl = root.querySelector("[data-park-pcm-crowd-last]");
   const crowdSamplesEl = root.querySelector("[data-park-pcm-crowd-samples]");
+  const imagePreview = {
+    overlay: null,
+    image: null,
+    title: null,
+    meta: null
+  };
 
   let authenticated = false;
   let busy = false;
@@ -189,6 +195,75 @@
     if (crowdStatusEl) crowdStatusEl.textContent = text;
   }
 
+  function closeImagePreview() {
+    if (!imagePreview.overlay) return;
+    imagePreview.overlay.hidden = true;
+    imagePreview.image.removeAttribute("src");
+    imagePreview.image.alt = "";
+    imagePreview.title.textContent = "";
+    imagePreview.meta.textContent = "";
+  }
+
+  function ensureImagePreview() {
+    if (imagePreview.overlay) return imagePreview.overlay;
+    const overlay = document.createElement("div");
+    overlay.className = "park-pcm-image-preview";
+    overlay.hidden = true;
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "图片预览");
+
+    const frame = document.createElement("div");
+    frame.className = "park-pcm-image-preview-frame";
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "park-pcm-image-preview-toolbar";
+    const copy = document.createElement("div");
+    copy.appendChild(textNode("strong", "", ""));
+    copy.appendChild(textNode("span", "", ""));
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "park-pcm-image-preview-close";
+    closeBtn.setAttribute("aria-label", "关闭图片预览");
+    closeBtn.textContent = "×";
+
+    const img = document.createElement("img");
+    img.alt = "";
+
+    toolbar.appendChild(copy);
+    toolbar.appendChild(closeBtn);
+    frame.appendChild(toolbar);
+    frame.appendChild(img);
+    overlay.appendChild(frame);
+    document.body.appendChild(overlay);
+
+    imagePreview.overlay = overlay;
+    imagePreview.image = img;
+    imagePreview.title = copy.querySelector("strong");
+    imagePreview.meta = copy.querySelector("span");
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeImagePreview();
+    });
+    closeBtn.addEventListener("click", closeImagePreview);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeImagePreview();
+    });
+    return overlay;
+  }
+
+  function openImagePreview(frame, sample) {
+    const imageUrl = String(frame && frame.image_url || "").trim();
+    if (!imageUrl) return;
+    ensureImagePreview();
+    const peopleText = frame.analysis && frame.analysis.people_count != null ? `${frame.analysis.people_count} 人` : "人数待识别";
+    imagePreview.image.src = imageUrl;
+    imagePreview.image.alt = `${sample && sample.vehicle_id || ""} ${frame.camera_id || "camera"}`;
+    imagePreview.title.textContent = `${sample && sample.vehicle_id || "-"} · ${frame.camera_id || "camera"}`;
+    imagePreview.meta.textContent = `${formatTime(sample && sample.collected_at)} · ${formatBytes(frame.image_size_bytes)} · ${peopleText}`;
+    imagePreview.overlay.hidden = false;
+  }
+
   function setMapStatus(text) {
     if (mapStatusEl) mapStatusEl.textContent = text;
   }
@@ -284,10 +359,16 @@
       img.decoding = "async";
       img.alt = `${sample.vehicle_id || ""} ${frame.camera_id || "camera"}`;
       img.src = frame.image_url || "";
+      const previewBtn = document.createElement("button");
+      previewBtn.type = "button";
+      previewBtn.className = "park-pcm-frame-preview-button";
+      previewBtn.setAttribute("aria-label", "放大查看图片");
+      previewBtn.addEventListener("click", () => openImagePreview(frame, sample));
       const caption = document.createElement("figcaption");
       caption.appendChild(textNode("span", "", frame.camera_id || "camera"));
       caption.appendChild(textNode("span", "", `${formatBytes(frame.image_size_bytes)} · ${frame.analysis && frame.analysis.people_count != null ? `${frame.analysis.people_count}人` : "待识别"}`));
-      figure.appendChild(img);
+      previewBtn.appendChild(img);
+      figure.appendChild(previewBtn);
       figure.appendChild(caption);
       grid.appendChild(figure);
     });
