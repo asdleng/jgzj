@@ -9,9 +9,12 @@
   const CROWD_PATROLS_URL = "/api/park-pcm/crowd/patrols";
   const PATROL_MAX_VEHICLES = 24;
   const PATROL_REFRESH_MS = 90 * 1000;
-  const HEAT_SEGMENT_STEP_M = 28;
+  const HEAT_SEGMENT_STEP_M = 48;
   const HEAT_SEGMENT_MAX_DISTANCE_M = 750;
-  const HEAT_SEGMENT_MAX_INTERPOLATED_POINTS = 640;
+  const HEAT_SEGMENT_MAX_INTERPOLATED_POINTS = 360;
+  const HEATMAP_RADIUS_PX = 50;
+  const HEATMAP_MIN_OPACITY = 0.08;
+  const HEATMAP_MAX_OPACITY = 0.68;
 
   const AMAP_KEY = root.getAttribute("data-amap-key") || "";
   const statusEl = root.querySelector("[data-park-pcm-status]");
@@ -45,6 +48,10 @@
   let amapTrackLine = null;
   let amapHeatmap = null;
   let amapControlsReady = false;
+  let amapHeatmapEventsBound = false;
+  let amapLastHeatData = [];
+  let amapLastHeatMax = 0;
+  let heatmapRefreshTimer = null;
   let selectedVehicleId = "";
   let selectedSampleId = "";
   let sampleLoadRequestId = 0;
@@ -201,6 +208,12 @@
         amapHeatmap.hide();
       }
       amapHeatmap = null;
+    }
+    amapLastHeatData = [];
+    amapLastHeatMax = 0;
+    if (heatmapRefreshTimer) {
+      window.clearTimeout(heatmapRefreshTimer);
+      heatmapRefreshTimer = null;
     }
     if (heatLegendEl) heatLegendEl.hidden = true;
     if (amapMarkers.length) {
@@ -515,6 +528,31 @@
     });
   }
 
+  function refreshPeopleHeatmap() {
+    if (!amapHeatmap || !amapLastHeatData.length || typeof amapHeatmap.setDataSet !== "function") return;
+    amapHeatmap.setDataSet({
+      data: amapLastHeatData,
+      max: amapLastHeatMax || 1
+    });
+  }
+
+  function schedulePeopleHeatmapRefresh(delayMs) {
+    if (!amapHeatmap) return;
+    if (heatmapRefreshTimer) window.clearTimeout(heatmapRefreshTimer);
+    heatmapRefreshTimer = window.setTimeout(() => {
+      heatmapRefreshTimer = null;
+      refreshPeopleHeatmap();
+    }, Number.isFinite(Number(delayMs)) ? Number(delayMs) : 80);
+  }
+
+  function bindAmapHeatmapRefreshEvents() {
+    if (!amapMap || amapHeatmapEventsBound || typeof amapMap.on !== "function") return;
+    ["moveend", "zoomend", "resize", "complete"].forEach((eventName) => {
+      amapMap.on(eventName, () => schedulePeopleHeatmapRefresh(40));
+    });
+    amapHeatmapEventsBound = true;
+  }
+
   function sampleMapPoint(sample) {
     const position = samplePosition(sample);
     if (!position) return null;
@@ -534,6 +572,33 @@
   function heatWeight(point) {
     const count = Number(point && point.heat_count);
     return Number.isFinite(count) && count > 0 ? count : null;
+  }
+
+  function chooseDefaultVehicleId(samples) {
+    const scores = new Map();
+    (Array.isArray(samples) ? samples : []).forEach((sample, index) => {
+      const vehicleId = String(sample && sample.vehicle_id || "").trim();
+      if (!vehicleId || !samplePosition(sample)) return;
+      const peopleCount = Number(samplePeopleCount(sample));
+      const item = scores.get(vehicleId) || {
+        vehicle_id: vehicleId,
+        positive_points: 0,
+        total_people: 0,
+        latest_rank: Number.MAX_SAFE_INTEGER
+      };
+      if (Number.isFinite(peopleCount) && peopleCount > 0) {
+        item.positive_points += 1;
+        item.total_people += peopleCount;
+      }
+      item.latest_rank = Math.min(item.latest_rank, index);
+      scores.set(vehicleId, item);
+    });
+    const ranked = [...scores.values()].sort((left, right) => {
+      if (right.positive_points !== left.positive_points) return right.positive_points - left.positive_points;
+      if (right.total_people !== left.total_people) return right.total_people - left.total_people;
+      return left.latest_rank - right.latest_rank;
+    });
+    return ranked[0] && ranked[0].vehicle_id ? ranked[0].vehicle_id : "";
   }
 
   function distanceMeters(left, right) {
@@ -583,7 +648,7 @@
         interpolatedPoints.push({
           lng: Number(start.longitude) + (Number(end.longitude) - Number(start.longitude)) * ratio,
           lat: Number(start.latitude) + (Number(end.latitude) - Number(start.latitude)) * ratio,
-          count
+          count: count * 0.5
         });
       }
     }
@@ -610,22 +675,24 @@
         };
       }
       const maxCount = Math.max(...heatData.map((point) => point.count), 1);
+      amapLastHeatData = heatData;
+      amapLastHeatMax = maxCount;
       amapHeatmap = new AMap.HeatMap(amapMap, {
-        radius: 76,
-        opacity: [0, 0.86],
-        zIndex: 70,
+        radius: HEATMAP_RADIUS_PX,
+        opacity: [HEATMAP_MIN_OPACITY, HEATMAP_MAX_OPACITY],
+        zIndex: 120,
         gradient: {
-          0.16: "#22c55e",
-          0.38: "#a3e635",
-          0.58: "#facc15",
-          0.78: "#fb923c",
+          0.18: "#22c55e",
+          0.42: "#a3e635",
+          0.64: "#facc15",
+          0.82: "#fb923c",
           1: "#ef4444"
         }
       });
-      amapHeatmap.setDataSet({
-        data: heatData,
-        max: maxCount
-      });
+      if (typeof amapHeatmap.setMap === "function") amapHeatmap.setMap(amapMap);
+      refreshPeopleHeatmap();
+      if (typeof amapHeatmap.show === "function") amapHeatmap.show();
+      schedulePeopleHeatmapRefresh(120);
       if (heatLegendEl) heatLegendEl.hidden = false;
       return {
         count: heatData.length,
@@ -639,6 +706,44 @@
         unavailable: true
       };
     }
+  }
+
+  function addSampleMarkers(AMap, samplePoints, focusSampleId) {
+    if (!amapMap || !AMap || !samplePoints.length) return;
+    amapMarkers = samplePoints.map((point) => {
+      const peopleCount = heatWeight(point) || 0;
+      const focused = point.sample_id && point.sample_id === focusSampleId;
+      const markerRadius = focused ? 7 : Math.max(4, Math.min(7, 4 + Math.sqrt(peopleCount)));
+      const center = [Number(point.longitude), Number(point.latitude)];
+      const marker = AMap.CircleMarker
+        ? new AMap.CircleMarker({
+            center,
+            radius: markerRadius,
+            strokeColor: focused ? "#ffffff" : "#0f172a",
+            strokeOpacity: 0.92,
+            strokeWeight: focused ? 2.5 : 1.5,
+            fillColor: peopleCount > 0 ? "#ef4444" : "#38bdf8",
+            fillOpacity: focused ? 0.92 : 0.78,
+            zIndex: focused ? 150 : 145,
+            bubble: true,
+            cursor: "pointer"
+          })
+        : new AMap.Marker({
+            position: center,
+            zIndex: focused ? 150 : 145,
+            cursor: "pointer"
+          });
+      if (typeof marker.on === "function") {
+        marker.on("click", () => {
+          selectedSampleId = point.sample_id || "";
+          renderTrackSamples();
+          renderSampleDetail(point.sample);
+          schedulePeopleHeatmapRefresh(20);
+        });
+      }
+      return marker;
+    });
+    if (amapMarkers.length) amapMap.add(amapMarkers);
   }
 
   async function renderTrackMap(options) {
@@ -682,26 +787,32 @@
       }
       await ensureAmapControls(AMap);
       enableMapInteraction();
+      bindAmapHeatmapRefreshEvents();
       clearMapOverlays();
-      const heatStats = await renderPeopleHeatmap(AMap, samplePoints);
+      let fitTargets = [];
       if (samplePoints.length >= 2) {
         amapTrackLine = new AMap.Polyline({
           path: samplePoints.map((point) => [point.longitude, point.latitude]),
           strokeColor: "#f59e0b",
           strokeWeight: 4,
-          strokeOpacity: 0.78,
+          strokeOpacity: 0.72,
           lineJoin: "round",
-          zIndex: 80,
+          zIndex: 135,
           bubble: true
         });
         amapMap.add(amapTrackLine);
+        fitTargets = [amapTrackLine];
       }
-      amapMarkers = [];
-      const fitTargets = amapTrackLine ? [amapTrackLine] : [];
       if (fitTargets.length) {
-        amapMap.setFitView(fitTargets, false, [46, 46, 46, 46], 18);
+        amapMap.setFitView(fitTargets, true, [46, 46, 46, 46], 18);
       } else {
         amapMap.setZoomAndCenter(17, center);
+      }
+      const heatStats = await renderPeopleHeatmap(AMap, samplePoints);
+      try {
+        addSampleMarkers(AMap, samplePoints, opts.focus_sample_id || selectedSampleId);
+      } catch (_error) {
+        amapMarkers = [];
       }
       enableMapInteraction();
       setMapStatus(
@@ -813,11 +924,11 @@
     const list = Array.isArray(samples) ? samples.filter((item) => !item.skipped) : [];
     latestCrowdSamples = list;
     if (!selectedVehicleId && list.length) {
-      const firstVehicleId = String(list.find((sample) => sample && sample.vehicle_id)?.vehicle_id || "").trim();
-      if (firstVehicleId) {
-        selectedVehicleId = firstVehicleId;
-        ensureVehicleOption(firstVehicleId);
-        if (crowdVehicleSelect) crowdVehicleSelect.value = firstVehicleId;
+      const defaultVehicleId = chooseDefaultVehicleId(list);
+      if (defaultVehicleId) {
+        selectedVehicleId = defaultVehicleId;
+        ensureVehicleOption(defaultVehicleId);
+        if (crowdVehicleSelect) crowdVehicleSelect.value = defaultVehicleId;
       }
     }
     const rows = visibleCrowdSamples();
