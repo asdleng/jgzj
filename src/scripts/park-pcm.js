@@ -9,6 +9,7 @@
   const CROWD_UPLOADS_URL = "/api/park-pcm/crowd/uploads";
   const PATROL_FLOW_COLLECTORS_URL = "/api/park-pcm/crowd/patrol-flow/collectors";
   const PATROL_FLOW_FLUSH_URL = "/api/park-pcm/crowd/patrol-flow/flush";
+  const VEHICLE_UPLOAD_SAMPLE_SOURCE = "auto_ad_patrol_flow_upload";
   const PATROL_MAX_VEHICLES = 24;
   const PATROL_REFRESH_MS = 90 * 1000;
   const HEAT_SEGMENT_STEP_M = 48;
@@ -326,7 +327,9 @@
   }
 
   function visibleCrowdSamples() {
-    const rows = latestCrowdSamples.filter((sample) => samplePosition(sample));
+    const rows = latestCrowdSamples
+      .filter((sample) => String(sample && sample.source || "") === VEHICLE_UPLOAD_SAMPLE_SOURCE)
+      .filter((sample) => samplePosition(sample));
     if (!selectedVehicleId) return [];
     return rows.filter((sample) => sample.vehicle_id === selectedVehicleId);
   }
@@ -337,7 +340,7 @@
     if ([...crowdVehicleSelect.options].some((option) => option.value === value)) return;
     const option = document.createElement("option");
     option.value = value;
-    option.textContent = `${value} · 历史采集`;
+    option.textContent = `${value} · 车端采集`;
     crowdVehicleSelect.appendChild(option);
   }
 
@@ -456,7 +459,7 @@
         textNode(
           "p",
           "park-pcm-empty",
-          selectedVehicleId ? `${selectedVehicleId} 还没有服务器落盘采集点。` : "请先选择一台车辆查看服务器落盘历史。"
+          selectedVehicleId ? `${selectedVehicleId} 还没有车端巡逻上传数据。` : "请选择一台车辆查看车端巡逻上传数据。"
         )
       );
       return;
@@ -486,7 +489,7 @@
       textNode(
         "p",
         "park-pcm-detail-note",
-        "当前地图和四路图片只来自该车已经上传并落盘到服务器的历史采集点。"
+        "当前地图和图片只来自车端 patrol-flow 上传包，不再展示云端主动抓拍旧数据。"
       )
     );
   }
@@ -981,12 +984,13 @@
     const state = data && data.state ? data.state : {};
     const storage = data && data.storage ? data.storage : {};
     const sampleIndex = data && data.sample_index ? data.sample_index : {};
+    const vehicleUpload = sampleIndex.vehicle_upload || {};
     const sessions = Array.isArray(state.recent_sessions) ? state.recent_sessions : [];
     clearElement(uploadSummaryEl);
     if (uploadSummaryEl) {
       [
         `Session ${formatNumber(state.session_count, "0")} / 成功 ${formatNumber(state.imported_count, "0")}`,
-        `采样 ${formatNumber(sampleIndex.sample_count, "0")} 点 / ${formatNumber(sampleIndex.frame_count, "0")} 张`,
+        `车端 ${formatNumber(vehicleUpload.sample_count, "0")} 点 / ${formatNumber(vehicleUpload.frame_count, "0")} 张`,
         `存储 ${formatBytes(storage.total_bytes)} / ${formatBytes(storage.max_storage_bytes)}`,
         `可接收 ${formatBoolean(data && data.can_accept_upload)}`
       ].forEach((text) => uploadSummaryEl.appendChild(textNode("span", "", text)));
@@ -994,14 +998,14 @@
     clearElement(uploadListEl);
     if (uploadListEl) {
       if (!sessions.length) {
-        const latest = sampleIndex.latest_sample;
+        const latest = vehicleUpload.latest_sample;
         uploadListEl.appendChild(
           textNode(
             "p",
             "park-pcm-empty",
             latest
-              ? `还没有车端补传 session；当前 ${formatNumber(sampleIndex.sample_count, "0")} 个采集点来自云端主动抓拍，最近 ${latest.vehicle_id || "-"} · ${formatTime(latest.collected_at)}。`
-              : "还没有车端补传 session。"
+              ? `最近车端上传 ${latest.vehicle_id || "-"} · ${formatTime(latest.collected_at)}。`
+              : "还没有车端 patrol-flow 上传数据；旧云端主动抓拍数据已隐藏。"
           )
         );
       } else {

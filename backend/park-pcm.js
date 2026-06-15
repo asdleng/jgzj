@@ -39,6 +39,7 @@ const DEFAULT_CROWD_STORAGE_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_PATROL_FLOW_UPLOAD_MAX_BYTES = 128 * 1024 * 1024;
 const DEFAULT_PATROL_FLOW_MAX_FRAME_ROWS = 4000;
 const PATROL_FLOW_SCHEMA_V1 = 'auto_ad_patrol_flow_session.v1';
+const VEHICLE_PATROL_FLOW_SAMPLE_SOURCE = 'auto_ad_patrol_flow_upload';
 
 function nowIso() {
   return new Date().toISOString();
@@ -1610,26 +1611,46 @@ module.exports = function registerParkPcmRoutes(app, options) {
         .filter((sample) => sample && !sample.skipped);
       const vehicleIds = new Set();
       const sourceCounts = {};
+      const vehicleUploadVehicleIds = new Set();
       let frameCount = 0;
       let totalImageBytes = 0;
       let withPositionCount = 0;
+      let vehicleUploadFrameCount = 0;
+      let vehicleUploadTotalImageBytes = 0;
+      let vehicleUploadWithPositionCount = 0;
       let latestSample = null;
+      let latestVehicleUploadSample = null;
       for (const sample of samples) {
         if (sample.vehicle_id) vehicleIds.add(String(sample.vehicle_id));
         const source = String(sample.source || 'cloud_camera_capture');
+        const isVehicleUpload = source === VEHICLE_PATROL_FLOW_SAMPLE_SOURCE;
+        const sampleFrameCount = Number(sample.frame_count) || 0;
+        const sampleImageBytes = Number(sample.total_image_bytes) || 0;
         sourceCounts[source] = (sourceCounts[source] || 0) + 1;
-        frameCount += Number(sample.frame_count) || 0;
-        totalImageBytes += Number(sample.total_image_bytes) || 0;
-        if (
+        frameCount += sampleFrameCount;
+        totalImageBytes += sampleImageBytes;
+        if (isVehicleUpload && sample.vehicle_id) {
+          vehicleUploadVehicleIds.add(String(sample.vehicle_id));
+          vehicleUploadFrameCount += sampleFrameCount;
+          vehicleUploadTotalImageBytes += sampleImageBytes;
+        }
+        const hasPosition =
           Number.isFinite(Number(sample?.position?.gaode_longitude)) &&
-          Number.isFinite(Number(sample?.position?.gaode_latitude))
-        ) {
+          Number.isFinite(Number(sample?.position?.gaode_latitude));
+        if (hasPosition) {
           withPositionCount += 1;
+          if (isVehicleUpload) vehicleUploadWithPositionCount += 1;
         }
         const sampleMs = Number(sample.collected_at_ms || Date.parse(sample.collected_at || ''));
         const latestMs = latestSample ? Number(latestSample.collected_at_ms || Date.parse(latestSample.collected_at || '')) : null;
         if (Number.isFinite(sampleMs) && (!Number.isFinite(latestMs) || sampleMs > latestMs)) {
           latestSample = sample;
+        }
+        const latestUploadMs = latestVehicleUploadSample
+          ? Number(latestVehicleUploadSample.collected_at_ms || Date.parse(latestVehicleUploadSample.collected_at || ''))
+          : null;
+        if (isVehicleUpload && Number.isFinite(sampleMs) && (!Number.isFinite(latestUploadMs) || sampleMs > latestUploadMs)) {
+          latestVehicleUploadSample = sample;
         }
       }
       return {
@@ -1649,6 +1670,25 @@ module.exports = function registerParkPcmRoutes(app, options) {
               total_image_bytes: latestSample.total_image_bytes || 0
             }
           : null
+        ,
+        vehicle_upload: {
+          source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE,
+          sample_count: sourceCounts[VEHICLE_PATROL_FLOW_SAMPLE_SOURCE] || 0,
+          frame_count: vehicleUploadFrameCount,
+          total_image_bytes: vehicleUploadTotalImageBytes,
+          vehicle_count: vehicleUploadVehicleIds.size,
+          with_position_count: vehicleUploadWithPositionCount,
+          latest_sample: latestVehicleUploadSample
+            ? {
+                sample_id: latestVehicleUploadSample.sample_id || null,
+                vehicle_id: latestVehicleUploadSample.vehicle_id || null,
+                source: latestVehicleUploadSample.source || null,
+                collected_at: latestVehicleUploadSample.collected_at || null,
+                frame_count: latestVehicleUploadSample.frame_count || 0,
+                total_image_bytes: latestVehicleUploadSample.total_image_bytes || 0
+              }
+            : null
+        }
       };
     } catch (_error) {
       return {
@@ -1658,7 +1698,16 @@ module.exports = function registerParkPcmRoutes(app, options) {
         vehicle_count: 0,
         with_position_count: 0,
         source_counts: {},
-        latest_sample: null
+        latest_sample: null,
+        vehicle_upload: {
+          source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE,
+          sample_count: 0,
+          frame_count: 0,
+          total_image_bytes: 0,
+          vehicle_count: 0,
+          with_position_count: 0,
+          latest_sample: null
+        }
       };
     }
   }
@@ -2985,6 +3034,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   async function readCrowdSampleLog(limit, filters) {
     const normalizedLimit = toFiniteInteger(limit, 20, { min: 1, max: 1000 });
     const vehicleId = String(filters?.vehicle_id || '').trim();
+    const source = String(filters?.source || '').trim();
     try {
       const text = await fsp.readFile(crowdIndexLogPath, 'utf8');
       const rows = text
@@ -2992,9 +3042,11 @@ module.exports = function registerParkPcmRoutes(app, options) {
         .filter(Boolean)
         .map((line) => safeJsonParse(line, null))
         .filter(Boolean);
-      const filteredRows = vehicleId
-        ? rows.filter((sample) => String(sample?.vehicle_id || '') === vehicleId)
-        : rows;
+      const filteredRows = rows.filter((sample) => {
+        if (vehicleId && String(sample?.vehicle_id || '') !== vehicleId) return false;
+        if (source && String(sample?.source || 'cloud_camera_capture') !== source) return false;
+        return true;
+      });
       return filteredRows
         .slice(-normalizedLimit)
         .reverse();
@@ -3019,7 +3071,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     const nowMs = Date.now();
     const [vehiclesRaw, samples, state] = await Promise.all([
       listVehicles(),
-      readRecentCrowdSamples(100),
+      readRecentCrowdSamples(100, { source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE }),
       readCrowdState()
     ]);
     const vehicles = vehiclesRaw
@@ -3114,7 +3166,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     const nowMs = Date.now();
     const [vehicles, samples, state] = await Promise.all([
       listVehicles(),
-      readRecentCrowdSamples(100),
+      readRecentCrowdSamples(100, { source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE }),
       readCrowdState()
     ]);
     const vehicle = vehicles.find((item) => String(item?.vehicle_id || '') === requestedVehicleId);
@@ -4698,11 +4750,13 @@ module.exports = function registerParkPcmRoutes(app, options) {
   app.get('/api/park-pcm/crowd/samples', requirePermission('vehicle:read'), async (req, res) => {
     try {
       const samples = await readRecentCrowdSamples(req.query?.limit, {
-        vehicle_id: req.query?.vehicle_id
+        vehicle_id: req.query?.vehicle_id,
+        source: req.query?.source
       });
       return res.json({
         ok: true,
         vehicle_id: req.query?.vehicle_id ? String(req.query.vehicle_id) : null,
+        source: req.query?.source ? String(req.query.source) : null,
         samples
       });
     } catch (error) {
