@@ -1078,6 +1078,7 @@ function firstFiniteNumber(values) {
   for (const value of values) {
     const raw = unwrapRosValue(value);
     if (raw == null || raw === '') continue;
+    if (raw && typeof raw === 'object') continue;
     const num = Number(raw);
     if (Number.isFinite(num)) return num;
   }
@@ -1562,6 +1563,132 @@ module.exports = function registerParkPcmRoutes(app, options) {
   async function appendPatrolFlowUploadLog(entry) {
     await ensureCrowdRuntimeDirs();
     await fsp.appendFile(crowdUploadIndexLogPath, `${JSON.stringify(entry)}\n`, 'utf8');
+  }
+
+  async function readPatrolFlowUploadLog(limit) {
+    const normalizedLimit = toFiniteInteger(limit, 50, { min: 1, max: 500 });
+    try {
+      const text = await fsp.readFile(crowdUploadIndexLogPath, 'utf8');
+      return text
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => safeJsonParse(line, null))
+        .filter(Boolean)
+        .slice(-normalizedLimit)
+        .reverse();
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  async function summarizeCrowdSampleIndex() {
+    try {
+      const text = await fsp.readFile(crowdIndexLogPath, 'utf8');
+      const samples = text
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => safeJsonParse(line, null))
+        .filter((sample) => sample && !sample.skipped);
+      const vehicleIds = new Set();
+      const sourceCounts = {};
+      let frameCount = 0;
+      let totalImageBytes = 0;
+      let withPositionCount = 0;
+      let latestSample = null;
+      for (const sample of samples) {
+        if (sample.vehicle_id) vehicleIds.add(String(sample.vehicle_id));
+        const source = String(sample.source || 'cloud_camera_capture');
+        sourceCounts[source] = (sourceCounts[source] || 0) + 1;
+        frameCount += Number(sample.frame_count) || 0;
+        totalImageBytes += Number(sample.total_image_bytes) || 0;
+        if (
+          Number.isFinite(Number(sample?.position?.gaode_longitude)) &&
+          Number.isFinite(Number(sample?.position?.gaode_latitude))
+        ) {
+          withPositionCount += 1;
+        }
+        const sampleMs = Number(sample.collected_at_ms || Date.parse(sample.collected_at || ''));
+        const latestMs = latestSample ? Number(latestSample.collected_at_ms || Date.parse(latestSample.collected_at || '')) : null;
+        if (Number.isFinite(sampleMs) && (!Number.isFinite(latestMs) || sampleMs > latestMs)) {
+          latestSample = sample;
+        }
+      }
+      return {
+        sample_count: samples.length,
+        frame_count: frameCount,
+        total_image_bytes: totalImageBytes,
+        vehicle_count: vehicleIds.size,
+        with_position_count: withPositionCount,
+        source_counts: sourceCounts,
+        latest_sample: latestSample
+          ? {
+              sample_id: latestSample.sample_id || null,
+              vehicle_id: latestSample.vehicle_id || null,
+              source: latestSample.source || 'cloud_camera_capture',
+              collected_at: latestSample.collected_at || null,
+              frame_count: latestSample.frame_count || 0,
+              total_image_bytes: latestSample.total_image_bytes || 0
+            }
+          : null
+      };
+    } catch (_error) {
+      return {
+        sample_count: 0,
+        frame_count: 0,
+        total_image_bytes: 0,
+        vehicle_count: 0,
+        with_position_count: 0,
+        source_counts: {},
+        latest_sample: null
+      };
+    }
+  }
+
+  function summarizePatrolFlowUploadState(state, limit) {
+    const normalizedLimit = toFiniteInteger(limit, 20, { min: 1, max: 100 });
+    const sessions = Object.values(state?.sessions || {});
+    const recentSessions = sessions
+      .sort((left, right) =>
+        Date.parse(right.imported_at || right.received_at || right.failed_at || '') -
+        Date.parse(left.imported_at || left.received_at || left.failed_at || '')
+      )
+      .slice(0, normalizedLimit);
+    return {
+      updated_at: state?.updated_at || null,
+      session_count: sessions.length,
+      imported_count: sessions.filter((session) => session.status === 'imported').length,
+      failed_count: sessions.filter((session) => session.status === 'failed').length,
+      importing_count: sessions.filter((session) => session.status === 'importing').length,
+      recent_sessions: recentSessions
+    };
+  }
+
+  async function buildPatrolFlowUploadStatus(params) {
+    const [state, storage, recent_log, sample_index] = await Promise.all([
+      readPatrolFlowUploadState(),
+      cleanupCrowdStorage(),
+      readPatrolFlowUploadLog(params?.log_limit),
+      summarizeCrowdSampleIndex()
+    ]);
+    return {
+      ok: true,
+      generated_at: nowIso(),
+      schema: PATROL_FLOW_SCHEMA_V1,
+      upload_endpoint: '/api/auto_ad/patrol-flow/upload',
+      status_endpoint: '/api/auto_ad/patrol-flow/status',
+      methods: ['POST', 'PUT'],
+      content_type: 'application/gzip',
+      auth_token_required: Boolean(patrolFlowUploadToken),
+      limits: {
+        max_upload_bytes: patrolFlowUploadMaxBytes,
+        max_frame_rows: patrolFlowMaxFrameRows
+      },
+      can_accept_upload: storage.can_accept_upload === true,
+      storage,
+      sample_index,
+      state: summarizePatrolFlowUploadState(state, params?.session_limit),
+      recent_log
+    };
   }
 
   async function walkFiles(rootPath, relativeBase) {
@@ -2117,7 +2244,9 @@ module.exports = function registerParkPcmRoutes(app, options) {
     ]);
     const gcj = suppliedGaodeLat != null && suppliedGaodeLng != null
       ? { latitude: suppliedGaodeLat, longitude: suppliedGaodeLng }
-      : wgs84ToGcj02(latitude, longitude);
+      : latitude != null && longitude != null
+        ? wgs84ToGcj02(latitude, longitude)
+        : { latitude: null, longitude: null };
     return {
       source: 'auto_ad_patrol_flow_upload',
       reliable: latitude != null && longitude != null,
@@ -2654,6 +2783,15 @@ module.exports = function registerParkPcmRoutes(app, options) {
           disk_free_bytes: storageBefore.disk_free_bytes
         }
       });
+      console.log(JSON.stringify({
+        event: 'patrol_flow_upload_imported',
+        session_id: headersInfo.session_id,
+        vehicle_ids: imported.vehicle_ids,
+        sample_count: imported.sample_count,
+        frame_count: imported.frame_count,
+        size_bytes: uploadInfo.size_bytes,
+        elapsed_ms: Date.now() - startedAt
+      }));
 
       return res.status(201).json({
         ...imported,
@@ -2690,6 +2828,13 @@ module.exports = function registerParkPcmRoutes(app, options) {
           elapsed_ms: Date.now() - startedAt
         }).catch(() => {});
       }
+      console.warn(JSON.stringify({
+        event: 'patrol_flow_upload_failed',
+        session_id: headersInfo?.session_id || null,
+        error: error.message || 'patrol_flow_upload_failed',
+        status: error.status || 500,
+        elapsed_ms: Date.now() - startedAt
+      }));
       return res.status(error.status || 500).json({
         ok: false,
         error: error.message || 'patrol_flow_upload_failed',
@@ -2760,6 +2905,62 @@ module.exports = function registerParkPcmRoutes(app, options) {
           }))
         : sample.frames
     };
+  }
+
+  function mergeServerAnalysisWithVehicleEstimate(sample, serverAnalysis) {
+    const frameResults = serverAnalysis?.frames && typeof serverAnalysis.frames === 'object'
+      ? serverAnalysis.frames
+      : {};
+    const mergedFrames = {};
+    const sampleFrames = Array.isArray(sample?.frames) ? sample.frames : [];
+    sampleFrames.forEach((frame) => {
+      const frameKey = frame.capture_id || frame.camera_id || `frame_${Object.keys(mergedFrames).length + 1}`;
+      const serverFrame = frameResults[frameKey] || frameResults[frame.camera_id] || null;
+      const existingFrameAnalysis = frame.analysis && typeof frame.analysis === 'object' ? frame.analysis : {};
+      if (existingFrameAnalysis.status === 'vehicle_estimate') {
+        mergedFrames[frameKey] = {
+          ...existingFrameAnalysis,
+          vehicle_estimate: {
+            people_count: existingFrameAnalysis.people_count,
+            confidence: existingFrameAnalysis.confidence || null,
+            model: existingFrameAnalysis.model || 'vehicle_perception_upload',
+            analyzed_at: existingFrameAnalysis.analyzed_at || null,
+            note: existingFrameAnalysis.note || null
+          },
+          server_vlm: serverFrame,
+          status: serverFrame?.status === 'done' ? 'vehicle_estimate_server_reviewed' : existingFrameAnalysis.status
+        };
+      } else {
+        mergedFrames[frameKey] = serverFrame || existingFrameAnalysis;
+      }
+    });
+
+    const existingAggregate = sample?.analysis && typeof sample.analysis === 'object' ? sample.analysis : {};
+    if (existingAggregate.status === 'vehicle_estimate') {
+      return {
+        frames: mergedFrames,
+        aggregate: {
+          ...existingAggregate,
+          vehicle_estimate: {
+            people_count: existingAggregate.people_count,
+            max_single_camera_people: existingAggregate.max_single_camera_people ?? null,
+            frame_count_analyzed: existingAggregate.frame_count_analyzed ?? null,
+            model: existingAggregate.model || 'vehicle_perception_upload',
+            analyzed_at: existingAggregate.analyzed_at || null,
+            note: existingAggregate.note || null
+          },
+          server_vlm: serverAnalysis?.aggregate || null,
+          status: serverAnalysis?.aggregate?.status === 'done'
+            ? 'vehicle_estimate_server_reviewed'
+            : existingAggregate.status,
+          note: serverAnalysis?.aggregate?.status
+            ? `${existingAggregate.note || '车端 perception 初始统计。'} 云端复核状态：${serverAnalysis.aggregate.status}。`
+            : existingAggregate.note
+        }
+      };
+    }
+
+    return serverAnalysis;
   }
 
   async function readCrowdSampleLog(limit, filters) {
@@ -3617,15 +3818,17 @@ module.exports = function registerParkPcmRoutes(app, options) {
           continue;
         }
         const existing = state.samples[sample.sample_id];
-        if (existing?.aggregate?.status === 'done') {
+        if (['done', 'vehicle_estimate_server_reviewed'].includes(existing?.aggregate?.status)) {
           continue;
         }
-        const sampleAnalysis = await analyzeCrowdSample(sample);
+        const sampleAnalysis = mergeServerAnalysisWithVehicleEstimate(sample, await analyzeCrowdSample(sample));
         state.samples[sample.sample_id] = {
           sample_id: sample.sample_id,
           vehicle_id: sample.vehicle_id || null,
           collected_at: sample.collected_at || null,
           position: sample.position || null,
+          source: sample.source || null,
+          upload_session_id: sample.upload_session_id || null,
           ...sampleAnalysis
         };
         attempts.push({
@@ -4130,6 +4333,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
       patrol_flow_upload: {
         schema: PATROL_FLOW_SCHEMA_V1,
         endpoint: '/api/auto_ad/patrol-flow/upload',
+        status_endpoint: '/api/auto_ad/patrol-flow/status',
         auth_token_required: Boolean(patrolFlowUploadToken),
         max_upload_bytes: patrolFlowUploadMaxBytes,
         max_frame_rows: patrolFlowMaxFrameRows,
@@ -4138,18 +4342,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
           max_storage_bytes: crowdStorageMaxBytes,
           min_free_bytes: crowdStorageMinFreeBytes
         },
-        state: uploadState
-          ? {
-              updated_at: uploadState.updated_at,
-              session_count: uploadState.sessions ? Object.keys(uploadState.sessions).length : 0,
-              recent_sessions: Object.values(uploadState.sessions || {})
-                .sort((left, right) =>
-                  Date.parse(right.imported_at || right.received_at || right.failed_at || '') -
-                  Date.parse(left.imported_at || left.received_at || left.failed_at || '')
-                )
-                .slice(0, 8)
-            }
-          : null
+        state: summarizePatrolFlowUploadState(uploadState, 8)
       },
       snapshot: snapshot
         ? {
@@ -4353,6 +4546,30 @@ module.exports = function registerParkPcmRoutes(app, options) {
 
   app.post('/api/auto_ad/patrol-flow/upload', requirePatrolFlowUploadAuth, handlePatrolFlowUpload);
   app.put('/api/auto_ad/patrol-flow/upload', requirePatrolFlowUploadAuth, handlePatrolFlowUpload);
+  app.get('/api/auto_ad/patrol-flow/status', requirePatrolFlowUploadAuth, async (_req, res) => {
+    try {
+      return res.json(await buildPatrolFlowUploadStatus({ session_limit: 8, log_limit: 8 }));
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'patrol_flow_status_failed'
+      });
+    }
+  });
+
+  app.get('/api/park-pcm/crowd/uploads', requirePermission('vehicle:read'), async (req, res) => {
+    try {
+      return res.json(await buildPatrolFlowUploadStatus({
+        session_limit: req.query?.limit,
+        log_limit: req.query?.log_limit || req.query?.limit
+      }));
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'park_pcm_crowd_uploads_failed'
+      });
+    }
+  });
 
   app.post('/api/park-pcm/crowd/cleanup', requirePermission('vehicle:read'), async (_req, res) => {
     try {

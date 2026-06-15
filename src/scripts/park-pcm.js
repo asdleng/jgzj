@@ -7,14 +7,15 @@
   const CROWD_SAMPLES_URL = "/api/park-pcm/crowd/samples";
   const CROWD_CAPTURE_URL = "/api/park-pcm/crowd/demo-capture";
   const CROWD_PATROLS_URL = "/api/park-pcm/crowd/patrols";
+  const CROWD_UPLOADS_URL = "/api/park-pcm/crowd/uploads";
   const PATROL_MAX_VEHICLES = 24;
   const PATROL_REFRESH_MS = 90 * 1000;
   const HEAT_SEGMENT_STEP_M = 48;
   const HEAT_SEGMENT_MAX_DISTANCE_M = 750;
   const HEAT_SEGMENT_MAX_INTERPOLATED_POINTS = 360;
-  const HEATMAP_RADIUS_PX = 50;
-  const HEATMAP_MIN_OPACITY = 0.08;
-  const HEATMAP_MAX_OPACITY = 0.68;
+  const HEATMAP_RADIUS_PX = 28;
+  const HEATMAP_MIN_OPACITY = 0.05;
+  const HEATMAP_MAX_OPACITY = 0.42;
 
   const AMAP_KEY = root.getAttribute("data-amap-key") || "";
   const statusEl = root.querySelector("[data-park-pcm-status]");
@@ -26,6 +27,9 @@
   const mapFallbackEl = root.querySelector("[data-park-pcm-map-fallback]");
   const heatLegendEl = root.querySelector("[data-park-pcm-heat-legend]");
   const mapStatusEl = root.querySelector("[data-park-pcm-map-status]");
+  const uploadStatusEl = root.querySelector("[data-park-pcm-upload-status]");
+  const uploadSummaryEl = root.querySelector("[data-park-pcm-upload-summary]");
+  const uploadListEl = root.querySelector("[data-park-pcm-upload-list]");
   const vehicleSummaryEl = root.querySelector("[data-park-pcm-vehicle-summary]");
   const vehicleDetailEl = root.querySelector("[data-park-pcm-vehicle-detail]");
   const trackSamplesEl = root.querySelector("[data-park-pcm-track-samples]");
@@ -138,6 +142,10 @@
     return Number.isFinite(num) ? num.toFixed(6) : "-";
   }
 
+  function formatBoolean(value) {
+    return value === true ? "是" : value === false ? "否" : "-";
+  }
+
   function samplePeopleCount(sample) {
     const direct = Number(sample && sample.analysis && sample.analysis.people_count);
     if (Number.isFinite(direct)) return direct;
@@ -193,6 +201,10 @@
 
   function setCrowdStatus(text) {
     if (crowdStatusEl) crowdStatusEl.textContent = text;
+  }
+
+  function setUploadStatus(text) {
+    if (uploadStatusEl) uploadStatusEl.textContent = text;
   }
 
   function closeImagePreview() {
@@ -609,27 +621,32 @@
     });
   }
 
-  function refreshPeopleHeatmap() {
+  function refreshPeopleHeatmap(resetMap) {
     if (!amapHeatmap || !amapLastHeatData.length || typeof amapHeatmap.setDataSet !== "function") return;
+    if (resetMap && typeof amapHeatmap.setMap === "function" && amapMap) {
+      amapHeatmap.setMap(null);
+      amapHeatmap.setMap(amapMap);
+    }
     amapHeatmap.setDataSet({
       data: amapLastHeatData,
       max: amapLastHeatMax || 1
     });
+    if (typeof amapHeatmap.show === "function") amapHeatmap.show();
   }
 
-  function schedulePeopleHeatmapRefresh(delayMs) {
+  function schedulePeopleHeatmapRefresh(delayMs, resetMap) {
     if (!amapHeatmap) return;
     if (heatmapRefreshTimer) window.clearTimeout(heatmapRefreshTimer);
     heatmapRefreshTimer = window.setTimeout(() => {
       heatmapRefreshTimer = null;
-      refreshPeopleHeatmap();
+      refreshPeopleHeatmap(resetMap);
     }, Number.isFinite(Number(delayMs)) ? Number(delayMs) : 80);
   }
 
   function bindAmapHeatmapRefreshEvents() {
     if (!amapMap || amapHeatmapEventsBound || typeof amapMap.on !== "function") return;
     ["moveend", "zoomend", "resize", "complete"].forEach((eventName) => {
-      amapMap.on(eventName, () => schedulePeopleHeatmapRefresh(40));
+      amapMap.on(eventName, () => schedulePeopleHeatmapRefresh(50, true));
     });
     amapHeatmapEventsBound = true;
   }
@@ -771,9 +788,9 @@
         }
       });
       if (typeof amapHeatmap.setMap === "function") amapHeatmap.setMap(amapMap);
-      refreshPeopleHeatmap();
+      refreshPeopleHeatmap(false);
       if (typeof amapHeatmap.show === "function") amapHeatmap.show();
-      schedulePeopleHeatmapRefresh(120);
+      schedulePeopleHeatmapRefresh(160, true);
       if (heatLegendEl) heatLegendEl.hidden = false;
       return {
         count: heatData.length,
@@ -819,7 +836,7 @@
           selectedSampleId = point.sample_id || "";
           renderTrackSamples();
           renderSampleDetail(point.sample);
-          schedulePeopleHeatmapRefresh(20);
+          schedulePeopleHeatmapRefresh(20, false);
         });
       }
       return marker;
@@ -960,6 +977,68 @@
     return nextVehicleId;
   }
 
+  function renderUploadStatus(data) {
+    const state = data && data.state ? data.state : {};
+    const storage = data && data.storage ? data.storage : {};
+    const sampleIndex = data && data.sample_index ? data.sample_index : {};
+    const sessions = Array.isArray(state.recent_sessions) ? state.recent_sessions : [];
+    clearElement(uploadSummaryEl);
+    if (uploadSummaryEl) {
+      [
+        `Session ${formatNumber(state.session_count, "0")} / 成功 ${formatNumber(state.imported_count, "0")}`,
+        `采样 ${formatNumber(sampleIndex.sample_count, "0")} 点 / ${formatNumber(sampleIndex.frame_count, "0")} 张`,
+        `存储 ${formatBytes(storage.total_bytes)} / ${formatBytes(storage.max_storage_bytes)}`,
+        `可接收 ${formatBoolean(data && data.can_accept_upload)}`
+      ].forEach((text) => uploadSummaryEl.appendChild(textNode("span", "", text)));
+    }
+    clearElement(uploadListEl);
+    if (uploadListEl) {
+      if (!sessions.length) {
+        const latest = sampleIndex.latest_sample;
+        uploadListEl.appendChild(
+          textNode(
+            "p",
+            "park-pcm-empty",
+            latest
+              ? `还没有车端补传 session；当前 ${formatNumber(sampleIndex.sample_count, "0")} 个采集点来自云端主动抓拍，最近 ${latest.vehicle_id || "-"} · ${formatTime(latest.collected_at)}。`
+              : "还没有车端补传 session。"
+          )
+        );
+      } else {
+        sessions.slice(0, 6).forEach((session) => {
+          const row = document.createElement("article");
+          row.className = "park-pcm-upload-row";
+          row.appendChild(
+            textNode(
+              "strong",
+              "",
+              `${session.session_id || "-"} · ${session.status || "-"} · ${formatTime(session.imported_at || session.failed_at || session.received_at)}`
+            )
+          );
+          row.appendChild(
+            textNode(
+              "span",
+              "",
+              [
+                `车辆 ${Array.isArray(session.vehicle_ids) && session.vehicle_ids.length ? session.vehicle_ids.join(", ") : "-"}`,
+                `采样 ${formatNumber(session.sample_count, "0")} 点`,
+                `图片 ${formatNumber(session.frame_count, "0")} 张`,
+                `包 ${formatBytes(session.size_bytes)}`,
+                session.error ? `错误 ${session.error}` : ""
+              ].filter(Boolean).join(" · ")
+            )
+          );
+          uploadListEl.appendChild(row);
+        });
+      }
+    }
+    setUploadStatus(
+      sessions.length
+        ? `最近 ${formatTime(sessions[0].imported_at || sessions[0].failed_at || sessions[0].received_at)}`
+        : `等待车端补传 · 可接收 ${formatBoolean(data && data.can_accept_upload)}`
+    );
+  }
+
   function renderCrowdLast(sample) {
     clearElement(crowdLastEl);
     if (!crowdLastEl) return;
@@ -1050,6 +1129,12 @@
     return data;
   }
 
+  async function loadCrowdUploads() {
+    const data = await fetchJson(`${CROWD_UPLOADS_URL}?limit=8&log_limit=8`);
+    renderUploadStatus(data);
+    return data;
+  }
+
   async function loadCrowdSamples(vehicleId) {
     const normalizedVehicleId = String(vehicleId == null ? selectedVehicleId : vehicleId).trim();
     const requestId = sampleLoadRequestId + 1;
@@ -1123,6 +1208,9 @@
         loadCrowdPatrols().catch((error) => {
           setMapStatus(`巡逻加载失败：${error.message || "-"}`);
         }),
+        loadCrowdUploads().catch((error) => {
+          setUploadStatus(`上传状态失败：${error.message || "-"}`);
+        }),
         loadCrowdVehicles().catch((error) => {
           setCrowdStatus(`车辆加载失败：${error.message || "-"}`);
         }),
@@ -1157,7 +1245,7 @@
       setBusy(true);
       setMapStatus("刷新中");
       try {
-        await loadCrowdPatrols();
+        await Promise.all([loadCrowdPatrols(), loadCrowdUploads()]);
         await loadCrowdSamples(selectedVehicleId);
         setStatus("已更新", "ok");
       } catch (error) {
@@ -1170,7 +1258,7 @@
   window.setInterval(() => {
     if (!authenticated || busy) return;
     void loadCrowdPatrols()
-      .then(() => loadCrowdSamples(selectedVehicleId))
+      .then(() => Promise.all([loadCrowdUploads(), loadCrowdSamples(selectedVehicleId)]))
       .catch((error) => {
         setMapStatus(`巡逻刷新失败：${error.message || "-"}`);
       });

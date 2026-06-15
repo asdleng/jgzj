@@ -21,6 +21,25 @@
     <p class="park-pcm-vehicle-summary" data-park-pcm-vehicle-summary>每次只显示一台车的服务器落盘历史采集点、图片和识别统计。</p>
   </section>
 
+  <section class="park-pcm-band park-pcm-upload-bar">
+    <div class="park-pcm-band-head park-pcm-band-head--compact">
+      <div>
+        <p class="section-kicker">VEHICLE UPLOAD</p>
+        <h2>车端补传</h2>
+      </div>
+      <p data-park-pcm-upload-status>等待上传状态</p>
+    </div>
+    <div class="park-pcm-upload-grid" data-park-pcm-upload-summary>
+      <span>Session -</span>
+      <span>采样 -</span>
+      <span>存储 -</span>
+      <span>可接收 -</span>
+    </div>
+    <div class="park-pcm-upload-list" data-park-pcm-upload-list>
+      <p class="park-pcm-empty">还没有车端补传 session。</p>
+    </div>
+  </section>
+
   <section class="park-pcm-layout">
     <section class="park-pcm-band park-pcm-patrols">
       <div class="park-pcm-band-head">
@@ -271,6 +290,62 @@
     background: rgba(2, 6, 23, 0.34);
     color: #dbeafe;
     font-weight: 800;
+  }
+
+  .park-pcm-upload-bar {
+    border-color: rgba(96, 165, 250, 0.24);
+  }
+
+  .park-pcm-band-head--compact {
+    margin-bottom: 10px;
+  }
+
+  .park-pcm-upload-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .park-pcm-upload-grid span {
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 8px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(2, 6, 23, 0.34);
+    color: #dbeafe;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+
+  .park-pcm-upload-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .park-pcm-upload-row {
+    display: grid;
+    gap: 5px;
+    padding: 10px 12px;
+    border: 1px solid rgba(96, 165, 250, 0.2);
+    background: rgba(15, 23, 42, 0.5);
+  }
+
+  .park-pcm-upload-row strong,
+  .park-pcm-upload-row span {
+    display: block;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  .park-pcm-upload-row strong {
+    color: #f8fafc;
+  }
+
+  .park-pcm-upload-row span {
+    color: #9fb0c7;
   }
 
   .park-pcm-patrol-list {
@@ -704,6 +779,10 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .park-pcm-upload-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .park-pcm-crowd-gallery {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -711,6 +790,10 @@
 
   @media (max-width: 560px) {
     .park-pcm-detail-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .park-pcm-upload-grid {
       grid-template-columns: 1fr;
     }
 
