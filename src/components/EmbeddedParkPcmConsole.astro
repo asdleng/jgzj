@@ -27,7 +27,10 @@
         <p class="section-kicker">VEHICLE UPLOAD</p>
         <h2>车端补传</h2>
       </div>
-      <p data-park-pcm-upload-status>等待上传状态</p>
+      <div class="park-pcm-head-actions">
+        <p data-park-pcm-upload-status>等待上传状态</p>
+        <button type="button" class="park-pcm-button park-pcm-button--compact" data-park-pcm-collector-refresh>刷新采集器</button>
+      </div>
     </div>
     <div class="park-pcm-upload-grid" data-park-pcm-upload-summary>
       <span>Session -</span>
@@ -37,6 +40,15 @@
     </div>
     <div class="park-pcm-upload-list" data-park-pcm-upload-list>
       <p class="park-pcm-empty">还没有车端补传 session。</p>
+    </div>
+    <div class="park-pcm-collector-summary" data-park-pcm-collector-summary>
+      <span>采集器 -</span>
+      <span>运行 -</span>
+      <span>待传 -</span>
+      <span>未更新 -</span>
+    </div>
+    <div class="park-pcm-collector-list" data-park-pcm-collector-list>
+      <p class="park-pcm-empty">等待车端采集器状态。</p>
     </div>
   </section>
 
@@ -89,39 +101,6 @@
     </section>
   </section>
 
-  <section class="park-pcm-band park-pcm-crowd-demo">
-    <div class="park-pcm-band-head">
-      <div>
-        <p class="section-kicker">CROWD CAPTURE</p>
-        <h2>4 路相机人流采样</h2>
-      </div>
-      <p data-park-pcm-crowd-status>等待车辆列表</p>
-    </div>
-
-    <div class="park-pcm-crowd-controls">
-      <label>
-        <span>距离门槛 m</span>
-        <input type="number" min="5" max="1000" value="60" data-park-pcm-crowd-distance />
-      </label>
-      <label>
-        <span>质量</span>
-        <input type="number" min="20" max="90" value="45" data-park-pcm-crowd-quality />
-      </label>
-      <label>
-        <span>宽度</span>
-        <input type="number" min="160" max="1280" value="480" data-park-pcm-crowd-width />
-      </label>
-      <button type="button" class="park-pcm-button" data-park-pcm-crowd-capture>4 路抓拍</button>
-    </div>
-
-    <div class="park-pcm-crowd-last" data-park-pcm-crowd-last>
-      <p class="park-pcm-empty">还没有采样记录。</p>
-    </div>
-
-    <div class="park-pcm-crowd-gallery" data-park-pcm-crowd-samples>
-      <p class="park-pcm-empty">等待采样图片。</p>
-    </div>
-  </section>
 </section>
 
 <style is:global>
@@ -318,6 +297,63 @@
     color: #dbeafe;
     font-weight: 800;
     overflow-wrap: anywhere;
+  }
+
+  .park-pcm-collector-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin: 12px 0 10px;
+  }
+
+  .park-pcm-collector-summary span {
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 8px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(2, 6, 23, 0.28);
+    color: #dbeafe;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+
+  .park-pcm-collector-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .park-pcm-collector-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid rgba(45, 212, 191, 0.18);
+    background: rgba(15, 23, 42, 0.5);
+  }
+
+  .park-pcm-collector-row strong,
+  .park-pcm-collector-row span {
+    display: block;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  .park-pcm-collector-row strong {
+    color: #f8fafc;
+  }
+
+  .park-pcm-collector-row span {
+    color: #9fb0c7;
+  }
+
+  .park-pcm-collector-row-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   .park-pcm-upload-list {
@@ -783,6 +819,18 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .park-pcm-collector-summary {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .park-pcm-collector-row {
+      grid-template-columns: 1fr;
+    }
+
+    .park-pcm-collector-row-actions {
+      justify-content: flex-start;
+    }
+
     .park-pcm-crowd-gallery {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -794,6 +842,10 @@
     }
 
     .park-pcm-upload-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .park-pcm-collector-summary {
       grid-template-columns: 1fr;
     }
 

@@ -1198,6 +1198,21 @@ module.exports = function registerParkPcmRoutes(app, options) {
     DEFAULT_PATROL_STATUS_CONCURRENCY,
     { min: 1, max: 8 }
   );
+  const patrolFlowToolTimeoutS = toFiniteNumber(
+    process.env.PARK_CROWD_PATROL_FLOW_TOOL_TIMEOUT_S || process.env.PARK_PCM_PATROL_FLOW_TOOL_TIMEOUT_S,
+    10,
+    { min: 3, max: 60 }
+  );
+  const patrolFlowFlushTimeoutS = toFiniteNumber(
+    process.env.PARK_CROWD_PATROL_FLOW_FLUSH_TIMEOUT_S || process.env.PARK_PCM_PATROL_FLOW_FLUSH_TIMEOUT_S,
+    60,
+    { min: 10, max: 300 }
+  );
+  const patrolFlowToolConcurrency = toFiniteInteger(
+    process.env.PARK_CROWD_PATROL_FLOW_TOOL_CONCURRENCY || process.env.PARK_PCM_PATROL_FLOW_TOOL_CONCURRENCY,
+    3,
+    { min: 1, max: 8 }
+  );
   const crowdMonitorEnabled = String(
     process.env.PARK_CROWD_MONITOR_ENABLED || process.env.PARK_PCM_CROWD_MONITOR_ENABLED || 'true'
   ).toLowerCase() !== 'false';
@@ -1393,6 +1408,10 @@ module.exports = function registerParkPcmRoutes(app, options) {
   async function listVehicles() {
     const payload = await fetchCloudAgentJson('/api/vehicles', { timeoutMs: 8000 });
     return Array.isArray(payload.vehicles) ? payload.vehicles : [];
+  }
+
+  async function getVehicleDetail(vehicleId) {
+    return fetchCloudAgentJson(`/api/vehicles/${encodeURIComponent(vehicleId)}`, { timeoutMs: 8000 });
   }
 
   async function callVehicleTool(vehicleId, toolName, args, timeoutS) {
@@ -3188,6 +3207,207 @@ module.exports = function registerParkPcmRoutes(app, options) {
     };
   }
 
+  function extractToolNamesFromVehicleDetail(detail) {
+    const vehicle = detail?.vehicle || detail || {};
+    const toolList = vehicle.tool_list_result || detail?.tool_list_result || {};
+    const rawTools = Array.isArray(toolList.tools)
+      ? toolList.tools
+      : Array.isArray(toolList.result?.tools)
+        ? toolList.result.tools
+        : Array.isArray(toolList.response?.result?.tools)
+          ? toolList.response.result.tools
+          : [];
+    return rawTools
+      .map((tool) => String(tool?.name || tool?.tool || tool?.id || tool || '').trim())
+      .filter(Boolean);
+  }
+
+  function summarizePatrolFlowCollectorResult(toolCall) {
+    if (!toolCall) return null;
+    const result = toolCall.result && typeof toolCall.result === 'object' ? toolCall.result : {};
+    const queue = result.queue && typeof result.queue === 'object' ? result.queue : {};
+    const cloudProbe = result.cloud_status_probe && typeof result.cloud_status_probe === 'object'
+      ? result.cloud_status_probe
+      : null;
+    return {
+      ok: toolCall.ok === true,
+      error: toolCall.ok ? null : toolCall.error || 'patrol_flow_status_failed',
+      elapsed_ms: toolCall.elapsed_ms ?? null,
+      health: result.health || null,
+      script_running: result.script_running === true,
+      output_root: result.output_root || null,
+      upload_url: result.upload_url || null,
+      status_url: result.status_url || null,
+      current_session: result.current_session || null,
+      capture_interval_s: result.capture_interval_s ?? null,
+      queue: {
+        queue_dir: queue.queue_dir || null,
+        pending_count: queue.pending_count ?? result.queue_package_count ?? 0,
+        pending_total_size_bytes: queue.pending_total_size_bytes ?? result.queue_total_size_bytes ?? 0,
+        done_count: queue.done_count ?? null,
+        latest_upload_result: queue.latest_upload_result || result.latest_upload_result || null,
+        pending_preview: Array.isArray(queue.pending_preview) ? queue.pending_preview.slice(0, 8) : []
+      },
+      latest_capture_at: result.latest_capture_at || null,
+      latest_upload_result: result.latest_upload_result || queue.latest_upload_result || null,
+      cloud_status_probe: cloudProbe
+        ? {
+            ok: cloudProbe.ok === true,
+            http_status: cloudProbe.http_status ?? null,
+            duration_ms: cloudProbe.duration_ms ?? null
+          }
+        : null,
+      warnings: Array.isArray(result.warnings) ? result.warnings.slice(0, 12) : []
+    };
+  }
+
+  function summarizePatrolFlowFlushResult(toolCall) {
+    const result = toolCall?.result && typeof toolCall.result === 'object' ? toolCall.result : {};
+    const queue = result.queue && typeof result.queue === 'object' ? result.queue : {};
+    return {
+      ok: toolCall?.ok === true,
+      error: toolCall?.ok ? null : toolCall?.error || 'patrol_flow_flush_failed',
+      elapsed_ms: toolCall?.elapsed_ms ?? null,
+      uploaded_count: result.uploaded_count ?? result.upload_count ?? result.uploaded_package_count ?? null,
+      failed_count: result.failed_count ?? result.failed_package_count ?? null,
+      skipped_count: result.skipped_count ?? null,
+      pending_count: queue.pending_count ?? result.pending_count ?? null,
+      pending_total_size_bytes: queue.pending_total_size_bytes ?? result.pending_total_size_bytes ?? null,
+      latest_upload_result: result.latest_upload_result || queue.latest_upload_result || null,
+      warnings: Array.isArray(result.warnings) ? result.warnings.slice(0, 12) : [],
+      result
+    };
+  }
+
+  async function buildPatrolFlowCollectorStatus(params) {
+    params = params || {};
+    const startedAt = Date.now();
+    const requestedVehicleIds = new Set(normalizeVehicleIds(params.vehicle_ids || params.vehicle_id));
+    const maxVehicles = toFiniteInteger(params.max_vehicles, 60, { min: 1, max: 120 });
+    const includeStatus = params.include_status !== false;
+    const nowMs = Date.now();
+    const vehiclesRaw = await listVehicles();
+    const vehicles = vehiclesRaw
+      .filter((vehicle) => vehicle && vehicle.vehicle_id)
+      .filter((vehicle) => !requestedVehicleIds.size || requestedVehicleIds.has(String(vehicle.vehicle_id)))
+      .filter((vehicle) => {
+        const lastSeenMs = Date.parse(vehicle.last_seen || '');
+        return Number.isFinite(lastSeenMs) && nowMs - lastSeenMs <= freshVehicleMs;
+      })
+      .sort((left, right) => String(left.vehicle_id).localeCompare(String(right.vehicle_id), 'zh-CN'))
+      .slice(0, maxVehicles);
+
+    const collectors = await mapWithConcurrency(vehicles, patrolFlowToolConcurrency, async (vehicle) => {
+      const vehicleId = String(vehicle.vehicle_id);
+      const lastSeenMs = Date.parse(vehicle.last_seen || '');
+      const toolDetail = await getVehicleDetail(vehicleId).catch((error) => ({
+        ok: false,
+        error: error.message || 'vehicle_detail_failed'
+      }));
+      const toolNames = extractToolNamesFromVehicleDetail(toolDetail);
+      const hasStatusTool = toolNames.includes('patrol_flow.status');
+      const hasFlushTool = toolNames.includes('patrol_flow.flush_upload_queue');
+      let collectorStatus = null;
+      if (includeStatus && hasStatusTool) {
+        collectorStatus = summarizePatrolFlowCollectorResult(
+          await callVehicleTool(vehicleId, 'patrol_flow.status', {}, patrolFlowToolTimeoutS)
+        );
+      }
+      return {
+        vehicle_id: vehicleId,
+        plate_number: vehicle.plate_number || null,
+        last_seen: vehicle.last_seen || null,
+        last_seen_age_s: Number.isFinite(lastSeenMs) ? Math.max(0, Math.round((nowMs - lastSeenMs) / 1000)) : null,
+        fresh: Number.isFinite(lastSeenMs) && nowMs - lastSeenMs <= freshVehicleMs,
+        tool_count: toolNames.length || vehicle.tool_count || null,
+        tools: {
+          has_status_tool: hasStatusTool,
+          has_flush_tool: hasFlushTool,
+          patrol_flow_tools: toolNames.filter((name) => /^patrol_flow\./.test(name))
+        },
+        status: collectorStatus,
+        detail_error: toolDetail.ok === false ? toolDetail.error : null
+      };
+    });
+
+    const withStatusTool = collectors.filter((row) => row.tools.has_status_tool);
+    const withFlushTool = collectors.filter((row) => row.tools.has_flush_tool);
+    const running = collectors.filter((row) => row.status?.script_running === true);
+    const pendingUpload = collectors.filter((row) => Number(row.status?.queue?.pending_count || 0) > 0);
+    return {
+      ok: true,
+      generated_at: nowIso(),
+      elapsed_ms: Date.now() - startedAt,
+      config: {
+        include_status: includeStatus,
+        max_vehicles: maxVehicles,
+        timeout_s: patrolFlowToolTimeoutS,
+        flush_timeout_s: patrolFlowFlushTimeoutS,
+        concurrency: patrolFlowToolConcurrency
+      },
+      counts: {
+        scanned: collectors.length,
+        with_status_tool: withStatusTool.length,
+        with_flush_tool: withFlushTool.length,
+        running: running.length,
+        pending_upload: pendingUpload.length,
+        not_updated: collectors.length - withStatusTool.length
+      },
+      collectors
+    };
+  }
+
+  async function runPatrolFlowFlush(params) {
+    params = params || {};
+    const vehicleIds = normalizeVehicleIds(params.vehicle_ids || params.vehicle_id);
+    if (!vehicleIds.length) {
+      const error = new Error('vehicle_id_required');
+      error.status = 400;
+      throw error;
+    }
+    const args = params.args && typeof params.args === 'object' && !Array.isArray(params.args)
+      ? params.args
+      : {};
+    const uniqueVehicleIds = [...new Set(vehicleIds)].slice(0, 24);
+    const startedAt = Date.now();
+    const results = await mapWithConcurrency(uniqueVehicleIds, patrolFlowToolConcurrency, async (vehicleId) => {
+      const detail = await getVehicleDetail(vehicleId).catch((error) => ({
+        ok: false,
+        error: error.message || 'vehicle_detail_failed'
+      }));
+      if (detail.ok === false) {
+        return {
+          vehicle_id: vehicleId,
+          ok: false,
+          error: detail.error || 'vehicle_detail_failed'
+        };
+      }
+      const toolNames = extractToolNamesFromVehicleDetail(detail);
+      if (!toolNames.includes('patrol_flow.flush_upload_queue')) {
+        return {
+          vehicle_id: vehicleId,
+          ok: false,
+          error: 'patrol_flow_flush_tool_missing',
+          patrol_flow_tools: toolNames.filter((name) => /^patrol_flow\./.test(name))
+        };
+      }
+      const toolCall = await callVehicleTool(vehicleId, 'patrol_flow.flush_upload_queue', args, patrolFlowFlushTimeoutS);
+      return {
+        vehicle_id: vehicleId,
+        ...summarizePatrolFlowFlushResult(toolCall)
+      };
+    });
+    return {
+      ok: true,
+      generated_at: nowIso(),
+      elapsed_ms: Date.now() - startedAt,
+      requested_vehicle_count: uniqueVehicleIds.length,
+      success_count: results.filter((item) => item.ok === true).length,
+      failed_count: results.filter((item) => item.ok !== true).length,
+      results
+    };
+  }
+
   async function saveCrowdCaptureImage(image, context) {
     const collectedAt = new Date(context.collected_at || Date.now());
     const day = dateStampCompact(collectedAt);
@@ -4525,6 +4745,35 @@ module.exports = function registerParkPcmRoutes(app, options) {
       return res.status(error.status || 502).json({
         ok: false,
         error: error.message || 'park_pcm_crowd_patrol_status_failed'
+      });
+    }
+  });
+
+  app.get('/api/park-pcm/crowd/patrol-flow/collectors', requirePermission('vehicle:read'), async (req, res) => {
+    try {
+      const status = await buildPatrolFlowCollectorStatus({
+        max_vehicles: req.query?.max_vehicles,
+        vehicle_id: req.query?.vehicle_id,
+        vehicle_ids: req.query?.vehicle_ids,
+        include_status: String(req.query?.include_status || 'true').toLowerCase() !== 'false'
+      });
+      return res.json(status);
+    } catch (error) {
+      return res.status(error.status || 502).json({
+        ok: false,
+        error: error.message || 'park_pcm_patrol_flow_collectors_failed'
+      });
+    }
+  });
+
+  app.post('/api/park-pcm/crowd/patrol-flow/flush', requirePermission('vehicle:read'), async (req, res) => {
+    try {
+      const result = await runPatrolFlowFlush(req.body || {});
+      return res.json(result);
+    } catch (error) {
+      return res.status(error.status || 502).json({
+        ok: false,
+        error: error.message || 'park_pcm_patrol_flow_flush_failed'
       });
     }
   });
