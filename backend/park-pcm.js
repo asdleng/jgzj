@@ -823,12 +823,12 @@ function formatCrowdReportText(report) {
   const lines = [
     `园区人流采集小时报告 ${formatLocalTime(report.generated_at)}`,
     `车辆：纳管 ${vehicle.total || 0}，新鲜在线 ${vehicle.fresh || 0}，过期/未知 ${vehicle.stale || 0}`,
-    `采样：近 24 小时 ${capture.sample_count_24h || 0} 次，图片 ${capture.frame_count_24h || 0} 张，数据 ${formatByteCount(capture.total_image_bytes_24h)}`,
-    `覆盖：近 24 小时车辆 ${capture.vehicle_count_24h || 0} 台，当前采样任务 ${report.in_flight ? '进行中' : '空闲'}`,
-    `策略：只在确认巡逻任务后抓拍，4 路相机，默认距离 ${report.config?.distance_m || 0} m，冷却 ${Math.round((report.config?.cooldown_ms || 0) / 1000)} s`
+    `车端上传：近 24 小时 ${capture.sample_count_24h || 0} 条，图片 ${capture.frame_count_24h || 0} 张，数据 ${formatByteCount(capture.total_image_bytes_24h)}`,
+    `覆盖：近 24 小时车辆 ${capture.vehicle_count_24h || 0} 台，服务状态 ${report.in_flight ? '处理中' : '空闲'}`,
+    `策略：只统计车端 patrol-flow 上传包，按图片定位和人群识别结果聚合`
   ];
   if (latest.length) {
-    lines.push('最近采样：');
+    lines.push('最近车端上传：');
     latest.forEach((sample, index) => {
       const position = sample.position || {};
       const patrol = sample.patrol_state || {};
@@ -841,7 +841,7 @@ function formatCrowdReportText(report) {
       );
     });
   } else {
-    lines.push('最近采样：暂无已确认巡逻的人流采样。');
+    lines.push('最近车端上传：暂无已确认巡逻的人流数据。');
   }
   return lines.join('\n');
 }
@@ -1669,8 +1669,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
               frame_count: latestSample.frame_count || 0,
               total_image_bytes: latestSample.total_image_bytes || 0
             }
-          : null
-        ,
+          : null,
         vehicle_upload: {
           source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE,
           sample_count: sourceCounts[VEHICLE_PATROL_FLOW_SAMPLE_SOURCE] || 0,
@@ -4361,7 +4360,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     const nowMs = Date.now();
     const [vehicles, samples] = await Promise.all([
       listVehicles().catch(() => []),
-      readRecentCrowdSamples(100)
+      readRecentCrowdSamples(100, { source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE })
     ]);
     const validVehicles = vehicles.filter((vehicle) => vehicle && vehicle.vehicle_id);
     const freshVehicles = validVehicles.filter((vehicle) => {
@@ -4749,14 +4748,15 @@ module.exports = function registerParkPcmRoutes(app, options) {
 
   app.get('/api/park-pcm/crowd/samples', requirePermission('vehicle:read'), async (req, res) => {
     try {
+      const source = String(req.query?.source || '').trim() || VEHICLE_PATROL_FLOW_SAMPLE_SOURCE;
       const samples = await readRecentCrowdSamples(req.query?.limit, {
         vehicle_id: req.query?.vehicle_id,
-        source: req.query?.source
+        source
       });
       return res.json({
         ok: true,
         vehicle_id: req.query?.vehicle_id ? String(req.query.vehicle_id) : null,
-        source: req.query?.source ? String(req.query.source) : null,
+        source,
         samples
       });
     } catch (error) {

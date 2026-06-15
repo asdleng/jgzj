@@ -55,7 +55,6 @@
   let patrolRefreshInFlight = false;
   let amapLoadPromise = null;
   let amapMap = null;
-  let amapMarkers = [];
   let amapTrackLine = null;
   let amapHeatmap = null;
   let amapControlsReady = false;
@@ -304,10 +303,6 @@
       heatmapRefreshTimer = null;
     }
     if (heatLegendEl) heatLegendEl.hidden = true;
-    if (amapMarkers.length) {
-      amapMap.remove(amapMarkers);
-      amapMarkers = [];
-    }
     if (amapTrackLine) {
       amapMap.remove(amapTrackLine);
       amapTrackLine = null;
@@ -362,7 +357,7 @@
     const grid = document.createElement("div");
     grid.className = "park-pcm-track-frames";
     if (!frames.length) {
-      grid.appendChild(textNode("p", "park-pcm-empty", "该采集点没有图片。"));
+      grid.appendChild(textNode("p", "park-pcm-empty", "该车端上传记录没有图片。"));
       container.appendChild(grid);
       return;
     }
@@ -395,7 +390,7 @@
       if (!container) return;
       clearElement(container);
       if (!sample) {
-        container.appendChild(textNode("p", "park-pcm-empty", "等待采集点四路图片。"));
+        container.appendChild(textNode("p", "park-pcm-empty", "等待车端上传图片。"));
         return;
       }
       const position = sample.position || {};
@@ -407,7 +402,7 @@
           "span",
           "",
           [
-            `采集点 ${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}`,
+            `坐标 ${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}`,
             `${sample.frame_count || 0} 路`,
             formatBytes(sample.total_image_bytes),
             `巡逻 ${patrolStateLabel(sample.patrol_state && sample.patrol_state.state)}`
@@ -425,7 +420,7 @@
     const rows = visibleCrowdSamples();
     const active = selectedCrowdSample();
     if (!rows.length) {
-      trackSamplesEl.appendChild(textNode("p", "park-pcm-empty", selectedVehicleId ? `${selectedVehicleId} 暂无采集点。` : "请先选择一台车辆。"));
+      trackSamplesEl.appendChild(textNode("p", "park-pcm-empty", selectedVehicleId ? `${selectedVehicleId} 暂无车端上传记录。` : "请先选择一台车辆。"));
       renderSampleDetail(null);
       return;
     }
@@ -477,12 +472,12 @@
     const position = latest.position || {};
     const grid = document.createElement("div");
     grid.className = "park-pcm-detail-grid";
-    grid.appendChild(detailCell("落盘采集点", `${rows.length} 个`));
+    grid.appendChild(detailCell("车端上传记录", `${rows.length} 条`));
     grid.appendChild(detailCell("四路图片", `${frames} 张 · ${formatBytes(bytes)}`));
-    grid.appendChild(detailCell("已识别人数", counts.length ? `${totalPeople} 人 · ${counts.length}/${rows.length} 点` : "等待识别"));
-    grid.appendChild(detailCell("热力点", positiveCounts.length ? `${positiveCounts.length} 个 · 峰值 ${maxPeople} 人` : "暂无人群热区"));
+    grid.appendChild(detailCell("已识别人数", counts.length ? `${totalPeople} 人 · ${counts.length}/${rows.length} 条` : "等待识别"));
+    grid.appendChild(detailCell("热力记录", positiveCounts.length ? `${positiveCounts.length} 条 · 峰值 ${maxPeople} 人` : "暂无人群热区"));
     grid.appendChild(detailCell("最近采集", `${latest.vehicle_id || "-"} · ${formatTime(latest.collected_at)}`));
-    grid.appendChild(detailCell("采集区间", `${formatTime(oldest.collected_at)} - ${formatTime(latest.collected_at)}`));
+    grid.appendChild(detailCell("上传时间段", `${formatTime(oldest.collected_at)} - ${formatTime(latest.collected_at)}`));
     grid.appendChild(detailCell("最近坐标", `${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}`));
     vehicleDetailEl.appendChild(grid);
     vehicleDetailEl.appendChild(
@@ -542,13 +537,13 @@
           "",
           [
             `高德 ${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}`,
-            latest ? `最近 ${formatTime(latest.collected_at)} ${formatBytes(latest.total_image_bytes)}` : "暂无采样"
+            latest ? `最近 ${formatTime(latest.collected_at)} ${formatBytes(latest.total_image_bytes)}` : "暂无上传"
           ].join(" · ")
         )
       );
       item.addEventListener("click", () => {
         void selectVehicle(row.vehicle_id).catch((error) => {
-          setMapStatus(`历史采集点加载失败：${error.message || "-"}`);
+          setMapStatus(`车端上传数据加载失败：${error.message || "-"}`);
         });
       });
       item.addEventListener("keydown", (event) => {
@@ -569,10 +564,10 @@
       crowdVehicleSelect.value = nextVehicleId;
     }
     if (!nextVehicleId) {
-      setVehicleSummary("请先选择一台车辆查看历史采集点。");
+      setVehicleSummary("请先选择一台车辆查看车端上传数据。");
       return loadCrowdSamples("");
     }
-    setVehicleSummary(`${nextVehicleId} 历史采集点加载中。`);
+    setVehicleSummary(`${nextVehicleId} 车端上传数据加载中。`);
     return loadCrowdSamples(nextVehicleId);
   }
 
@@ -809,44 +804,6 @@
     }
   }
 
-  function addSampleMarkers(AMap, samplePoints, focusSampleId) {
-    if (!amapMap || !AMap || !samplePoints.length) return;
-    amapMarkers = samplePoints.map((point) => {
-      const peopleCount = heatWeight(point) || 0;
-      const focused = point.sample_id && point.sample_id === focusSampleId;
-      const markerRadius = focused ? 7 : Math.max(4, Math.min(7, 4 + Math.sqrt(peopleCount)));
-      const center = [Number(point.longitude), Number(point.latitude)];
-      const marker = AMap.CircleMarker
-        ? new AMap.CircleMarker({
-            center,
-            radius: markerRadius,
-            strokeColor: focused ? "#ffffff" : "#0f172a",
-            strokeOpacity: 0.92,
-            strokeWeight: focused ? 2.5 : 1.5,
-            fillColor: peopleCount > 0 ? "#ef4444" : "#38bdf8",
-            fillOpacity: focused ? 0.92 : 0.78,
-            zIndex: focused ? 150 : 145,
-            bubble: true,
-            cursor: "pointer"
-          })
-        : new AMap.Marker({
-            position: center,
-            zIndex: focused ? 150 : 145,
-            cursor: "pointer"
-          });
-      if (typeof marker.on === "function") {
-        marker.on("click", () => {
-          selectedSampleId = point.sample_id || "";
-          renderTrackSamples();
-          renderSampleDetail(point.sample);
-          schedulePeopleHeatmapRefresh(20, false);
-        });
-      }
-      return marker;
-    });
-    if (amapMarkers.length) amapMap.add(amapMarkers);
-  }
-
   async function renderTrackMap(options) {
     const opts = options || {};
     const samples = visibleCrowdSamples();
@@ -858,14 +815,14 @@
       renderTrackSamples();
       clearMapOverlays();
       setMapStatus("请选择车辆");
-      setMapFallback("请选择一台车辆查看该车历史轨迹和四路采集图片", false);
+      setMapFallback("请选择一台车辆查看该车巡逻上传轨迹和图片", false);
       return;
     }
     if (!samplePoints.length) {
       renderTrackSamples();
       clearMapOverlays();
-      setMapStatus("暂无历史采集点");
-      setMapFallback(selectedVehicleId ? `${selectedVehicleId} 暂无服务器落盘采集点` : "暂无服务器落盘采集点", false);
+      setMapStatus("暂无车端上传数据");
+      setMapFallback(selectedVehicleId ? `${selectedVehicleId} 暂无车端 patrol-flow 上传数据` : "暂无车端 patrol-flow 上传数据", false);
       return;
     }
     try {
@@ -910,16 +867,11 @@
         amapMap.setZoomAndCenter(17, center);
       }
       const heatStats = await renderPeopleHeatmap(AMap, samplePoints);
-      try {
-        addSampleMarkers(AMap, samplePoints, opts.focus_sample_id || selectedSampleId);
-      } catch (_error) {
-        amapMarkers = [];
-      }
       enableMapInteraction();
       setMapStatus(
         heatStats.count
-          ? `${selectedVehicleId} 采集点 ${samplePoints.length} · 热力栅格 ${heatStats.count} · 峰值 ${heatStats.max} 人`
-          : `${selectedVehicleId} 采集点 ${samplePoints.length} · 暂无可用人数热力`
+          ? `${selectedVehicleId} 上传记录 ${samplePoints.length} · 热力栅格 ${heatStats.count} · 峰值 ${heatStats.max} 人`
+          : `${selectedVehicleId} 上传记录 ${samplePoints.length} · 暂无可用人数热力`
       );
     } catch (error) {
       setMapStatus("轨迹地图加载失败");
@@ -937,7 +889,7 @@
       if (!selectedVehicleId) {
         clearMapOverlays();
         setMapStatus("请选择车辆");
-        setMapFallback("选择一台车辆后显示该车历史采集轨迹", false);
+        setMapFallback("选择一台车辆后显示该车巡逻上传轨迹", false);
       }
       return data;
     } finally {
@@ -960,7 +912,7 @@
         crowdVehicleSelect.value = selectedVehicleId;
       }
       renderHistoryDetail();
-      setVehicleSummary(selectedVehicleId ? `${selectedVehicleId} · 使用服务器历史采集记录` : "暂无车辆列表。");
+      setVehicleSummary(selectedVehicleId ? `${selectedVehicleId} · 使用车端上传记录` : "暂无车辆列表。");
       return selectedVehicleId;
     }
     const previousVehicleId = selectedVehicleId || crowdVehicleSelect.value || "";
@@ -990,7 +942,7 @@
     if (uploadSummaryEl) {
       [
         `Session ${formatNumber(state.session_count, "0")} / 成功 ${formatNumber(state.imported_count, "0")}`,
-        `车端 ${formatNumber(vehicleUpload.sample_count, "0")} 点 / ${formatNumber(vehicleUpload.frame_count, "0")} 张`,
+        `车端 ${formatNumber(vehicleUpload.sample_count, "0")} 条 / ${formatNumber(vehicleUpload.frame_count, "0")} 张`,
         `存储 ${formatBytes(storage.total_bytes)} / ${formatBytes(storage.max_storage_bytes)}`,
         `可接收 ${formatBoolean(data && data.can_accept_upload)}`
       ].forEach((text) => uploadSummaryEl.appendChild(textNode("span", "", text)));
@@ -1025,7 +977,7 @@
               "",
               [
                 `车辆 ${Array.isArray(session.vehicle_ids) && session.vehicle_ids.length ? session.vehicle_ids.join(", ") : "-"}`,
-                `采样 ${formatNumber(session.sample_count, "0")} 点`,
+                `记录 ${formatNumber(session.sample_count, "0")} 条`,
                 `图片 ${formatNumber(session.frame_count, "0")} 张`,
                 `包 ${formatBytes(session.size_bytes)}`,
                 session.error ? `错误 ${session.error}` : ""
@@ -1117,7 +1069,7 @@
     clearElement(crowdLastEl);
     if (!crowdLastEl) return;
     if (!sample) {
-      crowdLastEl.appendChild(textNode("p", "park-pcm-empty", "还没有采样记录。"));
+      crowdLastEl.appendChild(textNode("p", "park-pcm-empty", "还没有车端 patrol-flow 上传数据。"));
       return;
     }
     if (sample.skipped) {
@@ -1155,7 +1107,9 @@
   }
 
   function renderCrowdSamples(samples) {
-    const list = Array.isArray(samples) ? samples.filter((item) => !item.skipped) : [];
+    const list = Array.isArray(samples)
+      ? samples.filter((item) => !item.skipped && String(item && item.source || "") === VEHICLE_UPLOAD_SAMPLE_SOURCE)
+      : [];
     latestCrowdSamples = list;
     if (!selectedVehicleId && list.length) {
       const defaultVehicleId = chooseDefaultVehicleId(list);
@@ -1170,8 +1124,8 @@
     const totalPeople = rowsWithCount.reduce((sum, sample) => sum + Number(samplePeopleCount(sample) || 0), 0);
     setVehicleSummary(
       selectedVehicleId
-        ? `${selectedVehicleId} · 历史采集点 ${rows.length} · 已识别 ${rowsWithCount.length} 点/${totalPeople} 人`
-        : "请选择一台车辆查看历史采集点。"
+        ? `${selectedVehicleId} · 车端上传记录 ${rows.length} · 已识别 ${rowsWithCount.length} 条/${totalPeople} 人`
+        : "请选择一台车辆查看车端上传数据。"
     );
     if (!rows.length) {
       renderCrowdLast(null);
@@ -1195,7 +1149,7 @@
   async function loadCrowdVehicles() {
     const data = await fetchJson(CROWD_VEHICLES_URL);
     renderCrowdVehicles(data);
-    setCrowdStatus(data.in_flight ? "采样进行中" : `车辆 ${Array.isArray(data.vehicles) ? data.vehicles.length : 0} 台`);
+    setCrowdStatus(data.in_flight ? "车辆状态更新中" : `车辆 ${Array.isArray(data.vehicles) ? data.vehicles.length : 0} 台`);
     return data;
   }
 
@@ -1219,7 +1173,10 @@
     const normalizedVehicleId = String(vehicleId == null ? selectedVehicleId : vehicleId).trim();
     const requestId = sampleLoadRequestId + 1;
     sampleLoadRequestId = requestId;
-    const query = new URLSearchParams({ limit: "300" });
+    const query = new URLSearchParams({
+      limit: "300",
+      source: VEHICLE_UPLOAD_SAMPLE_SOURCE
+    });
     if (normalizedVehicleId) query.set("vehicle_id", normalizedVehicleId);
     const data = await fetchJson(`${CROWD_SAMPLES_URL}?${query.toString()}`);
     if (requestId !== sampleLoadRequestId) return data;
@@ -1288,7 +1245,7 @@
           setCrowdStatus(`车辆加载失败：${error.message || "-"}`);
         }),
         loadCrowdSamples().catch((error) => {
-          setCrowdStatus(`采样加载失败：${error.message || "-"}`);
+          setCrowdStatus(`车端上传数据加载失败：${error.message || "-"}`);
         })
       ]);
       setStatus("已就绪", "ok");
@@ -1306,8 +1263,8 @@
   if (crowdVehicleSelect) {
     crowdVehicleSelect.addEventListener("change", () => {
       void selectVehicle(crowdVehicleSelect.value).catch((error) => {
-        setVehicleSummary(`历史采集点加载失败：${error.message || "-"}`);
-        setMapStatus("历史采集点加载失败");
+        setVehicleSummary(`车端上传数据加载失败：${error.message || "-"}`);
+        setMapStatus("车端上传数据加载失败");
       });
     });
   }
