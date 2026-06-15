@@ -1,3 +1,4 @@
+const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
@@ -32,6 +33,12 @@ const DEFAULT_CROWD_ANALYSIS_TIMEOUT_MS = 90 * 1000;
 const DEFAULT_CROWD_ANALYSIS_MAX_SAMPLES = 1;
 const DEFAULT_CROWD_ANALYSIS_IDLE_GPU_UTIL_MAX = 25;
 const DEFAULT_CROWD_ANALYSIS_IDLE_CHECK_TIMEOUT_MS = 3000;
+const DEFAULT_CROWD_STORAGE_RETENTION_DAYS = 14;
+const DEFAULT_CROWD_STORAGE_MAX_BYTES = 12 * 1024 * 1024 * 1024;
+const DEFAULT_CROWD_STORAGE_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
+const DEFAULT_PATROL_FLOW_UPLOAD_MAX_BYTES = 128 * 1024 * 1024;
+const DEFAULT_PATROL_FLOW_MAX_FRAME_ROWS = 4000;
+const PATROL_FLOW_SCHEMA_V1 = 'auto_ad_patrol_flow_session.v1';
 
 function nowIso() {
   return new Date().toISOString();
@@ -1047,6 +1054,74 @@ function summarizeVehicleCrowdSamples(samples, vehicleId, nowMs) {
   };
 }
 
+async function pathExists(targetPath) {
+  try {
+    await fsp.access(targetPath);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function firstNonEmpty(values) {
+  for (const value of values) {
+    if (value == null) continue;
+    const raw = unwrapRosValue(value);
+    if (raw && typeof raw === 'object') continue;
+    const text = String(raw).trim();
+    if (text) return raw;
+  }
+  return null;
+}
+
+function firstFiniteNumber(values) {
+  for (const value of values) {
+    const raw = unwrapRosValue(value);
+    if (raw == null || raw === '') continue;
+    const num = Number(raw);
+    if (Number.isFinite(num)) return num;
+  }
+  return null;
+}
+
+function timestampMsFromValue(value) {
+  const raw = unwrapRosValue(value);
+  if (raw == null || raw === '') return null;
+  if (raw instanceof Date && Number.isFinite(raw.getTime())) return raw.getTime();
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const sec = Number(
+      unwrapRosValue(raw.sec ?? raw.secs ?? raw.seconds ?? raw.tv_sec)
+    );
+    const nsec = Number(
+      unwrapRosValue(raw.nanosec ?? raw.nsec ?? raw.nsecs ?? raw.tv_nsec ?? raw.nanoseconds)
+    );
+    if (Number.isFinite(sec)) {
+      return Math.round(sec * 1000 + (Number.isFinite(nsec) ? nsec / 1000000 : 0));
+    }
+  }
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric)) {
+    if (numeric > 1000000000000) return Math.round(numeric);
+    if (numeric > 1000000000) return Math.round(numeric * 1000);
+    return null;
+  }
+  const parsed = Date.parse(String(raw));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function objectValue(value) {
+  const raw = unwrapRosValue(value);
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+}
+
+function imageMimeFromFilePath(filePath) {
+  const ext = path.extname(String(filePath || '')).toLowerCase();
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.gif') return 'image/gif';
+  return 'image/jpeg';
+}
+
 module.exports = function registerParkPcmRoutes(app, options) {
   options = options || {};
   const requirePermission = options.requirePermission;
@@ -1064,10 +1139,13 @@ module.exports = function registerParkPcmRoutes(app, options) {
   const snapshotPath = path.join(runtimeRoot, 'last-snapshot.json');
   const reportStatePath = path.join(runtimeRoot, 'report-state.json');
   const crowdFramesRoot = path.join(runtimeRoot, 'crowd-frames');
+  const crowdUploadsRoot = path.join(runtimeRoot, 'patrol-flow-uploads');
   const crowdIndexLogPath = path.join(runtimeRoot, 'crowd-samples.jsonl');
   const crowdStatePath = path.join(runtimeRoot, 'crowd-capture-state.json');
   const crowdMonitorStatePath = path.join(runtimeRoot, 'crowd-monitor-state.json');
   const crowdAnalysisStatePath = path.join(runtimeRoot, 'crowd-analysis-state.json');
+  const crowdUploadStatePath = path.join(runtimeRoot, 'patrol-flow-upload-state.json');
+  const crowdUploadIndexLogPath = path.join(runtimeRoot, 'patrol-flow-uploads.jsonl');
   const statusToolTimeoutS = toFiniteNumber(
     process.env.PARK_PCM_STATUS_TOOL_TIMEOUT_S,
     DEFAULT_STATUS_TOOL_TIMEOUT_S,
@@ -1210,6 +1288,34 @@ module.exports = function registerParkPcmRoutes(app, options) {
     DEFAULT_CROWD_ANALYSIS_IDLE_CHECK_TIMEOUT_MS,
     { min: 500, max: 10000 }
   );
+  const crowdStorageRetentionDays = toFiniteNumber(
+    process.env.PARK_CROWD_STORAGE_RETENTION_DAYS || process.env.PARK_PCM_CROWD_STORAGE_RETENTION_DAYS,
+    DEFAULT_CROWD_STORAGE_RETENTION_DAYS,
+    { min: 1, max: 90 }
+  );
+  const crowdStorageMaxBytes = toFiniteInteger(
+    process.env.PARK_CROWD_STORAGE_MAX_BYTES || process.env.PARK_PCM_CROWD_STORAGE_MAX_BYTES,
+    DEFAULT_CROWD_STORAGE_MAX_BYTES,
+    { min: 512 * 1024 * 1024, max: 200 * 1024 * 1024 * 1024 }
+  );
+  const crowdStorageMinFreeBytes = toFiniteInteger(
+    process.env.PARK_CROWD_STORAGE_MIN_FREE_BYTES || process.env.PARK_PCM_CROWD_STORAGE_MIN_FREE_BYTES,
+    DEFAULT_CROWD_STORAGE_MIN_FREE_BYTES,
+    { min: 256 * 1024 * 1024, max: 200 * 1024 * 1024 * 1024 }
+  );
+  const patrolFlowUploadMaxBytes = toFiniteInteger(
+    process.env.PARK_CROWD_PATROL_FLOW_UPLOAD_MAX_BYTES || process.env.PARK_PCM_PATROL_FLOW_UPLOAD_MAX_BYTES,
+    DEFAULT_PATROL_FLOW_UPLOAD_MAX_BYTES,
+    { min: 1024 * 1024, max: 2 * 1024 * 1024 * 1024 }
+  );
+  const patrolFlowMaxFrameRows = toFiniteInteger(
+    process.env.PARK_CROWD_PATROL_FLOW_MAX_FRAME_ROWS || process.env.PARK_PCM_PATROL_FLOW_MAX_FRAME_ROWS,
+    DEFAULT_PATROL_FLOW_MAX_FRAME_ROWS,
+    { min: 1, max: 100000 }
+  );
+  const patrolFlowUploadToken = String(
+    process.env.PARK_CROWD_PATROL_FLOW_UPLOAD_TOKEN || process.env.PARK_PCM_PATROL_FLOW_UPLOAD_TOKEN || ''
+  ).trim();
   const feishuWebhookUrl = String(
     process.env.PARK_PCM_FEISHU_WEBHOOK_URL ||
       process.env.FEISHU_WEBHOOK_URL ||
@@ -1235,7 +1341,8 @@ module.exports = function registerParkPcmRoutes(app, options) {
   async function ensureCrowdRuntimeDirs() {
     await Promise.all([
       ensureRuntimeDir(),
-      fsp.mkdir(crowdFramesRoot, { recursive: true })
+      fsp.mkdir(crowdFramesRoot, { recursive: true }),
+      fsp.mkdir(crowdUploadsRoot, { recursive: true })
     ]);
   }
 
@@ -1424,6 +1531,1172 @@ module.exports = function registerParkPcmRoutes(app, options) {
       ...(state || {}),
       updated_at: nowIso()
     });
+  }
+
+  async function readPatrolFlowUploadState() {
+    const parsed = await readJsonFile(crowdUploadStatePath);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return {
+        version: 1,
+        sessions: {},
+        ...parsed,
+        sessions: parsed.sessions && typeof parsed.sessions === 'object' ? parsed.sessions : {}
+      };
+    }
+    return {
+      version: 1,
+      sessions: {},
+      updated_at: nowIso()
+    };
+  }
+
+  async function writePatrolFlowUploadState(state) {
+    await atomicWriteJson(crowdUploadStatePath, {
+      version: 1,
+      sessions: {},
+      ...(state || {}),
+      updated_at: nowIso()
+    });
+  }
+
+  async function appendPatrolFlowUploadLog(entry) {
+    await ensureCrowdRuntimeDirs();
+    await fsp.appendFile(crowdUploadIndexLogPath, `${JSON.stringify(entry)}\n`, 'utf8');
+  }
+
+  async function walkFiles(rootPath, relativeBase) {
+    const out = [];
+    if (!(await pathExists(rootPath))) {
+      return out;
+    }
+    const basePath = path.resolve(relativeBase || rootPath);
+    async function walk(currentPath) {
+      const entries = await fsp.readdir(currentPath, { withFileTypes: true });
+      for (const entry of entries) {
+        const absPath = path.join(currentPath, entry.name);
+        const stat = await fsp.lstat(absPath);
+        if (entry.isDirectory()) {
+          await walk(absPath);
+        } else if (entry.isFile() || entry.isSymbolicLink()) {
+          out.push({
+            path: absPath,
+            rel_path: path.relative(basePath, absPath).split(path.sep).join('/'),
+            size: stat.size,
+            mtime_ms: stat.mtimeMs,
+            symlink: entry.isSymbolicLink()
+          });
+        }
+      }
+    }
+    await walk(rootPath);
+    return out;
+  }
+
+  async function getCrowdDiskFreeBytes() {
+    try {
+      if (typeof fsp.statfs !== 'function') {
+        return null;
+      }
+      await ensureCrowdRuntimeDirs();
+      const stat = await fsp.statfs(runtimeRoot);
+      return Number(stat.bavail) * Number(stat.bsize);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async function removeFileIfExists(targetPath) {
+    try {
+      await fsp.rm(targetPath, { force: true });
+    } catch (_error) {
+      // Ignore best-effort cleanup failures.
+    }
+  }
+
+  async function removeEmptyDirs(rootPath) {
+    if (!(await pathExists(rootPath))) {
+      return;
+    }
+    async function walk(currentPath) {
+      const entries = await fsp.readdir(currentPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          await walk(path.join(currentPath, entry.name));
+        }
+      }
+      if (currentPath !== rootPath) {
+        await fsp.rmdir(currentPath).catch(() => {});
+      }
+    }
+    await walk(rootPath);
+  }
+
+  async function cleanupCrowdStorage() {
+    await ensureCrowdRuntimeDirs();
+    const startedAt = Date.now();
+    const cutoffMs = Date.now() - crowdStorageRetentionDays * 24 * 60 * 60 * 1000;
+    const roots = [crowdFramesRoot, crowdUploadsRoot];
+    let files = [];
+    for (const rootPath of roots) {
+      files = files.concat(await walkFiles(rootPath, runtimeRoot));
+    }
+
+    let deletedExpired = 0;
+    for (const file of files) {
+      if (file.mtime_ms < cutoffMs) {
+        await removeFileIfExists(file.path);
+        deletedExpired += 1;
+      }
+    }
+
+    files = [];
+    for (const rootPath of roots) {
+      files = files.concat(await walkFiles(rootPath, runtimeRoot));
+    }
+    let totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    let deletedForQuota = 0;
+
+    if (totalBytes > crowdStorageMaxBytes) {
+      const targetBytes = Math.floor(crowdStorageMaxBytes * 0.9);
+      const ordered = files.slice().sort((left, right) => left.mtime_ms - right.mtime_ms);
+      for (const file of ordered) {
+        if (totalBytes <= targetBytes) {
+          break;
+        }
+        await removeFileIfExists(file.path);
+        totalBytes -= Math.max(0, file.size || 0);
+        deletedForQuota += 1;
+      }
+    }
+
+    await Promise.all(roots.map((rootPath) => removeEmptyDirs(rootPath).catch(() => {})));
+
+    let latestFiles = [];
+    for (const rootPath of roots) {
+      latestFiles = latestFiles.concat(await walkFiles(rootPath, runtimeRoot));
+    }
+    const latestTotalBytes = latestFiles.reduce((sum, file) => sum + file.size, 0);
+    const diskFreeBytes = await getCrowdDiskFreeBytes();
+    return {
+      runtime_root: runtimeRoot,
+      frames_root: crowdFramesRoot,
+      uploads_root: crowdUploadsRoot,
+      total_bytes: latestTotalBytes,
+      max_storage_bytes: crowdStorageMaxBytes,
+      file_count: latestFiles.length,
+      image_file_count: latestFiles.filter((file) => /\.(jpe?g|png|webp)$/i.test(file.path)).length,
+      retention_days: crowdStorageRetentionDays,
+      deleted_expired: deletedExpired,
+      deleted_for_quota: deletedForQuota,
+      disk_free_bytes: diskFreeBytes,
+      min_free_bytes: crowdStorageMinFreeBytes,
+      can_accept_upload:
+        latestTotalBytes < crowdStorageMaxBytes &&
+        (diskFreeBytes == null || diskFreeBytes >= crowdStorageMinFreeBytes),
+      elapsed_ms: Date.now() - startedAt
+    };
+  }
+
+  function timingSafeEqualText(left, right) {
+    const leftBuffer = Buffer.from(String(left || ''));
+    const rightBuffer = Buffer.from(String(right || ''));
+    return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+  }
+
+  function requirePatrolFlowUploadAuth(req, res, next) {
+    if (!patrolFlowUploadToken) {
+      return next();
+    }
+    const bearer = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+    const supplied = String(
+      req.headers['x-auto-ad-upload-token'] ||
+        req.headers['x-patrol-flow-upload-token'] ||
+        (bearer ? bearer[1] : '') ||
+        ''
+    ).trim();
+    if (!supplied || !timingSafeEqualText(supplied, patrolFlowUploadToken)) {
+      return res.status(401).json({
+        ok: false,
+        error: 'patrol_flow_upload_unauthorized'
+      });
+    }
+    return next();
+  }
+
+  function validatePatrolFlowUploadHeaders(req) {
+    const schema = String(req.headers['x-auto-ad-capture-schema'] || '').trim();
+    if (schema !== PATROL_FLOW_SCHEMA_V1) {
+      const error = new Error('unsupported_patrol_flow_schema');
+      error.status = 400;
+      error.detail = `expected ${PATROL_FLOW_SCHEMA_V1}`;
+      throw error;
+    }
+
+    const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+    if (contentType && !['application/gzip', 'application/x-gzip', 'application/octet-stream', 'binary/octet-stream'].includes(contentType)) {
+      const error = new Error('patrol_flow_upload_content_type_required');
+      error.status = 415;
+      throw error;
+    }
+
+    const rawSessionId = String(req.headers['x-auto-ad-session-id'] || '').trim();
+    const sessionId = sanitizeName(rawSessionId, '');
+    if (!sessionId) {
+      const error = new Error('patrol_flow_session_id_required');
+      error.status = 400;
+      throw error;
+    }
+
+    const sizeHeader = Number(req.headers['x-auto-ad-file-size'] || req.headers['content-length'] || 0);
+    const expectedSize = Number.isFinite(sizeHeader) && sizeHeader > 0 ? Math.round(sizeHeader) : null;
+    if (expectedSize != null && expectedSize > patrolFlowUploadMaxBytes) {
+      const error = new Error('patrol_flow_upload_too_large');
+      error.status = 413;
+      throw error;
+    }
+
+    const expectedSha256 = String(req.headers['x-auto-ad-file-sha256'] || '').trim().toLowerCase();
+    if (expectedSha256 && !/^[a-f0-9]{64}$/.test(expectedSha256)) {
+      const error = new Error('patrol_flow_sha256_invalid');
+      error.status = 400;
+      throw error;
+    }
+
+    return {
+      schema,
+      raw_session_id: rawSessionId,
+      session_id: sessionId,
+      expected_size_bytes: expectedSize,
+      expected_sha256: expectedSha256 || null,
+      content_type: contentType || null
+    };
+  }
+
+  async function assertPatrolFlowStorageCanAccept(expectedSizeBytes) {
+    const storage = await cleanupCrowdStorage();
+    const expectedSize = Number(expectedSizeBytes) || 0;
+    const projectedTotalBytes = storage.total_bytes + expectedSize;
+    const projectedFreeBytes = storage.disk_free_bytes == null ? null : storage.disk_free_bytes - expectedSize;
+    if (
+      projectedTotalBytes > crowdStorageMaxBytes ||
+      (projectedFreeBytes != null && projectedFreeBytes < crowdStorageMinFreeBytes)
+    ) {
+      const error = new Error('patrol_flow_storage_limit_reached');
+      error.status = 507;
+      error.storage = {
+        ...storage,
+        projected_total_bytes: projectedTotalBytes,
+        projected_disk_free_bytes: projectedFreeBytes
+      };
+      throw error;
+    }
+    return storage;
+  }
+
+  async function receivePatrolFlowUpload(req, targetPath, expectedSizeBytes) {
+    await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+    const partPath = `${targetPath}.part`;
+    await fsp.rm(partPath, { force: true });
+
+    return new Promise((resolve, reject) => {
+      let receivedBytes = 0;
+      let settled = false;
+      const hash = crypto.createHash('sha256');
+      const writeStream = fs.createWriteStream(partPath, { flags: 'w' });
+
+      const finishWithError = (error) => {
+        if (settled) return;
+        settled = true;
+        writeStream.destroy();
+        void fsp.rm(partPath, { force: true }).finally(() => reject(error));
+      };
+
+      req.on('data', (chunk) => {
+        receivedBytes += chunk.length;
+        hash.update(chunk);
+        if (receivedBytes > patrolFlowUploadMaxBytes) {
+          const error = new Error('patrol_flow_upload_too_large');
+          error.status = 413;
+          finishWithError(error);
+          req.destroy();
+        }
+      });
+      req.on('aborted', () => {
+        const error = new Error('patrol_flow_upload_aborted');
+        error.status = 499;
+        finishWithError(error);
+      });
+      req.on('error', (error) => {
+        const nextError = new Error(error?.message || 'patrol_flow_upload_failed');
+        nextError.status = error?.status || 500;
+        finishWithError(nextError);
+      });
+      writeStream.on('error', (error) => {
+        const nextError = new Error(error?.message || 'patrol_flow_file_write_failed');
+        nextError.status = 500;
+        finishWithError(nextError);
+      });
+      writeStream.on('finish', async () => {
+        if (settled) return;
+        settled = true;
+        try {
+          if (expectedSizeBytes != null && receivedBytes !== expectedSizeBytes) {
+            const error = new Error('patrol_flow_upload_size_mismatch');
+            error.status = 400;
+            error.expected_size_bytes = expectedSizeBytes;
+            error.received_size_bytes = receivedBytes;
+            throw error;
+          }
+          await fsp.rename(partPath, targetPath);
+          resolve({
+            path: targetPath,
+            size_bytes: receivedBytes,
+            sha256: hash.digest('hex')
+          });
+        } catch (error) {
+          await fsp.rm(partPath, { force: true }).catch(() => {});
+          await fsp.rm(targetPath, { force: true }).catch(() => {});
+          reject(error);
+        }
+      });
+
+      req.pipe(writeStream);
+    });
+  }
+
+  function validateTarEntryName(name) {
+    const normalized = String(name || '').replace(/\\/g, '/');
+    if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+      return false;
+    }
+    return !normalized.split('/').some((segment) => segment === '..');
+  }
+
+  async function validatePatrolFlowTarball(packagePath) {
+    const [plainList, verboseList] = await Promise.all([
+      execFileAsync('tar', ['-tzf', packagePath], {
+        timeout: 60000,
+        maxBuffer: 20 * 1024 * 1024
+      }),
+      execFileAsync('tar', ['-tvzf', packagePath], {
+        timeout: 60000,
+        maxBuffer: 20 * 1024 * 1024
+      })
+    ]);
+    const { stdout } = plainList;
+    const linkLine = String(verboseList.stdout || '')
+      .split('\n')
+      .find((line) => /^[lh]/.test(line.trim()));
+    if (linkLine) {
+      const error = new Error('patrol_flow_package_link_not_allowed');
+      error.status = 400;
+      error.invalid_path = linkLine.trim().slice(0, 240);
+      throw error;
+    }
+    const deviceLine = String(verboseList.stdout || '')
+      .split('\n')
+      .find((line) => /^[bcps]/.test(line.trim()));
+    if (deviceLine) {
+      const error = new Error('patrol_flow_package_special_file_not_allowed');
+      error.status = 400;
+      error.invalid_path = deviceLine.trim().slice(0, 240);
+      throw error;
+    }
+    const entries = String(stdout || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (!entries.length) {
+      const error = new Error('patrol_flow_package_empty');
+      error.status = 400;
+      throw error;
+    }
+    if (entries.length > 20000) {
+      const error = new Error('patrol_flow_package_too_many_entries');
+      error.status = 400;
+      throw error;
+    }
+    const invalid = entries.find((entry) => !validateTarEntryName(entry));
+    if (invalid) {
+      const error = new Error('patrol_flow_package_invalid_path');
+      error.status = 400;
+      error.invalid_path = invalid;
+      throw error;
+    }
+    return entries;
+  }
+
+  async function extractPatrolFlowTarball(packagePath, stagingDir) {
+    await validatePatrolFlowTarball(packagePath);
+    await fsp.rm(stagingDir, { recursive: true, force: true });
+    await fsp.mkdir(stagingDir, { recursive: true });
+    await execFileAsync('tar', ['--no-same-owner', '--no-same-permissions', '-xzf', packagePath, '-C', stagingDir], {
+      timeout: 120000,
+      maxBuffer: 1024 * 1024
+    });
+    const files = await walkFiles(stagingDir, stagingDir);
+    const symlink = files.find((file) => file.symlink);
+    if (symlink) {
+      const error = new Error('patrol_flow_package_symlink_not_allowed');
+      error.status = 400;
+      error.invalid_path = symlink.rel_path;
+      throw error;
+    }
+    return files;
+  }
+
+  function shortestNamedFile(files, name) {
+    const normalizedName = String(name || '').toLowerCase();
+    return files
+      .filter((file) => path.basename(file.path).toLowerCase() === normalizedName)
+      .sort((left, right) => left.rel_path.length - right.rel_path.length)[0] || null;
+  }
+
+  async function readJsonLimited(filePath, maxBytes) {
+    const stat = await fsp.stat(filePath);
+    if (stat.size > maxBytes) {
+      const error = new Error('patrol_flow_json_too_large');
+      error.status = 400;
+      throw error;
+    }
+    return JSON.parse(await fsp.readFile(filePath, 'utf8'));
+  }
+
+  async function readFramesJsonl(filePath) {
+    const stat = await fsp.stat(filePath);
+    if (stat.size > 128 * 1024 * 1024) {
+      const error = new Error('patrol_flow_frames_jsonl_too_large');
+      error.status = 400;
+      throw error;
+    }
+    const rows = [];
+    const text = await fsp.readFile(filePath, 'utf8');
+    const lines = text.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (rows.length >= patrolFlowMaxFrameRows) {
+        const error = new Error('patrol_flow_frame_row_limit_reached');
+        error.status = 413;
+        throw error;
+      }
+      rows.push(JSON.parse(trimmed));
+    }
+    return rows;
+  }
+
+  function resolveExtractedFile(stagingDir, baseDir, relativePath) {
+    const rel = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!rel || rel.split('/').some((segment) => segment === '..')) {
+      return null;
+    }
+    const rootPath = path.resolve(stagingDir);
+    const candidates = [
+      path.resolve(stagingDir, rel),
+      path.resolve(baseDir, rel)
+    ];
+    for (const candidate of candidates) {
+      if (candidate === rootPath || !candidate.startsWith(`${rootPath}${path.sep}`)) {
+        continue;
+      }
+      if (fs.existsSync(candidate) && fs.lstatSync(candidate).isFile()) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function extractFrameImagePath(row) {
+    return firstNonEmpty([
+      row?.image_path,
+      row?.image_rel_path,
+      row?.image_relative_path,
+      row?.relative_path,
+      row?.file_path,
+      row?.path,
+      row?.file,
+      row?.image?.path,
+      row?.image?.relative_path,
+      row?.image?.file,
+      row?.image?.filename
+    ]);
+  }
+
+  function extractFrameCamera(row, fallbackIndex) {
+    return sanitizeName(
+      firstNonEmpty([
+        row?.camera,
+        row?.camera_id,
+        row?.camera_name,
+        row?.image?.camera,
+        row?.image?.camera_id,
+        row?.topic
+      ]) || `camera${fallbackIndex + 1}`,
+      `camera${fallbackIndex + 1}`
+    );
+  }
+
+  function extractFrameVehicleId(row, manifest) {
+    return sanitizeName(
+      firstNonEmpty([
+        row?.vehicle_id,
+        row?.vehicle,
+        manifest?.vehicle_id,
+        manifest?.vehicle?.vehicle_id,
+        manifest?.vehicle?.id,
+        manifest?.robot_id,
+        manifest?.car_id
+      ]) || 'vehicle',
+      'vehicle'
+    );
+  }
+
+  function extractFrameTsMs(row, fallbackMs) {
+    return (
+      timestampMsFromValue(row?.ts) ??
+      timestampMsFromValue(row?.timestamp) ??
+      timestampMsFromValue(row?.collected_at) ??
+      timestampMsFromValue(row?.capture_time) ??
+      timestampMsFromValue(row?.time) ??
+      timestampMsFromValue(row?.header?.stamp) ??
+      timestampMsFromValue(row?.image?.ts) ??
+      fallbackMs
+    );
+  }
+
+  function extractFrameIndex(row, fallbackIndex) {
+    const index = firstFiniteNumber([
+      row?.index,
+      row?.frame_index,
+      row?.capture_index,
+      row?.sample_index,
+      row?.image?.index
+    ]);
+    return index == null ? fallbackIndex : index;
+  }
+
+  function extractFramePosition(row) {
+    const localization = objectValue(row?.localization || row?.location || row?.pose || row?.gps || row?.position);
+    const routeLocation = objectValue(row?.route_location || row?.route?.route_location);
+    const latitude = firstFiniteNumber([
+      row?.latitude,
+      row?.lat,
+      row?.Lattitude,
+      localization.latitude,
+      localization.lat,
+      localization.Lattitude,
+      routeLocation.latitude,
+      routeLocation.lat,
+      routeLocation.Lattitude
+    ]);
+    const longitude = firstFiniteNumber([
+      row?.longitude,
+      row?.lng,
+      row?.lon,
+      row?.Longitude,
+      localization.longitude,
+      localization.lng,
+      localization.lon,
+      localization.Longitude,
+      routeLocation.longitude,
+      routeLocation.lng,
+      routeLocation.lon,
+      routeLocation.Longitude
+    ]);
+    const suppliedGaodeLat = firstFiniteNumber([
+      row?.gaode_latitude,
+      row?.gcj02_latitude,
+      localization.gaode_latitude,
+      localization.gcj02_latitude
+    ]);
+    const suppliedGaodeLng = firstFiniteNumber([
+      row?.gaode_longitude,
+      row?.gcj02_longitude,
+      localization.gaode_longitude,
+      localization.gcj02_longitude
+    ]);
+    const gcj = suppliedGaodeLat != null && suppliedGaodeLng != null
+      ? { latitude: suppliedGaodeLat, longitude: suppliedGaodeLng }
+      : wgs84ToGcj02(latitude, longitude);
+    return {
+      source: 'auto_ad_patrol_flow_upload',
+      reliable: latitude != null && longitude != null,
+      latitude,
+      longitude,
+      gaode_latitude: Number.isFinite(gcj.latitude) ? gcj.latitude : null,
+      gaode_longitude: Number.isFinite(gcj.longitude) ? gcj.longitude : null,
+      heading: firstFiniteNumber([row?.heading, localization.heading, localization.yaw]),
+      speed_mps: firstFiniteNumber([row?.speed_mps, localization.speed_mps, localization.speed]),
+      raw_health: localization.health || row?.localization_health || null
+    };
+  }
+
+  function extractFramePlanning(row) {
+    return objectValue(row?.planning || row?.planning_status || row?.planner || row?.status?.planning);
+  }
+
+  function extractFrameRoute(row) {
+    const route = objectValue(row?.route);
+    return {
+      route_id: firstNonEmpty([row?.route_id, route.route_id, route.id, route.name]),
+      route_location: row?.route_location || route.route_location || route.location || null,
+      route_progress: row?.route_progress || route.route_progress || route.progress || null
+    };
+  }
+
+  function extractFramePerception(row) {
+    return objectValue(row?.perception || row?.perception_stats || row?.targets || row?.status?.perception);
+  }
+
+  function extractFramePeopleCount(row, perception) {
+    return firstFiniteNumber([
+      row?.people_count,
+      row?.person_count,
+      row?.crowd_people,
+      row?.crowd_count,
+      perception?.people_count,
+      perception?.person_count,
+      perception?.crowd_people,
+      perception?.crowd_count,
+      perception?.summary?.people_count,
+      perception?.summary?.person_count,
+      perception?.summary?.crowd_people,
+      perception?.summary?.crowd_count
+    ]);
+  }
+
+  function extractFrameTargetCount(row, perception) {
+    return firstFiniteNumber([
+      row?.target_count,
+      row?.object_count,
+      perception?.target_count,
+      perception?.object_count,
+      perception?.summary?.target_count,
+      perception?.summary?.object_count
+    ]);
+  }
+
+  function buildUploadedPatrolState(frameRows) {
+    const rows = Array.isArray(frameRows) ? frameRows : [];
+    const planningRows = rows.map((row) => extractFramePlanning(row)).filter((item) => item && Object.keys(item).length);
+    const routeRows = rows.map((row) => extractFrameRoute(row)).filter((item) => item.route_id || item.route_location);
+    const plannerRunning = firstFiniteNumber(planningRows.map((item) => item.planner_running));
+    const vehicleIdleStatus = firstFiniteNumber(planningRows.map((item) => item.vehicle_idle_status));
+    const longTimeStop = planningRows.some((item) => booleanValue(item.long_time_stop) === true);
+    const routeIds = [...new Set(routeRows.map((item) => String(item.route_id || '').trim()).filter(Boolean))];
+    const state = plannerRunning != null && plannerRunning > 0
+      ? 'patrol_active_moving'
+      : 'patrol_task_stopped_or_waiting';
+    return {
+      state,
+      capture_eligible: true,
+      confidence: 'high',
+      reasons: [
+        'vehicle_side_collector',
+        ...routeIds.slice(0, 3).map((routeId) => `route_id=${routeId}`),
+        plannerRunning != null ? `planner_running=${plannerRunning}` : null,
+        vehicleIdleStatus != null ? `vehicle_idle_status=${vehicleIdleStatus}` : null,
+        longTimeStop ? 'long_time_stop=true' : null
+      ].filter(Boolean).slice(0, 12),
+      tool_ok: {
+        vehicle_upload: true,
+        planning: planningRows.length > 0,
+        routing: routeRows.length > 0,
+        can: null
+      },
+      tool_elapsed_ms: {},
+      fields: {
+        planner_running: plannerRunning,
+        vehicle_idle_status: vehicleIdleStatus,
+        long_time_stop: longTimeStop || null,
+        route_ids: routeIds,
+        route_task_evidence: true,
+        vehicle_side_uploaded: true
+      }
+    };
+  }
+
+  function groupPatrolFlowFrames(rows, manifest, fallbackMs) {
+    const groups = new Map();
+    rows.forEach((row, rowIndex) => {
+      const frameIndex = extractFrameIndex(row, rowIndex);
+      const tsMs = extractFrameTsMs(row, fallbackMs);
+      const groupId = firstNonEmpty([
+        row?.sample_id,
+        row?.frame_group_id,
+        row?.capture_group_id,
+        row?.group_id
+      ]) || `frame_${frameIndex}`;
+      const key = String(groupId);
+      const current = groups.get(key) || {
+        key,
+        frame_index: frameIndex,
+        ts_ms: tsMs,
+        rows: []
+      };
+      current.ts_ms = Math.min(current.ts_ms || tsMs, tsMs || current.ts_ms || fallbackMs);
+      current.rows.push({
+        row,
+        row_index: rowIndex,
+        frame_index: frameIndex,
+        ts_ms: tsMs,
+        vehicle_id: extractFrameVehicleId(row, manifest),
+        camera_id: extractFrameCamera(row, rowIndex),
+        image_path: extractFrameImagePath(row)
+      });
+      groups.set(key, current);
+    });
+    return [...groups.values()].sort((left, right) => (left.ts_ms || 0) - (right.ts_ms || 0));
+  }
+
+  function samplePositionFromGroup(group) {
+    for (const item of group.rows) {
+      const position = extractFramePosition(item.row);
+      if (position.reliable && Number.isFinite(position.gaode_latitude) && Number.isFinite(position.gaode_longitude)) {
+        return position;
+      }
+    }
+    return group.rows.length ? extractFramePosition(group.rows[0].row) : null;
+  }
+
+  function normalizedManifestSessionId(manifest) {
+    return sanitizeName(
+      firstNonEmpty([
+        manifest?.session_id,
+        manifest?.capture_session_id,
+        manifest?.flow_session_id,
+        manifest?.id
+      ]) || '',
+      ''
+    );
+  }
+
+  async function copyPatrolFlowSessionMetadata(stagingDir, files, manifestPath, framesPath, sessionId) {
+    const sessionRoot = path.join(crowdUploadsRoot, 'sessions', sessionId);
+    await fsp.rm(sessionRoot, { recursive: true, force: true });
+    await fsp.mkdir(sessionRoot, { recursive: true });
+    await fsp.copyFile(manifestPath, path.join(sessionRoot, 'manifest.json'));
+    await fsp.copyFile(framesPath, path.join(sessionRoot, 'frames.jsonl'));
+
+    const routeDirs = [...new Set(
+      files
+        .filter((file) => file.rel_path.split('/').includes('routes'))
+        .map((file) => {
+          const parts = file.rel_path.split('/');
+          const index = parts.indexOf('routes');
+          return path.join(stagingDir, ...parts.slice(0, index + 1));
+        })
+    )];
+    if (routeDirs.length) {
+      await fsp.cp(routeDirs[0], path.join(sessionRoot, 'routes'), { recursive: true, force: true });
+    }
+    return sessionRoot;
+  }
+
+  async function saveUploadedPatrolFlowFrame(item, context) {
+    const imageAbsPath = resolveExtractedFile(context.staging_dir, context.frames_dir, item.image_path);
+    if (!imageAbsPath) {
+      return {
+        ok: false,
+        skipped: true,
+        error: 'image_file_not_found',
+        source_image_path: item.image_path || null,
+        camera_id: item.camera_id
+      };
+    }
+    const collectedAt = new Date(item.ts_ms || context.collected_at_ms || Date.now());
+    const day = dateStampCompact(collectedAt);
+    const vehicleId = sanitizeName(item.vehicle_id || context.vehicle_id, 'vehicle');
+    const cameraId = sanitizeName(item.camera_id, 'camera');
+    const sampleId = sanitizeName(context.sample_id, 'sample');
+    const ext = mimeToExt(imageMimeFromFilePath(imageAbsPath));
+    const frameDir = path.join(crowdFramesRoot, day, context.session_id);
+    await fsp.mkdir(frameDir, { recursive: true });
+    const captureId = sanitizeName(`${sampleId}_${cameraId}_${item.row_index}`, 'capture');
+    const destImagePath = path.join(frameDir, `${captureId}${ext}`);
+    const destMetaPath = path.join(frameDir, `${captureId}.json`);
+    await fsp.copyFile(imageAbsPath, destImagePath);
+    const stat = await fsp.stat(destImagePath);
+    const imageRelPath = path.relative(crowdFramesRoot, destImagePath).split(path.sep).join('/');
+    const position = extractFramePosition(item.row);
+    const route = extractFrameRoute(item.row);
+    const planning = extractFramePlanning(item.row);
+    const perception = extractFramePerception(item.row);
+    const peopleCount = extractFramePeopleCount(item.row, perception);
+    const targetCount = extractFrameTargetCount(item.row, perception);
+    const analysis = peopleCount == null
+      ? {
+          status: 'pending',
+          people_count: null,
+          confidence: 'low',
+          note: '等待云端视觉模型识别。'
+        }
+      : {
+          status: 'vehicle_estimate',
+          people_count: Math.max(0, Math.round(peopleCount)),
+          confidence: 'medium',
+          note: '车端 perception 初始统计，待云端视觉模型复核。',
+          model: 'vehicle_perception_upload',
+          analyzed_at: nowIso()
+        };
+    const meta = {
+      capture_id: captureId,
+      sample_id: context.sample_id,
+      upload_session_id: context.session_id,
+      source: 'auto_ad_patrol_flow_upload',
+      collected_at: collectedAt.toISOString(),
+      collected_at_ms: collectedAt.getTime(),
+      vehicle_id: vehicleId,
+      camera_id: cameraId,
+      frame_index: item.frame_index,
+      row_index: item.row_index,
+      image_mime_type: imageMimeFromFilePath(imageAbsPath),
+      image_size_bytes: stat.size,
+      image_sha256: crypto.createHash('sha256').update(await fsp.readFile(destImagePath)).digest('hex'),
+      image_path: imageRelPath,
+      image_url: crowdFrameUrl(imageRelPath),
+      source_image_path: item.image_path || null,
+      position,
+      route,
+      planning,
+      perception,
+      target_count: targetCount,
+      analysis,
+      business: {
+        kind: 'park_people_flow_vehicle_upload',
+        note: 'vehicle-side patrol image package for crowd analytics and ad traffic planning'
+      }
+    };
+    await fsp.writeFile(destMetaPath, JSON.stringify(meta, null, 2), 'utf8');
+    return meta;
+  }
+
+  async function importPatrolFlowPackage(packagePath, headersInfo) {
+    const startedAt = Date.now();
+    const sessionId = headersInfo.session_id;
+    const stagingDir = path.join(
+      crowdUploadsRoot,
+      'staging',
+      `${sessionId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+    );
+    let packageKeptPath = null;
+    try {
+      const files = await extractPatrolFlowTarball(packagePath, stagingDir);
+      const manifestFile = shortestNamedFile(files, 'manifest.json');
+      const framesFile = shortestNamedFile(files, 'frames.jsonl');
+      if (!manifestFile || !framesFile) {
+        const error = new Error(!manifestFile ? 'patrol_flow_manifest_missing' : 'patrol_flow_frames_missing');
+        error.status = 400;
+        throw error;
+      }
+
+      const manifest = await readJsonLimited(manifestFile.path, 2 * 1024 * 1024);
+      const manifestSessionId = normalizedManifestSessionId(manifest);
+      if (manifestSessionId && manifestSessionId !== sessionId) {
+        const error = new Error('patrol_flow_session_id_mismatch');
+        error.status = 400;
+        error.manifest_session_id = manifestSessionId;
+        error.header_session_id = sessionId;
+        throw error;
+      }
+
+      const frameRows = await readFramesJsonl(framesFile.path);
+      if (!frameRows.length) {
+        const error = new Error('patrol_flow_frames_empty');
+        error.status = 400;
+        throw error;
+      }
+
+      const sessionMetaRoot = await copyPatrolFlowSessionMetadata(stagingDir, files, manifestFile.path, framesFile.path, sessionId);
+      const fallbackMs =
+        timestampMsFromValue(manifest?.started_at) ??
+        timestampMsFromValue(manifest?.created_at) ??
+        Date.now();
+      const groups = groupPatrolFlowFrames(frameRows, manifest, fallbackMs);
+      const samples = [];
+      const skippedFrames = [];
+      const framesDir = path.dirname(framesFile.path);
+
+      for (const group of groups) {
+        const firstRow = group.rows[0];
+        const vehicleId = firstRow?.vehicle_id || extractFrameVehicleId(firstRow?.row, manifest);
+        const collectedAtMs = group.ts_ms || fallbackMs;
+        const collectedAt = new Date(collectedAtMs);
+        const sampleId = sanitizeName(
+          `${timeStampCompact(collectedAt)}_${vehicleId}_${sessionId}_${group.key}`,
+          `${sessionId}_${group.key}`
+        );
+        const context = {
+          session_id: sessionId,
+          sample_id: sampleId,
+          vehicle_id: vehicleId,
+          collected_at_ms: collectedAtMs,
+          staging_dir: stagingDir,
+          frames_dir: framesDir
+        };
+        const savedFrames = [];
+        for (const item of group.rows) {
+          const saved = await saveUploadedPatrolFlowFrame(item, context);
+          if (saved.ok === false || saved.skipped) {
+            skippedFrames.push({
+              sample_id: sampleId,
+              frame_index: item.frame_index,
+              row_index: item.row_index,
+              camera_id: item.camera_id,
+              error: saved.error || 'frame_skipped',
+              source_image_path: saved.source_image_path || null
+            });
+          } else {
+            savedFrames.push(saved);
+          }
+        }
+        if (!savedFrames.length) {
+          continue;
+        }
+        const position = samplePositionFromGroup(group);
+        const patrolState = buildUploadedPatrolState(group.rows.map((item) => item.row));
+        const peopleCounts = savedFrames
+          .map((frame) => normalizePeopleCount(frame.analysis?.people_count))
+          .filter((value) => value != null);
+        const samplePeopleCount = peopleCounts.length ? peopleCounts.reduce((sum, value) => sum + value, 0) : null;
+        const routeIds = [...new Set(savedFrames.map((frame) => String(frame.route?.route_id || '').trim()).filter(Boolean))];
+        const sample = {
+          sample_id: sampleId,
+          source: 'auto_ad_patrol_flow_upload',
+          upload_session_id: sessionId,
+          ok: true,
+          skipped: false,
+          collected_at: collectedAt.toISOString(),
+          collected_at_ms: collectedAt.getTime(),
+          elapsed_ms: null,
+          vehicle_id: vehicleId,
+          vehicle_last_seen: null,
+          patrol_state: patrolState,
+          position,
+          route: {
+            route_ids: routeIds,
+            primary_route_id: routeIds[0] || null
+          },
+          capture_policy: manifest?.capture_policy || manifest?.policy || manifest?.collection_policy || null,
+          upload_manifest: {
+            schema: manifest?.schema || headersInfo.schema,
+            session_id: manifestSessionId || sessionId,
+            started_at: manifest?.started_at || null,
+            finished_at: manifest?.finished_at || null,
+            route_id: manifest?.route_id || null,
+            strategy: manifest?.strategy || manifest?.capture_strategy || null
+          },
+          frame_count: savedFrames.length,
+          total_image_bytes: savedFrames.reduce((sum, frame) => sum + (frame.image_size_bytes || 0), 0),
+          response_elapsed_ms: null,
+          analysis: samplePeopleCount == null
+            ? {
+                status: 'pending',
+                people_count: null,
+                note: '等待云端视觉模型识别。'
+              }
+            : {
+                status: 'vehicle_estimate',
+                people_count: samplePeopleCount,
+                max_single_camera_people: Math.max(...peopleCounts),
+                frame_count_analyzed: peopleCounts.length,
+                model: 'vehicle_perception_upload',
+                analyzed_at: nowIso(),
+                note: 'people_count 来自车端 perception 初始统计，后续由云端视觉模型复核。'
+              },
+          frames: savedFrames.map((frame) => ({
+            capture_id: frame.capture_id,
+            camera_id: frame.camera_id,
+            frame_index: frame.frame_index,
+            row_index: frame.row_index,
+            image_size_bytes: frame.image_size_bytes,
+            image_width: frame.image_width || null,
+            image_height: frame.image_height || null,
+            image_url: frame.image_url,
+            image_path: frame.image_path,
+            route: frame.route,
+            target_count: frame.target_count,
+            analysis: frame.analysis
+          }))
+        };
+        await appendCrowdSampleLog(sample);
+        samples.push(sample);
+      }
+
+      const vehicleIds = [...new Set(samples.map((sample) => sample.vehicle_id).filter(Boolean))];
+      const latestByVehicle = new Map();
+      for (const sample of samples) {
+        const current = latestByVehicle.get(sample.vehicle_id);
+        if (!current || (sample.collected_at_ms || 0) > (current.collected_at_ms || 0)) {
+          latestByVehicle.set(sample.vehicle_id, sample);
+        }
+      }
+      if (latestByVehicle.size) {
+        const crowdState = await readCrowdState();
+        for (const [vehicleId, sample] of latestByVehicle.entries()) {
+          crowdState.last_capture_by_vehicle[vehicleId] = {
+            sample_id: sample.sample_id,
+            collected_at: sample.collected_at,
+            collected_at_ms: sample.collected_at_ms,
+            position: sample.position,
+            patrol_state: sample.patrol_state,
+            frame_count: sample.frame_count,
+            total_image_bytes: sample.total_image_bytes,
+            source: sample.source,
+            upload_session_id: sessionId
+          };
+        }
+        await writeCrowdState(crowdState);
+      }
+
+      if (String(process.env.PARK_CROWD_PATROL_FLOW_KEEP_PACKAGES || process.env.PARK_PCM_PATROL_FLOW_KEEP_PACKAGES || 'false').toLowerCase() !== 'false') {
+        packageKeptPath = path.join(crowdUploadsRoot, 'packages', `${sessionId}.tar.gz`);
+        await fsp.mkdir(path.dirname(packageKeptPath), { recursive: true });
+        await fsp.rename(packagePath, packageKeptPath);
+      } else {
+        await fsp.rm(packagePath, { force: true });
+      }
+
+      const storage = await cleanupCrowdStorage();
+      return {
+        ok: true,
+        imported: true,
+        schema: headersInfo.schema,
+        session_id: sessionId,
+        vehicle_ids: vehicleIds,
+        sample_count: samples.length,
+        frame_count: samples.reduce((sum, sample) => sum + (sample.frame_count || 0), 0),
+        skipped_frame_count: skippedFrames.length,
+        skipped_frames: skippedFrames.slice(0, 20),
+        manifest: {
+          session_id: manifestSessionId || sessionId,
+          vehicle_id: extractFrameVehicleId(frameRows[0], manifest),
+          route_id: manifest?.route_id || null,
+          started_at: manifest?.started_at || null,
+          finished_at: manifest?.finished_at || null
+        },
+        metadata_root: sessionMetaRoot,
+        package_kept_path: packageKeptPath,
+        storage,
+        elapsed_ms: Date.now() - startedAt
+      };
+    } finally {
+      await fsp.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  async function handlePatrolFlowUpload(req, res) {
+    const startedAt = Date.now();
+    let headersInfo = null;
+    let packagePath = null;
+    try {
+      headersInfo = validatePatrolFlowUploadHeaders(req);
+      const state = await readPatrolFlowUploadState();
+      const existing = state.sessions[headersInfo.session_id];
+      if (existing?.status === 'imported') {
+        return res.json({
+          ok: true,
+          duplicate: true,
+          imported: false,
+          session_id: headersInfo.session_id,
+          existing
+        });
+      }
+
+      const storageBefore = await assertPatrolFlowStorageCanAccept(headersInfo.expected_size_bytes);
+      const incomingDir = path.join(crowdUploadsRoot, 'incoming');
+      packagePath = path.join(
+        incomingDir,
+        `${headersInfo.session_id}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.tar.gz`
+      );
+      const uploadInfo = await receivePatrolFlowUpload(req, packagePath, headersInfo.expected_size_bytes);
+      if (headersInfo.expected_sha256 && uploadInfo.sha256 !== headersInfo.expected_sha256) {
+        const error = new Error('patrol_flow_upload_sha256_mismatch');
+        error.status = 400;
+        error.expected_sha256 = headersInfo.expected_sha256;
+        error.actual_sha256 = uploadInfo.sha256;
+        throw error;
+      }
+
+      state.sessions[headersInfo.session_id] = {
+        status: 'importing',
+        session_id: headersInfo.session_id,
+        schema: headersInfo.schema,
+        received_at: nowIso(),
+        size_bytes: uploadInfo.size_bytes,
+        sha256: uploadInfo.sha256
+      };
+      await writePatrolFlowUploadState(state);
+
+      const imported = await importPatrolFlowPackage(packagePath, headersInfo);
+      packagePath = null;
+      const nextState = await readPatrolFlowUploadState();
+      nextState.sessions[headersInfo.session_id] = {
+        status: 'imported',
+        session_id: headersInfo.session_id,
+        schema: headersInfo.schema,
+        received_at: state.sessions[headersInfo.session_id].received_at,
+        imported_at: nowIso(),
+        size_bytes: uploadInfo.size_bytes,
+        sha256: uploadInfo.sha256,
+        sample_count: imported.sample_count,
+        frame_count: imported.frame_count,
+        vehicle_ids: imported.vehicle_ids,
+        elapsed_ms: Date.now() - startedAt
+      };
+      await writePatrolFlowUploadState(nextState);
+      await appendPatrolFlowUploadLog({
+        ...nextState.sessions[headersInfo.session_id],
+        ok: true,
+        content_type: headersInfo.content_type,
+        storage_before: {
+          total_bytes: storageBefore.total_bytes,
+          disk_free_bytes: storageBefore.disk_free_bytes
+        }
+      });
+
+      return res.status(201).json({
+        ...imported,
+        upload: {
+          size_bytes: uploadInfo.size_bytes,
+          sha256: uploadInfo.sha256,
+          sha256_verified: Boolean(headersInfo.expected_sha256),
+          elapsed_ms: Date.now() - startedAt
+        }
+      });
+    } catch (error) {
+      if (packagePath) {
+        await fsp.rm(packagePath, { force: true }).catch(() => {});
+      }
+      if (headersInfo?.session_id) {
+        const state = await readPatrolFlowUploadState().catch(() => ({ version: 1, sessions: {} }));
+        state.sessions = state.sessions && typeof state.sessions === 'object' ? state.sessions : {};
+        state.sessions[headersInfo.session_id] = {
+          ...(state.sessions[headersInfo.session_id] || {}),
+          status: 'failed',
+          session_id: headersInfo.session_id,
+          schema: headersInfo.schema,
+          failed_at: nowIso(),
+          error: error.message || 'patrol_flow_upload_failed',
+          elapsed_ms: Date.now() - startedAt
+        };
+        await writePatrolFlowUploadState(state).catch(() => {});
+        await appendPatrolFlowUploadLog({
+          ok: false,
+          session_id: headersInfo.session_id,
+          schema: headersInfo.schema,
+          error: error.message || 'patrol_flow_upload_failed',
+          status: error.status || 500,
+          elapsed_ms: Date.now() - startedAt
+        }).catch(() => {});
+      }
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'patrol_flow_upload_failed',
+        detail: error.detail || null,
+        storage: error.storage || null
+      });
+    }
   }
 
   function extractLocalizationPosition(localizationResult) {
@@ -2798,11 +4071,12 @@ module.exports = function registerParkPcmRoutes(app, options) {
   }
 
   app.get('/api/park-pcm/status', requirePermission('vehicle:read'), async (_req, res) => {
-    const [snapshot, reportState, monitorState, analysisState] = await Promise.all([
+    const [snapshot, reportState, monitorState, analysisState, uploadState] = await Promise.all([
       readJsonFile(snapshotPath),
       readJsonFile(reportStatePath),
       readCrowdMonitorState(),
-      readCrowdAnalysisState()
+      readCrowdAnalysisState(),
+      readPatrolFlowUploadState()
     ]);
     return res.json({
       ok: true,
@@ -2850,6 +4124,30 @@ module.exports = function registerParkPcmRoutes(app, options) {
               last_attempt_at: analysisState.last_attempt_at,
               last_result: analysisState.last_result,
               analyzed_sample_count: analysisState.samples ? Object.keys(analysisState.samples).length : 0
+            }
+          : null
+      },
+      patrol_flow_upload: {
+        schema: PATROL_FLOW_SCHEMA_V1,
+        endpoint: '/api/auto_ad/patrol-flow/upload',
+        auth_token_required: Boolean(patrolFlowUploadToken),
+        max_upload_bytes: patrolFlowUploadMaxBytes,
+        max_frame_rows: patrolFlowMaxFrameRows,
+        storage: {
+          retention_days: crowdStorageRetentionDays,
+          max_storage_bytes: crowdStorageMaxBytes,
+          min_free_bytes: crowdStorageMinFreeBytes
+        },
+        state: uploadState
+          ? {
+              updated_at: uploadState.updated_at,
+              session_count: uploadState.sessions ? Object.keys(uploadState.sessions).length : 0,
+              recent_sessions: Object.values(uploadState.sessions || {})
+                .sort((left, right) =>
+                  Date.parse(right.imported_at || right.received_at || right.failed_at || '') -
+                  Date.parse(left.imported_at || left.received_at || left.failed_at || '')
+                )
+                .slice(0, 8)
             }
           : null
       },
@@ -3049,6 +4347,24 @@ module.exports = function registerParkPcmRoutes(app, options) {
       return res.status(error.status || 502).json({
         ok: false,
         error: error.message || 'park_pcm_crowd_capture_failed'
+      });
+    }
+  });
+
+  app.post('/api/auto_ad/patrol-flow/upload', requirePatrolFlowUploadAuth, handlePatrolFlowUpload);
+  app.put('/api/auto_ad/patrol-flow/upload', requirePatrolFlowUploadAuth, handlePatrolFlowUpload);
+
+  app.post('/api/park-pcm/crowd/cleanup', requirePermission('vehicle:read'), async (_req, res) => {
+    try {
+      const storage = await cleanupCrowdStorage();
+      return res.json({
+        ok: true,
+        storage
+      });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'park_pcm_crowd_cleanup_failed'
       });
     }
   });
