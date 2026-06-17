@@ -212,6 +212,7 @@
       construction_near_people: "施工区有人"
     }
   };
+  const PEOPLE_CHART_COLORS = ["#22c55e", "#38bdf8", "#f59e0b", "#f43f5e", "#a78bfa", "#14b8a6", "#eab308", "#fb7185"];
 
   function featureCountMap(sample, key) {
     const analysis = sample && sample.analysis && typeof sample.analysis === "object" ? sample.analysis : {};
@@ -229,6 +230,16 @@
       .slice(0, opts.limit || 4)
       .map((item) => `${labels[item.key] || item.key} ${item.count}`)
       .join(" · ");
+  }
+
+  function chartFeatureRows(map, labels, options) {
+    const opts = options || {};
+    const rows = Object.entries(map || {})
+      .map(([key, value]) => ({ key, label: labels[key] || key, count: Number(value) }))
+      .filter((item) => Number.isFinite(item.count) && item.count > 0)
+      .filter((item) => opts.includeUnknown || item.key !== "unknown")
+      .sort((left, right) => right.count - left.count);
+    return rows.slice(0, opts.limit || 6);
   }
 
   function formatRiskHints(risks) {
@@ -272,6 +283,147 @@
     return Object.entries(totals)
       .map(([type, count]) => ({ type, count }))
       .sort((left, right) => right.count - left.count);
+  }
+
+  function chartFill(rows) {
+    const total = rows.reduce((sum, item) => sum + item.count, 0);
+    if (!total) return "conic-gradient(rgba(148, 163, 184, 0.2) 0 360deg)";
+    let cursor = 0;
+    const stops = rows.map((item, index) => {
+      const start = cursor;
+      const end = cursor + (item.count / total) * 360;
+      cursor = end;
+      const color = item.color || PEOPLE_CHART_COLORS[index % PEOPLE_CHART_COLORS.length];
+      return `${color} ${start.toFixed(2)}deg ${end.toFixed(2)}deg`;
+    });
+    return `conic-gradient(${stops.join(", ")})`;
+  }
+
+  function createPeopleDonutChart(title, subtitle, map, labels, options) {
+    const opts = options || {};
+    const rows = chartFeatureRows(map, labels, opts).map((item, index) => ({
+      ...item,
+      color: PEOPLE_CHART_COLORS[index % PEOPLE_CHART_COLORS.length]
+    }));
+    const total = rows.reduce((sum, item) => sum + item.count, 0);
+    const card = document.createElement("article");
+    card.className = "park-pcm-chart-card";
+
+    const head = document.createElement("div");
+    head.className = "park-pcm-chart-head";
+    head.appendChild(textNode("h3", "", title));
+    head.appendChild(textNode("span", "", total ? `${total} 项画像` : "等待画像"));
+
+    const body = document.createElement("div");
+    body.className = "park-pcm-chart-body";
+    const donut = document.createElement("div");
+    donut.className = "park-pcm-donut";
+    donut.style.setProperty("--chart-fill", chartFill(rows));
+    const core = document.createElement("div");
+    core.className = "park-pcm-donut-core";
+    core.appendChild(textNode("strong", "", total ? String(total) : "-"));
+    core.appendChild(textNode("span", "", subtitle));
+    donut.appendChild(core);
+
+    const legend = document.createElement("div");
+    legend.className = "park-pcm-chart-legend";
+    if (!rows.length) {
+      legend.appendChild(textNode("p", "park-pcm-chart-empty", opts.emptyText || "Qwen3.6 正在回填画像。"));
+    } else {
+      rows.forEach((item) => {
+        const percent = total ? Math.round((item.count / total) * 100) : 0;
+        const row = document.createElement("div");
+        row.className = "park-pcm-chart-row";
+        const label = document.createElement("span");
+        const swatch = document.createElement("i");
+        swatch.style.background = item.color;
+        label.appendChild(swatch);
+        label.appendChild(textNode("em", "", item.label));
+        const value = textNode("strong", "", `${item.count} · ${percent}%`);
+        const bar = document.createElement("b");
+        bar.style.width = `${Math.max(4, percent)}%`;
+        row.appendChild(label);
+        row.appendChild(value);
+        row.appendChild(bar);
+        legend.appendChild(row);
+      });
+    }
+    body.appendChild(donut);
+    body.appendChild(legend);
+    card.appendChild(head);
+    card.appendChild(body);
+    return card;
+  }
+
+  function createRiskChart(risks) {
+    const rows = (Array.isArray(risks) ? risks : []).slice(0, 6);
+    const maxCount = rows.reduce((max, item) => Math.max(max, Number(item.count) || 1), 1);
+    const card = document.createElement("article");
+    card.className = "park-pcm-chart-card park-pcm-chart-card--wide";
+    const head = document.createElement("div");
+    head.className = "park-pcm-chart-head";
+    head.appendChild(textNode("h3", "", "风险候选"));
+    head.appendChild(textNode("span", "", rows.length ? `${rows.length} 类提示` : "暂无风险"));
+    const list = document.createElement("div");
+    list.className = "park-pcm-risk-list";
+    if (!rows.length) {
+      list.appendChild(textNode("p", "park-pcm-chart-empty", "当前样本未聚合出风险候选。"));
+    } else {
+      rows.forEach((risk, index) => {
+        const type = String(risk && risk.type || "").trim();
+        const count = Number(risk && risk.count) || 1;
+        const row = document.createElement("div");
+        row.className = "park-pcm-risk-row";
+        const label = textNode("span", "", PEOPLE_FEATURE_LABELS.risk_hints[type] || type);
+        const value = textNode("strong", "", String(count));
+        const bar = document.createElement("b");
+        bar.style.width = `${Math.max(8, Math.round((count / maxCount) * 100))}%`;
+        bar.style.background = PEOPLE_CHART_COLORS[(index + 3) % PEOPLE_CHART_COLORS.length];
+        row.appendChild(label);
+        row.appendChild(value);
+        row.appendChild(bar);
+        list.appendChild(row);
+      });
+    }
+    card.appendChild(head);
+    card.appendChild(list);
+    return card;
+  }
+
+  function renderPeopleCharts(container, rows) {
+    if (!container) return;
+    const chartGrid = document.createElement("div");
+    chartGrid.className = "park-pcm-chart-grid";
+    chartGrid.appendChild(
+      createPeopleDonutChart("年龄结构", "年龄", aggregateFeatureMap(rows, "age_groups"), PEOPLE_FEATURE_LABELS.age_groups, {
+        limit: 5,
+        includeUnknown: false,
+        emptyText: "暂未识别出年龄阶段。"
+      })
+    );
+    chartGrid.appendChild(
+      createPeopleDonutChart("角色类型", "角色", aggregateFeatureMap(rows, "role_types"), PEOPLE_FEATURE_LABELS.role_types, {
+        limit: 5,
+        includeUnknown: false,
+        emptyText: "暂未识别出工作人员、访客等角色。"
+      })
+    );
+    chartGrid.appendChild(
+      createPeopleDonutChart("行为状态", "行为", aggregateFeatureMap(rows, "activity_types"), PEOPLE_FEATURE_LABELS.activity_types, {
+        limit: 6,
+        includeUnknown: false,
+        emptyText: "暂未识别出通行、停留、骑行等行为。"
+      })
+    );
+    chartGrid.appendChild(
+      createPeopleDonutChart("通行辅助", "辅助", aggregateFeatureMap(rows, "mobility_types"), PEOPLE_FEATURE_LABELS.mobility_types, {
+        limit: 5,
+        includeUnknown: false,
+        emptyText: "暂未识别出轮椅、拐杖、婴儿车等特征。"
+      })
+    );
+    chartGrid.appendChild(createRiskChart(aggregateRiskHints(rows)));
+    container.appendChild(chartGrid);
   }
 
   function sampleFeatureSummary(sample) {
@@ -661,6 +813,7 @@
     grid.appendChild(detailCell("上传时间段", `${formatTime(oldest.collected_at)} - ${formatTime(latest.collected_at)}`));
     grid.appendChild(detailCell("最近坐标", `${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}`));
     vehicleDetailEl.appendChild(grid);
+    renderPeopleCharts(vehicleDetailEl, rows);
     vehicleDetailEl.appendChild(
       textNode(
         "p",
