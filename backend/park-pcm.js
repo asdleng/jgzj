@@ -3872,6 +3872,129 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return Number.isFinite(num) && num >= 0 ? Math.round(num) : null;
   }
 
+  const CROWD_ANALYSIS_FEATURE_SCHEMA = 'park_crowd_anonymous_people_features.v1';
+  const CROWD_FEATURE_MAP_KEYS = {
+    age_groups: ['child', 'teenager', 'adult', 'elderly', 'unknown'],
+    mobility_types: ['wheelchair', 'cane_or_walker', 'stroller', 'assisted_walking', 'slow_moving', 'large_baggage', 'unknown'],
+    role_types: ['visitor', 'staff', 'security', 'cleaner', 'delivery', 'maintenance', 'vendor', 'student', 'volunteer', 'unknown'],
+    activity_types: ['walking', 'standing', 'sitting_or_resting', 'queueing', 'gathering', 'running', 'cycling', 'scooter_or_ebike', 'taking_photo', 'shopping_or_pickup', 'crossing_road', 'near_water', 'unknown'],
+    group_types: ['single', 'pair', 'family_parent_child', 'elderly_group', 'student_group', 'tour_group', 'work_crew', 'queue', 'gathering']
+  };
+
+  function normalizeFeatureKey(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^\w]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  function normalizeFeatureCountMap(value, allowedKeys) {
+    const allowed = new Set(allowedKeys || []);
+    const result = {};
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        const key = normalizeFeatureKey(item);
+        if (allowed.has(key)) result[key] = (result[key] || 0) + 1;
+      });
+      return result;
+    }
+    if (!value || typeof value !== 'object') return result;
+    Object.entries(value).forEach(([rawKey, rawCount]) => {
+      const key = normalizeFeatureKey(rawKey);
+      if (!allowed.has(key)) return;
+      const count = normalizePeopleCount(rawCount);
+      if (count != null && count > 0) result[key] = count;
+    });
+    return result;
+  }
+
+  function sumFeatureCountMaps(items, key) {
+    const result = {};
+    items.forEach((item) => {
+      const map = item && item[key] && typeof item[key] === 'object' ? item[key] : {};
+      Object.entries(map).forEach(([rawKey, rawCount]) => {
+        const count = normalizePeopleCount(rawCount);
+        if (count == null || count <= 0) return;
+        result[rawKey] = (result[rawKey] || 0) + count;
+      });
+    });
+    return result;
+  }
+
+  function normalizeStringListForAnalysis(value, limit) {
+    const raw = Array.isArray(value) ? value : (typeof value === 'string' && value.trim() ? value.split(/[,，、]/) : []);
+    return raw
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .map((item) => item.slice(0, 48))
+      .slice(0, Number.isFinite(Number(limit)) ? Number(limit) : 8);
+  }
+
+  function normalizeConfidence(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return ['low', 'medium', 'high'].includes(normalized) ? normalized : 'low';
+  }
+
+  function normalizeRiskHints(value) {
+    const rows = Array.isArray(value) ? value : [];
+    return rows
+      .map((item) => {
+        if (typeof item === 'string') {
+          return {
+            type: normalizeFeatureKey(item).slice(0, 48),
+            confidence: 'low',
+            note: ''
+          };
+        }
+        if (!item || typeof item !== 'object') return null;
+        const type = normalizeFeatureKey(item.type || item.risk || item.name).slice(0, 48);
+        if (!type) return null;
+        return {
+          type,
+          confidence: normalizeConfidence(item.confidence),
+          note: String(item.note || '').slice(0, 120)
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 8);
+  }
+
+  function aggregateRiskHints(frameAnalyses) {
+    const confidenceScore = { low: 1, medium: 2, high: 3 };
+    const merged = {};
+    frameAnalyses.forEach((frame) => {
+      (Array.isArray(frame?.risk_hints) ? frame.risk_hints : []).forEach((risk) => {
+        const type = normalizeFeatureKey(risk.type);
+        if (!type) return;
+        const current = merged[type] || {
+          type,
+          count: 0,
+          confidence: 'low',
+          notes: []
+        };
+        current.count += 1;
+        if (confidenceScore[risk.confidence] > confidenceScore[current.confidence]) {
+          current.confidence = risk.confidence;
+        }
+        if (risk.note && current.notes.length < 2) current.notes.push(risk.note);
+        merged[type] = current;
+      });
+    });
+    return Object.values(merged)
+      .sort((left, right) => {
+        if (right.count !== left.count) return right.count - left.count;
+        return (confidenceScore[right.confidence] || 0) - (confidenceScore[left.confidence] || 0);
+      })
+      .slice(0, 10)
+      .map((risk) => ({
+        type: risk.type,
+        count: risk.count,
+        confidence: risk.confidence,
+        note: risk.notes.join('；')
+      }));
+  }
+
   function imageMimeFromPath(imagePath) {
     const ext = path.extname(String(imagePath || '')).toLowerCase();
     if (ext === '.png') return 'image/png';
@@ -3889,9 +4012,15 @@ module.exports = function registerParkPcmRoutes(app, options) {
     const imageBuffer = await fsp.readFile(imageAbsPath);
     const imageBase64 = imageBuffer.toString('base64');
     const prompt =
-      '你在做园区巡逻人流统计。请统计这张单路相机图片中可见的真实行人数量，只数真实人体，不数雕塑、海报、倒影。' +
-      '只输出紧凑 JSON，不要 Markdown，不要解释。格式：{"people_count":0,"confidence":"low|medium|high","note":"中文简短说明"}。' +
-      '看不清时给最佳估计并把 confidence 设为 low。';
+      '你在做园区巡逻车的人流画像分析。只分析这张单路相机图片中可见的真实人体和随身/伴随物，不数雕塑、海报、倒影。' +
+      '必须匿名聚合，不做人脸识别，不识别具体身份，不推断民族、宗教、疾病，不输出性别。' +
+      '只输出紧凑 JSON，不要 Markdown，不要解释。所有分类键必须使用下面给定英文键；看不清就归 unknown 或低置信度。' +
+      '格式：{"people_count":0,"confidence":"low|medium|high","age_groups":{"child":0,"teenager":0,"adult":0,"elderly":0,"unknown":0},' +
+      '"mobility_types":{"wheelchair":0,"cane_or_walker":0,"stroller":0,"assisted_walking":0,"slow_moving":0,"large_baggage":0,"unknown":0},' +
+      '"role_types":{"visitor":0,"staff":0,"security":0,"cleaner":0,"delivery":0,"maintenance":0,"vendor":0,"student":0,"volunteer":0,"unknown":0},' +
+      '"activity_types":{"walking":0,"standing":0,"sitting_or_resting":0,"queueing":0,"gathering":0,"running":0,"cycling":0,"scooter_or_ebike":0,"taking_photo":0,"shopping_or_pickup":0,"crossing_road":0,"near_water":0,"unknown":0},' +
+      '"group_types":{"single":0,"pair":0,"family_parent_child":0,"elderly_group":0,"student_group":0,"tour_group":0,"work_crew":0,"queue":0,"gathering":0},' +
+      '"risk_hints":[{"type":"child_near_road|child_near_water|elderly_needs_care|mobility_barrier|crowd_gathering|queue_congestion|mixed_traffic|night_stay|construction_near_people","confidence":"low|medium|high","note":"中文短句"}],"scene_tags":["中文短标签"],"note":"中文简短说明"}。';
     const response = await fetch(crowdAnalysisChatUrl, {
       method: 'POST',
       headers: {
@@ -3917,7 +4046,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
             ]
           }
         ],
-        max_tokens: 160,
+        max_tokens: 900,
         temperature: 0,
         stream: false,
         chat_template_kwargs: {
@@ -3936,10 +4065,18 @@ module.exports = function registerParkPcmRoutes(app, options) {
     const reply = String(payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.message?.reasoning || '').trim();
     const parsed = parseCrowdAnalysisJson(reply);
     const peopleCount = normalizePeopleCount(parsed.people_count);
+    const featureMaps = {};
+    Object.entries(CROWD_FEATURE_MAP_KEYS).forEach(([key, allowedKeys]) => {
+      featureMaps[key] = normalizeFeatureCountMap(parsed[key], allowedKeys);
+    });
     return {
       status: peopleCount == null ? 'needs_review' : 'done',
+      feature_schema: CROWD_ANALYSIS_FEATURE_SCHEMA,
       people_count: peopleCount,
-      confidence: String(parsed.confidence || 'low').toLowerCase(),
+      confidence: normalizeConfidence(parsed.confidence),
+      ...featureMaps,
+      risk_hints: normalizeRiskHints(parsed.risk_hints),
+      scene_tags: normalizeStringListForAnalysis(parsed.scene_tags, 8),
       note: String(parsed.note || parsed.raw_reply || '').slice(0, 300),
       model: crowdAnalysisModel,
       analyzed_at: nowIso()
@@ -3956,6 +4093,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
       } catch (error) {
         frameResults[frameKey] = {
           status: 'error',
+          feature_schema: CROWD_ANALYSIS_FEATURE_SCHEMA,
           people_count: null,
           confidence: 'low',
           note: error.message || 'crowd_frame_analysis_failed',
@@ -3968,16 +4106,25 @@ module.exports = function registerParkPcmRoutes(app, options) {
       .map((item) => normalizePeopleCount(item.people_count))
       .filter((value) => value != null);
     const allDone = frames.length > 0 && counts.length === frames.length;
+    const analyzedFrames = Object.values(frameResults).filter((item) => item && item.status !== 'error');
+    const aggregateFeatureMaps = {};
+    Object.keys(CROWD_FEATURE_MAP_KEYS).forEach((key) => {
+      aggregateFeatureMaps[key] = sumFeatureCountMaps(analyzedFrames, key);
+    });
     return {
       frames: frameResults,
       aggregate: {
         status: allDone ? 'done' : counts.length ? 'partial' : 'needs_review',
+        feature_schema: CROWD_ANALYSIS_FEATURE_SCHEMA,
         people_count: counts.length ? counts.reduce((sum, value) => sum + value, 0) : null,
         max_single_camera_people: counts.length ? Math.max(...counts) : null,
         frame_count_analyzed: Object.keys(frameResults).length,
+        ...aggregateFeatureMaps,
+        risk_hints: aggregateRiskHints(analyzedFrames),
+        scene_tags: normalizeStringListForAnalysis([].concat(...analyzedFrames.map((item) => item.scene_tags || [])), 12),
         model: crowdAnalysisModel,
         analyzed_at: nowIso(),
-        note: 'people_count 为四路相机可见人数合计；max_single_camera_people 为单路最大值，供重叠视角保守参考。'
+        note: '匿名聚合分析：people_count 与各类人群特征为四路相机可见结果合计；max_single_camera_people 为单路最大值，供重叠视角保守参考。'
       }
     };
   }
@@ -4089,7 +4236,11 @@ module.exports = function registerParkPcmRoutes(app, options) {
           continue;
         }
         const existing = state.samples[sample.sample_id];
-        if (['done', 'vehicle_estimate_server_reviewed'].includes(existing?.aggregate?.status)) {
+        const existingAggregate = existing?.aggregate || {};
+        const existingHasCurrentFeatureSchema =
+          existingAggregate.feature_schema === CROWD_ANALYSIS_FEATURE_SCHEMA &&
+          existingAggregate.model === crowdAnalysisModel;
+        if (['done', 'vehicle_estimate_server_reviewed'].includes(existingAggregate.status) && existingHasCurrentFeatureSchema) {
           continue;
         }
         const sampleAnalysis = mergeServerAnalysisWithVehicleEstimate(sample, await analyzeCrowdSample(sample));

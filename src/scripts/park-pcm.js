@@ -145,6 +145,146 @@
     return value === true ? "是" : value === false ? "否" : "-";
   }
 
+  const PEOPLE_FEATURE_LABELS = {
+    age_groups: {
+      child: "儿童",
+      teenager: "青少年",
+      adult: "成年人",
+      elderly: "老人",
+      unknown: "年龄不明"
+    },
+    mobility_types: {
+      wheelchair: "轮椅",
+      cane_or_walker: "拐杖/助行器",
+      stroller: "婴儿车",
+      assisted_walking: "被搀扶",
+      slow_moving: "行动缓慢",
+      large_baggage: "大件行李",
+      unknown: "行动特征不明"
+    },
+    role_types: {
+      visitor: "访客/游客",
+      staff: "工作人员",
+      security: "安保",
+      cleaner: "保洁",
+      delivery: "配送",
+      maintenance: "维修/施工",
+      vendor: "商户/摊位",
+      student: "学生",
+      volunteer: "志愿者",
+      unknown: "角色不明"
+    },
+    activity_types: {
+      walking: "通行",
+      standing: "停留",
+      sitting_or_resting: "休息",
+      queueing: "排队",
+      gathering: "聚集",
+      running: "跑步",
+      cycling: "骑行",
+      scooter_or_ebike: "电动车/滑板车",
+      taking_photo: "拍照",
+      shopping_or_pickup: "购物/取餐",
+      crossing_road: "过路",
+      near_water: "靠近水域",
+      unknown: "行为不明"
+    },
+    group_types: {
+      single: "单人",
+      pair: "双人",
+      family_parent_child: "亲子/家庭",
+      elderly_group: "老人结伴",
+      student_group: "学生队伍",
+      tour_group: "游客团体",
+      work_crew: "工作班组",
+      queue: "队列",
+      gathering: "聚集"
+    },
+    risk_hints: {
+      child_near_road: "儿童靠近车道",
+      child_near_water: "儿童靠近水域",
+      elderly_needs_care: "老人照护提示",
+      mobility_barrier: "通行障碍",
+      crowd_gathering: "人群聚集",
+      queue_congestion: "排队拥堵",
+      mixed_traffic: "人车混行",
+      night_stay: "夜间停留",
+      construction_near_people: "施工区有人"
+    }
+  };
+
+  function featureCountMap(sample, key) {
+    const analysis = sample && sample.analysis && typeof sample.analysis === "object" ? sample.analysis : {};
+    return analysis[key] && typeof analysis[key] === "object" ? analysis[key] : {};
+  }
+
+  function formatFeatureMap(map, labels, options) {
+    const opts = options || {};
+    const rows = Object.entries(map || {})
+      .map(([key, value]) => ({ key, count: Number(value) }))
+      .filter((item) => Number.isFinite(item.count) && item.count > 0)
+      .sort((left, right) => right.count - left.count);
+    const filtered = opts.includeUnknown ? rows : rows.filter((item) => item.key !== "unknown");
+    return filtered
+      .slice(0, opts.limit || 4)
+      .map((item) => `${labels[item.key] || item.key} ${item.count}`)
+      .join(" · ");
+  }
+
+  function formatRiskHints(risks) {
+    return (Array.isArray(risks) ? risks : [])
+      .slice()
+      .sort((left, right) => (Number(right.count) || 1) - (Number(left.count) || 1))
+      .slice(0, 3)
+      .map((risk) => {
+        const type = String(risk && risk.type || "").trim();
+        if (!type) return "";
+        const label = PEOPLE_FEATURE_LABELS.risk_hints[type] || type;
+        const count = Number(risk && risk.count);
+        return Number.isFinite(count) && count > 1 ? `${label} ${count}` : label;
+      })
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  function aggregateFeatureMap(samples, key) {
+    const totals = {};
+    (Array.isArray(samples) ? samples : []).forEach((sample) => {
+      Object.entries(featureCountMap(sample, key)).forEach(([featureKey, value]) => {
+        const count = Number(value);
+        if (!Number.isFinite(count) || count <= 0) return;
+        totals[featureKey] = (totals[featureKey] || 0) + count;
+      });
+    });
+    return totals;
+  }
+
+  function aggregateRiskHints(samples) {
+    const totals = {};
+    (Array.isArray(samples) ? samples : []).forEach((sample) => {
+      const risks = sample && sample.analysis && Array.isArray(sample.analysis.risk_hints) ? sample.analysis.risk_hints : [];
+      risks.forEach((risk) => {
+        const type = String(risk && risk.type || "").trim();
+        if (!type) return;
+        totals[type] = (totals[type] || 0) + (Number(risk.count) || 1);
+      });
+    });
+    return Object.entries(totals)
+      .map(([type, count]) => ({ type, count }))
+      .sort((left, right) => right.count - left.count);
+  }
+
+  function sampleFeatureSummary(sample) {
+    const parts = [
+      formatFeatureMap(featureCountMap(sample, "age_groups"), PEOPLE_FEATURE_LABELS.age_groups, { limit: 3 }),
+      formatFeatureMap(featureCountMap(sample, "mobility_types"), PEOPLE_FEATURE_LABELS.mobility_types, { limit: 2 }),
+      formatFeatureMap(featureCountMap(sample, "role_types"), PEOPLE_FEATURE_LABELS.role_types, { limit: 2 }),
+      formatFeatureMap(featureCountMap(sample, "activity_types"), PEOPLE_FEATURE_LABELS.activity_types, { limit: 3 }),
+      formatRiskHints(sample && sample.analysis && sample.analysis.risk_hints)
+    ].filter(Boolean);
+    return parts.length ? parts.join(" · ") : "人群画像待分析";
+  }
+
   function samplePeopleCount(sample) {
     const direct = Number(sample && sample.analysis && sample.analysis.people_count);
     if (Number.isFinite(direct)) return direct;
@@ -441,6 +581,7 @@
           ].join(" · ")
         )
       );
+      head.appendChild(textNode("span", "", sampleFeatureSummary(sample)));
       container.appendChild(head);
       renderSampleFrameGrid(container, sample);
     });
@@ -502,12 +643,20 @@
     const latest = rows[0];
     const oldest = rows[rows.length - 1];
     const position = latest.position || {};
+    const ageSummary = formatFeatureMap(aggregateFeatureMap(rows, "age_groups"), PEOPLE_FEATURE_LABELS.age_groups, { limit: 4 });
+    const mobilitySummary = formatFeatureMap(aggregateFeatureMap(rows, "mobility_types"), PEOPLE_FEATURE_LABELS.mobility_types, { limit: 3 });
+    const roleSummary = formatFeatureMap(aggregateFeatureMap(rows, "role_types"), PEOPLE_FEATURE_LABELS.role_types, { limit: 3 });
+    const activitySummary = formatFeatureMap(aggregateFeatureMap(rows, "activity_types"), PEOPLE_FEATURE_LABELS.activity_types, { limit: 4 });
+    const riskSummary = formatRiskHints(aggregateRiskHints(rows));
     const grid = document.createElement("div");
     grid.className = "park-pcm-detail-grid";
     grid.appendChild(detailCell("人流记录", `${rows.length} 条`));
     grid.appendChild(detailCell("四路图片", `${frames} 张 · ${formatBytes(bytes)}`));
     grid.appendChild(detailCell("已识别人数", counts.length ? `${totalPeople} 人 · ${counts.length}/${rows.length} 条` : "等待识别"));
     grid.appendChild(detailCell("热力记录", positiveCounts.length ? `${positiveCounts.length} 条 · 峰值 ${maxPeople} 人` : "暂无人群热区"));
+    grid.appendChild(detailCell("人群结构", ageSummary || "等待画像"));
+    grid.appendChild(detailCell("角色/通行", [roleSummary, mobilitySummary].filter(Boolean).join(" · ") || "等待画像"));
+    grid.appendChild(detailCell("行为/风险", [activitySummary, riskSummary].filter(Boolean).join(" · ") || "等待画像"));
     grid.appendChild(detailCell("最近采集", `${latest.vehicle_id || "-"} · ${formatTime(latest.collected_at)}`));
     grid.appendChild(detailCell("上传时间段", `${formatTime(oldest.collected_at)} - ${formatTime(latest.collected_at)}`));
     grid.appendChild(detailCell("最近坐标", `${formatCoord(position.gaode_longitude)}, ${formatCoord(position.gaode_latitude)}`));
@@ -516,7 +665,7 @@
       textNode(
         "p",
         "park-pcm-detail-note",
-        "热力图按车辆定位、人群识别结果和采样位置聚合。"
+        "热力图按车辆定位、人群识别结果和采样位置聚合；人群画像为匿名可见特征统计，不做人脸身份识别。"
       )
     );
   }
