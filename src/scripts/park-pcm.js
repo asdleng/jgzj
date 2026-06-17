@@ -9,15 +9,13 @@
   const CROWD_UPLOADS_URL = "/api/park-pcm/crowd/uploads";
   const PATROL_FLOW_COLLECTORS_URL = "/api/park-pcm/crowd/patrol-flow/collectors";
   const PATROL_FLOW_FLUSH_URL = "/api/park-pcm/crowd/patrol-flow/flush";
-  const VEHICLE_UPLOAD_SAMPLE_SOURCE = "auto_ad_patrol_flow_upload";
+  const CROWD_SAMPLE_SOURCE = "all";
   const PATROL_MAX_VEHICLES = 24;
   const PATROL_REFRESH_MS = 90 * 1000;
   const HEAT_SEGMENT_STEP_M = 48;
   const HEAT_SEGMENT_MAX_DISTANCE_M = 750;
   const HEAT_SEGMENT_MAX_INTERPOLATED_POINTS = 360;
-  const HEATMAP_RADIUS_PX = 28;
-  const HEATMAP_MIN_OPACITY = 0.05;
-  const HEATMAP_MAX_OPACITY = 0.42;
+  const HEATMAP_RADIUS_PX = 42;
 
   const AMAP_KEY = root.getAttribute("data-amap-key") || "";
   const statusEl = root.querySelector("[data-park-pcm-status]");
@@ -55,8 +53,9 @@
   let patrolRefreshInFlight = false;
   let amapLoadPromise = null;
   let amapMap = null;
-  let amapTrackLine = null;
   let amapHeatmap = null;
+  let customHeatmapCanvas = null;
+  let customHeatmapRaf = 0;
   let amapControlsReady = false;
   let amapHeatmapEventsBound = false;
   let amapLastHeatData = [];
@@ -296,17 +295,22 @@
       }
       amapHeatmap = null;
     }
+    if (customHeatmapCanvas) {
+      const ctx = customHeatmapCanvas.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, customHeatmapCanvas.width, customHeatmapCanvas.height);
+      customHeatmapCanvas.hidden = true;
+    }
     amapLastHeatData = [];
     amapLastHeatMax = 0;
+    if (customHeatmapRaf) {
+      window.cancelAnimationFrame(customHeatmapRaf);
+      customHeatmapRaf = 0;
+    }
     if (heatmapRefreshTimer) {
       window.clearTimeout(heatmapRefreshTimer);
       heatmapRefreshTimer = null;
     }
     if (heatLegendEl) heatLegendEl.hidden = true;
-    if (amapTrackLine) {
-      amapMap.remove(amapTrackLine);
-      amapTrackLine = null;
-    }
   }
 
   function setVehicleSummary(text) {
@@ -323,7 +327,6 @@
 
   function visibleCrowdSamples() {
     const rows = latestCrowdSamples
-      .filter((sample) => String(sample && sample.source || "") === VEHICLE_UPLOAD_SAMPLE_SOURCE)
       .filter((sample) => samplePosition(sample));
     if (!selectedVehicleId) return [];
     return rows.filter((sample) => sample.vehicle_id === selectedVehicleId);
@@ -335,8 +338,37 @@
     if ([...crowdVehicleSelect.options].some((option) => option.value === value)) return;
     const option = document.createElement("option");
     option.value = value;
-    option.textContent = `${value} · 车端采集`;
+    option.textContent = `${value} · 人流样本`;
     crowdVehicleSelect.appendChild(option);
+  }
+
+  function syncSampleVehicleOptions(samples) {
+    if (!crowdVehicleSelect) return;
+    const vehicles = new Map();
+    (Array.isArray(samples) ? samples : []).forEach((sample, index) => {
+      const vehicleId = String(sample && sample.vehicle_id || "").trim();
+      if (!vehicleId || !samplePosition(sample)) return;
+      const current = vehicles.get(vehicleId) || {
+        vehicle_id: vehicleId,
+        sample_count: 0,
+        max_people: 0,
+        latest_rank: Number.MAX_SAFE_INTEGER
+      };
+      const peopleCount = Number(samplePeopleCount(sample));
+      current.sample_count += 1;
+      if (Number.isFinite(peopleCount)) current.max_people = Math.max(current.max_people, peopleCount);
+      current.latest_rank = Math.min(current.latest_rank, index);
+      vehicles.set(vehicleId, current);
+    });
+    [...vehicles.values()]
+      .sort((left, right) => left.vehicle_id.localeCompare(right.vehicle_id, "zh-CN"))
+      .forEach((vehicle) => {
+        if ([...crowdVehicleSelect.options].some((option) => option.value === vehicle.vehicle_id)) return;
+        const option = document.createElement("option");
+        option.value = vehicle.vehicle_id;
+        option.textContent = `${vehicle.vehicle_id} · ${vehicle.sample_count} 条 · 峰值 ${vehicle.max_people} 人`;
+        crowdVehicleSelect.appendChild(option);
+      });
   }
 
   function selectedCrowdSample() {
@@ -357,7 +389,7 @@
     const grid = document.createElement("div");
     grid.className = "park-pcm-track-frames";
     if (!frames.length) {
-      grid.appendChild(textNode("p", "park-pcm-empty", "该车端上传记录没有图片。"));
+      grid.appendChild(textNode("p", "park-pcm-empty", "该记录没有图片。"));
       container.appendChild(grid);
       return;
     }
@@ -390,7 +422,7 @@
       if (!container) return;
       clearElement(container);
       if (!sample) {
-        container.appendChild(textNode("p", "park-pcm-empty", "等待车端上传图片。"));
+        container.appendChild(textNode("p", "park-pcm-empty", "选择热力记录查看图片。"));
         return;
       }
       const position = sample.position || {};
@@ -420,7 +452,7 @@
     const rows = visibleCrowdSamples();
     const active = selectedCrowdSample();
     if (!rows.length) {
-      trackSamplesEl.appendChild(textNode("p", "park-pcm-empty", selectedVehicleId ? `${selectedVehicleId} 暂无车端上传记录。` : "请先选择一台车辆。"));
+      trackSamplesEl.appendChild(textNode("p", "park-pcm-empty", selectedVehicleId ? `${selectedVehicleId} 暂无人流记录。` : "请先选择一台车辆。"));
       renderSampleDetail(null);
       return;
     }
@@ -437,7 +469,7 @@
         renderTrackSamples();
         renderSampleDetail(sample);
         void renderTrackMap({ focus_sample_id: selectedSampleId }).catch((error) => {
-          setMapStatus(`轨迹刷新失败：${error.message || "-"}`);
+          setMapStatus(`热力刷新失败：${error.message || "-"}`);
         });
       });
       trackSamplesEl.appendChild(button);
@@ -454,7 +486,7 @@
         textNode(
           "p",
           "park-pcm-empty",
-          selectedVehicleId ? `${selectedVehicleId} 还没有车端巡逻上传数据。` : "请选择一台车辆查看车端巡逻上传数据。"
+          selectedVehicleId ? `${selectedVehicleId} 还没有人流记录。` : "请选择一台车辆查看人流热力。"
         )
       );
       return;
@@ -472,7 +504,7 @@
     const position = latest.position || {};
     const grid = document.createElement("div");
     grid.className = "park-pcm-detail-grid";
-    grid.appendChild(detailCell("车端上传记录", `${rows.length} 条`));
+    grid.appendChild(detailCell("人流记录", `${rows.length} 条`));
     grid.appendChild(detailCell("四路图片", `${frames} 张 · ${formatBytes(bytes)}`));
     grid.appendChild(detailCell("已识别人数", counts.length ? `${totalPeople} 人 · ${counts.length}/${rows.length} 条` : "等待识别"));
     grid.appendChild(detailCell("热力记录", positiveCounts.length ? `${positiveCounts.length} 条 · 峰值 ${maxPeople} 人` : "暂无人群热区"));
@@ -484,7 +516,7 @@
       textNode(
         "p",
         "park-pcm-detail-note",
-        "当前地图和图片只来自车端 patrol-flow 上传包，不再展示云端主动抓拍旧数据。"
+        "热力图按车辆定位、人群识别结果和采样位置聚合。"
       )
     );
   }
@@ -543,7 +575,7 @@
       );
       item.addEventListener("click", () => {
         void selectVehicle(row.vehicle_id).catch((error) => {
-          setMapStatus(`车端上传数据加载失败：${error.message || "-"}`);
+          setMapStatus(`人流数据加载失败：${error.message || "-"}`);
         });
       });
       item.addEventListener("keydown", (event) => {
@@ -564,10 +596,10 @@
       crowdVehicleSelect.value = nextVehicleId;
     }
     if (!nextVehicleId) {
-      setVehicleSummary("请先选择一台车辆查看车端上传数据。");
+      setVehicleSummary("请先选择一台车辆查看人流热力。");
       return loadCrowdSamples("");
     }
-    setVehicleSummary(`${nextVehicleId} 车端上传数据加载中。`);
+    setVehicleSummary(`${nextVehicleId} 人流数据加载中。`);
     return loadCrowdSamples(nextVehicleId);
   }
 
@@ -620,16 +652,8 @@
   }
 
   function refreshPeopleHeatmap(resetMap) {
-    if (!amapHeatmap || !amapLastHeatData.length || typeof amapHeatmap.setDataSet !== "function") return;
-    if (resetMap && typeof amapHeatmap.setMap === "function" && amapMap) {
-      amapHeatmap.setMap(null);
-      amapHeatmap.setMap(amapMap);
-    }
-    amapHeatmap.setDataSet({
-      data: amapLastHeatData,
-      max: amapLastHeatMax || 1
-    });
-    if (typeof amapHeatmap.show === "function") amapHeatmap.show();
+    void resetMap;
+    drawCustomHeatmap();
   }
 
   function schedulePeopleHeatmapRefresh(delayMs, resetMap) {
@@ -649,6 +673,94 @@
     amapHeatmapEventsBound = true;
   }
 
+  function ensureCustomHeatmapCanvas() {
+    if (customHeatmapCanvas || !mapEl) return customHeatmapCanvas;
+    const canvas = document.createElement("canvas");
+    canvas.className = "park-pcm-custom-heatmap";
+    canvas.setAttribute("aria-hidden", "true");
+    canvas.hidden = true;
+    mapEl.appendChild(canvas);
+    customHeatmapCanvas = canvas;
+    return customHeatmapCanvas;
+  }
+
+  function heatmapContainerPoint(lng, lat) {
+    if (!amapMap || typeof amapMap.lngLatToContainer !== "function") return null;
+    let pixel = null;
+    try {
+      pixel = amapMap.lngLatToContainer([Number(lng), Number(lat)]);
+    } catch (_error) {
+      try {
+        const AMap = window["AMap"];
+        pixel = AMap && AMap.LngLat ? amapMap.lngLatToContainer(new AMap.LngLat(Number(lng), Number(lat))) : null;
+      } catch (_innerError) {
+        pixel = null;
+      }
+    }
+    if (!pixel) return null;
+    const x = Number(pixel.x ?? (typeof pixel.getX === "function" ? pixel.getX() : pixel[0]));
+    const y = Number(pixel.y ?? (typeof pixel.getY === "function" ? pixel.getY() : pixel[1]));
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x, y };
+  }
+
+  function drawCustomHeatmapNow() {
+    const canvas = ensureCustomHeatmapCanvas();
+    if (!canvas || !mapEl || !amapMap || !amapLastHeatData.length) return;
+    const rect = mapEl.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const pixelWidth = Math.max(1, Math.round(width * dpr));
+    const pixelHeight = Math.max(1, Math.round(height * dpr));
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.globalCompositeOperation = "lighter";
+    const maxCount = Math.max(1, Number(amapLastHeatMax) || 1);
+    amapLastHeatData.forEach((point) => {
+      const projected = heatmapContainerPoint(point.lng, point.lat);
+      if (!projected) return;
+      const radius = HEATMAP_RADIUS_PX * (0.85 + Math.min(1.5, Number(point.count) / maxCount) * 0.65);
+      if (
+        projected.x < -radius ||
+        projected.y < -radius ||
+        projected.x > width + radius ||
+        projected.y > height + radius
+      ) {
+        return;
+      }
+      const strength = Math.max(0.14, Math.min(1, Number(point.count) / maxCount));
+      const gradient = ctx.createRadialGradient(projected.x, projected.y, 0, projected.x, projected.y, radius);
+      gradient.addColorStop(0, `rgba(239, 68, 68, ${0.62 + strength * 0.28})`);
+      gradient.addColorStop(0.24, `rgba(249, 115, 22, ${0.5 + strength * 0.24})`);
+      gradient.addColorStop(0.52, `rgba(250, 204, 21, ${0.34 + strength * 0.2})`);
+      gradient.addColorStop(0.78, `rgba(132, 204, 22, ${0.18 + strength * 0.14})`);
+      gradient.addColorStop(1, "rgba(34, 197, 94, 0)");
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(projected.x, projected.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalCompositeOperation = "source-over";
+    canvas.hidden = false;
+  }
+
+  function drawCustomHeatmap() {
+    if (customHeatmapRaf) window.cancelAnimationFrame(customHeatmapRaf);
+    customHeatmapRaf = window.requestAnimationFrame(() => {
+      customHeatmapRaf = 0;
+      drawCustomHeatmapNow();
+    });
+  }
+
   function sampleMapPoint(sample) {
     const position = samplePosition(sample);
     if (!position) return null;
@@ -659,7 +771,7 @@
       longitude: position.longitude,
       latitude: position.latitude,
       people_count: peopleCount,
-      heat_count: peopleCount == null ? null : Math.max(0, peopleCount),
+      heat_count: peopleCount == null ? 1 : Math.max(1, peopleCount),
       collected_at: sample.collected_at,
       sample
     };
@@ -752,6 +864,7 @@
   }
 
   async function renderPeopleHeatmap(AMap, samplePoints) {
+    void AMap;
     const heatData = heatDataFromPoints(samplePoints);
     if (!heatData.length) {
       if (heatLegendEl) heatLegendEl.hidden = true;
@@ -760,48 +873,46 @@
         max: 0
       };
     }
-    try {
-      await loadAmapPlugins(AMap, ["AMap.HeatMap"]);
-      if (!AMap.HeatMap) {
-        if (heatLegendEl) heatLegendEl.hidden = true;
-        return {
-          count: 0,
-          max: 0,
-          unavailable: true
-        };
-      }
-      const maxCount = Math.max(...heatData.map((point) => point.count), 1);
-      amapLastHeatData = heatData;
-      amapLastHeatMax = maxCount;
-      amapHeatmap = new AMap.HeatMap(amapMap, {
-        radius: HEATMAP_RADIUS_PX,
-        opacity: [HEATMAP_MIN_OPACITY, HEATMAP_MAX_OPACITY],
-        zIndex: 120,
-        gradient: {
-          0.18: "#22c55e",
-          0.42: "#a3e635",
-          0.64: "#facc15",
-          0.82: "#fb923c",
-          1: "#ef4444"
-        }
-      });
-      if (typeof amapHeatmap.setMap === "function") amapHeatmap.setMap(amapMap);
-      refreshPeopleHeatmap(false);
-      if (typeof amapHeatmap.show === "function") amapHeatmap.show();
-      schedulePeopleHeatmapRefresh(160, true);
-      if (heatLegendEl) heatLegendEl.hidden = false;
-      return {
-        count: heatData.length,
-        max: maxCount
-      };
-    } catch (_error) {
-      if (heatLegendEl) heatLegendEl.hidden = true;
-      return {
-        count: 0,
-        max: 0,
-        unavailable: true
-      };
+    const maxCount = Math.max(...heatData.map((point) => point.count), 1);
+    amapLastHeatData = heatData;
+    amapLastHeatMax = maxCount;
+    drawCustomHeatmap();
+    schedulePeopleHeatmapRefresh(160, true);
+    if (heatLegendEl) heatLegendEl.hidden = false;
+    return {
+      count: heatData.length,
+      max: maxCount
+    };
+  }
+
+  function fitHeatmapView(AMap, samplePoints, center) {
+    if (!amapMap || !Array.isArray(samplePoints) || samplePoints.length < 2) {
+      amapMap.setZoomAndCenter(17, center);
+      return;
     }
+    const lngs = samplePoints.map((point) => Number(point.longitude)).filter(Number.isFinite);
+    const lats = samplePoints.map((point) => Number(point.latitude)).filter(Number.isFinite);
+    if (!lngs.length || !lats.length) {
+      amapMap.setZoomAndCenter(17, center);
+      return;
+    }
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    if (Math.abs(maxLng - minLng) < 0.00005 && Math.abs(maxLat - minLat) < 0.00005) {
+      amapMap.setZoomAndCenter(17, center);
+      return;
+    }
+    try {
+      if (AMap.Bounds && typeof amapMap.setBounds === "function") {
+        amapMap.setBounds(new AMap.Bounds([minLng, minLat], [maxLng, maxLat]), false, [44, 44, 44, 44]);
+        return;
+      }
+    } catch (_error) {
+      // Fall back to a focused heatmap view below.
+    }
+    amapMap.setZoomAndCenter(16, center);
   }
 
   async function renderTrackMap(options) {
@@ -815,14 +926,14 @@
       renderTrackSamples();
       clearMapOverlays();
       setMapStatus("请选择车辆");
-      setMapFallback("请选择一台车辆查看该车巡逻上传轨迹和图片", false);
+      setMapFallback("请选择一台车辆查看人流热力图", false);
       return;
     }
     if (!samplePoints.length) {
       renderTrackSamples();
       clearMapOverlays();
-      setMapStatus("暂无车端上传数据");
-      setMapFallback(selectedVehicleId ? `${selectedVehicleId} 暂无车端 patrol-flow 上传数据` : "暂无车端 patrol-flow 上传数据", false);
+      setMapStatus("暂无人流数据");
+      setMapFallback(selectedVehicleId ? `${selectedVehicleId} 暂无人流定位样本` : "暂无人流定位样本", false);
       return;
     }
     try {
@@ -847,35 +958,17 @@
       enableMapInteraction();
       bindAmapHeatmapRefreshEvents();
       clearMapOverlays();
-      let fitTargets = [];
-      if (samplePoints.length >= 2) {
-        amapTrackLine = new AMap.Polyline({
-          path: samplePoints.map((point) => [point.longitude, point.latitude]),
-          strokeColor: "#f59e0b",
-          strokeWeight: 4,
-          strokeOpacity: 0.72,
-          lineJoin: "round",
-          zIndex: 135,
-          bubble: true
-        });
-        amapMap.add(amapTrackLine);
-        fitTargets = [amapTrackLine];
-      }
-      if (fitTargets.length) {
-        amapMap.setFitView(fitTargets, true, [46, 46, 46, 46], 18);
-      } else {
-        amapMap.setZoomAndCenter(17, center);
-      }
+      fitHeatmapView(AMap, samplePoints, center);
       const heatStats = await renderPeopleHeatmap(AMap, samplePoints);
       enableMapInteraction();
       setMapStatus(
         heatStats.count
-          ? `${selectedVehicleId} 上传记录 ${samplePoints.length} · 热力栅格 ${heatStats.count} · 峰值 ${heatStats.max} 人`
-          : `${selectedVehicleId} 上传记录 ${samplePoints.length} · 暂无可用人数热力`
+          ? `${selectedVehicleId} 记录 ${samplePoints.length} · 热力点 ${heatStats.count} · 峰值 ${heatStats.max} 人`
+          : `${selectedVehicleId} 记录 ${samplePoints.length} · 暂无可用热力`
       );
     } catch (error) {
-      setMapStatus("轨迹地图加载失败");
-      setMapFallback(`轨迹地图加载失败：${error.message || "amap_failed"}`, false);
+      setMapStatus("热力地图加载失败");
+      setMapFallback(`热力地图加载失败：${error.message || "amap_failed"}`, false);
     }
   }
 
@@ -889,7 +982,7 @@
       if (!selectedVehicleId) {
         clearMapOverlays();
         setMapStatus("请选择车辆");
-        setMapFallback("选择一台车辆后显示该车巡逻上传轨迹", false);
+        setMapFallback("选择一台车辆后显示人流热力图", false);
       }
       return data;
     } finally {
@@ -912,7 +1005,7 @@
         crowdVehicleSelect.value = selectedVehicleId;
       }
       renderHistoryDetail();
-      setVehicleSummary(selectedVehicleId ? `${selectedVehicleId} · 使用车端上传记录` : "暂无车辆列表。");
+      setVehicleSummary(selectedVehicleId ? `${selectedVehicleId} · 人流热力数据` : "暂无车辆列表。");
       return selectedVehicleId;
     }
     const previousVehicleId = selectedVehicleId || crowdVehicleSelect.value || "";
@@ -956,8 +1049,8 @@
             "p",
             "park-pcm-empty",
             latest
-              ? `最近车端上传 ${latest.vehicle_id || "-"} · ${formatTime(latest.collected_at)}。`
-              : "还没有车端 patrol-flow 上传数据；旧云端主动抓拍数据已隐藏。"
+              ? `最近记录 ${latest.vehicle_id || "-"} · ${formatTime(latest.collected_at)}。`
+              : "还没有同步记录。"
           )
         );
       } else {
@@ -991,12 +1084,12 @@
     setUploadStatus(
       sessions.length
         ? `最近 ${formatTime(sessions[0].imported_at || sessions[0].failed_at || sessions[0].received_at)}`
-        : `等待车端补传 · 可接收 ${formatBoolean(data && data.can_accept_upload)}`
+        : `等待数据同步 · 可接收 ${formatBoolean(data && data.can_accept_upload)}`
     );
   }
 
   function collectorStatusText(row) {
-    if (!row || !row.tools || !row.tools.has_status_tool) return "未更新采集器";
+    if (!row || !row.tools || !row.tools.has_status_tool) return "未更新状态";
     const status = row.status || {};
     if (status.ok === false) return `状态失败：${status.error || "-"}`;
     if (status.script_running) return `运行中 · ${status.health || "ok"}`;
@@ -1008,7 +1101,7 @@
     clearElement(collectorSummaryEl);
     if (collectorSummaryEl) {
       [
-        `采集器 ${formatNumber(counts.with_status_tool, "0")}/${formatNumber(counts.scanned, "0")}`,
+        `状态 ${formatNumber(counts.with_status_tool, "0")}/${formatNumber(counts.scanned, "0")}`,
         `运行 ${formatNumber(counts.running, "0")}`,
         `待传 ${formatNumber(counts.pending_upload, "0")}`,
         `未更新 ${formatNumber(counts.not_updated, "0")}`
@@ -1019,7 +1112,7 @@
     if (!collectorListEl) return;
     const rows = Array.isArray(data && data.collectors) ? data.collectors : [];
     if (!rows.length) {
-      collectorListEl.appendChild(textNode("p", "park-pcm-empty", "没有在线车辆采集器状态。"));
+      collectorListEl.appendChild(textNode("p", "park-pcm-empty", "没有在线车辆状态。"));
       return;
     }
     rows.forEach((row) => {
@@ -1050,11 +1143,11 @@
       const flushBtn = document.createElement("button");
       flushBtn.type = "button";
       flushBtn.className = "park-pcm-button park-pcm-button--compact";
-      flushBtn.textContent = "补传队列";
+      flushBtn.textContent = "同步队列";
       flushBtn.disabled = !row.tools || !row.tools.has_flush_tool;
       flushBtn.addEventListener("click", () => {
         void flushPatrolFlowQueue(row.vehicle_id).catch((error) => {
-          setUploadStatus(`补传失败：${error.message || "-"}`);
+          setUploadStatus(`同步失败：${error.message || "-"}`);
         });
       });
       actions.appendChild(flushBtn);
@@ -1069,7 +1162,7 @@
     clearElement(crowdLastEl);
     if (!crowdLastEl) return;
     if (!sample) {
-      crowdLastEl.appendChild(textNode("p", "park-pcm-empty", "还没有车端 patrol-flow 上传数据。"));
+      crowdLastEl.appendChild(textNode("p", "park-pcm-empty", "还没有人流样本。"));
       return;
     }
     if (sample.skipped) {
@@ -1108,9 +1201,10 @@
 
   function renderCrowdSamples(samples) {
     const list = Array.isArray(samples)
-      ? samples.filter((item) => !item.skipped && String(item && item.source || "") === VEHICLE_UPLOAD_SAMPLE_SOURCE)
+      ? samples.filter((item) => !item.skipped && samplePosition(item))
       : [];
     latestCrowdSamples = list;
+    syncSampleVehicleOptions(list);
     if (!selectedVehicleId && list.length) {
       const defaultVehicleId = chooseDefaultVehicleId(list);
       if (defaultVehicleId) {
@@ -1124,8 +1218,8 @@
     const totalPeople = rowsWithCount.reduce((sum, sample) => sum + Number(samplePeopleCount(sample) || 0), 0);
     setVehicleSummary(
       selectedVehicleId
-        ? `${selectedVehicleId} · 车端上传记录 ${rows.length} · 已识别 ${rowsWithCount.length} 条/${totalPeople} 人`
-        : "请选择一台车辆查看车端上传数据。"
+        ? `${selectedVehicleId} · 人流记录 ${rows.length} · 已识别 ${rowsWithCount.length} 条/${totalPeople} 人`
+        : "请选择一台车辆查看人流热力。"
     );
     if (!rows.length) {
       renderCrowdLast(null);
@@ -1133,7 +1227,7 @@
       renderTrackSamples();
       renderSampleDetail(null);
       void renderTrackMap().catch((error) => {
-        setMapStatus(`轨迹刷新失败：${error.message || "-"}`);
+        setMapStatus(`热力刷新失败：${error.message || "-"}`);
       });
       return;
     }
@@ -1142,7 +1236,7 @@
     renderTrackSamples();
     renderSampleDetail(selectedCrowdSample());
     void renderTrackMap().catch((error) => {
-      setMapStatus(`轨迹刷新失败：${error.message || "-"}`);
+      setMapStatus(`热力刷新失败：${error.message || "-"}`);
     });
   }
 
@@ -1175,7 +1269,7 @@
     sampleLoadRequestId = requestId;
     const query = new URLSearchParams({
       limit: "300",
-      source: VEHICLE_UPLOAD_SAMPLE_SOURCE
+      source: CROWD_SAMPLE_SOURCE
     });
     if (normalizedVehicleId) query.set("vehicle_id", normalizedVehicleId);
     const data = await fetchJson(`${CROWD_SAMPLES_URL}?${query.toString()}`);
@@ -1192,7 +1286,7 @@
       return;
     }
     setBusy(true);
-    setUploadStatus(`${normalizedVehicleId} 补传队列中`);
+    setUploadStatus(`${normalizedVehicleId} 同步队列中`);
     try {
       const result = await fetchJson(PATROL_FLOW_FLUSH_URL, {
         method: "POST",
@@ -1201,12 +1295,12 @@
         }
       });
       await Promise.all([loadCrowdUploads(), loadPatrolFlowCollectors(), loadCrowdSamples(selectedVehicleId)]);
-      setUploadStatus(`${normalizedVehicleId} 补传完成 · 成功 ${formatNumber(result.success_count, "0")} / 失败 ${formatNumber(result.failed_count, "0")}`);
+      setUploadStatus(`${normalizedVehicleId} 同步完成 · 成功 ${formatNumber(result.success_count, "0")} / 失败 ${formatNumber(result.failed_count, "0")}`);
     } catch (error) {
-      setUploadStatus(`补传失败：${error.message || "patrol_flow_flush_failed"}`);
+      setUploadStatus(`同步失败：${error.message || "patrol_flow_flush_failed"}`);
       if (authEl) {
         authEl.hidden = false;
-        authEl.textContent = error.message || "车端补传失败。";
+        authEl.textContent = error.message || "数据同步失败。";
       }
     } finally {
       setBusy(false);
@@ -1232,20 +1326,11 @@
       if (authEl) authEl.hidden = true;
       setStatus("加载中", "warn");
       await Promise.all([
-        loadCrowdPatrols().catch((error) => {
-          setMapStatus(`巡逻加载失败：${error.message || "-"}`);
-        }),
-        loadCrowdUploads().catch((error) => {
-          setUploadStatus(`上传状态失败：${error.message || "-"}`);
-        }),
-        loadPatrolFlowCollectors().catch((error) => {
-          setUploadStatus(`采集器状态失败：${error.message || "-"}`);
-        }),
         loadCrowdVehicles().catch((error) => {
           setCrowdStatus(`车辆加载失败：${error.message || "-"}`);
         }),
         loadCrowdSamples().catch((error) => {
-          setCrowdStatus(`车端上传数据加载失败：${error.message || "-"}`);
+          setCrowdStatus(`人流数据加载失败：${error.message || "-"}`);
         })
       ]);
       setStatus("已就绪", "ok");
@@ -1263,8 +1348,8 @@
   if (crowdVehicleSelect) {
     crowdVehicleSelect.addEventListener("change", () => {
       void selectVehicle(crowdVehicleSelect.value).catch((error) => {
-        setVehicleSummary(`车端上传数据加载失败：${error.message || "-"}`);
-        setMapStatus("车端上传数据加载失败");
+        setVehicleSummary(`人流数据加载失败：${error.message || "-"}`);
+        setMapStatus("人流数据加载失败");
       });
     });
   }
@@ -1272,12 +1357,12 @@
     collectorRefreshBtn.addEventListener("click", async () => {
       if (!authenticated || busy) return;
       setBusy(true);
-      setUploadStatus("刷新采集器");
+      setUploadStatus("刷新状态");
       try {
         await Promise.all([loadCrowdUploads(), loadPatrolFlowCollectors()]);
-        setUploadStatus("采集器已更新");
+        setUploadStatus("状态已更新");
       } catch (error) {
-        setUploadStatus(`采集器刷新失败：${error.message || "-"}`);
+        setUploadStatus(`状态刷新失败：${error.message || "-"}`);
       } finally {
         setBusy(false);
       }
@@ -1289,7 +1374,7 @@
       setBusy(true);
       setMapStatus("刷新中");
       try {
-        await Promise.all([loadCrowdPatrols(), loadCrowdUploads(), loadPatrolFlowCollectors()]);
+        await loadCrowdVehicles();
         await loadCrowdSamples(selectedVehicleId);
         setStatus("已更新", "ok");
       } catch (error) {
@@ -1301,10 +1386,10 @@
   }
   window.setInterval(() => {
     if (!authenticated || busy) return;
-    void loadCrowdPatrols()
-      .then(() => Promise.all([loadCrowdUploads(), loadPatrolFlowCollectors(), loadCrowdSamples(selectedVehicleId)]))
+    void loadCrowdVehicles()
+      .then(() => loadCrowdSamples(selectedVehicleId))
       .catch((error) => {
-        setMapStatus(`巡逻刷新失败：${error.message || "-"}`);
+        setMapStatus(`数据刷新失败：${error.message || "-"}`);
       });
   }, PATROL_REFRESH_MS);
   void init();

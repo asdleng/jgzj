@@ -4748,7 +4748,8 @@ module.exports = function registerParkPcmRoutes(app, options) {
 
   app.get('/api/park-pcm/crowd/samples', requirePermission('vehicle:read'), async (req, res) => {
     try {
-      const source = String(req.query?.source || '').trim() || VEHICLE_PATROL_FLOW_SAMPLE_SOURCE;
+      const requestedSource = String(req.query?.source || 'all').trim();
+      const source = requestedSource && requestedSource !== 'all' ? requestedSource : '';
       const samples = await readRecentCrowdSamples(req.query?.limit, {
         vehicle_id: req.query?.vehicle_id,
         source
@@ -4756,7 +4757,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
       return res.json({
         ok: true,
         vehicle_id: req.query?.vehicle_id ? String(req.query.vehicle_id) : null,
-        source,
+        source: source || 'all',
         samples
       });
     } catch (error) {
