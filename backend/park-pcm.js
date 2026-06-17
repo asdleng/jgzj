@@ -3872,7 +3872,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return Number.isFinite(num) && num >= 0 ? Math.round(num) : null;
   }
 
-  const CROWD_ANALYSIS_FEATURE_SCHEMA = 'park_crowd_anonymous_people_features.v1';
+  const CROWD_ANALYSIS_FEATURE_SCHEMA = 'park_crowd_anonymous_people_features.v2';
   const CROWD_FEATURE_MAP_KEYS = {
     age_groups: ['child', 'teenager', 'adult', 'elderly', 'unknown'],
     mobility_types: ['wheelchair', 'cane_or_walker', 'stroller', 'assisted_walking', 'slow_moving', 'large_baggage', 'unknown'],
@@ -4015,6 +4015,8 @@ module.exports = function registerParkPcmRoutes(app, options) {
       '你在做园区巡逻车的人流画像分析。只分析这张单路相机图片中可见的真实人体和随身/伴随物，不数雕塑、海报、倒影。' +
       '必须匿名聚合，不做人脸识别，不识别具体身份，不推断民族、宗教、疾病，不输出性别。' +
       '只输出紧凑 JSON，不要 Markdown，不要解释。所有分类键必须使用下面给定英文键；看不清就归 unknown 或低置信度。' +
+      '年龄阶段只作为运营关照线索：只有儿童或老人特征在图中清晰可见时才填 child/elderly；不得仅凭儿童乐园、亲子场景、身高远近、服装、撑伞或模糊小人猜年龄。' +
+      'adult/teenager 也只能在近距离且体态清晰时填写；否则 age_groups 统一计入 unknown。各分类合计不得超过 people_count。' +
       '格式：{"people_count":0,"confidence":"low|medium|high","age_groups":{"child":0,"teenager":0,"adult":0,"elderly":0,"unknown":0},' +
       '"mobility_types":{"wheelchair":0,"cane_or_walker":0,"stroller":0,"assisted_walking":0,"slow_moving":0,"large_baggage":0,"unknown":0},' +
       '"role_types":{"visitor":0,"staff":0,"security":0,"cleaner":0,"delivery":0,"maintenance":0,"vendor":0,"student":0,"volunteer":0,"unknown":0},' +

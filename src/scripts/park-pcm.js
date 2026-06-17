@@ -147,10 +147,10 @@
 
   const PEOPLE_FEATURE_LABELS = {
     age_groups: {
-      child: "儿童",
-      teenager: "青少年",
+      child: "疑似儿童",
+      teenager: "疑似青少年",
       adult: "成年人",
-      elderly: "老人",
+      elderly: "疑似老人",
       unknown: "年龄不明"
     },
     mobility_types: {
@@ -213,6 +213,15 @@
     }
   };
   const PEOPLE_CHART_COLORS = ["#22c55e", "#38bdf8", "#f59e0b", "#f43f5e", "#a78bfa", "#14b8a6", "#eab308", "#fb7185"];
+  const ATTENTION_SIGNAL_LABELS = {
+    child: "疑似儿童",
+    elderly: "疑似老人",
+    wheelchair: "轮椅",
+    cane_or_walker: "拐杖/助行器",
+    stroller: "婴儿车",
+    assisted_walking: "被搀扶",
+    slow_moving: "行动缓慢"
+  };
 
   function featureCountMap(sample, key) {
     const analysis = sample && sample.analysis && typeof sample.analysis === "object" ? sample.analysis : {};
@@ -285,6 +294,32 @@
       .sort((left, right) => right.count - left.count);
   }
 
+  function addPositiveCount(target, key, value) {
+    const count = Number(value);
+    if (!Number.isFinite(count) || count <= 0) return;
+    target[key] = (target[key] || 0) + count;
+  }
+
+  function attentionSignalMap(sample) {
+    const result = {};
+    const ageMap = featureCountMap(sample, "age_groups");
+    const mobilityMap = featureCountMap(sample, "mobility_types");
+    addPositiveCount(result, "child", ageMap.child);
+    addPositiveCount(result, "elderly", ageMap.elderly);
+    ["wheelchair", "cane_or_walker", "stroller", "assisted_walking", "slow_moving"].forEach((key) => {
+      addPositiveCount(result, key, mobilityMap[key]);
+    });
+    return result;
+  }
+
+  function aggregateAttentionSignals(samples) {
+    const totals = {};
+    (Array.isArray(samples) ? samples : []).forEach((sample) => {
+      Object.entries(attentionSignalMap(sample)).forEach(([key, value]) => addPositiveCount(totals, key, value));
+    });
+    return totals;
+  }
+
   function chartFill(rows) {
     const total = rows.reduce((sum, item) => sum + item.count, 0);
     if (!total) return "conic-gradient(rgba(148, 163, 184, 0.2) 0 360deg)";
@@ -312,7 +347,7 @@
     const head = document.createElement("div");
     head.className = "park-pcm-chart-head";
     head.appendChild(textNode("h3", "", title));
-    head.appendChild(textNode("span", "", total ? `${total} 项画像` : "等待画像"));
+    head.appendChild(textNode("span", "", total ? `${total} ${opts.unitLabel || "项画像"}` : (opts.emptyStateLabel || "等待画像")));
 
     const body = document.createElement("div");
     body.className = "park-pcm-chart-body";
@@ -395,10 +430,12 @@
     const chartGrid = document.createElement("div");
     chartGrid.className = "park-pcm-chart-grid";
     chartGrid.appendChild(
-      createPeopleDonutChart("年龄结构", "年龄", aggregateFeatureMap(rows, "age_groups"), PEOPLE_FEATURE_LABELS.age_groups, {
+      createPeopleDonutChart("关照线索", "线索", aggregateAttentionSignals(rows), ATTENTION_SIGNAL_LABELS, {
         limit: 5,
         includeUnknown: false,
-        emptyText: "暂未识别出年龄阶段。"
+        unitLabel: "项线索",
+        emptyStateLabel: "暂无线索",
+        emptyText: "暂无儿童、老人或通行辅助等明显线索。"
       })
     );
     chartGrid.appendChild(
@@ -428,7 +465,7 @@
 
   function sampleFeatureSummary(sample) {
     const parts = [
-      formatFeatureMap(featureCountMap(sample, "age_groups"), PEOPLE_FEATURE_LABELS.age_groups, { limit: 3 }),
+      formatFeatureMap(attentionSignalMap(sample), ATTENTION_SIGNAL_LABELS, { limit: 3 }),
       formatFeatureMap(featureCountMap(sample, "mobility_types"), PEOPLE_FEATURE_LABELS.mobility_types, { limit: 2 }),
       formatFeatureMap(featureCountMap(sample, "role_types"), PEOPLE_FEATURE_LABELS.role_types, { limit: 2 }),
       formatFeatureMap(featureCountMap(sample, "activity_types"), PEOPLE_FEATURE_LABELS.activity_types, { limit: 3 }),
@@ -795,7 +832,7 @@
     const latest = rows[0];
     const oldest = rows[rows.length - 1];
     const position = latest.position || {};
-    const ageSummary = formatFeatureMap(aggregateFeatureMap(rows, "age_groups"), PEOPLE_FEATURE_LABELS.age_groups, { limit: 4 });
+    const attentionSummary = formatFeatureMap(aggregateAttentionSignals(rows), ATTENTION_SIGNAL_LABELS, { limit: 4 });
     const mobilitySummary = formatFeatureMap(aggregateFeatureMap(rows, "mobility_types"), PEOPLE_FEATURE_LABELS.mobility_types, { limit: 3 });
     const roleSummary = formatFeatureMap(aggregateFeatureMap(rows, "role_types"), PEOPLE_FEATURE_LABELS.role_types, { limit: 3 });
     const activitySummary = formatFeatureMap(aggregateFeatureMap(rows, "activity_types"), PEOPLE_FEATURE_LABELS.activity_types, { limit: 4 });
@@ -806,7 +843,7 @@
     grid.appendChild(detailCell("四路图片", `${frames} 张 · ${formatBytes(bytes)}`));
     grid.appendChild(detailCell("已识别人数", counts.length ? `${totalPeople} 人 · ${counts.length}/${rows.length} 条` : "等待识别"));
     grid.appendChild(detailCell("热力记录", positiveCounts.length ? `${positiveCounts.length} 条 · 峰值 ${maxPeople} 人` : "暂无人群热区"));
-    grid.appendChild(detailCell("人群结构", ageSummary || "等待画像"));
+    grid.appendChild(detailCell("关照线索", attentionSummary || "暂无明显线索"));
     grid.appendChild(detailCell("角色/通行", [roleSummary, mobilitySummary].filter(Boolean).join(" · ") || "等待画像"));
     grid.appendChild(detailCell("行为/风险", [activitySummary, riskSummary].filter(Boolean).join(" · ") || "等待画像"));
     grid.appendChild(detailCell("最近采集", `${latest.vehicle_id || "-"} · ${formatTime(latest.collected_at)}`));
@@ -818,7 +855,7 @@
       textNode(
         "p",
         "park-pcm-detail-note",
-        "热力图按车辆定位、人群识别结果和采样位置聚合；人群画像为匿名可见特征统计，不做人脸身份识别。"
+        "热力图按车辆定位、人群识别结果和采样位置聚合；关照线索只用于运营提醒，不做精确年龄、人脸身份或个人属性识别。"
       )
     );
   }
