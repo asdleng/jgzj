@@ -15,6 +15,7 @@ const registerRuntimeControlRoutes = require('./runtime-control');
 const registerThreeDgsRoutes = require('./three-dgs');
 const registerCrowdCpmRoutes = require('./crowd-cpm');
 const registerParkPcmRoutes = require('./park-pcm');
+const registerOpenAiGatewayRoutes = require('./openai-gateway');
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -6187,6 +6188,10 @@ registerParkPcmRoutes(app, {
   requirePermission: (permission) => authStore.requirePermission(permission),
   cloudAgentBaseUrl,
   rootDir: path.resolve(__dirname, '..')
+});
+registerOpenAiGatewayRoutes(app, {
+  rootDir: path.resolve(__dirname, '..'),
+  statusAuthMiddleware: authStore.requirePermission('ai:chat')
 });
 
 function loginRedirectUrl(req) {
