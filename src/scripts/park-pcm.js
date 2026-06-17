@@ -12,10 +12,10 @@
   const CROWD_SAMPLE_SOURCE = "all";
   const PATROL_MAX_VEHICLES = 24;
   const PATROL_REFRESH_MS = 90 * 1000;
-  const HEAT_SEGMENT_STEP_M = 48;
-  const HEAT_SEGMENT_MAX_DISTANCE_M = 750;
-  const HEAT_SEGMENT_MAX_INTERPOLATED_POINTS = 360;
-  const HEATMAP_RADIUS_PX = 42;
+  const CROWD_SAMPLE_INITIAL_LIMIT = 1000;
+  const CROWD_SAMPLE_VEHICLE_LIMIT = 500;
+  const HEATMAP_RADIUS_PX = 36;
+  const HEATMAP_PIXEL_BUCKET = 18;
 
   const AMAP_KEY = root.getAttribute("data-amap-key") || "";
   const statusEl = root.querySelector("[data-park-pcm-status]");
@@ -657,7 +657,7 @@
   }
 
   function schedulePeopleHeatmapRefresh(delayMs, resetMap) {
-    if (!amapHeatmap) return;
+    if (!amapMap || !amapLastHeatData.length) return;
     if (heatmapRefreshTimer) window.clearTimeout(heatmapRefreshTimer);
     heatmapRefreshTimer = window.setTimeout(() => {
       heatmapRefreshTimer = null;
@@ -671,6 +671,21 @@
       amapMap.on(eventName, () => schedulePeopleHeatmapRefresh(50, true));
     });
     amapHeatmapEventsBound = true;
+  }
+
+  function waitForAmapComplete(timeoutMs) {
+    if (!amapMap || typeof amapMap.on !== "function") return Promise.resolve();
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (typeof amapMap.off === "function") amapMap.off("complete", finish);
+        resolve();
+      };
+      amapMap.on("complete", finish);
+      window.setTimeout(finish, Number.isFinite(Number(timeoutMs)) ? Number(timeoutMs) : 600);
+    });
   }
 
   function ensureCustomHeatmapCanvas() {
@@ -704,6 +719,36 @@
     return { x, y };
   }
 
+  function projectedHeatBuckets() {
+    const buckets = new Map();
+    const maxCount = Math.max(1, Number(amapLastHeatMax) || 1);
+    amapLastHeatData.forEach((point) => {
+      const projected = heatmapContainerPoint(point.lng, point.lat);
+      const count = Number(point.count);
+      if (!projected || !Number.isFinite(count) || count <= 0) return;
+      const bucketX = Math.round(projected.x / HEATMAP_PIXEL_BUCKET);
+      const bucketY = Math.round(projected.y / HEATMAP_PIXEL_BUCKET);
+      const key = `${bucketX}:${bucketY}`;
+      const current = buckets.get(key) || {
+        x: 0,
+        y: 0,
+        count: 0,
+        weight: 0
+      };
+      current.x += projected.x * count;
+      current.y += projected.y * count;
+      current.count += count;
+      current.weight += Math.min(1, count / maxCount);
+      buckets.set(key, current);
+    });
+    return [...buckets.values()].map((bucket) => ({
+      x: bucket.x / bucket.count,
+      y: bucket.y / bucket.count,
+      count: bucket.count,
+      weight: bucket.weight
+    }));
+  }
+
   function drawCustomHeatmapNow() {
     const canvas = ensureCustomHeatmapCanvas();
     if (!canvas || !mapEl || !amapMap || !amapLastHeatData.length) return;
@@ -723,30 +768,29 @@
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    ctx.globalCompositeOperation = "lighter";
+    ctx.globalCompositeOperation = "source-over";
     const maxCount = Math.max(1, Number(amapLastHeatMax) || 1);
-    amapLastHeatData.forEach((point) => {
-      const projected = heatmapContainerPoint(point.lng, point.lat);
-      if (!projected) return;
-      const radius = HEATMAP_RADIUS_PX * (0.85 + Math.min(1.5, Number(point.count) / maxCount) * 0.65);
+    projectedHeatBuckets().forEach((point) => {
+      const density = Math.max(Number(point.count) / maxCount, Number(point.weight) || 0);
+      const radius = HEATMAP_RADIUS_PX * (0.85 + Math.min(1.35, density) * 0.55);
       if (
-        projected.x < -radius ||
-        projected.y < -radius ||
-        projected.x > width + radius ||
-        projected.y > height + radius
+        point.x < -radius ||
+        point.y < -radius ||
+        point.x > width + radius ||
+        point.y > height + radius
       ) {
         return;
       }
-      const strength = Math.max(0.14, Math.min(1, Number(point.count) / maxCount));
-      const gradient = ctx.createRadialGradient(projected.x, projected.y, 0, projected.x, projected.y, radius);
-      gradient.addColorStop(0, `rgba(239, 68, 68, ${0.62 + strength * 0.28})`);
-      gradient.addColorStop(0.24, `rgba(249, 115, 22, ${0.5 + strength * 0.24})`);
-      gradient.addColorStop(0.52, `rgba(250, 204, 21, ${0.34 + strength * 0.2})`);
-      gradient.addColorStop(0.78, `rgba(132, 204, 22, ${0.18 + strength * 0.14})`);
+      const strength = Math.max(0.16, Math.min(1, density));
+      const gradient = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
+      gradient.addColorStop(0, `rgba(239, 68, 68, ${0.24 + strength * 0.2})`);
+      gradient.addColorStop(0.26, `rgba(249, 115, 22, ${0.18 + strength * 0.16})`);
+      gradient.addColorStop(0.54, `rgba(250, 204, 21, ${0.11 + strength * 0.12})`);
+      gradient.addColorStop(0.78, `rgba(34, 197, 94, ${0.05 + strength * 0.08})`);
       gradient.addColorStop(1, "rgba(34, 197, 94, 0)");
       ctx.fillStyle = gradient;
       ctx.beginPath();
-      ctx.arc(projected.x, projected.y, radius, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
       ctx.fill();
     });
     ctx.globalCompositeOperation = "source-over";
@@ -809,58 +853,14 @@
     return ranked[0] && ranked[0].vehicle_id ? ranked[0].vehicle_id : "";
   }
 
-  function distanceMeters(left, right) {
-    const leftLng = Number(left && left.longitude);
-    const leftLat = Number(left && left.latitude);
-    const rightLng = Number(right && right.longitude);
-    const rightLat = Number(right && right.latitude);
-    if (![leftLng, leftLat, rightLng, rightLat].every(Number.isFinite)) return null;
-    const toRad = (value) => (value * Math.PI) / 180;
-    const earthRadiusM = 6371000;
-    const dLat = toRad(rightLat - leftLat);
-    const dLng = toRad(rightLng - leftLng);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(toRad(leftLat)) * Math.cos(toRad(rightLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-    return 2 * earthRadiusM * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  }
-
   function heatDataFromPoints(points) {
-    const directPoints = points
+    return points
       .map((point) => ({
         lng: Number(point.longitude),
         lat: Number(point.latitude),
         count: heatWeight(point)
       }))
       .filter((point) => Number.isFinite(point.lng) && Number.isFinite(point.lat) && Number.isFinite(point.count) && point.count > 0);
-    const interpolatedPoints = [];
-    for (let index = 1; index < points.length; index += 1) {
-      if (interpolatedPoints.length >= HEAT_SEGMENT_MAX_INTERPOLATED_POINTS) break;
-      const start = points[index - 1];
-      const end = points[index];
-      const distanceM = distanceMeters(start, end);
-      if (!Number.isFinite(distanceM) || distanceM < HEAT_SEGMENT_STEP_M || distanceM > HEAT_SEGMENT_MAX_DISTANCE_M) {
-        continue;
-      }
-      const startWeight = heatWeight(start);
-      const endWeight = heatWeight(end);
-      if (startWeight == null && endWeight == null) continue;
-      const safeStartWeight = startWeight == null ? endWeight : startWeight;
-      const safeEndWeight = endWeight == null ? startWeight : endWeight;
-      const steps = Math.max(2, Math.min(32, Math.ceil(distanceM / HEAT_SEGMENT_STEP_M)));
-      for (let step = 1; step < steps; step += 1) {
-        if (interpolatedPoints.length >= HEAT_SEGMENT_MAX_INTERPOLATED_POINTS) break;
-        const ratio = step / steps;
-        const count = safeStartWeight + (safeEndWeight - safeStartWeight) * ratio;
-        if (!Number.isFinite(count) || count <= 0) continue;
-        interpolatedPoints.push({
-          lng: Number(start.longitude) + (Number(end.longitude) - Number(start.longitude)) * ratio,
-          lat: Number(start.latitude) + (Number(end.latitude) - Number(start.latitude)) * ratio,
-          count: count * 0.5
-        });
-      }
-    }
-    return [...directPoints, ...interpolatedPoints];
   }
 
   async function renderPeopleHeatmap(AMap, samplePoints) {
@@ -906,7 +906,9 @@
     }
     try {
       if (AMap.Bounds && typeof amapMap.setBounds === "function") {
-        amapMap.setBounds(new AMap.Bounds([minLng, minLat], [maxLng, maxLat]), false, [44, 44, 44, 44]);
+        const southWest = AMap.LngLat ? new AMap.LngLat(minLng, minLat) : [minLng, minLat];
+        const northEast = AMap.LngLat ? new AMap.LngLat(maxLng, maxLat) : [maxLng, maxLat];
+        amapMap.setBounds(new AMap.Bounds(southWest, northEast), false, [56, 56, 56, 56]);
         return;
       }
     } catch (_error) {
@@ -941,6 +943,7 @@
       setMapFallback("", true);
       const focus = samplePoints.find((point) => point.sample_id === opts.focus_sample_id) || samplePoints[samplePoints.length - 1];
       const center = [Number(focus.longitude), Number(focus.latitude)];
+      const mapWasCreated = !amapMap;
       if (!amapMap) {
         amapMap = new AMap.Map(mapEl, {
           zoom: 17,
@@ -954,12 +957,23 @@
           scrollWheel: true
         });
       }
+      if (mapWasCreated) {
+        await waitForAmapComplete(800);
+      }
       await ensureAmapControls(AMap);
       enableMapInteraction();
       bindAmapHeatmapRefreshEvents();
       clearMapOverlays();
       fitHeatmapView(AMap, samplePoints, center);
       const heatStats = await renderPeopleHeatmap(AMap, samplePoints);
+      const viewVehicleId = selectedVehicleId;
+      [120, 420].forEach((delayMs) => {
+        window.setTimeout(() => {
+          if (selectedVehicleId !== viewVehicleId || !amapMap || !amapLastHeatData.length) return;
+          fitHeatmapView(AMap, samplePoints, center);
+          drawCustomHeatmap();
+        }, delayMs);
+      });
       enableMapInteraction();
       setMapStatus(
         heatStats.count
@@ -1268,7 +1282,7 @@
     const requestId = sampleLoadRequestId + 1;
     sampleLoadRequestId = requestId;
     const query = new URLSearchParams({
-      limit: "300",
+      limit: normalizedVehicleId ? String(CROWD_SAMPLE_VEHICLE_LIMIT) : String(CROWD_SAMPLE_INITIAL_LIMIT),
       source: CROWD_SAMPLE_SOURCE
     });
     if (normalizedVehicleId) query.set("vehicle_id", normalizedVehicleId);
