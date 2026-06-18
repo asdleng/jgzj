@@ -187,6 +187,7 @@
   let openClawAuthenticated = false;
   let cloudOpsAuthenticated = false;
   let cloudOpsBusy = false;
+  let cloudOpsContextLoading = false;
   let cloudOpsVehicles = [];
   let cloudOpsCurrentVehicleId = "";
   let cloudOpsCurrentDetail = null;
@@ -240,6 +241,12 @@
       ])
   );
   const cloudOpsAudioStreams = new Map();
+
+  function hasActiveCloudOpsAudioChannel() {
+    return Array.from(cloudOpsAudioChannels.values()).some((channel) =>
+      ["starting", "active", "stopping"].includes(channel.phase)
+    );
+  }
 
   let aiPreviewUrl = "";
   let qwen36mmPreviewUrl = "";
@@ -1161,7 +1168,13 @@
         channel.phase = "active";
         updateCloudOpsAudioAvailability();
       }
-      setCloudOpsAudioStatus(`${channel.label}播放中`, "ok");
+      const bufferedSeconds = cloudOpsAudioContext
+        ? Math.max(0, (stream.nextPlayTime || 0) - cloudOpsAudioContext.currentTime)
+        : 0;
+      setCloudOpsAudioStatus(
+        `${channel.label}播放中 · 已收 ${stream.chunkCount} 包 · 缓冲 ${bufferedSeconds.toFixed(1)}s`,
+        "ok"
+      );
       setCloudOpsStatus("实时音频中", "ok");
     } catch (error) {
       releaseCloudOpsAudioChannel(channel, { stopPlayback: true, phase: "idle" });
@@ -1173,7 +1186,7 @@
   }
 
   function scheduleCloudOpsContextRefresh(delayMs = 1200) {
-    if (!cloudOpsAuthenticated) {
+    if (!cloudOpsAuthenticated || hasActiveCloudOpsAudioChannel()) {
       return;
     }
     if (cloudOpsContextReloadTimer) {
@@ -1181,6 +1194,9 @@
     }
     cloudOpsContextReloadTimer = window.setTimeout(() => {
       cloudOpsContextReloadTimer = 0;
+      if (hasActiveCloudOpsAudioChannel()) {
+        return;
+      }
       loadCloudOpsContext({ preserveResult: true, silent: true }).catch(() => {});
     }, delayMs);
   }
@@ -1275,7 +1291,7 @@
       eventData?.event === "connection.opened" ||
       eventData?.event === "connection.closed" ||
       (eventData?.event === "vehicle.message" &&
-        ["hello", "heartbeat", "snapshot", "tool.list.result"].includes(eventData?.message_type))
+        ["hello", "heartbeat", "snapshot"].includes(eventData?.message_type))
     ) {
       scheduleCloudOpsContextRefresh();
     }
@@ -2160,6 +2176,7 @@
       button.disabled =
         channel.busy ||
         cloudOpsBusy ||
+        (cloudOpsContextLoading && !allowStop) ||
         !cloudOpsAuthenticated ||
         !vehicleSelected ||
         (!supported && !allowStop);
@@ -2186,6 +2203,8 @@
       setCloudOpsAudioStatus("登录后可听", "idle");
     } else if (!vehicleSelected) {
       setCloudOpsAudioStatus("请选择车辆", "idle");
+    } else if (cloudOpsContextLoading && !activeLabels.length && !pending) {
+      setCloudOpsAudioStatus("加载车辆工具中", "loading");
     } else if (pending) {
       setCloudOpsAudioStatus("音频切换中", "loading");
     } else if (activeLabels.length) {
@@ -5700,6 +5719,9 @@
       return;
     }
 
+    cloudOpsContextLoading = true;
+    updateCloudOpsActionAvailability();
+
     try {
       if (!silent) {
         setCloudOpsStatus("加载车辆中...", "loading");
@@ -5796,6 +5818,9 @@
           "ok"
         );
       }
+    } finally {
+      cloudOpsContextLoading = false;
+      updateCloudOpsActionAvailability();
     }
   }
 
@@ -6013,6 +6038,11 @@
 
   async function startCloudOpsAudioChannel(channel) {
     await ensureCloudOpsAudioContext();
+
+    if (cloudOpsContextReloadTimer) {
+      window.clearTimeout(cloudOpsContextReloadTimer);
+      cloudOpsContextReloadTimer = 0;
+    }
 
     const vehicleId = cloudOpsCurrentVehicleId;
     const streamId = createCloudOpsAudioStreamId(channel.toolName);
@@ -6312,6 +6342,12 @@
     }
 
     const shouldStop = channel.phase === "starting" || channel.phase === "active";
+    if (!shouldStop && cloudOpsContextLoading) {
+      setCloudOpsStatus("车辆工具加载中", "loading");
+      setCloudOpsAudioStatus("请等车辆工具加载完成后再启动音频", "loading");
+      return;
+    }
+
     cloudOpsBusy = true;
     channel.busy = true;
     updateCloudOpsActionAvailability();
@@ -8172,7 +8208,13 @@
     updateCloudOpsAudioAvailability();
     refreshCloudOpsAuthStatus();
     window.setInterval(() => {
-      if (!cloudOpsAuthenticated || cloudOpsBusy || document.hidden) {
+      if (
+        !cloudOpsAuthenticated ||
+        cloudOpsBusy ||
+        cloudOpsContextLoading ||
+        hasActiveCloudOpsAudioChannel() ||
+        document.hidden
+      ) {
         return;
       }
       loadCloudOpsContext({ preserveResult: true, silent: true }).catch(() => {});
