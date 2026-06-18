@@ -16,6 +16,8 @@
   const CROWD_SAMPLE_VEHICLE_LIMIT = 500;
   const HEATMAP_RADIUS_PX = 36;
   const HEATMAP_PIXEL_BUCKET = 18;
+  const HEATMAP_TIME_ZONE = "Asia/Shanghai";
+  const DAY_MS = 24 * 60 * 60 * 1000;
 
   const AMAP_KEY = root.getAttribute("data-amap-key") || "";
   const statusEl = root.querySelector("[data-park-pcm-status]");
@@ -27,6 +29,11 @@
   const mapFallbackEl = root.querySelector("[data-park-pcm-map-fallback]");
   const heatLegendEl = root.querySelector("[data-park-pcm-heat-legend]");
   const mapStatusEl = root.querySelector("[data-park-pcm-map-status]");
+  const heatmapDateEl = root.querySelector("[data-park-pcm-heatmap-date]");
+  const heatmapDateRangeEl = root.querySelector("[data-park-pcm-heatmap-date-range]");
+  const heatmapDateLabelEl = root.querySelector("[data-park-pcm-heatmap-date-label]");
+  const heatmapDateSummaryEl = root.querySelector("[data-park-pcm-heatmap-date-summary]");
+  const heatmapDateTicksEl = root.querySelector("[data-park-pcm-heatmap-date-ticks]");
   const uploadStatusEl = root.querySelector("[data-park-pcm-upload-status]");
   const uploadSummaryEl = root.querySelector("[data-park-pcm-upload-summary]");
   const uploadListEl = root.querySelector("[data-park-pcm-upload-list]");
@@ -63,8 +70,22 @@
   let heatmapRefreshTimer = null;
   let selectedVehicleId = "";
   let selectedSampleId = "";
+  let selectedDayKey = "";
   let sampleLoadRequestId = 0;
   let latestCrowdSamples = [];
+  const dayKeyFormatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: HEATMAP_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const dayLabelFormatter = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: HEATMAP_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short"
+  });
 
   function setStatus(text, state) {
     if (!statusEl) return;
@@ -121,6 +142,49 @@
       second: "2-digit",
       hour12: false
     }).format(date);
+  }
+
+  function sampleTimeMs(sample) {
+    const direct = Number(sample && sample.collected_at_ms);
+    if (Number.isFinite(direct)) return direct;
+    const parsed = Date.parse(sample && sample.collected_at || "");
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function dayKeyFromDate(date) {
+    const parts = dayKeyFormatter.formatToParts(date).reduce((acc, part) => {
+      if (part.type !== "literal") acc[part.type] = part.value;
+      return acc;
+    }, {});
+    return parts.year && parts.month && parts.day ? `${parts.year}-${parts.month}-${parts.day}` : "";
+  }
+
+  function sampleDayKey(sample) {
+    const ms = sampleTimeMs(sample);
+    return ms == null ? "" : dayKeyFromDate(new Date(ms));
+  }
+
+  function dayKeyToMs(key) {
+    const match = String(key || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    const ms = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  function dayKeyFromMs(ms) {
+    if (!Number.isFinite(Number(ms))) return "";
+    return new Date(Number(ms)).toISOString().slice(0, 10);
+  }
+
+  function formatDayLabel(key) {
+    const ms = dayKeyToMs(key);
+    if (ms == null) return key || "-";
+    return dayLabelFormatter.format(new Date(ms));
+  }
+
+  function formatDayShortLabel(key) {
+    const match = String(key || "").match(/^\d{4}-(\d{2})-(\d{2})$/);
+    return match ? `${match[1]}/${match[2]}` : key || "-";
   }
 
   function formatNumber(value, fallback) {
@@ -909,11 +973,127 @@
     return cell;
   }
 
-  function visibleCrowdSamples() {
-    const rows = latestCrowdSamples
-      .filter((sample) => samplePosition(sample));
+  function selectedVehicleCrowdSamples() {
+    const rows = latestCrowdSamples.filter((sample) => samplePosition(sample));
     if (!selectedVehicleId) return [];
     return rows.filter((sample) => sample.vehicle_id === selectedVehicleId);
+  }
+
+  function buildHeatmapDayAxis(samples) {
+    const stats = new Map();
+    (Array.isArray(samples) ? samples : []).forEach((sample) => {
+      const key = sampleDayKey(sample);
+      const ms = dayKeyToMs(key);
+      if (!key || ms == null) return;
+      const current = stats.get(key) || {
+        key,
+        ms,
+        sample_count: 0,
+        recognized_count: 0,
+        people_total: 0,
+        max_people: 0
+      };
+      const peopleCount = samplePeopleCount(sample);
+      current.sample_count += 1;
+      if (peopleCount != null) {
+        current.recognized_count += 1;
+        current.people_total += Number(peopleCount);
+        current.max_people = Math.max(current.max_people, Number(peopleCount));
+      }
+      stats.set(key, current);
+    });
+    const dataDays = [...stats.values()].sort((left, right) => left.ms - right.ms);
+    if (!dataDays.length) {
+      return {
+        days: [],
+        latest_key: ""
+      };
+    }
+    const minMs = dataDays[0].ms;
+    const maxMs = dataDays[dataDays.length - 1].ms;
+    const days = [];
+    for (let ms = minMs; ms <= maxMs; ms += DAY_MS) {
+      const key = dayKeyFromMs(ms);
+      days.push(
+        stats.get(key) || {
+          key,
+          ms,
+          sample_count: 0,
+          recognized_count: 0,
+          people_total: 0,
+          max_people: 0
+        }
+      );
+    }
+    return {
+      days,
+      latest_key: dataDays[dataDays.length - 1].key
+    };
+  }
+
+  function dayAxisForSelectedVehicle() {
+    return buildHeatmapDayAxis(selectedVehicleCrowdSamples());
+  }
+
+  function ensureSelectedDay(axis) {
+    const days = Array.isArray(axis && axis.days) ? axis.days : [];
+    if (!days.length) {
+      selectedDayKey = "";
+      return "";
+    }
+    if (!selectedDayKey || !days.some((day) => day.key === selectedDayKey)) {
+      selectedDayKey = axis.latest_key || days[days.length - 1].key;
+    }
+    return selectedDayKey;
+  }
+
+  function renderHeatmapDateControl() {
+    if (!heatmapDateEl) return;
+    const axis = dayAxisForSelectedVehicle();
+    const days = axis.days || [];
+    const key = ensureSelectedDay(axis);
+    if (!days.length || !key) {
+      heatmapDateEl.hidden = true;
+      if (heatmapDateTicksEl) clearElement(heatmapDateTicksEl);
+      return;
+    }
+    const activeIndex = Math.max(0, days.findIndex((day) => day.key === key));
+    const active = days[activeIndex] || days[days.length - 1];
+    heatmapDateEl.hidden = false;
+    if (heatmapDateLabelEl) heatmapDateLabelEl.textContent = formatDayLabel(active.key);
+    if (heatmapDateSummaryEl) {
+      heatmapDateSummaryEl.textContent = active.sample_count
+        ? `当天 ${active.sample_count} 条 · 已识别 ${active.recognized_count} 条/${active.people_total} 人 · 峰值 ${active.max_people} 人`
+        : "当天暂无采集点。";
+    }
+    if (heatmapDateRangeEl) {
+      heatmapDateRangeEl.min = "0";
+      heatmapDateRangeEl.max = String(Math.max(0, days.length - 1));
+      heatmapDateRangeEl.step = "1";
+      heatmapDateRangeEl.value = String(activeIndex);
+      heatmapDateRangeEl.disabled = days.length < 2;
+      heatmapDateRangeEl.setAttribute("aria-valuetext", formatDayLabel(active.key));
+    }
+    if (heatmapDateTicksEl) {
+      clearElement(heatmapDateTicksEl);
+      heatmapDateTicksEl.style.gridTemplateColumns = `repeat(${days.length}, minmax(0, 1fr))`;
+      heatmapDateTicksEl.style.minWidth = `${Math.max(320, days.length * 58)}px`;
+      days.forEach((day) => {
+        const tick = document.createElement("span");
+        tick.className = "park-pcm-date-tick";
+        tick.dataset.active = day.key === active.key ? "true" : "false";
+        tick.dataset.hasData = day.sample_count > 0 ? "true" : "false";
+        tick.title = `${formatDayLabel(day.key)} · ${day.sample_count} 条`;
+        tick.textContent = formatDayShortLabel(day.key);
+        heatmapDateTicksEl.appendChild(tick);
+      });
+    }
+  }
+
+  function visibleCrowdSamples() {
+    const rows = selectedVehicleCrowdSamples();
+    if (!selectedDayKey) return rows;
+    return rows.filter((sample) => sampleDayKey(sample) === selectedDayKey);
   }
 
   function ensureVehicleOption(vehicleId) {
@@ -1037,7 +1217,15 @@
     const rows = visibleCrowdSamples();
     const active = selectedCrowdSample();
     if (!rows.length) {
-      trackSamplesEl.appendChild(textNode("p", "park-pcm-empty", selectedVehicleId ? `${selectedVehicleId} 暂无人流记录。` : "请先选择一台车辆。"));
+      trackSamplesEl.appendChild(
+        textNode(
+          "p",
+          "park-pcm-empty",
+          selectedVehicleId
+            ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 暂无人流记录。`
+            : "请先选择一台车辆。"
+        )
+      );
       renderSampleDetail(null);
       return;
     }
@@ -1071,7 +1259,9 @@
         textNode(
           "p",
           "park-pcm-empty",
-          selectedVehicleId ? `${selectedVehicleId} 还没有人流记录。` : "请选择一台车辆查看人流热力。"
+          selectedVehicleId
+            ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 暂无人流记录。`
+            : "请选择一台车辆查看人流热力。"
         )
       );
       return;
@@ -1186,6 +1376,7 @@
     const nextVehicleId = String(vehicleId || "").trim();
     selectedVehicleId = nextVehicleId;
     selectedSampleId = "";
+    selectedDayKey = "";
     if (crowdVehicleSelect && crowdVehicleSelect.value !== nextVehicleId) {
       crowdVehicleSelect.value = nextVehicleId;
     }
@@ -1513,6 +1704,8 @@
 
   async function renderTrackMap(options) {
     const opts = options || {};
+    const viewVehicleId = selectedVehicleId;
+    const viewDayKey = selectedDayKey;
     const samples = visibleCrowdSamples();
     const samplePoints = samples
       .map((sample) => sampleMapPoint(sample))
@@ -1529,11 +1722,17 @@
       renderTrackSamples();
       clearMapOverlays();
       setMapStatus("暂无人流数据");
-      setMapFallback(selectedVehicleId ? `${selectedVehicleId} 暂无人流定位样本` : "暂无人流定位样本", false);
+      setMapFallback(
+        selectedVehicleId
+          ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 暂无人流定位样本`
+          : "暂无人流定位样本",
+        false
+      );
       return;
     }
     try {
       const AMap = await loadAmap();
+      if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey) return;
       setMapFallback("", true);
       const focus = samplePoints.find((point) => point.sample_id === opts.focus_sample_id) || samplePoints[samplePoints.length - 1];
       const center = [Number(focus.longitude), Number(focus.latitude)];
@@ -1553,17 +1752,18 @@
       }
       if (mapWasCreated) {
         await waitForAmapComplete(800);
+        if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey) return;
       }
       await ensureAmapControls(AMap);
+      if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey) return;
       enableMapInteraction();
       bindAmapHeatmapRefreshEvents();
       clearMapOverlays();
       fitHeatmapView(AMap, samplePoints, center);
       const heatStats = await renderPeopleHeatmap(AMap, samplePoints);
-      const viewVehicleId = selectedVehicleId;
       [120, 420].forEach((delayMs) => {
         window.setTimeout(() => {
-          if (selectedVehicleId !== viewVehicleId || !amapMap || !amapLastHeatData.length) return;
+          if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey || !amapMap || !amapLastHeatData.length) return;
           fitHeatmapView(AMap, samplePoints, center);
           drawCustomHeatmap();
         }, delayMs);
@@ -1571,8 +1771,8 @@
       enableMapInteraction();
       setMapStatus(
         heatStats.count
-          ? `${selectedVehicleId} 记录 ${samplePoints.length} · 热力点 ${heatStats.count} · 峰值 ${heatStats.max} 人`
-          : `${selectedVehicleId} 记录 ${samplePoints.length} · 暂无可用热力`
+          ? `${viewVehicleId} · ${formatDayLabel(viewDayKey)} 记录 ${samplePoints.length} · 热力点 ${heatStats.count} · 峰值 ${heatStats.max} 人`
+          : `${viewVehicleId} · ${formatDayLabel(viewDayKey)} 记录 ${samplePoints.length} · 暂无可用热力`
       );
     } catch (error) {
       setMapStatus("热力地图加载失败");
@@ -1807,26 +2007,15 @@
     );
   }
 
-  function renderCrowdSamples(samples) {
-    const list = Array.isArray(samples)
-      ? samples.filter((item) => !item.skipped && samplePosition(item))
-      : [];
-    latestCrowdSamples = list;
-    syncSampleVehicleOptions(list);
-    if (!selectedVehicleId && list.length) {
-      const defaultVehicleId = chooseDefaultVehicleId(list);
-      if (defaultVehicleId) {
-        selectedVehicleId = defaultVehicleId;
-        ensureVehicleOption(defaultVehicleId);
-        if (crowdVehicleSelect) crowdVehicleSelect.value = defaultVehicleId;
-      }
-    }
+  function renderCurrentCrowdView() {
+    renderHeatmapDateControl();
+    const vehicleRows = selectedVehicleCrowdSamples();
     const rows = visibleCrowdSamples();
     const rowsWithCount = rows.filter((sample) => samplePeopleCount(sample) != null);
     const totalPeople = rowsWithCount.reduce((sum, sample) => sum + Number(samplePeopleCount(sample) || 0), 0);
     setVehicleSummary(
       selectedVehicleId
-        ? `${selectedVehicleId} · 人流记录 ${rows.length} · 已识别 ${rowsWithCount.length} 条/${totalPeople} 人`
+        ? `${selectedVehicleId} · ${selectedDayKey ? `${formatDayLabel(selectedDayKey)} · ` : ""}当日记录 ${rows.length} · 已识别 ${rowsWithCount.length} 条/${totalPeople} 人 · 全部 ${vehicleRows.length} 条`
         : "请选择一台车辆查看人流热力。"
     );
     if (!rows.length) {
@@ -1846,6 +2035,24 @@
     void renderTrackMap().catch((error) => {
       setMapStatus(`热力刷新失败：${error.message || "-"}`);
     });
+  }
+
+  function renderCrowdSamples(samples) {
+    const list = Array.isArray(samples)
+      ? samples.filter((item) => !item.skipped && samplePosition(item))
+      : [];
+    latestCrowdSamples = list;
+    syncSampleVehicleOptions(list);
+    if (!selectedVehicleId && list.length) {
+      const defaultVehicleId = chooseDefaultVehicleId(list);
+      if (defaultVehicleId) {
+        selectedVehicleId = defaultVehicleId;
+        selectedDayKey = "";
+        ensureVehicleOption(defaultVehicleId);
+        if (crowdVehicleSelect) crowdVehicleSelect.value = defaultVehicleId;
+      }
+    }
+    renderCurrentCrowdView();
   }
 
   async function loadCrowdVehicles() {
@@ -1959,6 +2166,18 @@
         setVehicleSummary(`人流数据加载失败：${error.message || "-"}`);
         setMapStatus("人流数据加载失败");
       });
+    });
+  }
+  if (heatmapDateRangeEl) {
+    heatmapDateRangeEl.addEventListener("input", () => {
+      const axis = dayAxisForSelectedVehicle();
+      const days = axis.days || [];
+      const index = Math.max(0, Math.min(days.length - 1, Math.round(Number(heatmapDateRangeEl.value) || 0)));
+      const day = days[index];
+      if (!day || day.key === selectedDayKey) return;
+      selectedDayKey = day.key;
+      selectedSampleId = "";
+      renderCurrentCrowdView();
     });
   }
   if (collectorRefreshBtn) {

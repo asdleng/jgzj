@@ -40,6 +40,25 @@
         <span>高</span>
       </div>
     </div>
+    <div class="park-pcm-date-control" data-park-pcm-heatmap-date hidden>
+      <div class="park-pcm-date-head">
+        <div>
+          <span>日期热力</span>
+          <strong data-park-pcm-heatmap-date-label>最新日期</strong>
+        </div>
+        <p data-park-pcm-heatmap-date-summary>按天查看热力图。</p>
+      </div>
+      <input
+        type="range"
+        min="0"
+        max="0"
+        step="1"
+        value="0"
+        aria-label="选择人流热力日期"
+        data-park-pcm-heatmap-date-range
+      />
+      <div class="park-pcm-date-ticks" data-park-pcm-heatmap-date-ticks></div>
+    </div>
     <div class="park-pcm-vehicle-detail" data-park-pcm-vehicle-detail>
       <p class="park-pcm-empty">选择车辆后显示人流统计。</p>
     </div>
@@ -80,6 +99,10 @@
     color: #e5edf8;
   }
 
+  .park-pcm-shell > * {
+    min-width: 0;
+  }
+
   .park-pcm-head,
   .park-pcm-band,
   .park-pcm-auth {
@@ -97,6 +120,11 @@
     padding: 0 0 4px;
     border: 0;
     background: transparent;
+    min-width: 0;
+  }
+
+  .park-pcm-head > div {
+    min-width: 0;
   }
 
   .park-pcm-head h1,
@@ -104,6 +132,7 @@
     margin: 0;
     line-height: 1.2;
     letter-spacing: 0;
+    overflow-wrap: anywhere;
   }
 
   .park-pcm-head h1 {
@@ -436,6 +465,111 @@
     height: 10px;
     display: block;
     background: linear-gradient(90deg, rgba(34, 197, 94, 0.42), rgba(250, 204, 21, 0.62), rgba(251, 146, 60, 0.76), rgba(239, 68, 68, 0.86));
+  }
+
+  .park-pcm-date-control {
+    display: grid;
+    gap: 12px;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(15, 23, 42, 0.48);
+    overflow-x: auto;
+  }
+
+  .park-pcm-date-control[hidden] {
+    display: none;
+  }
+
+  .park-pcm-date-head {
+    min-width: 0;
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .park-pcm-date-head div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .park-pcm-date-head span,
+  .park-pcm-date-head p {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+
+  .park-pcm-date-head strong {
+    color: #f8fafc;
+    font-size: 1rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .park-pcm-date-head p {
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+
+  .park-pcm-date-control input[type="range"] {
+    width: 100%;
+    accent-color: #38bdf8;
+    cursor: pointer;
+  }
+
+  .park-pcm-date-control input[type="range"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .park-pcm-date-ticks {
+    min-width: 0;
+    display: grid;
+    align-items: start;
+    gap: 0;
+  }
+
+  .park-pcm-date-tick {
+    min-width: 0;
+    display: grid;
+    justify-items: center;
+    gap: 5px;
+    color: #94a3b8;
+    font-size: 0.72rem;
+    line-height: 1.2;
+    text-align: center;
+  }
+
+  .park-pcm-date-tick::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: rgba(148, 163, 184, 0.5);
+  }
+
+  .park-pcm-date-tick[data-has-data="false"] {
+    color: rgba(148, 163, 184, 0.56);
+  }
+
+  .park-pcm-date-tick[data-has-data="false"]::before {
+    background: rgba(148, 163, 184, 0.24);
+  }
+
+  .park-pcm-date-tick[data-active="true"] {
+    color: #f8fafc;
+    font-weight: 800;
+  }
+
+  .park-pcm-date-tick[data-active="true"]::before {
+    width: 10px;
+    height: 10px;
+    background: #fbbf24;
+    box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.16);
   }
 
   .park-pcm-vehicle-detail {
@@ -1061,6 +1195,15 @@
 
     .park-pcm-track-panel {
       grid-template-columns: 1fr;
+    }
+
+    .park-pcm-date-head {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .park-pcm-date-head p {
+      text-align: left;
     }
 
     .park-pcm-detail-grid {
