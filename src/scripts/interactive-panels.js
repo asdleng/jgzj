@@ -89,6 +89,7 @@
   const cloudOpsAudioStatus = document.getElementById("cloud-ops-audio-status");
   const cloudOpsAudioMicBtn = document.getElementById("cloud-ops-audio-mic");
   const cloudOpsAudioSpeakerBtn = document.getElementById("cloud-ops-audio-speaker");
+  const cloudOpsAudioExternalMicBtn = document.getElementById("cloud-ops-audio-external-mic");
   const cloudOpsDeployRefreshBtn = document.getElementById("cloud-ops-deploy-refresh");
   const cloudOpsDeployStatus = document.getElementById("cloud-ops-deploy-status");
   const cloudOpsDeployRepo = document.getElementById("cloud-ops-deploy-repo");
@@ -111,7 +112,11 @@
   const cloudOpsActionButtons = Array.from(
     document.querySelectorAll("[data-cloud-ops-action]")
   );
-  const cloudOpsAudioButtons = [cloudOpsAudioMicBtn, cloudOpsAudioSpeakerBtn].filter(Boolean);
+  const cloudOpsAudioButtons = [
+    cloudOpsAudioMicBtn,
+    cloudOpsAudioSpeakerBtn,
+    cloudOpsAudioExternalMicBtn
+  ].filter(Boolean);
 
   const aiCheckForm = document.getElementById("ai-check-form");
   const aiCheckImageInput = document.getElementById("ai-check-image");
@@ -213,6 +218,12 @@
         label: "听喇叭",
         idleHint: "整车喇叭最终混音输出",
         button: cloudOpsAudioSpeakerBtn
+      },
+      {
+        toolName: "audio.uplink.external_mic",
+        label: "听外置麦",
+        idleHint: "外侧麦克风上行音频",
+        button: cloudOpsAudioExternalMicBtn
       }
     ]
       .filter((item) => item.button)
@@ -2011,7 +2022,13 @@
 
   function createCloudOpsAudioStreamId(toolName) {
     const toolSegment =
-      toolName === "audio.uplink.speaker" ? "speaker" : toolName === "audio.uplink.mic" ? "mic" : "audio";
+      toolName === "audio.uplink.speaker"
+        ? "speaker"
+        : toolName === "audio.uplink.external_mic"
+          ? "external-mic"
+          : toolName === "audio.uplink.mic"
+            ? "mic"
+            : "audio";
     const vehicleSegment = normalizeCloudOpsAudioStreamSegment(cloudOpsCurrentVehicleId, "vehicle");
     return `web-${toolSegment}-${vehicleSegment}-${createNonce()}`;
   }
@@ -2101,9 +2118,13 @@
       return "正在请求车端开启音频上行";
     }
     if (channel.phase === "active") {
-      return channel.toolName === "audio.uplink.speaker"
-        ? "浏览器正在播放喇叭混音"
-        : "浏览器正在播放麦克风上行";
+      if (channel.toolName === "audio.uplink.speaker") {
+        return "浏览器正在播放喇叭混音";
+      }
+      if (channel.toolName === "audio.uplink.external_mic") {
+        return "浏览器正在播放外侧麦克风上行";
+      }
+      return "浏览器正在播放麦克风上行";
     }
     if (channel.phase === "stopping") {
       return "正在停止音频上行";
@@ -3451,6 +3472,7 @@
       "route.stop_patrol": "停止巡逻",
       "ros.overview": "ROS 总览",
       "audio.uplink.mic": "听麦",
+      "audio.uplink.external_mic": "听外置麦",
       "audio.uplink.speaker": "听喇叭",
       "deploy.targets": "可维护 Repo",
       "deploy.repo_status": "仓库状态",
