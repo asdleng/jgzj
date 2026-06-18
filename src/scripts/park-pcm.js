@@ -73,6 +73,10 @@
   let selectedDayKey = "";
   let sampleLoadRequestId = 0;
   let latestCrowdSamples = [];
+  let knownHeatmapDayBounds = {
+    min_ms: null,
+    max_ms: null
+  };
   const dayKeyFormatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: HEATMAP_TIME_ZONE,
     year: "numeric",
@@ -174,6 +178,18 @@
   function dayKeyFromMs(ms) {
     if (!Number.isFinite(Number(ms))) return "";
     return new Date(Number(ms)).toISOString().slice(0, 10);
+  }
+
+  function updateKnownHeatmapDayBounds(samples) {
+    (Array.isArray(samples) ? samples : []).forEach((sample) => {
+      const key = sampleDayKey(sample);
+      const ms = dayKeyToMs(key);
+      if (ms == null) return;
+      knownHeatmapDayBounds.min_ms =
+        knownHeatmapDayBounds.min_ms == null ? ms : Math.min(knownHeatmapDayBounds.min_ms, ms);
+      knownHeatmapDayBounds.max_ms =
+        knownHeatmapDayBounds.max_ms == null ? ms : Math.max(knownHeatmapDayBounds.max_ms, ms);
+    });
   }
 
   function formatDayLabel(key) {
@@ -1003,14 +1019,14 @@
       stats.set(key, current);
     });
     const dataDays = [...stats.values()].sort((left, right) => left.ms - right.ms);
-    if (!dataDays.length) {
+    const minMs = knownHeatmapDayBounds.min_ms ?? (dataDays[0] && dataDays[0].ms);
+    const maxMs = knownHeatmapDayBounds.max_ms ?? (dataDays[dataDays.length - 1] && dataDays[dataDays.length - 1].ms);
+    if (minMs == null || maxMs == null) {
       return {
         days: [],
         latest_key: ""
       };
     }
-    const minMs = dataDays[0].ms;
-    const maxMs = dataDays[dataDays.length - 1].ms;
     const days = [];
     for (let ms = minMs; ms <= maxMs; ms += DAY_MS) {
       const key = dayKeyFromMs(ms);
@@ -1027,7 +1043,7 @@
     }
     return {
       days,
-      latest_key: dataDays[dataDays.length - 1].key
+      latest_key: dayKeyFromMs(maxMs)
     };
   }
 
@@ -2042,6 +2058,7 @@
       ? samples.filter((item) => !item.skipped && samplePosition(item))
       : [];
     latestCrowdSamples = list;
+    updateKnownHeatmapDayBounds(list);
     syncSampleVehicleOptions(list);
     if (!selectedVehicleId && list.length) {
       const defaultVehicleId = chooseDefaultVehicleId(list);
