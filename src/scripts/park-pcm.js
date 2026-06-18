@@ -71,6 +71,7 @@
   let selectedVehicleId = "";
   let selectedSampleId = "";
   let selectedDayKey = "";
+  let heatmapDateTouched = false;
   let sampleLoadRequestId = 0;
   let latestCrowdSamples = [];
   let knownHeatmapDayBounds = {
@@ -181,15 +182,21 @@
   }
 
   function updateKnownHeatmapDayBounds(samples) {
+    let changed = false;
     (Array.isArray(samples) ? samples : []).forEach((sample) => {
       const key = sampleDayKey(sample);
       const ms = dayKeyToMs(key);
       if (ms == null) return;
-      knownHeatmapDayBounds.min_ms =
-        knownHeatmapDayBounds.min_ms == null ? ms : Math.min(knownHeatmapDayBounds.min_ms, ms);
-      knownHeatmapDayBounds.max_ms =
-        knownHeatmapDayBounds.max_ms == null ? ms : Math.max(knownHeatmapDayBounds.max_ms, ms);
+      if (knownHeatmapDayBounds.min_ms == null || ms < knownHeatmapDayBounds.min_ms) {
+        knownHeatmapDayBounds.min_ms = ms;
+        changed = true;
+      }
+      if (knownHeatmapDayBounds.max_ms == null || ms > knownHeatmapDayBounds.max_ms) {
+        knownHeatmapDayBounds.max_ms = ms;
+        changed = true;
+      }
     });
+    return changed;
   }
 
   function formatDayLabel(key) {
@@ -1057,8 +1064,9 @@
       selectedDayKey = "";
       return "";
     }
-    if (!selectedDayKey || !days.some((day) => day.key === selectedDayKey)) {
-      selectedDayKey = axis.latest_key || days[days.length - 1].key;
+    const latestKey = axis.latest_key || days[days.length - 1].key;
+    if (!selectedDayKey || !days.some((day) => day.key === selectedDayKey) || (!heatmapDateTouched && latestKey && selectedDayKey !== latestKey)) {
+      selectedDayKey = latestKey;
     }
     return selectedDayKey;
   }
@@ -1393,6 +1401,7 @@
     selectedVehicleId = nextVehicleId;
     selectedSampleId = "";
     selectedDayKey = "";
+    heatmapDateTouched = false;
     if (crowdVehicleSelect && crowdVehicleSelect.value !== nextVehicleId) {
       crowdVehicleSelect.value = nextVehicleId;
     }
@@ -2065,6 +2074,7 @@
       if (defaultVehicleId) {
         selectedVehicleId = defaultVehicleId;
         selectedDayKey = "";
+        heatmapDateTouched = false;
         ensureVehicleOption(defaultVehicleId);
         if (crowdVehicleSelect) crowdVehicleSelect.value = defaultVehicleId;
       }
@@ -2105,7 +2115,14 @@
     });
     if (normalizedVehicleId) query.set("vehicle_id", normalizedVehicleId);
     const data = await fetchJson(`${CROWD_SAMPLES_URL}?${query.toString()}`);
-    if (requestId !== sampleLoadRequestId) return data;
+    const fetchedSamples = Array.isArray(data.samples)
+      ? data.samples.filter((item) => !item.skipped && samplePosition(item))
+      : [];
+    const boundsChanged = updateKnownHeatmapDayBounds(fetchedSamples);
+    if (requestId !== sampleLoadRequestId) {
+      if (boundsChanged && latestCrowdSamples.length) renderCurrentCrowdView();
+      return data;
+    }
     renderCrowdSamples(data.samples || []);
     return data;
   }
@@ -2191,6 +2208,7 @@
       const days = axis.days || [];
       const index = Math.max(0, Math.min(days.length - 1, Math.round(Number(heatmapDateRangeEl.value) || 0)));
       const day = days[index];
+      heatmapDateTouched = true;
       if (!day || day.key === selectedDayKey) return;
       selectedDayKey = day.key;
       selectedSampleId = "";
