@@ -2184,11 +2184,16 @@ module.exports = function registerParkPcmRoutes(app, options) {
     if (!rel || rel.split('/').some((segment) => segment === '..')) {
       return null;
     }
+    const relCandidates = [rel];
+    const imageSegmentIndex = rel.indexOf('/images/');
+    if (imageSegmentIndex >= 0) {
+      relCandidates.push(rel.slice(imageSegmentIndex + 1));
+    }
     const rootPath = path.resolve(stagingDir);
-    const candidates = [
-      path.resolve(stagingDir, rel),
-      path.resolve(baseDir, rel)
-    ];
+    const candidates = relCandidates.flatMap((candidateRel) => [
+      path.resolve(stagingDir, candidateRel),
+      path.resolve(baseDir, candidateRel)
+    ]);
     for (const candidate of candidates) {
       if (candidate === rootPath || !candidate.startsWith(`${rootPath}${path.sep}`)) {
         continue;
@@ -2206,13 +2211,14 @@ module.exports = function registerParkPcmRoutes(app, options) {
       row?.image_rel_path,
       row?.image_relative_path,
       row?.relative_path,
+      row?.image?.relative_path,
+      row?.image?.rel_path,
+      row?.image?.filename,
       row?.file_path,
       row?.path,
       row?.file,
       row?.image?.path,
-      row?.image?.relative_path,
       row?.image?.file,
-      row?.image?.filename
     ]);
   }
 
@@ -2230,14 +2236,33 @@ module.exports = function registerParkPcmRoutes(app, options) {
     );
   }
 
+  function extractManifestPlateNumber(manifest) {
+    const vehicle = objectValue(manifest?.vehicle);
+    const license = objectValue(vehicle.license || manifest?.license);
+    const rawLicense = typeof license.raw === 'string' ? safeJsonParse(license.raw, null) : null;
+    return firstNonEmpty([
+      manifest?.vehicle_id,
+      manifest?.vehicle_code,
+      manifest?.plateNumber,
+      manifest?.plate_number,
+      vehicle.vehicle_id,
+      vehicle.vehicle_code,
+      vehicle.plateNumber,
+      vehicle.plate_number,
+      license.plateNumber,
+      license.plate_number,
+      rawLicense?.plateNumber,
+      rawLicense?.plate_number
+    ]);
+  }
+
   function extractFrameVehicleId(row, manifest) {
     return sanitizeName(
       firstNonEmpty([
         row?.vehicle_id,
         row?.vehicle,
-        manifest?.vehicle_id,
-        manifest?.vehicle?.vehicle_id,
-        manifest?.vehicle?.id,
+        row?.vehicle_code,
+        extractManifestPlateNumber(manifest),
         manifest?.robot_id,
         manifest?.car_id
       ]) || 'vehicle',
@@ -2252,8 +2277,12 @@ module.exports = function registerParkPcmRoutes(app, options) {
       timestampMsFromValue(row?.collected_at) ??
       timestampMsFromValue(row?.capture_time) ??
       timestampMsFromValue(row?.time) ??
+      timestampMsFromValue(row?.saved_at) ??
       timestampMsFromValue(row?.header?.stamp) ??
       timestampMsFromValue(row?.image?.ts) ??
+      timestampMsFromValue(row?.image?.ts_iso) ??
+      timestampMsFromValue(row?.image?.ts_unix) ??
+      timestampMsFromValue(row?.image?.header?.stamp) ??
       fallbackMs
     );
   }
@@ -2328,14 +2357,19 @@ module.exports = function registerParkPcmRoutes(app, options) {
   }
 
   function extractFramePlanning(row) {
-    return objectValue(row?.planning || row?.planning_status || row?.planner || row?.status?.planning);
+    return objectValue(row?.planning || row?.planning_status || row?.planner || row?.patrol?.planning || row?.status?.planning);
   }
 
   function extractFrameRoute(row) {
+    const patrol = objectValue(row?.patrol);
     const route = objectValue(row?.route);
+    const routeIds = Array.isArray(patrol.route_ids)
+      ? patrol.route_ids.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
     return {
-      route_id: firstNonEmpty([row?.route_id, route.route_id, route.id, route.name]),
-      route_location: row?.route_location || route.route_location || route.location || null,
+      route_id: firstNonEmpty([row?.route_id, route.route_id, route.id, route.name, routeIds[0]]),
+      route_ids: routeIds,
+      route_location: row?.route_location || route.route_location || route.location || patrol.route_location || null,
       route_progress: row?.route_progress || route.route_progress || route.progress || null
     };
   }
@@ -2375,11 +2409,11 @@ module.exports = function registerParkPcmRoutes(app, options) {
   function buildUploadedPatrolState(frameRows) {
     const rows = Array.isArray(frameRows) ? frameRows : [];
     const planningRows = rows.map((row) => extractFramePlanning(row)).filter((item) => item && Object.keys(item).length);
-    const routeRows = rows.map((row) => extractFrameRoute(row)).filter((item) => item.route_id || item.route_location);
+    const routeRows = rows.map((row) => extractFrameRoute(row)).filter((item) => item.route_id || item.route_location || item.route_ids?.length);
     const plannerRunning = firstFiniteNumber(planningRows.map((item) => item.planner_running));
     const vehicleIdleStatus = firstFiniteNumber(planningRows.map((item) => item.vehicle_idle_status));
     const longTimeStop = planningRows.some((item) => booleanValue(item.long_time_stop) === true);
-    const routeIds = [...new Set(routeRows.map((item) => String(item.route_id || '').trim()).filter(Boolean))];
+    const routeIds = [...new Set(routeRows.flatMap((item) => [item.route_id, ...(item.route_ids || [])]).map((item) => String(item || '').trim()).filter(Boolean))];
     const state = plannerRunning != null && plannerRunning > 0
       ? 'patrol_active_moving'
       : 'patrol_task_stopped_or_waiting';
@@ -2417,12 +2451,14 @@ module.exports = function registerParkPcmRoutes(app, options) {
     rows.forEach((row, rowIndex) => {
       const frameIndex = extractFrameIndex(row, rowIndex);
       const tsMs = extractFrameTsMs(row, fallbackMs);
-      const groupId = firstNonEmpty([
+      const explicitGroupId = firstNonEmpty([
         row?.sample_id,
         row?.frame_group_id,
         row?.capture_group_id,
         row?.group_id
-      ]) || `frame_${frameIndex}`;
+      ]);
+      const groupId = explicitGroupId ||
+        `batch_${Math.floor(Math.max(0, Number(frameIndex) || rowIndex) / 4)}`;
       const key = String(groupId);
       const current = groups.get(key) || {
         key,
@@ -2655,7 +2691,12 @@ module.exports = function registerParkPcmRoutes(app, options) {
           .map((frame) => normalizePeopleCount(frame.analysis?.people_count))
           .filter((value) => value != null);
         const samplePeopleCount = peopleCounts.length ? peopleCounts.reduce((sum, value) => sum + value, 0) : null;
-        const routeIds = [...new Set(savedFrames.map((frame) => String(frame.route?.route_id || '').trim()).filter(Boolean))];
+        const routeIds = [...new Set(
+          savedFrames
+            .flatMap((frame) => [frame.route?.route_id, ...(frame.route?.route_ids || [])])
+            .map((routeId) => String(routeId || '').trim())
+            .filter(Boolean)
+        )];
         const sample = {
           sample_id: sampleId,
           source: 'auto_ad_patrol_flow_upload',
