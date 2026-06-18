@@ -334,6 +334,260 @@
     return `conic-gradient(${stops.join(", ")})`;
   }
 
+  function formatTrendTime(value) {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) return "-";
+    return new Intl.DateTimeFormat("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(date);
+  }
+
+  function formatTrendDuration(ms) {
+    const value = Number(ms);
+    if (!Number.isFinite(value) || value <= 0) return "-";
+    const minutes = value / 60000;
+    if (minutes < 60) return `${Math.max(1, Math.round(minutes))} 分钟`;
+    const hours = minutes / 60;
+    if (hours < 24) return `${hours >= 10 ? Math.round(hours) : hours.toFixed(1)} 小时`;
+    const days = hours / 24;
+    return `${days >= 10 ? Math.round(days) : days.toFixed(1)} 天`;
+  }
+
+  function formatTrendNumber(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "-";
+    return Math.abs(num - Math.round(num)) < 0.05 ? String(Math.round(num)) : num.toFixed(1);
+  }
+
+  function svgNode(tag, attrs, text) {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    Object.entries(attrs || {}).forEach(([key, value]) => {
+      el.setAttribute(key, String(value));
+    });
+    if (text != null) el.textContent = String(text);
+    return el;
+  }
+
+  function buildPeopleTrend(samples) {
+    const raw = (Array.isArray(samples) ? samples : [])
+      .map((sample) => {
+        const ts = Date.parse(sample && sample.collected_at || "");
+        const people = Number(samplePeopleCount(sample));
+        if (!Number.isFinite(ts) || !Number.isFinite(people)) return null;
+        return {
+          ts,
+          people,
+          sample
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.ts - right.ts);
+    const totalPeople = raw.reduce((sum, point) => sum + point.people, 0);
+    const startTs = raw[0] ? raw[0].ts : null;
+    const endTs = raw[raw.length - 1] ? raw[raw.length - 1].ts : null;
+    let points = [];
+    if (raw.length <= 36) {
+      points = raw.map((point) => ({
+        ts: point.ts,
+        start_ts: point.ts,
+        end_ts: point.ts,
+        avg_people: point.people,
+        max_people: point.people,
+        sample_count: 1
+      }));
+    } else if (startTs != null && endTs != null) {
+      const bucketCount = Math.min(36, Math.max(8, Math.ceil(raw.length / 3)));
+      const span = Math.max(1, endTs - startTs);
+      const interval = Math.max(1, span / bucketCount);
+      const buckets = [];
+      raw.forEach((point) => {
+        const index = Math.min(bucketCount - 1, Math.floor((point.ts - startTs) / interval));
+        const bucket = buckets[index] || {
+          start_ts: point.ts,
+          end_ts: point.ts,
+          sum_people: 0,
+          sum_ts: 0,
+          sample_count: 0,
+          max_people: 0
+        };
+        bucket.start_ts = Math.min(bucket.start_ts, point.ts);
+        bucket.end_ts = Math.max(bucket.end_ts, point.ts);
+        bucket.sum_people += point.people;
+        bucket.sum_ts += point.ts;
+        bucket.sample_count += 1;
+        bucket.max_people = Math.max(bucket.max_people, point.people);
+        buckets[index] = bucket;
+      });
+      points = buckets.filter(Boolean).map((bucket) => ({
+        ts: bucket.sum_ts / bucket.sample_count,
+        start_ts: bucket.start_ts,
+        end_ts: bucket.end_ts,
+        avg_people: bucket.sum_people / bucket.sample_count,
+        max_people: bucket.max_people,
+        sample_count: bucket.sample_count
+      }));
+    }
+    const peakPoint = points.reduce((best, point) => {
+      if (!best) return point;
+      if (point.max_people !== best.max_people) return point.max_people > best.max_people ? point : best;
+      return point.ts > best.ts ? point : best;
+    }, null);
+    const latest = raw[raw.length - 1] || null;
+    return {
+      raw_count: raw.length,
+      total_people: totalPeople,
+      avg_people: raw.length ? totalPeople / raw.length : null,
+      peak_people: peakPoint ? peakPoint.max_people : null,
+      latest_people: latest ? latest.people : null,
+      start_ts: startTs,
+      end_ts: endTs,
+      span_ms: startTs != null && endTs != null ? endTs - startTs : null,
+      points,
+      peak_point: peakPoint
+    };
+  }
+
+  function createTrendMetric(label, value, detail) {
+    const metric = document.createElement("div");
+    metric.className = "park-pcm-trend-metric";
+    metric.appendChild(textNode("span", "", label));
+    metric.appendChild(textNode("strong", "", value));
+    if (detail) metric.appendChild(textNode("em", "", detail));
+    return metric;
+  }
+
+  function createPeopleTrendChart(samples) {
+    const trend = buildPeopleTrend(samples);
+    const card = document.createElement("article");
+    card.className = "park-pcm-chart-card park-pcm-chart-card--trend";
+
+    const head = document.createElement("div");
+    head.className = "park-pcm-chart-head";
+    head.appendChild(textNode("h3", "", "人流时间趋势"));
+    head.appendChild(textNode("span", "", trend.raw_count ? `${trend.raw_count} 条识别样本` : "等待人数识别"));
+
+    const body = document.createElement("div");
+    body.className = "park-pcm-trend-layout";
+    if (trend.points.length < 2) {
+      body.appendChild(
+        textNode(
+          "p",
+          "park-pcm-chart-empty park-pcm-trend-empty",
+          trend.raw_count ? "有效时间点不足，等待更多采集样本后生成趋势线。" : "等待 Qwen3.6 回填人数后生成趋势线。"
+        )
+      );
+    } else {
+      const width = 720;
+      const height = 260;
+      const padding = { top: 18, right: 24, bottom: 42, left: 50 };
+      const plotWidth = width - padding.left - padding.right;
+      const plotHeight = height - padding.top - padding.bottom;
+      const baseY = padding.top + plotHeight;
+      const yMax = Math.max(1, Math.ceil(Math.max(...trend.points.map((point) => Math.max(point.avg_people, point.max_people))) * 1.15));
+      const start = trend.start_ts;
+      const end = trend.end_ts;
+      const span = Math.max(0, Number(end) - Number(start));
+      const xFor = (point, index) => {
+        if (span > 0) return padding.left + ((point.ts - start) / span) * plotWidth;
+        return padding.left + (index / Math.max(1, trend.points.length - 1)) * plotWidth;
+      };
+      const yFor = (value) => padding.top + (1 - Math.min(1, Math.max(0, Number(value) / yMax))) * plotHeight;
+      const coordinates = trend.points.map((point, index) => ({
+        x: xFor(point, index),
+        y: yFor(point.avg_people),
+        point
+      }));
+      const areaPath = [
+        `M ${coordinates[0].x.toFixed(2)} ${baseY.toFixed(2)}`,
+        ...coordinates.map((item) => `L ${item.x.toFixed(2)} ${item.y.toFixed(2)}`),
+        `L ${coordinates[coordinates.length - 1].x.toFixed(2)} ${baseY.toFixed(2)}`,
+        "Z"
+      ].join(" ");
+      const linePoints = coordinates.map((item) => `${item.x.toFixed(2)},${item.y.toFixed(2)}`).join(" ");
+
+      const plot = document.createElement("div");
+      plot.className = "park-pcm-trend-plot";
+      const svg = svgNode("svg", {
+        class: "park-pcm-trend-svg",
+        viewBox: `0 0 ${width} ${height}`,
+        role: "img",
+        "aria-label": "人流时间趋势折线图"
+      });
+      [0, 0.5, 1].forEach((ratio) => {
+        const y = padding.top + (1 - ratio) * plotHeight;
+        const value = yMax * ratio;
+        svg.appendChild(svgNode("line", {
+          class: "park-pcm-trend-grid",
+          x1: padding.left,
+          y1: y,
+          x2: width - padding.right,
+          y2: y
+        }));
+        svg.appendChild(svgNode("text", {
+          class: "park-pcm-trend-axis-label",
+          x: padding.left - 10,
+          y: y + 4,
+          "text-anchor": "end"
+        }, formatTrendNumber(value)));
+      });
+      svg.appendChild(svgNode("path", {
+        class: "park-pcm-trend-area",
+        d: areaPath
+      }));
+      svg.appendChild(svgNode("polyline", {
+        class: "park-pcm-trend-line",
+        points: linePoints
+      }));
+      coordinates.forEach((item) => {
+        const isPeak = trend.peak_point && item.point.ts === trend.peak_point.ts && item.point.max_people === trend.peak_point.max_people;
+        const dot = svgNode("circle", {
+          class: isPeak ? "park-pcm-trend-dot park-pcm-trend-dot--peak" : "park-pcm-trend-dot",
+          cx: item.x,
+          cy: item.y,
+          r: isPeak ? 4.8 : 3.4
+        });
+        dot.appendChild(
+          svgNode(
+            "title",
+            {},
+            `${formatTrendTime(item.point.start_ts)} · 平均 ${formatTrendNumber(item.point.avg_people)} 人 · 峰值 ${formatTrendNumber(item.point.max_people)} 人 · ${item.point.sample_count} 条`
+          )
+        );
+        svg.appendChild(dot);
+      });
+      svg.appendChild(svgNode("text", {
+        class: "park-pcm-trend-axis-label",
+        x: padding.left,
+        y: height - 12,
+        "text-anchor": "start"
+      }, formatTrendTime(start)));
+      svg.appendChild(svgNode("text", {
+        class: "park-pcm-trend-axis-label",
+        x: width - padding.right,
+        y: height - 12,
+        "text-anchor": "end"
+      }, formatTrendTime(end)));
+      plot.appendChild(svg);
+      body.appendChild(plot);
+    }
+
+    const metrics = document.createElement("div");
+    metrics.className = "park-pcm-trend-metrics";
+    metrics.appendChild(createTrendMetric("平均人流", trend.avg_people == null ? "-" : `${formatTrendNumber(trend.avg_people)} 人`, "单次采样"));
+    metrics.appendChild(createTrendMetric("峰值人流", trend.peak_people == null ? "-" : `${formatTrendNumber(trend.peak_people)} 人`, trend.peak_point ? formatTrendTime(trend.peak_point.ts) : ""));
+    metrics.appendChild(createTrendMetric("最近人流", trend.latest_people == null ? "-" : `${formatTrendNumber(trend.latest_people)} 人`, trend.end_ts ? formatTrendTime(trend.end_ts) : ""));
+    metrics.appendChild(createTrendMetric("时间跨度", formatTrendDuration(trend.span_ms), trend.start_ts && trend.end_ts ? `${formatTrendTime(trend.start_ts)} - ${formatTrendTime(trend.end_ts)}` : ""));
+    body.appendChild(metrics);
+
+    card.appendChild(head);
+    card.appendChild(body);
+    return card;
+  }
+
   function createPeopleDonutChart(title, subtitle, map, labels, options) {
     const opts = options || {};
     const rows = chartFeatureRows(map, labels, opts).map((item, index) => ({
@@ -429,6 +683,7 @@
     if (!container) return;
     const chartGrid = document.createElement("div");
     chartGrid.className = "park-pcm-chart-grid";
+    chartGrid.appendChild(createPeopleTrendChart(rows));
     chartGrid.appendChild(
       createPeopleDonutChart("关照线索", "线索", aggregateAttentionSignals(rows), ATTENTION_SIGNAL_LABELS, {
         limit: 5,
