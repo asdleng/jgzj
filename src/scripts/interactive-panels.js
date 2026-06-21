@@ -7281,30 +7281,29 @@
     yoloTestPreview.innerHTML = '<p class="ai-check-preview-empty">选择图片后会在这里预览</p>';
   }
 
+  function clearYoloDetectionOverlay() {
+    const overlay = yoloTestPreview?.querySelector(".yolo-preview-overlay");
+    if (overlay) {
+      overlay.innerHTML = "";
+    }
+  }
+
   function renderYoloTestPreview(file) {
     if (!yoloTestPreview) return;
     if (yoloTestPreviewUrl) URL.revokeObjectURL(yoloTestPreviewUrl);
     yoloTestPreviewUrl = URL.createObjectURL(file);
     yoloTestPreview.dataset.empty = "false";
     yoloTestPreview.innerHTML = "";
+    const frame = document.createElement("div");
+    frame.className = "yolo-preview-frame";
     const image = document.createElement("img");
     image.src = yoloTestPreviewUrl;
     image.alt = file.name || "YOLO待测图片";
-    yoloTestPreview.appendChild(image);
-  }
-
-  function renderYoloAnnotatedPreview(annotatedImage) {
-    if (!yoloTestPreview || !annotatedImage?.data_base64) return;
-    if (yoloTestPreviewUrl) {
-      URL.revokeObjectURL(yoloTestPreviewUrl);
-      yoloTestPreviewUrl = "";
-    }
-    yoloTestPreview.dataset.empty = "false";
-    yoloTestPreview.innerHTML = "";
-    const image = document.createElement("img");
-    image.src = `data:${annotatedImage.mime_type || "image/jpeg"};base64,${annotatedImage.data_base64}`;
-    image.alt = "YOLO检测结果";
-    yoloTestPreview.appendChild(image);
+    const overlay = document.createElement("div");
+    overlay.className = "yolo-preview-overlay";
+    frame.appendChild(image);
+    frame.appendChild(overlay);
+    yoloTestPreview.appendChild(frame);
   }
 
   function setYoloTestBusy(isBusy) {
@@ -7322,13 +7321,56 @@
     return `${Math.round(numeric * 1000) / 10}%`;
   }
 
-  function formatYoloBox(box) {
+  function normalizeYoloBox(box) {
     if (!box || typeof box !== "object") return "";
-    const values = [box.x_center, box.y_center, box.width, box.height]
-      .map((value) => Number(value))
-      .filter((value) => Number.isFinite(value));
-    if (values.length !== 4) return "";
-    return `中心 ${values[0].toFixed(3)}, ${values[1].toFixed(3)} / 宽高 ${values[2].toFixed(3)}, ${values[3].toFixed(3)}`;
+    const xCenter = Number(box.x_center);
+    const yCenter = Number(box.y_center);
+    const width = Number(box.width);
+    const height = Number(box.height);
+    if (![xCenter, yCenter, width, height].every(Number.isFinite)) return null;
+    const left = Math.max(0, Math.min(100, (xCenter - width / 2) * 100));
+    const top = Math.max(0, Math.min(100, (yCenter - height / 2) * 100));
+    const right = Math.max(0, Math.min(100, (xCenter + width / 2) * 100));
+    const bottom = Math.max(0, Math.min(100, (yCenter + height / 2) * 100));
+    if (right <= left || bottom <= top) return null;
+    return {
+      left,
+      top,
+      width: right - left,
+      height: bottom - top
+    };
+  }
+
+  function getYoloBoxTone(detection) {
+    const source = String(detection.source_task_id || detection.source_task_label || "").toLowerCase();
+    if (detection.accepted === true) return "is-accepted";
+    if (detection.accepted === false || source.includes("smoking")) return "is-smoking";
+    if (source.includes("trash")) return "is-trash";
+    return "is-general";
+  }
+
+  function renderYoloDetectionOverlay(detections, defaultLabel = "") {
+    const overlay = yoloTestPreview?.querySelector(".yolo-preview-overlay");
+    if (!overlay) return;
+    overlay.innerHTML = "";
+
+    (Array.isArray(detections) ? detections : []).forEach((detection) => {
+      const rect = normalizeYoloBox(detection.box);
+      if (!rect) return;
+
+      const box = document.createElement("div");
+      box.className = `yolo-preview-box ${getYoloBoxTone(detection)}`;
+      box.style.left = `${rect.left}%`;
+      box.style.top = `${rect.top}%`;
+      box.style.width = `${rect.width}%`;
+      box.style.height = `${rect.height}%`;
+
+      const sourceLabel = detection.source_task_label || defaultLabel;
+      const className = detection.class_name || detection.class_id || "目标";
+      const label = sourceLabel ? `${sourceLabel} / ${className}` : String(className);
+      box.appendChild(createNode("span", "yolo-preview-box-label", `${label} ${formatYoloConfidence(detection.confidence)}`));
+      overlay.appendChild(box);
+    });
   }
 
   function renderYoloDetectionList(detections) {
@@ -7347,11 +7389,6 @@
       top.appendChild(createNode("p", "yolo-detection-name", `${index + 1}. ${taskPrefix}${detection.class_name || detection.class_id}`));
       top.appendChild(createNode("span", "yolo-detection-confidence", formatYoloConfidence(detection.confidence)));
       item.appendChild(top);
-
-      const boxText = formatYoloBox(detection.box);
-      if (boxText) {
-        item.appendChild(createNode("p", "yolo-detection-meta", boxText));
-      }
 
       if (detection.stage2?.top) {
         const verdict = detection.accepted ? "二级确认" : "二级未确认";
@@ -7414,8 +7451,6 @@
         top.appendChild(createNode("p", "yolo-detection-name", `${index + 1}. ${taskPrefix}${detection.class_name || detection.class_id}`));
         top.appendChild(createNode("span", "yolo-detection-confidence", formatYoloConfidence(detection.confidence)));
         item.appendChild(top);
-        const boxText = formatYoloBox(detection.box);
-        if (boxText) item.appendChild(createNode("p", "yolo-detection-meta", boxText));
         if (detection.stage2?.top) {
           const verdict = detection.accepted ? "二级确认" : "二级未确认";
           item.appendChild(
@@ -7436,11 +7471,10 @@
     const taskLabel = data.task_label || "YOLO任务";
     const mode = data.mode || "";
 
-    renderYoloAnnotatedPreview(data.annotated_image);
-
     if (mode === "all_yolo") {
       const groups = Array.isArray(data.groups) ? data.groups : [];
       const detections = Array.isArray(data.detections) ? data.detections : [];
+      renderYoloDetectionOverlay(detections, taskLabel);
       renderYoloAllOutput(groups, detections);
       if (detections.length > 0) {
         setYoloTestResult(`${detections.length} 个目标`, `${taskLabel}: ${groups.length} 个YOLO任务已完成，耗时 ${data.duration_ms ?? "-"}ms。`, "ok");
@@ -7453,6 +7487,7 @@
     if (mode === "classify") {
       const predictions = Array.isArray(data.predictions) ? data.predictions : [];
       const top = data.top || predictions[0] || null;
+      clearYoloDetectionOverlay();
       renderYoloClassifyOutput(predictions);
       if (!top) {
         setYoloTestResult("无结果", `${taskLabel} 没有返回分类概率。`, "error");
@@ -7468,6 +7503,7 @@
     }
 
     const detections = Array.isArray(data.detections) ? data.detections : [];
+    renderYoloDetectionOverlay(detections, taskLabel);
     renderYoloDetectionList(detections);
 
     if (mode === "smoking_two_stage") {
@@ -7505,6 +7541,7 @@
     });
     setYoloTestStatus("推理中...", "loading");
     setYoloTestResult("推理中", "正在调用常驻 YOLO 小模型，必要时自动回退 A100。", "loading");
+    clearYoloDetectionOverlay();
     if (yoloTestOutput) yoloTestOutput.innerHTML = "";
 
     try {
@@ -8418,6 +8455,7 @@
 
   yoloTestImageInput?.addEventListener("change", () => {
     const file = yoloTestImageInput.files?.[0];
+    yoloTestButtons.forEach((button) => button.classList.remove("is-active"));
     if (!file) {
       resetYoloTestPreview();
       setYoloTestStatus("待上传", "idle");
