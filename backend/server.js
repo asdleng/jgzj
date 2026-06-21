@@ -164,6 +164,11 @@ const yoloA100Gpu = process.env.YOLO_A100_GPU || '3';
 const yoloA100Python = process.env.YOLO_A100_PYTHON || '/home/sari/autodistill/bin/python3';
 const yoloA100WorkRoot = process.env.YOLO_A100_TEST_ROOT || '/home/sari/jgzj_yolo_test';
 const yoloModelTestTasks = Object.freeze({
+  all_yolo: {
+    kind: 'all_yolo',
+    label: '全部YOLO检测',
+    subTasks: ['general_yolo', 'trash_yolo', 'smoking_two_stage']
+  },
   general_yolo: {
     kind: 'detect',
     label: '通用事件',
@@ -197,7 +202,7 @@ const yoloModelTestTasks = Object.freeze({
   },
   smoking_two_stage: {
     kind: 'smoking_two_stage',
-    label: '吸烟两层',
+    label: '吸烟检测',
     model: '/home/sari/jgzj_yolo_runs/smoking_candidate_yolo_small_manual_20260621_063036/weights/best.pt',
     classifierModel: '/home/sari/jgzj_yolo_runs/smoking_cls_small_manual_20260621_064107/weights/best.pt',
     names: ['smoking'],
@@ -295,7 +300,7 @@ def run_detect(args):
         "ok": True,
         "mode": "detect",
         "detections": detections,
-        "annotated_image": encode_annotated_image(result),
+        "annotated_image": None if args.no_annotated else encode_annotated_image(result),
     }
 
 
@@ -377,7 +382,7 @@ def run_smoking_two_stage(args):
         "ok": True,
         "mode": "smoking_two_stage",
         "detections": detections,
-        "annotated_image": encode_annotated_image(result),
+        "annotated_image": None if args.no_annotated else encode_annotated_image(result),
     }
 
 
@@ -392,6 +397,7 @@ def main():
     parser.add_argument("--device", default="0")
     parser.add_argument("--cls-imgsz", type=int, default=224)
     parser.add_argument("--cls-threshold", type=float, default=0.55)
+    parser.add_argument("--no-annotated", action="store_true")
     args = parser.parse_args()
 
     if args.mode == "classify":
@@ -673,7 +679,7 @@ function remapYoloDetectionNames(detections, task) {
   });
 }
 
-function buildYoloRemotePredictCommand({ task, remoteScriptPath, remoteInputPath }) {
+function buildYoloRemotePredictCommand({ task, remoteScriptPath, remoteInputPath, noAnnotated = false }) {
   const args = [
     shellQuote(yoloA100Python),
     shellQuote(remoteScriptPath),
@@ -692,12 +698,68 @@ function buildYoloRemotePredictCommand({ task, remoteScriptPath, remoteInputPath
     args.push('--cls-imgsz', shellQuote(task.classifierImgsz || 224));
     args.push('--cls-threshold', shellQuote(task.classifierThreshold || 0.55));
   }
+  if (noAnnotated) {
+    args.push('--no-annotated');
+  }
 
   return [
     `export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`,
     `export CUDA_VISIBLE_DEVICES=${shellQuote(yoloA100Gpu)}`,
     args.join(' ')
   ].join(' && ');
+}
+
+async function runRemoteYoloPrediction(task, remoteScriptPath, remoteInputPath, options = {}) {
+  const remoteCommand = buildYoloRemotePredictCommand({
+    task,
+    remoteScriptPath,
+    remoteInputPath,
+    noAnnotated: Boolean(options.noAnnotated)
+  });
+  const result = await runYoloA100Command(remoteCommand, {
+    timeoutMs: options.timeoutMs || yoloModelTestTimeoutMs,
+    maxBuffer: options.maxBuffer || 64 * 1024 * 1024
+  });
+  const payload = extractJsonObject(result.stdout);
+  if (!payload?.ok) {
+    const detail = payload?.detail || result.stderr || result.stdout || 'YOLO推理没有返回有效结果。';
+    const error = new Error(truncateText(detail, 2000));
+    error.payload = payload || null;
+    throw error;
+  }
+  return payload;
+}
+
+function buildYoloTaskResponse(taskId, task, payload, options = {}) {
+  const responsePayload = {
+    ok: true,
+    task_id: taskId,
+    task_label: task.label,
+    mode: payload.mode || task.kind,
+    model: path.basename(task.model || ''),
+    gpu: yoloA100Gpu
+  };
+
+  if (payload.mode === 'classify' || task.kind === 'classify') {
+    const predictions = remapYoloPredictionNames(payload.predictions, task.names);
+    responsePayload.predictions = predictions;
+    responsePayload.top = payload.top
+      ? remapYoloPredictionNames([payload.top], task.names)[0]
+      : predictions[0] || null;
+  } else {
+    responsePayload.detections = remapYoloDetectionNames(payload.detections, task);
+    if (!options.omitAnnotatedImage && payload.annotated_image?.data_base64) {
+      responsePayload.annotated_image = {
+        mime_type: payload.annotated_image.mime_type || 'image/jpeg',
+        data_base64: payload.annotated_image.data_base64
+      };
+    }
+    if (payload.annotated_image?.error) {
+      responsePayload.annotated_image_error = payload.annotated_image.error;
+    }
+  }
+
+  return responsePayload;
 }
 
 function extractJsonObject(text) {
@@ -7407,49 +7469,68 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
     await copyYoloFileToA100(localScriptPath, remoteScriptPath);
     await copyYoloFileToA100(localInputPath, remoteInputPath);
 
-    const remoteCommand = buildYoloRemotePredictCommand({ task, remoteScriptPath, remoteInputPath });
-    const result = await runYoloA100Command(remoteCommand, {
+    if (task.kind === 'all_yolo') {
+      const groups = [];
+      for (const subTaskId of task.subTasks || []) {
+        const subTask = yoloModelTestTasks[subTaskId];
+        if (!subTask || subTask.kind === 'all_yolo') {
+          continue;
+        }
+        const subStartMs = Date.now();
+        const payload = await runRemoteYoloPrediction(subTask, remoteScriptPath, remoteInputPath, {
+          noAnnotated: true,
+          timeoutMs: yoloModelTestTimeoutMs,
+          maxBuffer: 24 * 1024 * 1024
+        });
+        groups.push({
+          ...buildYoloTaskResponse(subTaskId, subTask, payload, { omitAnnotatedImage: true }),
+          duration_ms: Date.now() - subStartMs
+        });
+      }
+
+      const durationMs = Date.now() - startMs;
+      const detections = groups.flatMap((group) =>
+        (Array.isArray(group.detections) ? group.detections : []).map((detection) => ({
+          ...detection,
+          source_task_id: group.task_id,
+          source_task_label: group.task_label
+        }))
+      );
+      const responsePayload = {
+        ok: true,
+        request_id: requestId,
+        task_id: taskId,
+        task_label: task.label,
+        mode: 'all_yolo',
+        duration_ms: durationMs,
+        gpu: yoloA100Gpu,
+        groups,
+        detections
+      };
+
+      console.info('yolo_model_test_result', JSON.stringify({
+        task_id: taskId,
+        mode: responsePayload.mode,
+        groups: groups.length,
+        detections: detections.length,
+        duration_ms: durationMs,
+        gpu: yoloA100Gpu
+      }));
+
+      return res.json(responsePayload);
+    }
+
+    const payload = await runRemoteYoloPrediction(task, remoteScriptPath, remoteInputPath, {
       timeoutMs: yoloModelTestTimeoutMs,
       maxBuffer: 64 * 1024 * 1024
     });
-    const payload = extractJsonObject(result.stdout);
-    if (!payload?.ok) {
-      const detail = payload?.detail || result.stderr || result.stdout || 'YOLO推理没有返回有效结果。';
-      const error = new Error(truncateText(detail, 2000));
-      error.payload = payload || null;
-      throw error;
-    }
 
     const durationMs = Date.now() - startMs;
     const responsePayload = {
-      ok: true,
+      ...buildYoloTaskResponse(taskId, task, payload),
       request_id: requestId,
-      task_id: taskId,
-      task_label: task.label,
-      mode: payload.mode || task.kind,
-      duration_ms: durationMs,
-      model: path.basename(task.model || ''),
-      gpu: yoloA100Gpu
+      duration_ms: durationMs
     };
-
-    if (payload.mode === 'classify' || task.kind === 'classify') {
-      const predictions = remapYoloPredictionNames(payload.predictions, task.names);
-      responsePayload.predictions = predictions;
-      responsePayload.top = payload.top
-        ? remapYoloPredictionNames([payload.top], task.names)[0]
-        : predictions[0] || null;
-    } else {
-      responsePayload.detections = remapYoloDetectionNames(payload.detections, task);
-      if (payload.annotated_image?.data_base64) {
-        responsePayload.annotated_image = {
-          mime_type: payload.annotated_image.mime_type || 'image/jpeg',
-          data_base64: payload.annotated_image.data_base64
-        };
-      }
-      if (payload.annotated_image?.error) {
-        responsePayload.annotated_image_error = payload.annotated_image.error;
-      }
-    }
 
     console.info('yolo_model_test_result', JSON.stringify({
       task_id: taskId,

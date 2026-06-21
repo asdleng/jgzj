@@ -7343,7 +7343,8 @@
     detections.forEach((detection, index) => {
       const item = createNode("div", "yolo-detection-item");
       const top = createNode("div", "yolo-detection-top");
-      top.appendChild(createNode("p", "yolo-detection-name", `${index + 1}. ${detection.class_name || detection.class_id}`));
+      const taskPrefix = detection.source_task_label ? `${detection.source_task_label} / ` : "";
+      top.appendChild(createNode("p", "yolo-detection-name", `${index + 1}. ${taskPrefix}${detection.class_name || detection.class_id}`));
       top.appendChild(createNode("span", "yolo-detection-confidence", formatYoloConfidence(detection.confidence)));
       item.appendChild(top);
 
@@ -7383,11 +7384,71 @@
     yoloTestOutput.appendChild(list);
   }
 
+  function renderYoloAllOutput(groups, detections) {
+    if (!yoloTestOutput) return;
+    yoloTestOutput.innerHTML = "";
+
+    const summaryList = createNode("div", "yolo-detection-list");
+    (Array.isArray(groups) ? groups : []).forEach((group) => {
+      const groupDetections = Array.isArray(group.detections) ? group.detections : [];
+      const item = createNode("div", "yolo-detection-item");
+      const top = createNode("div", "yolo-detection-top");
+      top.appendChild(createNode("p", "yolo-detection-name", group.task_label || group.task_id || "YOLO任务"));
+      top.appendChild(createNode("span", "yolo-detection-confidence", `${groupDetections.length} 个`));
+      item.appendChild(top);
+      item.appendChild(createNode("p", "yolo-detection-meta", `耗时 ${group.duration_ms ?? "-"}ms`));
+      summaryList.appendChild(item);
+    });
+    yoloTestOutput.appendChild(summaryList);
+
+    if (Array.isArray(detections) && detections.length) {
+      const title = createNode("p", "yolo-test-empty", "命中结果");
+      title.style.marginTop = "12px";
+      yoloTestOutput.appendChild(title);
+      const previousOutput = yoloTestOutput;
+      const list = createNode("div", "yolo-detection-list");
+      detections.forEach((detection, index) => {
+        const item = createNode("div", "yolo-detection-item");
+        const top = createNode("div", "yolo-detection-top");
+        const taskPrefix = detection.source_task_label ? `${detection.source_task_label} / ` : "";
+        top.appendChild(createNode("p", "yolo-detection-name", `${index + 1}. ${taskPrefix}${detection.class_name || detection.class_id}`));
+        top.appendChild(createNode("span", "yolo-detection-confidence", formatYoloConfidence(detection.confidence)));
+        item.appendChild(top);
+        const boxText = formatYoloBox(detection.box);
+        if (boxText) item.appendChild(createNode("p", "yolo-detection-meta", boxText));
+        if (detection.stage2?.top) {
+          const verdict = detection.accepted ? "二级确认" : "二级未确认";
+          item.appendChild(
+            createNode(
+              "p",
+              `yolo-detection-stage2 ${detection.accepted ? "is-accepted" : "is-rejected"}`,
+              `${verdict}: ${detection.stage2.top.class_name || detection.stage2.top.class_id} ${formatYoloConfidence(detection.stage2.top.confidence)}`
+            )
+          );
+        }
+        list.appendChild(item);
+      });
+      previousOutput.appendChild(list);
+    }
+  }
+
   function renderYoloTestData(data) {
     const taskLabel = data.task_label || "YOLO任务";
     const mode = data.mode || "";
 
     renderYoloAnnotatedPreview(data.annotated_image);
+
+    if (mode === "all_yolo") {
+      const groups = Array.isArray(data.groups) ? data.groups : [];
+      const detections = Array.isArray(data.detections) ? data.detections : [];
+      renderYoloAllOutput(groups, detections);
+      if (detections.length > 0) {
+        setYoloTestResult(`${detections.length} 个目标`, `${taskLabel}: ${groups.length} 个YOLO任务已完成，耗时 ${data.duration_ms ?? "-"}ms。`, "ok");
+      } else {
+        setYoloTestResult("未检出", `${taskLabel}: ${groups.length} 个YOLO任务均未检出，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+      }
+      return;
+    }
 
     if (mode === "classify") {
       const predictions = Array.isArray(data.predictions) ? data.predictions : [];
