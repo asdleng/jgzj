@@ -495,6 +495,22 @@
   font-size: 0.92rem;
 }
 
+@media (max-width: 980px) {
+  .inspection-page-shell .ai-check-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .inspection-page-shell .ai-check-preview-shell {
+    min-height: 320px;
+    border-right: none;
+    border-bottom: 1px solid rgba(71, 85, 105, 0.45);
+  }
+
+  .yolo-task-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .dialogue-chat-shell {
   min-width: 0;
 }
@@ -2670,6 +2686,131 @@
 .ai-check-submit:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.yolo-test-form {
+  align-content: start;
+}
+
+.yolo-task-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.yolo-task-button {
+  min-height: 76px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(71, 85, 105, 0.82);
+  background: rgba(15, 23, 42, 0.9);
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.yolo-task-button:hover {
+  border-color: rgba(45, 212, 191, 0.62);
+  background: rgba(15, 23, 42, 0.98);
+  transform: translateY(-1px);
+}
+
+.yolo-task-button:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.yolo-task-button.is-active {
+  border-color: rgba(251, 191, 36, 0.76);
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.18);
+}
+
+.yolo-task-button--wide {
+  grid-column: 1 / -1;
+}
+
+.yolo-task-title {
+  font-size: 0.94rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.yolo-task-meta {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: #94a3b8;
+  word-break: break-word;
+}
+
+.yolo-test-output {
+  margin-top: 12px;
+}
+
+.yolo-test-empty {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #94a3b8;
+}
+
+.yolo-detection-list {
+  display: grid;
+  gap: 8px;
+}
+
+.yolo-detection-item {
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  background: rgba(2, 6, 23, 0.42);
+}
+
+.yolo-detection-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.yolo-detection-name {
+  margin: 0;
+  min-width: 0;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+  color: #f8fafc;
+  word-break: break-word;
+}
+
+.yolo-detection-confidence {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: rgba(14, 165, 233, 0.16);
+  color: #bae6fd;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.yolo-detection-meta,
+.yolo-detection-stage2 {
+  margin: 6px 0 0;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: #94a3b8;
+  word-break: break-word;
+}
+
+.yolo-detection-stage2.is-accepted {
+  color: #86efac;
+}
+
+.yolo-detection-stage2.is-rejected {
+  color: #fdba74;
 }
 
 .ai-check-result {

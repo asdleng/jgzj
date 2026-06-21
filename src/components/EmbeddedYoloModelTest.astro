@@ -1,0 +1,56 @@
+<section
+  id="yolo-model-test-panel"
+  class="cloud-chat-panel ai-check-panel yolo-model-test-panel embedded-panel inspection-panel inspection-panel--check"
+  aria-live="polite"
+  data-requires-permission="ai:detect"
+>
+  <header class="cloud-chat-head">
+    <div class="cloud-chat-head-main">
+      <p class="cloud-chat-title">YOLO小模型测试</p>
+      <p id="yolo-test-status" class="cloud-chat-status" data-state="idle">待上传</p>
+    </div>
+  </header>
+  <div class="ai-check-workbench yolo-test-workbench">
+    <div class="ai-check-preview-shell">
+      <div id="yolo-test-preview" class="ai-check-preview yolo-test-preview" data-empty="true">
+        <p class="ai-check-preview-empty">选择图片后会在这里预览</p>
+      </div>
+    </div>
+    <div class="ai-check-side">
+      <div class="ai-check-form yolo-test-form">
+        <label class="ai-check-field" for="yolo-test-image">
+          <span>上传图片</span>
+          <input id="yolo-test-image" type="file" accept="image/*" />
+        </label>
+        <div class="yolo-task-grid" aria-label="YOLO固定任务">
+          <button class="yolo-task-button" type="button" data-yolo-task="general_yolo">
+            <span class="yolo-task-title">通用事件</span>
+            <span class="yolo-task-meta">车 / 非机动车 / 宠物 / 摊位</span>
+          </button>
+          <button class="yolo-task-button" type="button" data-yolo-task="trash_yolo">
+            <span class="yolo-task-title">小垃圾细类</span>
+            <span class="yolo-task-meta">瓶 / 盒 / 纸 / 袋</span>
+          </button>
+          <button class="yolo-task-button" type="button" data-yolo-task="smoking_candidate">
+            <span class="yolo-task-title">吸烟候选</span>
+            <span class="yolo-task-meta">一层候选框</span>
+          </button>
+          <button class="yolo-task-button" type="button" data-yolo-task="smoking_cls">
+            <span class="yolo-task-title">吸烟二级裁剪</span>
+            <span class="yolo-task-meta">候选 ROI 分类</span>
+          </button>
+          <button class="yolo-task-button yolo-task-button--wide" type="button" data-yolo-task="smoking_two_stage">
+            <span class="yolo-task-title">吸烟两层</span>
+            <span class="yolo-task-meta">候选检测 + ROI 二级确认</span>
+          </button>
+        </div>
+      </div>
+      <section id="yolo-test-result" class="ai-check-result yolo-test-result" data-state="idle">
+        <p class="ai-check-result-label">测试结果</p>
+        <p id="yolo-test-answer" class="ai-check-answer">等待测试</p>
+        <p id="yolo-test-detail" class="ai-check-detail">上传图片后选择一个固定任务。</p>
+        <div id="yolo-test-output" class="yolo-test-output"></div>
+      </section>
+    </div>
+  </div>
+</section>

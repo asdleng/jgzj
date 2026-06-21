@@ -152,6 +152,264 @@ const cloudOpsDeployGitCacheDir = path.resolve(
 const cloudOpsRouteCatalogCache = new Map();
 const cloudOpsAudioAlsaCache = new Map();
 const projectRoot = path.resolve(__dirname, '..');
+const yoloModelTestRoot = path.resolve(
+  process.env.YOLO_MODEL_TEST_ROOT || path.join(projectRoot, '.runtime/yolo_model_test')
+);
+const yoloModelTestMaxImageBytes = Number(process.env.YOLO_MODEL_TEST_MAX_IMAGE_BYTES || 4 * 1024 * 1024);
+const yoloModelTestTimeoutMs = Number(process.env.YOLO_MODEL_TEST_TIMEOUT_MS || 180000);
+const yoloA100Host = process.env.YOLO_A100_HOST || '192.168.80.49';
+const yoloA100User = process.env.YOLO_A100_USER || 'sari';
+const yoloA100Key = process.env.YOLO_A100_KEY || '/home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519';
+const yoloA100Gpu = process.env.YOLO_A100_GPU || '3';
+const yoloA100Python = process.env.YOLO_A100_PYTHON || '/home/sari/autodistill/bin/python3';
+const yoloA100WorkRoot = process.env.YOLO_A100_TEST_ROOT || '/home/sari/jgzj_yolo_test';
+const yoloModelTestTasks = Object.freeze({
+  general_yolo: {
+    kind: 'detect',
+    label: '通用事件',
+    model: '/home/sari/jgzj_yolo_runs/general_yolo_manual_20260621_044205/weights/best.pt',
+    names: ['car', 'truck', 'non_motor_vehicle', 'pet', 'stall'],
+    imgsz: 640,
+    conf: 0.25
+  },
+  trash_yolo: {
+    kind: 'detect',
+    label: '小垃圾细类',
+    model: '/home/sari/jgzj_yolo_runs/trash_yolo_manual_20260621_034134/weights/best.pt',
+    names: ['bottle', 'box', 'paper', 'bag'],
+    imgsz: 960,
+    conf: 0.15
+  },
+  smoking_candidate: {
+    kind: 'detect',
+    label: '吸烟候选',
+    model: '/home/sari/jgzj_yolo_runs/smoking_candidate_yolo_small_manual_20260621_063036/weights/best.pt',
+    names: ['smoking'],
+    imgsz: 640,
+    conf: 0.2
+  },
+  smoking_cls: {
+    kind: 'classify',
+    label: '吸烟二级分类',
+    model: '/home/sari/jgzj_yolo_runs/smoking_cls_small_manual_20260621_064107/weights/best.pt',
+    names: ['not_smoking', 'smoking'],
+    imgsz: 224
+  },
+  smoking_two_stage: {
+    kind: 'smoking_two_stage',
+    label: '吸烟两层',
+    model: '/home/sari/jgzj_yolo_runs/smoking_candidate_yolo_small_manual_20260621_063036/weights/best.pt',
+    classifierModel: '/home/sari/jgzj_yolo_runs/smoking_cls_small_manual_20260621_064107/weights/best.pt',
+    names: ['smoking'],
+    classifierNames: ['not_smoking', 'smoking'],
+    imgsz: 640,
+    conf: 0.18,
+    classifierImgsz: 224,
+    classifierThreshold: 0.55
+  }
+});
+const yoloModelTestPredictScript = String.raw`import argparse
+import base64
+import json
+import os
+import sys
+
+os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
+
+from ultralytics import YOLO
+
+
+def name_for(names, class_id):
+    if isinstance(names, dict):
+        return str(names.get(class_id, names.get(str(class_id), class_id)))
+    if isinstance(names, (list, tuple)) and 0 <= class_id < len(names):
+        return str(names[class_id])
+    return str(class_id)
+
+
+def normalize_predictions(probs, names):
+    if probs is None:
+        return []
+    values = probs.data.detach().cpu().tolist()
+    items = []
+    for class_id, confidence in enumerate(values):
+        items.append({
+            "class_id": int(class_id),
+            "class_name": name_for(names, int(class_id)),
+            "confidence": float(confidence),
+        })
+    items.sort(key=lambda item: item["confidence"], reverse=True)
+    return items
+
+
+def serialize_box(box, names):
+    class_id = int(box.cls.item())
+    confidence = float(box.conf.item()) if box.conf is not None else 0.0
+    xyxy = [float(value) for value in box.xyxy[0].detach().cpu().tolist()]
+    xywhn = [float(value) for value in box.xywhn[0].detach().cpu().tolist()]
+    return {
+        "class_id": class_id,
+        "class_name": name_for(names, class_id),
+        "confidence": confidence,
+        "box": {
+            "x_center": xywhn[0],
+            "y_center": xywhn[1],
+            "width": xywhn[2],
+            "height": xywhn[3],
+            "xyxy": xyxy,
+        },
+    }
+
+
+def encode_annotated_image(result):
+    try:
+        import cv2
+
+        plotted = result.plot()
+        ok, encoded = cv2.imencode(".jpg", plotted, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+        if not ok:
+            return None
+        return {
+            "mime_type": "image/jpeg",
+            "data_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def run_detect(args):
+    model = YOLO(args.model)
+    result = model.predict(
+        args.image,
+        imgsz=args.imgsz,
+        conf=args.conf,
+        device=args.device,
+        verbose=False,
+    )[0]
+    names = getattr(result, "names", getattr(model.model, "names", {}))
+    detections = []
+    if result.boxes is not None:
+        for box in result.boxes:
+            detections.append(serialize_box(box, names))
+    return {
+        "ok": True,
+        "mode": "detect",
+        "detections": detections,
+        "annotated_image": encode_annotated_image(result),
+    }
+
+
+def run_classify(args):
+    model = YOLO(args.model)
+    result = model.predict(
+        args.image,
+        imgsz=args.imgsz,
+        device=args.device,
+        verbose=False,
+    )[0]
+    names = getattr(result, "names", getattr(model.model, "names", {}))
+    predictions = normalize_predictions(getattr(result, "probs", None), names)
+    return {
+        "ok": True,
+        "mode": "classify",
+        "predictions": predictions,
+        "top": predictions[0] if predictions else None,
+    }
+
+
+def crop_with_padding(image, xyxy, pad_ratio=0.08):
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = xyxy
+    pad_x = (x2 - x1) * pad_ratio
+    pad_y = (y2 - y1) * pad_ratio
+    left = max(0, int(round(x1 - pad_x)))
+    top = max(0, int(round(y1 - pad_y)))
+    right = min(width, int(round(x2 + pad_x)))
+    bottom = min(height, int(round(y2 + pad_y)))
+    if right <= left or bottom <= top:
+        return None
+    return image[top:bottom, left:right]
+
+
+def run_smoking_two_stage(args):
+    import cv2
+
+    image = cv2.imread(args.image)
+    if image is None:
+        raise RuntimeError("image_decode_failed")
+
+    detector = YOLO(args.model)
+    classifier = YOLO(args.classifier_model)
+    result = detector.predict(
+        args.image,
+        imgsz=args.imgsz,
+        conf=args.conf,
+        device=args.device,
+        verbose=False,
+    )[0]
+    names = getattr(result, "names", getattr(detector.model, "names", {}))
+    detections = []
+    if result.boxes is not None:
+        for box in result.boxes:
+            detection = serialize_box(box, names)
+            crop = crop_with_padding(image, detection["box"]["xyxy"])
+            if crop is not None:
+                cls_result = classifier.predict(
+                    crop,
+                    imgsz=args.cls_imgsz,
+                    device=args.device,
+                    verbose=False,
+                )[0]
+                cls_names = getattr(cls_result, "names", getattr(classifier.model, "names", {}))
+                predictions = normalize_predictions(getattr(cls_result, "probs", None), cls_names)
+                top = predictions[0] if predictions else None
+                detection["stage2"] = {"predictions": predictions, "top": top}
+                detection["accepted"] = bool(
+                    top
+                    and str(top.get("class_name", "")).lower() == "smoking"
+                    and float(top.get("confidence", 0.0)) >= args.cls_threshold
+                )
+            else:
+                detection["stage2"] = {"predictions": [], "top": None, "error": "empty_crop"}
+                detection["accepted"] = False
+            detections.append(detection)
+    return {
+        "ok": True,
+        "mode": "smoking_two_stage",
+        "detections": detections,
+        "annotated_image": encode_annotated_image(result),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", required=True, choices=["detect", "classify", "smoking_two_stage"])
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--classifier-model", default="")
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--conf", type=float, default=0.25)
+    parser.add_argument("--device", default="0")
+    parser.add_argument("--cls-imgsz", type=int, default=224)
+    parser.add_argument("--cls-threshold", type=float, default=0.55)
+    args = parser.parse_args()
+
+    if args.mode == "classify":
+        payload = run_classify(args)
+    elif args.mode == "smoking_two_stage":
+        payload = run_smoking_two_stage(args)
+    else:
+        payload = run_detect(args)
+    print(json.dumps(payload, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": type(exc).__name__, "detail": str(exc)}, ensure_ascii=False))
+        sys.exit(1)
+`;
 const yoloDatasetRootSpecs = [
   {
     alias: 'loop',
@@ -302,6 +560,144 @@ function resolveExecutable(configured, candidates = []) {
     }
   }
   return requested || 'sqlite3';
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function yoloA100SshArgs(command) {
+  return [
+    '-i', yoloA100Key,
+    '-o', 'ClearAllForwardings=yes',
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=10',
+    '-o', 'StrictHostKeyChecking=no',
+    `${yoloA100User}@${yoloA100Host}`,
+    `bash -lc ${shellQuote(command)}`
+  ];
+}
+
+async function runYoloA100Command(command, options = {}) {
+  return execFileAsync('ssh', yoloA100SshArgs(command), {
+    timeout: options.timeoutMs || yoloModelTestTimeoutMs,
+    maxBuffer: options.maxBuffer || 48 * 1024 * 1024
+  });
+}
+
+async function copyYoloFileToA100(localPath, remotePath) {
+  return execFileAsync('scp', [
+    '-i', yoloA100Key,
+    '-o', 'ClearAllForwardings=yes',
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=10',
+    '-o', 'StrictHostKeyChecking=no',
+    localPath,
+    `${yoloA100User}@${yoloA100Host}:${remotePath}`
+  ], {
+    timeout: 60000,
+    maxBuffer: 4 * 1024 * 1024
+  });
+}
+
+function decodeYoloModelTestImage(image) {
+  if (!image?.mime_type || !image?.data_base64) {
+    const error = new Error('image_required');
+    error.status = 400;
+    throw error;
+  }
+
+  const mimeType = String(image.mime_type || '').toLowerCase().split(';', 1)[0].trim();
+  const extensionByMime = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/bmp': '.bmp'
+  };
+  const ext = extensionByMime[mimeType];
+  if (!ext) {
+    const error = new Error('unsupported_image_type');
+    error.status = 415;
+    throw error;
+  }
+
+  const imageSizeBytes = Buffer.byteLength(String(image.data_base64 || ''), 'base64');
+  if (imageSizeBytes > yoloModelTestMaxImageBytes) {
+    const error = new Error('image_too_large');
+    error.status = 413;
+    error.detail = `图片过大，请压缩到 ${Math.floor(yoloModelTestMaxImageBytes / 1024 / 1024)}MB 以内。`;
+    error.imageSizeBytes = imageSizeBytes;
+    throw error;
+  }
+
+  const buffer = Buffer.from(String(image.data_base64 || ''), 'base64');
+  if (!buffer.length) {
+    const error = new Error('empty_image');
+    error.status = 400;
+    throw error;
+  }
+
+  return { buffer, mimeType, ext, imageSizeBytes };
+}
+
+function remapYoloPredictionNames(predictions, names = []) {
+  return (Array.isArray(predictions) ? predictions : []).map((prediction) => {
+    const classId = Number(prediction.class_id);
+    const className = Number.isInteger(classId) && names[classId] ? names[classId] : prediction.class_name;
+    return {
+      ...prediction,
+      class_id: Number.isInteger(classId) ? classId : prediction.class_id,
+      class_name: className || String(prediction.class_id ?? '')
+    };
+  });
+}
+
+function remapYoloDetectionNames(detections, task) {
+  return (Array.isArray(detections) ? detections : []).map((detection) => {
+    const classId = Number(detection.class_id);
+    const className = Number.isInteger(classId) && task.names?.[classId] ? task.names[classId] : detection.class_name;
+    const next = {
+      ...detection,
+      class_id: Number.isInteger(classId) ? classId : detection.class_id,
+      class_name: className || String(detection.class_id ?? '')
+    };
+    if (next.stage2) {
+      const predictions = remapYoloPredictionNames(next.stage2.predictions, task.classifierNames || task.names || []);
+      const top = next.stage2.top
+        ? remapYoloPredictionNames([next.stage2.top], task.classifierNames || task.names || [])[0]
+        : null;
+      next.stage2 = { ...next.stage2, predictions, top };
+    }
+    return next;
+  });
+}
+
+function buildYoloRemotePredictCommand({ task, remoteScriptPath, remoteInputPath }) {
+  const args = [
+    shellQuote(yoloA100Python),
+    shellQuote(remoteScriptPath),
+    '--mode', shellQuote(task.kind),
+    '--model', shellQuote(task.model),
+    '--image', shellQuote(remoteInputPath),
+    '--imgsz', shellQuote(task.imgsz || 640),
+    '--device', shellQuote('0')
+  ];
+
+  if (task.kind !== 'classify') {
+    args.push('--conf', shellQuote(task.conf ?? 0.25));
+  }
+  if (task.classifierModel) {
+    args.push('--classifier-model', shellQuote(task.classifierModel));
+    args.push('--cls-imgsz', shellQuote(task.classifierImgsz || 224));
+    args.push('--cls-threshold', shellQuote(task.classifierThreshold || 0.55));
+  }
+
+  return [
+    `export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`,
+    `export CUDA_VISIBLE_DEVICES=${shellQuote(yoloA100Gpu)}`,
+    args.join(' ')
+  ].join(' && ');
 }
 
 function extractJsonObject(text) {
@@ -5322,6 +5718,15 @@ function auditBodySummary(req) {
     };
   }
 
+  if (requestPath === '/api/yolo-model-test') {
+    const image = body.image && typeof body.image === 'object' ? body.image : {};
+    return {
+      task_id: String(body.task_id || '').trim(),
+      image_mime_type: image.mime_type || null,
+      image_size_bytes: image.data_base64 ? Buffer.byteLength(String(image.data_base64), 'base64') : null
+    };
+  }
+
   if (requestPath === '/api/qwen36-chat' || requestPath === '/api/cloud-chat' || requestPath === '/api/openclaw-chat') {
     return {
       message: String(body.message || '').trim().slice(0, 800),
@@ -5472,6 +5877,17 @@ function classifyOperationAuditRequest(req) {
       action: 'ai.qwen36_mm_check',
       target_type: 'model',
       target_id: qwen36MmModel,
+      permission: 'ai:detect',
+      detail: auditBodySummary(req)
+    };
+  }
+
+  if (requestPath === '/api/yolo-model-test' && method === 'POST') {
+    return {
+      category: 'ai',
+      action: 'ai.yolo_model_test',
+      target_type: 'model',
+      target_id: String(req.body?.task_id || '').trim() || null,
       permission: 'ai:detect',
       detail: auditBodySummary(req)
     };
@@ -6943,6 +7359,124 @@ app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async
     });
   } finally {
     guard.release();
+  }
+});
+
+app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async (req, res) => {
+  const startMs = Date.now();
+  const taskId = String(req.body?.task_id || '').trim();
+  const task = yoloModelTestTasks[taskId];
+  if (!task) {
+    return res.status(400).json({
+      ok: false,
+      error: 'unknown_task',
+      detail: '未知YOLO固定任务。'
+    });
+  }
+
+  let decoded;
+  try {
+    decoded = decodeYoloModelTestImage(req.body?.image);
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      ok: false,
+      error: error.message || 'invalid_image',
+      detail: error.detail || null,
+      max_image_bytes: yoloModelTestMaxImageBytes,
+      image_size_bytes: error.imageSizeBytes || null
+    });
+  }
+
+  const requestId = `yolo_${startMs}_${crypto.randomBytes(4).toString('hex')}`;
+  const localRunDir = path.join(yoloModelTestRoot, requestId);
+  const localInputPath = path.join(localRunDir, `input${decoded.ext}`);
+  const localScriptPath = path.join(localRunDir, 'predict.py');
+  const remoteRunDir = `${yoloA100WorkRoot}/${requestId}`;
+  const remoteInputPath = `${remoteRunDir}/input${decoded.ext}`;
+  const remoteScriptPath = `${remoteRunDir}/predict.py`;
+
+  try {
+    await fs.mkdir(localRunDir, { recursive: true });
+    await fs.writeFile(localInputPath, decoded.buffer);
+    await fs.writeFile(localScriptPath, yoloModelTestPredictScript);
+
+    await runYoloA100Command(`mkdir -p ${shellQuote(remoteRunDir)}`, {
+      timeoutMs: 30000,
+      maxBuffer: 1024 * 1024
+    });
+    await copyYoloFileToA100(localScriptPath, remoteScriptPath);
+    await copyYoloFileToA100(localInputPath, remoteInputPath);
+
+    const remoteCommand = buildYoloRemotePredictCommand({ task, remoteScriptPath, remoteInputPath });
+    const result = await runYoloA100Command(remoteCommand, {
+      timeoutMs: yoloModelTestTimeoutMs,
+      maxBuffer: 64 * 1024 * 1024
+    });
+    const payload = extractJsonObject(result.stdout);
+    if (!payload?.ok) {
+      const detail = payload?.detail || result.stderr || result.stdout || 'YOLO推理没有返回有效结果。';
+      const error = new Error(truncateText(detail, 2000));
+      error.payload = payload || null;
+      throw error;
+    }
+
+    const durationMs = Date.now() - startMs;
+    const responsePayload = {
+      ok: true,
+      request_id: requestId,
+      task_id: taskId,
+      task_label: task.label,
+      mode: payload.mode || task.kind,
+      duration_ms: durationMs,
+      model: path.basename(task.model || ''),
+      gpu: yoloA100Gpu
+    };
+
+    if (payload.mode === 'classify' || task.kind === 'classify') {
+      const predictions = remapYoloPredictionNames(payload.predictions, task.names);
+      responsePayload.predictions = predictions;
+      responsePayload.top = payload.top
+        ? remapYoloPredictionNames([payload.top], task.names)[0]
+        : predictions[0] || null;
+    } else {
+      responsePayload.detections = remapYoloDetectionNames(payload.detections, task);
+      if (payload.annotated_image?.data_base64) {
+        responsePayload.annotated_image = {
+          mime_type: payload.annotated_image.mime_type || 'image/jpeg',
+          data_base64: payload.annotated_image.data_base64
+        };
+      }
+      if (payload.annotated_image?.error) {
+        responsePayload.annotated_image_error = payload.annotated_image.error;
+      }
+    }
+
+    console.info('yolo_model_test_result', JSON.stringify({
+      task_id: taskId,
+      mode: responsePayload.mode,
+      detections: Array.isArray(responsePayload.detections) ? responsePayload.detections.length : undefined,
+      top: responsePayload.top?.class_name || null,
+      duration_ms: durationMs,
+      gpu: yoloA100Gpu
+    }));
+
+    return res.json(responsePayload);
+  } catch (error) {
+    const durationMs = Date.now() - startMs;
+    console.info('yolo_model_test_result', JSON.stringify({
+      task_id: taskId,
+      ok: false,
+      error: error.message,
+      duration_ms: durationMs,
+      gpu: yoloA100Gpu
+    }));
+    return res.status(502).json({
+      ok: false,
+      error: 'yolo_model_test_failed',
+      detail: error.message || 'YOLO测试失败。',
+      duration_ms: durationMs,
+      gpu: yoloA100Gpu
+    });
   }
 });
 

@@ -2,6 +2,7 @@
 import "../../styles/app.css";
 import EmbeddedAiCheckHistory from "../../components/EmbeddedAiCheckHistory.astro";
 import EmbeddedCloudChat from "../../components/EmbeddedCloudChat.astro";
+import EmbeddedYoloModelTest from "../../components/EmbeddedYoloModelTest.astro";
 import InteractiveScripts from "../../components/InteractiveScripts.astro";
 import OptimizedImage from "../../components/OptimizedImage.astro";
 import SiteLayout from "../../components/SiteLayout.astro";
@@ -38,6 +39,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
     <section class="page-section">
       <nav class="anchor-nav reveal" data-reveal>
         <a href="#workbench-dialogue" class="anchor-nav-item">AI 对话</a>
+        <a href="#yolo-model-test-panel" class="anchor-nav-item">YOLO小模型</a>
         <a href="#ai-check-panel" class="anchor-nav-item">AI 检测</a>
         <a href="#ai-history-panel" class="anchor-nav-item">历史记录</a>
       </nav>
@@ -51,6 +53,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
 
     <section class="page-section robot-workbench-detection-section" id="workbench-detection">
       <div class="reveal" data-reveal>
+        <EmbeddedYoloModelTest />
         <EmbeddedAiCheckHistory />
       </div>
     </section>

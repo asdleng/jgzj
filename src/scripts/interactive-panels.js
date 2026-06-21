@@ -17,6 +17,7 @@
   const IDENTITIES_URL = "/api/chat-identities";
   const AI_CHECK_HISTORY_URL = "/api/ai-check-history";
   const QWEN36_MM_CHECK_URL = "/api/qwen36-mm-check";
+  const YOLO_MODEL_TEST_URL = "/api/yolo-model-test";
   const AI_CHECK_HISTORY_PAGE_SIZE = 5;
   const DEFAULT_VEHICLE_ID = "car-web";
   const QWEN_CHECK_PATH = "/ws/qwen/check";
@@ -128,6 +129,15 @@
   const aiCheckAnswer = document.getElementById("ai-check-answer");
   const aiCheckDetail = document.getElementById("ai-check-detail");
   const aiCheckResult = document.getElementById("ai-check-result");
+
+  const yoloTestImageInput = document.getElementById("yolo-test-image");
+  const yoloTestPreview = document.getElementById("yolo-test-preview");
+  const yoloTestStatus = document.getElementById("yolo-test-status");
+  const yoloTestButtons = Array.from(document.querySelectorAll("[data-yolo-task]"));
+  const yoloTestAnswer = document.getElementById("yolo-test-answer");
+  const yoloTestDetail = document.getElementById("yolo-test-detail");
+  const yoloTestResult = document.getElementById("yolo-test-result");
+  const yoloTestOutput = document.getElementById("yolo-test-output");
 
   const qwen36mmForm = document.getElementById("qwen36mm-form");
   const qwen36mmImageInput = document.getElementById("qwen36mm-image");
@@ -249,6 +259,7 @@
   }
 
   let aiPreviewUrl = "";
+  let yoloTestPreviewUrl = "";
   let qwen36mmPreviewUrl = "";
   let aiHistoryPageValue = 1;
   let aiHistoryTotalPages = 1;
@@ -7248,6 +7259,216 @@
     };
   }
 
+  function setYoloTestStatus(text, state) {
+    if (!yoloTestStatus) return;
+    yoloTestStatus.textContent = text;
+    yoloTestStatus.dataset.state = state || "idle";
+  }
+
+  function setYoloTestResult(answer, detail, state) {
+    if (yoloTestAnswer) yoloTestAnswer.textContent = answer;
+    if (yoloTestDetail) yoloTestDetail.textContent = detail;
+    if (yoloTestResult) yoloTestResult.dataset.state = state || "idle";
+  }
+
+  function resetYoloTestPreview() {
+    if (!yoloTestPreview) return;
+    if (yoloTestPreviewUrl) {
+      URL.revokeObjectURL(yoloTestPreviewUrl);
+      yoloTestPreviewUrl = "";
+    }
+    yoloTestPreview.dataset.empty = "true";
+    yoloTestPreview.innerHTML = '<p class="ai-check-preview-empty">选择图片后会在这里预览</p>';
+  }
+
+  function renderYoloTestPreview(file) {
+    if (!yoloTestPreview) return;
+    if (yoloTestPreviewUrl) URL.revokeObjectURL(yoloTestPreviewUrl);
+    yoloTestPreviewUrl = URL.createObjectURL(file);
+    yoloTestPreview.dataset.empty = "false";
+    yoloTestPreview.innerHTML = "";
+    const image = document.createElement("img");
+    image.src = yoloTestPreviewUrl;
+    image.alt = file.name || "YOLO待测图片";
+    yoloTestPreview.appendChild(image);
+  }
+
+  function renderYoloAnnotatedPreview(annotatedImage) {
+    if (!yoloTestPreview || !annotatedImage?.data_base64) return;
+    if (yoloTestPreviewUrl) {
+      URL.revokeObjectURL(yoloTestPreviewUrl);
+      yoloTestPreviewUrl = "";
+    }
+    yoloTestPreview.dataset.empty = "false";
+    yoloTestPreview.innerHTML = "";
+    const image = document.createElement("img");
+    image.src = `data:${annotatedImage.mime_type || "image/jpeg"};base64,${annotatedImage.data_base64}`;
+    image.alt = "YOLO检测结果";
+    yoloTestPreview.appendChild(image);
+  }
+
+  function setYoloTestBusy(isBusy) {
+    yoloTestButtons.forEach((button) => {
+      button.disabled = isBusy;
+    });
+    if (yoloTestImageInput) {
+      yoloTestImageInput.disabled = isBusy;
+    }
+  }
+
+  function formatYoloConfidence(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "-";
+    return `${Math.round(numeric * 1000) / 10}%`;
+  }
+
+  function formatYoloBox(box) {
+    if (!box || typeof box !== "object") return "";
+    const values = [box.x_center, box.y_center, box.width, box.height]
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+    if (values.length !== 4) return "";
+    return `中心 ${values[0].toFixed(3)}, ${values[1].toFixed(3)} / 宽高 ${values[2].toFixed(3)}, ${values[3].toFixed(3)}`;
+  }
+
+  function renderYoloDetectionList(detections) {
+    if (!yoloTestOutput) return;
+    yoloTestOutput.innerHTML = "";
+    if (!detections.length) {
+      yoloTestOutput.appendChild(createNode("p", "yolo-test-empty", "没有检测框。"));
+      return;
+    }
+
+    const list = createNode("div", "yolo-detection-list");
+    detections.forEach((detection, index) => {
+      const item = createNode("div", "yolo-detection-item");
+      const top = createNode("div", "yolo-detection-top");
+      top.appendChild(createNode("p", "yolo-detection-name", `${index + 1}. ${detection.class_name || detection.class_id}`));
+      top.appendChild(createNode("span", "yolo-detection-confidence", formatYoloConfidence(detection.confidence)));
+      item.appendChild(top);
+
+      const boxText = formatYoloBox(detection.box);
+      if (boxText) {
+        item.appendChild(createNode("p", "yolo-detection-meta", boxText));
+      }
+
+      if (detection.stage2?.top) {
+        const verdict = detection.accepted ? "二级确认" : "二级未确认";
+        item.appendChild(
+          createNode(
+            "p",
+            `yolo-detection-stage2 ${detection.accepted ? "is-accepted" : "is-rejected"}`,
+            `${verdict}: ${detection.stage2.top.class_name || detection.stage2.top.class_id} ${formatYoloConfidence(detection.stage2.top.confidence)}`
+          )
+        );
+      }
+
+      list.appendChild(item);
+    });
+    yoloTestOutput.appendChild(list);
+  }
+
+  function renderYoloClassifyOutput(predictions) {
+    if (!yoloTestOutput) return;
+    yoloTestOutput.innerHTML = "";
+    const list = createNode("div", "yolo-detection-list");
+    predictions.slice(0, 5).forEach((prediction, index) => {
+      const item = createNode("div", "yolo-detection-item");
+      const top = createNode("div", "yolo-detection-top");
+      top.appendChild(createNode("p", "yolo-detection-name", `${index + 1}. ${prediction.class_name || prediction.class_id}`));
+      top.appendChild(createNode("span", "yolo-detection-confidence", formatYoloConfidence(prediction.confidence)));
+      item.appendChild(top);
+      list.appendChild(item);
+    });
+    yoloTestOutput.appendChild(list);
+  }
+
+  function renderYoloTestData(data) {
+    const taskLabel = data.task_label || "YOLO任务";
+    const mode = data.mode || "";
+
+    renderYoloAnnotatedPreview(data.annotated_image);
+
+    if (mode === "classify") {
+      const predictions = Array.isArray(data.predictions) ? data.predictions : [];
+      const top = data.top || predictions[0] || null;
+      renderYoloClassifyOutput(predictions);
+      if (!top) {
+        setYoloTestResult("无结果", `${taskLabel} 没有返回分类概率。`, "error");
+        return;
+      }
+      const isSmoking = String(top.class_name || "").toLowerCase() === "smoking";
+      setYoloTestResult(
+        `${top.class_name || top.class_id}`,
+        `${taskLabel}: top1 ${formatYoloConfidence(top.confidence)}，耗时 ${data.duration_ms ?? "-"}ms。`,
+        isSmoking ? "yes" : "no"
+      );
+      return;
+    }
+
+    const detections = Array.isArray(data.detections) ? data.detections : [];
+    renderYoloDetectionList(detections);
+
+    if (mode === "smoking_two_stage") {
+      const acceptedCount = detections.filter((detection) => detection.accepted).length;
+      if (acceptedCount > 0) {
+        setYoloTestResult("吸烟确认", `${taskLabel}: ${acceptedCount}/${detections.length} 个候选通过二级确认，耗时 ${data.duration_ms ?? "-"}ms。`, "yes");
+      } else if (detections.length > 0) {
+        setYoloTestResult("二级未确认", `${taskLabel}: ${detections.length} 个一层候选，二级未确认吸烟，耗时 ${data.duration_ms ?? "-"}ms。`, "ok");
+      } else {
+        setYoloTestResult("未检出", `${taskLabel}: 没有一层吸烟候选，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+      }
+      return;
+    }
+
+    if (detections.length > 0) {
+      setYoloTestResult(`${detections.length} 个目标`, `${taskLabel}: 已返回检测框，耗时 ${data.duration_ms ?? "-"}ms。`, "ok");
+    } else {
+      setYoloTestResult("未检出", `${taskLabel}: 没有检测到目标，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+    }
+  }
+
+  async function handleYoloTaskClick(button) {
+    const taskId = button?.dataset?.yoloTask || "";
+    const file = yoloTestImageInput?.files?.[0];
+    if (!taskId) return;
+    if (!file) {
+      setYoloTestStatus("缺少图片", "error");
+      setYoloTestResult("无法测试", "请先上传图片。", "error");
+      return;
+    }
+
+    setYoloTestBusy(true);
+    yoloTestButtons.forEach((taskButton) => {
+      taskButton.classList.toggle("is-active", taskButton === button);
+    });
+    setYoloTestStatus("推理中...", "loading");
+    setYoloTestResult("推理中", "正在调用 A100 空卡上的固定 YOLO 小模型。", "loading");
+    if (yoloTestOutput) yoloTestOutput.innerHTML = "";
+
+    try {
+      const imagePayload = await buildImagePayload(file);
+      const response = await fetch(YOLO_MODEL_TEST_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_id: taskId, image: imagePayload }),
+        signal: AbortSignal.timeout(180000)
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.detail || data?.error || `HTTP ${response.status}`);
+      }
+      setYoloTestStatus("测试完成", "ok");
+      renderYoloTestData(data);
+    } catch (error) {
+      setYoloTestStatus("测试失败", "error");
+      setYoloTestResult("无法测试", `YOLO测试失败：${error?.message || "未知错误"}`, "error");
+      if (yoloTestOutput) yoloTestOutput.innerHTML = "";
+    } finally {
+      setYoloTestBusy(false);
+    }
+  }
+
   function buildAiCheckPrompt(eventName, customPrompt = "") {
     const cleanEvent = String(eventName || "").trim();
     const custom = String(customPrompt || "").trim();
@@ -8133,6 +8354,27 @@
   });
 
   aiCheckForm?.addEventListener("submit", handleAiCheckSubmit);
+
+  yoloTestImageInput?.addEventListener("change", () => {
+    const file = yoloTestImageInput.files?.[0];
+    if (!file) {
+      resetYoloTestPreview();
+      setYoloTestStatus("待上传", "idle");
+      setYoloTestResult("等待测试", "上传图片后选择一个固定任务。", "idle");
+      if (yoloTestOutput) yoloTestOutput.innerHTML = "";
+      return;
+    }
+    renderYoloTestPreview(file);
+    setYoloTestStatus("图片就绪", "idle");
+    setYoloTestResult("等待测试", "选择一个 YOLO 固定任务。", "idle");
+    if (yoloTestOutput) yoloTestOutput.innerHTML = "";
+  });
+
+  yoloTestButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      handleYoloTaskClick(button);
+    });
+  });
 
   qwen36mmImageInput?.addEventListener("change", () => {
     const file = qwen36mmImageInput.files?.[0];
