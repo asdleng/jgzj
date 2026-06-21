@@ -163,6 +163,10 @@ const yoloA100Key = process.env.YOLO_A100_KEY || '/home/admin1/a100_tunnel/jgzj_
 const yoloA100Gpu = process.env.YOLO_A100_GPU || '3';
 const yoloA100Python = process.env.YOLO_A100_PYTHON || '/home/sari/autodistill/bin/python3';
 const yoloA100WorkRoot = process.env.YOLO_A100_TEST_ROOT || '/home/sari/jgzj_yolo_test';
+const yoloLocalServiceUrl = process.env.YOLO_LOCAL_SERVICE_URL || 'http://127.0.0.1:18087';
+const yoloLocalServiceEnabled = String(process.env.YOLO_LOCAL_SERVICE_ENABLED || 'true').toLowerCase() !== 'false';
+const yoloLocalServiceTimeoutMs = Number(process.env.YOLO_LOCAL_SERVICE_TIMEOUT_MS || 60000);
+const yoloLocalGpuLabel = process.env.YOLO_LOCAL_GPU_LABEL || 'server-proxy-gpu2';
 const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
@@ -173,6 +177,7 @@ const yoloModelTestTasks = Object.freeze({
     kind: 'detect',
     label: '通用事件',
     model: '/home/sari/jgzj_yolo_runs/general_yolo_manual_20260621_044205/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/general_yolo_best.pt',
     names: ['car', 'truck', 'non_motor_vehicle', 'pet', 'stall'],
     imgsz: 640,
     conf: 0.25
@@ -181,6 +186,7 @@ const yoloModelTestTasks = Object.freeze({
     kind: 'detect',
     label: '小垃圾细类',
     model: '/home/sari/jgzj_yolo_runs/trash_yolo_manual_20260621_034134/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/trash_yolo_best.pt',
     names: ['bottle', 'box', 'paper', 'bag'],
     imgsz: 960,
     conf: 0.15
@@ -189,6 +195,7 @@ const yoloModelTestTasks = Object.freeze({
     kind: 'detect',
     label: '吸烟候选',
     model: '/home/sari/jgzj_yolo_runs/smoking_candidate_yolo_small_manual_20260621_063036/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/smoking_candidate_best.pt',
     names: ['smoking'],
     imgsz: 640,
     conf: 0.2
@@ -197,6 +204,7 @@ const yoloModelTestTasks = Object.freeze({
     kind: 'classify',
     label: '吸烟二级分类',
     model: '/home/sari/jgzj_yolo_runs/smoking_cls_small_manual_20260621_064107/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/smoking_cls_best.pt',
     names: ['not_smoking', 'smoking'],
     imgsz: 224
   },
@@ -205,6 +213,8 @@ const yoloModelTestTasks = Object.freeze({
     label: '吸烟检测',
     model: '/home/sari/jgzj_yolo_runs/smoking_candidate_yolo_small_manual_20260621_063036/weights/best.pt',
     classifierModel: '/home/sari/jgzj_yolo_runs/smoking_cls_small_manual_20260621_064107/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/smoking_candidate_best.pt',
+    localClassifierModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/smoking_cls_best.pt',
     names: ['smoking'],
     classifierNames: ['not_smoking', 'smoking'],
     imgsz: 640,
@@ -730,6 +740,64 @@ async function runRemoteYoloPrediction(task, remoteScriptPath, remoteInputPath, 
   return payload;
 }
 
+function buildLocalYoloTask(task) {
+  const localTask = {
+    kind: task.kind,
+    label: task.label,
+    model: task.localModel || task.model,
+    names: task.names || [],
+    imgsz: task.imgsz || 640,
+    conf: task.conf ?? 0.25
+  };
+  if (task.classifierModel || task.localClassifierModel) {
+    localTask.classifierModel = task.localClassifierModel || task.classifierModel;
+    localTask.classifierNames = task.classifierNames || [];
+    localTask.classifierImgsz = task.classifierImgsz || 224;
+    localTask.classifierThreshold = task.classifierThreshold || 0.55;
+  }
+  return localTask;
+}
+
+async function runLocalYoloPrediction(taskId, task, decoded, options = {}) {
+  if (!yoloLocalServiceEnabled) {
+    throw new Error('local_yolo_service_disabled');
+  }
+  const response = await fetch(new URL('/predict', yoloLocalServiceUrl).toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      task_id: taskId,
+      task: buildLocalYoloTask(task),
+      image: {
+        mime_type: decoded.mimeType,
+        data_base64: decoded.buffer.toString('base64')
+      },
+      no_annotated: Boolean(options.noAnnotated)
+    }),
+    signal: AbortSignal.timeout(options.localTimeoutMs || yoloLocalServiceTimeoutMs)
+  });
+
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch (_error) {
+    // Keep the raw upstream text below.
+  }
+  if (!response.ok || !payload?.ok) {
+    const detail = payload?.detail || payload?.error || text || `local_yolo_service_http_${response.status}`;
+    const error = new Error(truncateText(detail, 2000));
+    error.payload = payload || null;
+    error.status = response.status;
+    throw error;
+  }
+  return {
+    ...payload,
+    backend: payload.backend || 'local_service',
+    gpu: payload.gpu || yoloLocalGpuLabel
+  };
+}
+
 function buildYoloTaskResponse(taskId, task, payload, options = {}) {
   const responsePayload = {
     ok: true,
@@ -737,7 +805,8 @@ function buildYoloTaskResponse(taskId, task, payload, options = {}) {
     task_label: task.label,
     mode: payload.mode || task.kind,
     model: path.basename(task.model || ''),
-    gpu: yoloA100Gpu
+    gpu: payload.gpu || options.gpu || yoloA100Gpu,
+    backend: payload.backend || options.backend || 'a100_ssh'
   };
 
   if (payload.mode === 'classify' || task.kind === 'classify') {
@@ -7456,8 +7525,10 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
   const remoteRunDir = `${yoloA100WorkRoot}/${requestId}`;
   const remoteInputPath = `${remoteRunDir}/input${decoded.ext}`;
   const remoteScriptPath = `${remoteRunDir}/predict.py`;
+  let remoteContextReady = false;
 
-  try {
+  const ensureRemoteYoloContext = async () => {
+    if (remoteContextReady) return;
     await fs.mkdir(localRunDir, { recursive: true });
     await fs.writeFile(localInputPath, decoded.buffer);
     await fs.writeFile(localScriptPath, yoloModelTestPredictScript);
@@ -7468,7 +7539,39 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
     });
     await copyYoloFileToA100(localScriptPath, remoteScriptPath);
     await copyYoloFileToA100(localInputPath, remoteInputPath);
+    remoteContextReady = true;
+  };
 
+  const runYoloPredictionWithFallback = async (currentTaskId, currentTask, options = {}) => {
+    const failures = [];
+    try {
+      const payload = await runLocalYoloPrediction(currentTaskId, currentTask, decoded, options);
+      return payload;
+    } catch (localError) {
+      failures.push(`local:${localError.message}`);
+      console.info('yolo_model_test_local_fallback', JSON.stringify({
+        task_id: currentTaskId,
+        error: localError.message
+      }));
+    }
+
+    try {
+      await ensureRemoteYoloContext();
+      const payload = await runRemoteYoloPrediction(currentTask, remoteScriptPath, remoteInputPath, options);
+      return {
+        ...payload,
+        backend: 'a100_ssh',
+        gpu: yoloA100Gpu
+      };
+    } catch (remoteError) {
+      failures.push(`a100:${remoteError.message}`);
+      const error = new Error(failures.join('; '));
+      error.payload = remoteError.payload || null;
+      throw error;
+    }
+  };
+
+  try {
     if (task.kind === 'all_yolo') {
       const groups = [];
       for (const subTaskId of task.subTasks || []) {
@@ -7477,7 +7580,7 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
           continue;
         }
         const subStartMs = Date.now();
-        const payload = await runRemoteYoloPrediction(subTask, remoteScriptPath, remoteInputPath, {
+        const payload = await runYoloPredictionWithFallback(subTaskId, subTask, {
           noAnnotated: true,
           timeoutMs: yoloModelTestTimeoutMs,
           maxBuffer: 24 * 1024 * 1024
@@ -7489,6 +7592,8 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
       }
 
       const durationMs = Date.now() - startMs;
+      const backends = [...new Set(groups.map((group) => group.backend).filter(Boolean))];
+      const gpus = [...new Set(groups.map((group) => group.gpu).filter(Boolean))];
       const detections = groups.flatMap((group) =>
         (Array.isArray(group.detections) ? group.detections : []).map((detection) => ({
           ...detection,
@@ -7503,7 +7608,8 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
         task_label: task.label,
         mode: 'all_yolo',
         duration_ms: durationMs,
-        gpu: yoloA100Gpu,
+        gpu: gpus.join(', ') || yoloA100Gpu,
+        backend: backends.join(' + ') || 'a100_ssh',
         groups,
         detections
       };
@@ -7514,13 +7620,14 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
         groups: groups.length,
         detections: detections.length,
         duration_ms: durationMs,
-        gpu: yoloA100Gpu
+        gpu: responsePayload.gpu,
+        backend: responsePayload.backend
       }));
 
       return res.json(responsePayload);
     }
 
-    const payload = await runRemoteYoloPrediction(task, remoteScriptPath, remoteInputPath, {
+    const payload = await runYoloPredictionWithFallback(taskId, task, {
       timeoutMs: yoloModelTestTimeoutMs,
       maxBuffer: 64 * 1024 * 1024
     });
@@ -7538,7 +7645,8 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
       detections: Array.isArray(responsePayload.detections) ? responsePayload.detections.length : undefined,
       top: responsePayload.top?.class_name || null,
       duration_ms: durationMs,
-      gpu: yoloA100Gpu
+      gpu: responsePayload.gpu,
+      backend: responsePayload.backend
     }));
 
     return res.json(responsePayload);

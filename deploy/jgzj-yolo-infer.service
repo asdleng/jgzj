@@ -1,0 +1,20 @@
+[Unit]
+Description=JGZJ local YOLO inference service
+After=network.target
+
+[Service]
+Type=simple
+User=admin1
+WorkingDirectory=/home/admin1/jgzj
+Environment=JGZJ_ROOT_DIR=/home/admin1/jgzj
+Environment=YOLO_LOCAL_GPU_INDEX=2
+Environment=YOLO_LOCAL_GPU_MAX_USED_MB=1000
+Environment=YOLO_MODEL_TEST_HOST=127.0.0.1
+Environment=YOLO_MODEL_TEST_PORT=18087
+ExecStart=/bin/bash /home/admin1/jgzj/scripts/start_yolo_infer_service.sh
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=75 76 77 78
+
+[Install]
+WantedBy=multi-user.target

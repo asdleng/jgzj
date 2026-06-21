@@ -7504,7 +7504,7 @@
       taskButton.classList.toggle("is-active", taskButton === button);
     });
     setYoloTestStatus("推理中...", "loading");
-    setYoloTestResult("推理中", "正在调用 A100 空卡上的固定 YOLO 小模型。", "loading");
+    setYoloTestResult("推理中", "正在调用常驻 YOLO 小模型，必要时自动回退 A100。", "loading");
     if (yoloTestOutput) yoloTestOutput.innerHTML = "";
 
     try {
