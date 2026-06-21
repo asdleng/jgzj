@@ -5,8 +5,7 @@
   const endpoints = {
     datasets: "/api/yolo-label-review/datasets",
     items: "/api/yolo-label-review/items",
-    item: "/api/yolo-label-review/item",
-    reviews: "/api/yolo-label-review/reviews"
+    item: "/api/yolo-label-review/item"
   };
 
   const refs = {
@@ -16,7 +15,6 @@
     split: document.getElementById("yolo-review-split"),
     className: document.getElementById("yolo-review-class"),
     answer: document.getElementById("yolo-review-answer"),
-    reviewStatus: document.getElementById("yolo-review-review-status"),
     query: document.getElementById("yolo-review-query"),
     summary: document.getElementById("yolo-review-summary"),
     list: document.getElementById("yolo-review-list"),
@@ -32,8 +30,7 @@
     page: 1,
     pageSize: 24,
     totalPages: 1,
-    selectedItemKey: "",
-    selectedVerdict: ""
+    selectedItemKey: ""
   };
 
   function createNode(tag, className, text) {
@@ -81,20 +78,6 @@
     return String(value || "").trim().toLowerCase().replace(/[-\s]+/g, "_");
   }
 
-  function reviewText(status) {
-    if (status === "correct") return "正确";
-    if (status === "incorrect") return "错误";
-    if (status === "unsure") return "不确定";
-    return "未校核";
-  }
-
-  function reviewTone(status) {
-    if (status === "correct") return "tone-yes";
-    if (status === "incorrect") return "tone-error";
-    if (status === "unsure") return "tone-no";
-    return "tone-idle";
-  }
-
   function answerTone(answer) {
     return answer === "YES" ? "tone-yes" : answer === "NO" ? "tone-no" : "tone-idle";
   }
@@ -138,16 +121,13 @@
       return;
     }
 
-    const counts = dataset.review_counts || {};
     const cells = [
       ["Profile", dataset.profile || dataset.name || "-"],
       ["类型", dataset.kind === "classify" ? "分类" : "检测"],
       ["样本", compactNumber(dataset.total_images)],
       ["框", dataset.boxes ? compactNumber(Object.values(dataset.boxes).reduce((a, b) => a + Number(b || 0), 0)) : "-"],
       ["AI YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
-      ["AI NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"],
-      ["已校核", compactNumber(counts.reviewed || 0)],
-      ["错误", compactNumber(counts.incorrect || 0)]
+      ["AI NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"]
     ];
 
     cells.forEach(([label, value]) => {
@@ -212,7 +192,6 @@
     if (refs.split.value) params.set("split", refs.split.value);
     if (refs.className.value) params.set("class_name", refs.className.value);
     if (refs.answer.value) params.set("ai_answer", refs.answer.value);
-    if (refs.reviewStatus.value) params.set("review_status", refs.reviewStatus.value);
     if (refs.query.value.trim()) params.set("q", refs.query.value.trim());
     return `${endpoints.items}?${params.toString()}`;
   }
@@ -277,7 +256,6 @@
       body.appendChild(createNode("p", "yolo-review-item-meta", `${item.split || "-"} · ${item.request_id || "-"} · task ${item.task_row_id || item.task_id || "-"}`));
 
       const chips = createNode("div", "yolo-review-item-chips");
-      chips.appendChild(createNode("span", `ai-history-chip ${reviewTone(item.review_status)}`, reviewText(item.review_status)));
       chips.appendChild(createNode("span", "ai-history-chip tone-idle", `${item.label_count || 0} 框`));
       body.appendChild(chips);
 
@@ -340,7 +318,6 @@
   async function loadDetail(itemKey) {
     if (!itemKey || !state.datasetId) return;
     state.selectedItemKey = itemKey;
-    state.selectedVerdict = "";
     refs.detail.dataset.state = "loading";
     refs.detail.innerHTML = "";
     refs.detail.appendChild(createNode("p", "yolo-review-empty", "加载样本详情..."));
@@ -422,97 +399,6 @@
     if (frameCard) sourceGrid.appendChild(frameCard);
     if (sourceGrid.childElementCount) refs.detail.appendChild(sourceGrid);
 
-    refs.detail.appendChild(renderReviewEditor(dataset, item));
-  }
-
-  function renderReviewEditor(dataset, item) {
-    const wrap = createNode("form", "yolo-review-editor");
-    wrap.addEventListener("submit", (event) => {
-      event.preventDefault();
-      saveReview(item).catch(() => {});
-    });
-
-    const head = createNode("div", "yolo-review-section-head");
-    head.appendChild(createNode("h3", "", "人工校核"));
-    head.appendChild(createNode("span", `ai-history-chip ${reviewTone(item.review_status)}`, reviewText(item.review_status)));
-    wrap.appendChild(head);
-
-    const buttons = createNode("div", "yolo-review-verdicts");
-    [
-      ["correct", "正确"],
-      ["incorrect", "错误"],
-      ["unsure", "不确定"]
-    ].forEach(([value, label]) => {
-      const button = createNode("button", "", label);
-      button.type = "button";
-      button.dataset.verdict = value;
-      button.classList.toggle("is-active", item.review_status === value);
-      button.addEventListener("click", () => {
-        state.selectedVerdict = value;
-        buttons.querySelectorAll("button").forEach((node) => node.classList.toggle("is-active", node.dataset.verdict === value));
-        saveReview(item).catch(() => {});
-      });
-      buttons.appendChild(button);
-    });
-    wrap.appendChild(buttons);
-
-    const classRow = createNode("label", "yolo-review-editor-field");
-    classRow.appendChild(createNode("span", "", "修正类别"));
-    const classSelect = document.createElement("select");
-    classSelect.id = "yolo-review-corrected-class";
-    const empty = document.createElement("option");
-    empty.value = "";
-    empty.textContent = "不修改";
-    classSelect.appendChild(empty);
-    (dataset.classes || []).forEach((className) => {
-      const option = document.createElement("option");
-      option.value = className;
-      option.textContent = className;
-      classSelect.appendChild(option);
-    });
-    classSelect.value = item.review?.corrected_class || "";
-    classRow.appendChild(classSelect);
-    wrap.appendChild(classRow);
-
-    const noteRow = createNode("label", "yolo-review-editor-field");
-    noteRow.appendChild(createNode("span", "", "备注"));
-    const textarea = document.createElement("textarea");
-    textarea.id = "yolo-review-note";
-    textarea.rows = 3;
-    textarea.maxLength = 1000;
-    textarea.value = item.review?.note || "";
-    noteRow.appendChild(textarea);
-    wrap.appendChild(noteRow);
-
-    const save = createNode("button", "yolo-review-save", "保存校核");
-    save.type = "submit";
-    wrap.appendChild(save);
-    return wrap;
-  }
-
-  async function saveReview(item) {
-    const verdict = state.selectedVerdict || item.review?.verdict || item.review_status;
-    if (!["correct", "incorrect", "unsure"].includes(verdict)) {
-      setStatus("请选择校核结论", "error");
-      return;
-    }
-    setStatus("保存校核...", "loading");
-    const note = document.getElementById("yolo-review-note")?.value || "";
-    const correctedClass = document.getElementById("yolo-review-corrected-class")?.value || "";
-    await requestJson(endpoints.reviews, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        dataset_id: state.datasetId,
-        item_key: item.item_key,
-        verdict,
-        note,
-        corrected_class: correctedClass
-      })
-    });
-    setStatus("校核已保存", "ok");
-    await loadItems({ resetPage: false });
-    await loadDetail(item.item_key);
   }
 
   let queryTimer = null;
@@ -530,7 +416,6 @@
     refs.split.value = "";
     refs.className.value = "";
     refs.answer.value = "";
-    refs.reviewStatus.value = "";
     updateClassOptions();
     renderSummary(selectedDataset());
     loadItems({ resetPage: true }).catch(() => {});
@@ -538,7 +423,6 @@
   refs.split?.addEventListener("change", scheduleReload);
   refs.className?.addEventListener("change", scheduleReload);
   refs.answer?.addEventListener("change", scheduleReload);
-  refs.reviewStatus?.addEventListener("change", scheduleReload);
   refs.query?.addEventListener("input", scheduleReload);
   refs.refresh?.addEventListener("click", () => loadDatasets().catch(() => {}));
   refs.prev?.addEventListener("click", () => {

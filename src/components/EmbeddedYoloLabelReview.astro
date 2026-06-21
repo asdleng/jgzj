@@ -6,8 +6,8 @@
 >
   <header class="yolo-review-head">
     <div class="yolo-review-title-wrap">
-      <p class="yolo-review-kicker">YOLO DATASET REVIEW</p>
-      <h1>YOLO 训练标签校核</h1>
+      <p class="yolo-review-kicker">YOLO DATASET VIEWER</p>
+      <h1>YOLO 训练标签浏览</h1>
     </div>
     <div class="yolo-review-head-actions">
       <p id="yolo-review-status" class="cloud-chat-status" data-state="idle">待加载</p>
@@ -40,16 +40,6 @@
         <option value="NO">NO</option>
       </select>
     </label>
-    <label class="yolo-review-field" for="yolo-review-review-status">
-      <span>人工校核</span>
-      <select id="yolo-review-review-status">
-        <option value="">全部</option>
-        <option value="unreviewed">未校核</option>
-        <option value="correct">正确</option>
-        <option value="incorrect">错误</option>
-        <option value="unsure">不确定</option>
-      </select>
-    </label>
     <label class="yolo-review-field yolo-review-field--search" for="yolo-review-query">
       <span>搜索</span>
       <input id="yolo-review-query" type="search" maxlength="120" placeholder="request / task / 地点" />
@@ -76,4 +66,4 @@
   </div>
 </section>
 
-<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260621-1" defer></script>
+<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260621-2" defer></script>

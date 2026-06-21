@@ -166,12 +166,7 @@ const yoloDatasetRootSpecs = [
     )
   }
 ];
-const yoloReviewStorePath = path.resolve(
-  process.env.YOLO_LABEL_REVIEW_STORE_PATH ||
-    path.join(projectRoot, '.runtime/yolo_loop/label_review_store.json')
-);
 const yoloImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp']);
-let yoloReviewWriteLock = Promise.resolve();
 const authStore = createAuthStore({
   rootDir: projectRoot,
   storePath: process.env.JGZJ_AUTH_STORE_PATH || undefined,
@@ -657,47 +652,7 @@ function sumYoloImageCounts(value) {
   return 0;
 }
 
-async function readYoloReviewStore() {
-  const state = await readJsonFile(yoloReviewStorePath, null);
-  if (!state || typeof state !== 'object') {
-    return { version: 1, datasets: {} };
-  }
-  state.version = Number(state.version || 1);
-  state.datasets = state.datasets && typeof state.datasets === 'object' ? state.datasets : {};
-  return state;
-}
-
-async function writeYoloReviewStore(state) {
-  await fs.mkdir(path.dirname(yoloReviewStorePath), { recursive: true });
-  const tmpPath = `${yoloReviewStorePath}.${process.pid}.tmp`;
-  await fs.writeFile(tmpPath, JSON.stringify(state, null, 2), 'utf8');
-  await fs.rename(tmpPath, yoloReviewStorePath);
-}
-
-function yoloReviewCountsForDataset(store, datasetId, totalItems) {
-  const items = store?.datasets?.[datasetId]?.items || {};
-  const counts = {
-    reviewed: 0,
-    correct: 0,
-    incorrect: 0,
-    unsure: 0,
-    unreviewed: Math.max(0, Number(totalItems || 0))
-  };
-
-  Object.values(items).forEach((item) => {
-    const verdict = String(item?.verdict || '').trim();
-    if (!['correct', 'incorrect', 'unsure'].includes(verdict)) {
-      return;
-    }
-    counts.reviewed += 1;
-    counts[verdict] += 1;
-  });
-  counts.unreviewed = Math.max(0, Number(totalItems || 0) - counts.reviewed);
-  return counts;
-}
-
 async function listYoloDatasets() {
-  const store = await readYoloReviewStore();
   const datasets = [];
 
   for (const spec of yoloDatasetRootSpecs) {
@@ -730,8 +685,7 @@ async function listYoloDatasets() {
         answers: summary.answers || null,
         by_class_yes: summary.by_class_yes || null,
         max_task_id: summary.max_task_id ?? null,
-        total_images: totalImages,
-        review_counts: yoloReviewCountsForDataset(store, id, totalImages)
+        total_images: totalImages
       });
     }
   }
@@ -937,15 +891,6 @@ function answerFromYoloItem(kind, itemClass, labels) {
   return Array.isArray(labels) && labels.length ? 'YES' : 'NO';
 }
 
-function normalizeReviewVerdict(verdict) {
-  const value = String(verdict || '').trim().toLowerCase();
-  return ['correct', 'incorrect', 'unsure'].includes(value) ? value : '';
-}
-
-function yoloReviewForItem(store, datasetId, itemKey) {
-  return store?.datasets?.[datasetId]?.items?.[itemKey] || null;
-}
-
 function normalizeClassToken(value) {
   return String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
 }
@@ -1040,13 +985,12 @@ function yoloItemMatchesQuery(item, q) {
     .some((value) => value.includes(needle));
 }
 
-async function enrichYoloItem(dataset, store, item, options = {}) {
+async function enrichYoloItem(dataset, item, options = {}) {
   const labelsPayload = options.includeLabels ? await readYoloLabelsForItem(dataset, item.image_rel_path) : null;
   const labels = labelsPayload?.labels || [];
   const aiAnswer =
     item.manifest?.tasks?.[0]?.answer ||
     answerFromYoloItem(dataset.kind, item.ai_class, labels);
-  const review = yoloReviewForItem(store, dataset.id, item.item_key);
   return {
     ...item,
     image_url: toYoloDatasetFileUrl(dataset.id, item.image_rel_path),
@@ -1054,20 +998,16 @@ async function enrichYoloItem(dataset, store, item, options = {}) {
     label_count: labels.length,
     labels: options.includeLabels ? labels : undefined,
     ai_answer: aiAnswer,
-    is_positive: aiAnswer === 'YES',
-    review: review || null,
-    review_status: review?.verdict || 'unreviewed'
+    is_positive: aiAnswer === 'YES'
   };
 }
 
 async function listYoloReviewItems(datasetId, query = {}) {
   const dataset = await resolveYoloDataset(datasetId);
-  const store = await readYoloReviewStore();
   const page = toFiniteInteger(query.page, 1, { min: 1, max: 9999 });
   const pageSize = toFiniteInteger(query.page_size, 24, { min: 1, max: 60 });
   const split = String(query.split || '').trim();
   const className = normalizeClassToken(query.class_name || '');
-  const reviewStatus = String(query.review_status || '').trim();
   const aiAnswer = String(query.ai_answer || '').trim().toUpperCase();
   const q = String(query.q || '').trim();
   const needsLabelBeforePagination = ['YES', 'NO'].includes(aiAnswer);
@@ -1081,20 +1021,13 @@ async function listYoloReviewItems(datasetId, query = {}) {
     if (className && normalizeClassToken(item.ai_class) !== className) {
       return false;
     }
-    if (reviewStatus) {
-      const review = yoloReviewForItem(store, dataset.id, item.item_key);
-      const status = review?.verdict || 'unreviewed';
-      if (status !== reviewStatus) {
-        return false;
-      }
-    }
     return yoloItemMatchesQuery(item, q);
   });
 
   if (needsLabelBeforePagination) {
     const enrichedForAnswer = [];
     for (const item of items) {
-      const enriched = await enrichYoloItem(dataset, store, item, { includeLabels: true });
+      const enriched = await enrichYoloItem(dataset, item, { includeLabels: true });
       if (enriched.ai_answer === aiAnswer) {
         enrichedForAnswer.push(enriched);
       }
@@ -1109,7 +1042,7 @@ async function listYoloReviewItems(datasetId, query = {}) {
   const pageItems = items.slice(start, start + pageSize);
   const enrichedItems = [];
   for (const item of pageItems) {
-    enrichedItems.push(item.labels ? item : await enrichYoloItem(dataset, store, item, { includeLabels: true }));
+    enrichedItems.push(item.labels ? item : await enrichYoloItem(dataset, item, { includeLabels: true }));
   }
 
   const splits = [...new Set(allItems.map((item) => item.split).filter(Boolean))].sort();
@@ -1248,12 +1181,11 @@ async function getYoloReviewItemDetail(datasetId, itemKey) {
     throw Object.assign(new Error('item_not_found'), { status: 404 });
   }
 
-  const store = await readYoloReviewStore();
   const manifestItems = await readYoloManifestItems(dataset);
   const manifest = manifestItems.find((item) => item.rel === rel)?.item || null;
   const base = buildYoloBaseItem(dataset, rel, manifest);
 
-  const enriched = await enrichYoloItem(dataset, store, { ...base, manifest }, { includeLabels: true });
+  const enriched = await enrichYoloItem(dataset, { ...base, manifest }, { includeLabels: true });
   const archive = enriched.task_row_id ? await getAiCheckTaskDetail(enriched.task_row_id) : null;
 
   return {
@@ -1270,42 +1202,6 @@ async function getYoloReviewItemDetail(datasetId, itemKey) {
       archive
     }
   };
-}
-
-async function saveYoloReview({ datasetId, itemKey, verdict, note, correctedClass, auth }) {
-  const normalizedVerdict = normalizeReviewVerdict(verdict);
-  if (!normalizedVerdict) {
-    throw Object.assign(new Error('invalid_verdict'), { status: 400 });
-  }
-  const dataset = await resolveYoloDataset(datasetId);
-  const { rel, absolutePath } = resolveYoloDatasetRelPath(dataset, itemKey);
-  if (!isYoloImagePath(absolutePath)) {
-    throw Object.assign(new Error('not_an_image_item'), { status: 400 });
-  }
-  await fs.stat(absolutePath);
-
-  const run = yoloReviewWriteLock.catch(() => {}).then(async () => {
-    const store = await readYoloReviewStore();
-    const now = new Date().toISOString();
-    store.version = 1;
-    store.updated_at = now;
-    store.datasets = store.datasets && typeof store.datasets === 'object' ? store.datasets : {};
-    store.datasets[dataset.id] = store.datasets[dataset.id] || { items: {} };
-    store.datasets[dataset.id].updated_at = now;
-    store.datasets[dataset.id].items = store.datasets[dataset.id].items || {};
-    store.datasets[dataset.id].items[rel] = {
-      verdict: normalizedVerdict,
-      note: String(note || '').trim().slice(0, 1000),
-      corrected_class: String(correctedClass || '').trim().slice(0, 80),
-      reviewed_by: auth?.user?.username || null,
-      reviewed_display_name: auth?.user?.display_name || auth?.user?.username || null,
-      reviewed_at: now
-    };
-    await writeYoloReviewStore(store);
-    return store.datasets[dataset.id].items[rel];
-  });
-  yoloReviewWriteLock = run.catch(() => {});
-  return run;
 }
 
 function normalizeAiCheckTask(task) {
@@ -5596,17 +5492,15 @@ function classifyOperationAuditRequest(req) {
   }
 
   const yoloReviewMatch = requestPath.match(/^\/api\/yolo-label-review(?:\/([^/?]+))?/);
-  if (yoloReviewMatch && (method === 'GET' || method === 'POST')) {
-    const isReviewWrite = method === 'POST' && requestPath === '/api/yolo-label-review/reviews';
+  if (yoloReviewMatch && method === 'GET') {
     return {
       category: 'ai',
-      action: isReviewWrite ? 'ai.yolo_label_review.write' : 'ai.yolo_label_review.read',
-      target_type: isReviewWrite ? 'yolo_label_review' : 'yolo_training_dataset',
+      action: 'ai.yolo_label.read',
+      target_type: 'yolo_training_dataset',
       target_id: String(req.body?.dataset_id || req.query?.dataset_id || yoloReviewMatch[1] || '').trim() || null,
       permission: 'ai:yolo:review',
       detail: {
-        query: sanitizeCloudOpsPayload(req.query || {}),
-        body: method === 'POST' ? auditBodySummary(req) : undefined
+        query: sanitizeCloudOpsPayload(req.query || {})
       }
     };
   }
@@ -6549,28 +6443,6 @@ app.get('/api/yolo-label-review/file', async (req, res) => {
   }
 });
 
-app.post('/api/yolo-label-review/reviews', async (req, res) => {
-  try {
-    const review = await saveYoloReview({
-      datasetId: req.body?.dataset_id,
-      itemKey: req.body?.item_key,
-      verdict: req.body?.verdict,
-      note: req.body?.note,
-      correctedClass: req.body?.corrected_class,
-      auth: req.jgzjAuth
-    });
-    return res.json({
-      ok: true,
-      review
-    });
-  } catch (error) {
-    return res.status(error.status || 502).json({
-      ok: false,
-      error: error.message || 'yolo_review_save_failed'
-    });
-  }
-});
-
 app.use(
   '/api/ai-check-history/files',
   authStore.requirePermission('ai:history:read'),
@@ -7114,7 +6986,7 @@ const privateNavigationItems = [
   },
   {
     href: '/app/yolo-label-review',
-    label: 'YOLO校核',
+    label: 'YOLO标签',
     permissions: ['ai:yolo:review']
   },
   {

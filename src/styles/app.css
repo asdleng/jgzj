@@ -3288,7 +3288,7 @@
 
 .yolo-review-toolbar {
   display: grid;
-  grid-template-columns: minmax(280px, 1.25fr) repeat(4, minmax(132px, 0.55fr)) minmax(220px, 0.9fr);
+  grid-template-columns: minmax(280px, 1.25fr) repeat(3, minmax(132px, 0.55fr)) minmax(220px, 0.9fr);
   gap: 10px;
   align-items: end;
   padding: 14px 18px;
@@ -3330,7 +3330,7 @@
 
 .yolo-review-summary {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   padding: 12px 18px;
   border-bottom: 1px solid rgba(71, 85, 105, 0.35);
