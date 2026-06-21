@@ -7,6 +7,7 @@ const PERMISSIONS = [
   { id: 'ai:chat', label: '体验 AI 对话', group: 'AI' },
   { id: 'ai:detect', label: '体验 AI 检测', group: 'AI' },
   { id: 'ai:history:read', label: '查看 AI 检测历史', group: 'AI' },
+  { id: 'ai:yolo:review', label: '校核 YOLO 训练标签', group: 'AI' },
   { id: 'vehicle:read', label: '查看车辆状态', group: '车辆' },
   { id: 'vehicle:control', label: '控车与车端工具', group: '车辆' },
   { id: 'vehicle:path:write', label: '修改车端路径/地图', group: '车辆' },
@@ -294,7 +295,10 @@ class AuthStore {
     if (options.super_admin) {
       existing.permissions = [];
     } else {
-      existing.permissions = sanitizePermissions(existing.permissions);
+      existing.permissions = sanitizePermissions([
+        ...(Array.isArray(existing.permissions) ? existing.permissions : []),
+        ...(Array.isArray(options.permissions) ? options.permissions : [])
+      ]);
     }
     existing.updated_at = existing.updated_at || nowIso();
     if (!existing.password_hash) {

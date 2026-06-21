@@ -1,0 +1,561 @@
+(() => {
+  const panel = document.getElementById("yolo-review-panel");
+  if (!panel) return;
+
+  const endpoints = {
+    datasets: "/api/yolo-label-review/datasets",
+    items: "/api/yolo-label-review/items",
+    item: "/api/yolo-label-review/item",
+    reviews: "/api/yolo-label-review/reviews"
+  };
+
+  const refs = {
+    status: document.getElementById("yolo-review-status"),
+    refresh: document.getElementById("yolo-review-refresh"),
+    dataset: document.getElementById("yolo-review-dataset"),
+    split: document.getElementById("yolo-review-split"),
+    className: document.getElementById("yolo-review-class"),
+    answer: document.getElementById("yolo-review-answer"),
+    reviewStatus: document.getElementById("yolo-review-review-status"),
+    query: document.getElementById("yolo-review-query"),
+    summary: document.getElementById("yolo-review-summary"),
+    list: document.getElementById("yolo-review-list"),
+    detail: document.getElementById("yolo-review-detail"),
+    prev: document.getElementById("yolo-review-prev"),
+    next: document.getElementById("yolo-review-next"),
+    page: document.getElementById("yolo-review-page")
+  };
+
+  const state = {
+    datasets: [],
+    datasetId: "",
+    page: 1,
+    pageSize: 24,
+    totalPages: 1,
+    selectedItemKey: "",
+    selectedVerdict: ""
+  };
+
+  function createNode(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function setStatus(text, status = "idle") {
+    if (!refs.status) return;
+    refs.status.textContent = text;
+    refs.status.dataset.state = status;
+  }
+
+  async function requestJson(url, options = {}) {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        Accept: "application/json",
+        ...(options.headers || {})
+      }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.ok === false) {
+      throw new Error(data?.detail || data?.error || `HTTP ${response.status}`);
+    }
+    return data;
+  }
+
+  function compactNumber(value) {
+    const num = Number(value || 0);
+    if (!Number.isFinite(num)) return "0";
+    return new Intl.NumberFormat("zh-CN").format(num);
+  }
+
+  function formatDate(value) {
+    if (!value) return "-";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return String(value);
+    return parsed.toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function normalizeClassToken(value) {
+    return String(value || "").trim().toLowerCase().replace(/[-\s]+/g, "_");
+  }
+
+  function reviewText(status) {
+    if (status === "correct") return "正确";
+    if (status === "incorrect") return "错误";
+    if (status === "unsure") return "不确定";
+    return "未校核";
+  }
+
+  function reviewTone(status) {
+    if (status === "correct") return "tone-yes";
+    if (status === "incorrect") return "tone-error";
+    if (status === "unsure") return "tone-no";
+    return "tone-idle";
+  }
+
+  function answerTone(answer) {
+    return answer === "YES" ? "tone-yes" : answer === "NO" ? "tone-no" : "tone-idle";
+  }
+
+  function datasetLabel(dataset) {
+    const profile = dataset.profile || dataset.name || "dataset";
+    const parent = dataset.parent_name && dataset.parent_name !== profile ? ` / ${dataset.parent_name}` : "";
+    return `${profile}${parent} · ${dataset.kind || "dataset"} · ${compactNumber(dataset.total_images)}张`;
+  }
+
+  function selectedDataset() {
+    return state.datasets.find((item) => item.id === state.datasetId) || null;
+  }
+
+  function setSelectOptions(select, items, options = {}) {
+    if (!select) return;
+    const previous = select.value;
+    select.innerHTML = "";
+    if (options.allLabel) {
+      const all = document.createElement("option");
+      all.value = "";
+      all.textContent = options.allLabel;
+      select.appendChild(all);
+    }
+    items.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      select.appendChild(option);
+    });
+    if ([...select.options].some((option) => option.value === previous)) {
+      select.value = previous;
+    }
+  }
+
+  function renderSummary(dataset) {
+    if (!refs.summary) return;
+    refs.summary.innerHTML = "";
+    if (!dataset) {
+      refs.summary.appendChild(createNode("p", "yolo-review-empty", "暂无数据集。"));
+      return;
+    }
+
+    const counts = dataset.review_counts || {};
+    const cells = [
+      ["Profile", dataset.profile || dataset.name || "-"],
+      ["类型", dataset.kind === "classify" ? "分类" : "检测"],
+      ["样本", compactNumber(dataset.total_images)],
+      ["框", dataset.boxes ? compactNumber(Object.values(dataset.boxes).reduce((a, b) => a + Number(b || 0), 0)) : "-"],
+      ["AI YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
+      ["AI NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"],
+      ["已校核", compactNumber(counts.reviewed || 0)],
+      ["错误", compactNumber(counts.incorrect || 0)]
+    ];
+
+    cells.forEach(([label, value]) => {
+      const item = createNode("div", "yolo-review-summary-item");
+      item.appendChild(createNode("p", "yolo-review-summary-label", label));
+      item.appendChild(createNode("p", "yolo-review-summary-value", value));
+      refs.summary.appendChild(item);
+    });
+  }
+
+  async function loadDatasets() {
+    setStatus("加载数据集...", "loading");
+    try {
+      const data = await requestJson(endpoints.datasets);
+      state.datasets = Array.isArray(data.datasets) ? data.datasets : [];
+      refs.dataset.innerHTML = "";
+      state.datasets.forEach((dataset) => {
+        const option = document.createElement("option");
+        option.value = dataset.id;
+        option.textContent = datasetLabel(dataset);
+        refs.dataset.appendChild(option);
+      });
+      if (!state.datasetId && state.datasets.length) {
+        state.datasetId = state.datasets[0].id;
+      }
+      refs.dataset.value = state.datasetId;
+      updateClassOptions();
+      renderSummary(selectedDataset());
+      await loadItems({ resetPage: true });
+      setStatus("已加载", "ok");
+    } catch (error) {
+      setStatus(`加载失败：${error?.message || "未知错误"}`, "error");
+      refs.list.innerHTML = "";
+      refs.list.appendChild(createNode("p", "yolo-review-empty", "数据集加载失败。"));
+      renderSummary(null);
+    }
+  }
+
+  function updateClassOptions() {
+    const dataset = selectedDataset();
+    const classes = Array.isArray(dataset?.classes) ? dataset.classes : [];
+    setSelectOptions(
+      refs.className,
+      classes.map((className) => ({ value: normalizeClassToken(className), label: className })),
+      { allLabel: "全部" }
+    );
+  }
+
+  function updateSplitOptions(splits) {
+    setSelectOptions(
+      refs.split,
+      (Array.isArray(splits) ? splits : []).map((split) => ({ value: split, label: split })),
+      { allLabel: "全部" }
+    );
+  }
+
+  function buildItemsUrl() {
+    const params = new URLSearchParams();
+    params.set("dataset_id", state.datasetId);
+    params.set("page", String(state.page));
+    params.set("page_size", String(state.pageSize));
+    if (refs.split.value) params.set("split", refs.split.value);
+    if (refs.className.value) params.set("class_name", refs.className.value);
+    if (refs.answer.value) params.set("ai_answer", refs.answer.value);
+    if (refs.reviewStatus.value) params.set("review_status", refs.reviewStatus.value);
+    if (refs.query.value.trim()) params.set("q", refs.query.value.trim());
+    return `${endpoints.items}?${params.toString()}`;
+  }
+
+  async function loadItems(options = {}) {
+    if (options.resetPage) state.page = 1;
+    if (!state.datasetId) {
+      refs.list.innerHTML = "";
+      refs.list.appendChild(createNode("p", "yolo-review-empty", "暂无数据集。"));
+      refs.detail.innerHTML = "";
+      refs.detail.appendChild(createNode("p", "yolo-review-empty", "暂无样本。"));
+      return;
+    }
+
+    setStatus("加载样本...", "loading");
+    try {
+      const data = await requestJson(buildItemsUrl());
+      state.page = data.page || 1;
+      state.totalPages = data.total_pages || 1;
+      updateSplitOptions(data.available_splits || []);
+      renderList(data.items || []);
+      refs.page.textContent = `第 ${state.page} / ${state.totalPages} 页 · ${compactNumber(data.total)} 条`;
+      refs.prev.disabled = state.page <= 1;
+      refs.next.disabled = state.page >= state.totalPages;
+      setStatus("样本就绪", "ok");
+      if (!state.selectedItemKey && data.items?.[0]?.item_key) {
+        loadDetail(data.items[0].item_key).catch(() => {});
+      }
+    } catch (error) {
+      setStatus(`样本加载失败：${error?.message || "未知错误"}`, "error");
+      refs.list.innerHTML = "";
+      refs.list.appendChild(createNode("p", "yolo-review-empty", "样本加载失败。"));
+    }
+  }
+
+  function renderList(items) {
+    refs.list.innerHTML = "";
+    if (!items.length) {
+      refs.list.appendChild(createNode("p", "yolo-review-empty", "没有符合条件的样本。"));
+      return;
+    }
+
+    items.forEach((item) => {
+      const button = createNode("button", "yolo-review-item");
+      button.type = "button";
+      button.dataset.itemKey = item.item_key;
+      button.classList.toggle("is-active", item.item_key === state.selectedItemKey);
+      button.addEventListener("click", () => loadDetail(item.item_key));
+
+      const thumb = createNode("div", "yolo-review-thumb");
+      const img = document.createElement("img");
+      img.src = item.image_url;
+      img.alt = item.item_key;
+      img.loading = "lazy";
+      thumb.appendChild(img);
+
+      const body = createNode("div", "yolo-review-item-body");
+      const top = createNode("div", "yolo-review-item-top");
+      top.appendChild(createNode("p", "yolo-review-item-title", item.ai_class || item.event_name || "-"));
+      top.appendChild(createNode("span", `ai-history-chip ${answerTone(item.ai_answer)}`, item.ai_answer || "-"));
+      body.appendChild(top);
+      body.appendChild(createNode("p", "yolo-review-item-meta", `${item.split || "-"} · ${item.request_id || "-"} · task ${item.task_row_id || item.task_id || "-"}`));
+
+      const chips = createNode("div", "yolo-review-item-chips");
+      chips.appendChild(createNode("span", `ai-history-chip ${reviewTone(item.review_status)}`, reviewText(item.review_status)));
+      chips.appendChild(createNode("span", "ai-history-chip tone-idle", `${item.label_count || 0} 框`));
+      body.appendChild(chips);
+
+      button.appendChild(thumb);
+      button.appendChild(body);
+      refs.list.appendChild(button);
+    });
+  }
+
+  function metaItem(label, value) {
+    const item = createNode("div", "yolo-review-meta-item");
+    item.appendChild(createNode("p", "yolo-review-meta-label", label));
+    item.appendChild(createNode("p", "yolo-review-meta-value", value == null || value === "" ? "-" : String(value)));
+    return item;
+  }
+
+  function clampPercent(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    return Math.max(0, Math.min(100, num));
+  }
+
+  function renderBoxes(overlay, labels) {
+    overlay.innerHTML = "";
+    (Array.isArray(labels) ? labels : []).forEach((label) => {
+      if (![label.x, label.y, label.w, label.h].every((value) => Number.isFinite(Number(value)))) return;
+      const left = clampPercent((Number(label.x) - Number(label.w) / 2) * 100);
+      const top = clampPercent((Number(label.y) - Number(label.h) / 2) * 100);
+      const width = clampPercent(Number(label.w) * 100);
+      const height = clampPercent(Number(label.h) * 100);
+      const box = createNode("div", "yolo-review-box");
+      box.style.left = `${left}%`;
+      box.style.top = `${top}%`;
+      box.style.width = `${width}%`;
+      box.style.height = `${height}%`;
+      box.appendChild(createNode("span", "", label.class_name || String(label.class_id ?? "")));
+      overlay.appendChild(box);
+    });
+  }
+
+  function sourceImageCard(title, url, subtitle) {
+    if (!url) return null;
+    const card = document.createElement("a");
+    card.className = "yolo-review-source-image";
+    card.href = url;
+    card.target = "_blank";
+    card.rel = "noopener noreferrer";
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = title;
+    img.loading = "lazy";
+    card.appendChild(img);
+    const text = createNode("div", "yolo-review-source-caption");
+    text.appendChild(createNode("p", "yolo-review-source-title", title));
+    text.appendChild(createNode("p", "yolo-review-source-subtitle", subtitle || "新窗口打开"));
+    card.appendChild(text);
+    return card;
+  }
+
+  async function loadDetail(itemKey) {
+    if (!itemKey || !state.datasetId) return;
+    state.selectedItemKey = itemKey;
+    state.selectedVerdict = "";
+    refs.detail.dataset.state = "loading";
+    refs.detail.innerHTML = "";
+    refs.detail.appendChild(createNode("p", "yolo-review-empty", "加载样本详情..."));
+    refs.list.querySelectorAll(".yolo-review-item").forEach((node) => node.classList.remove("is-active"));
+
+    try {
+      const params = new URLSearchParams({ dataset_id: state.datasetId, item_key: itemKey });
+      const data = await requestJson(`${endpoints.item}?${params.toString()}`);
+      renderDetail(data.dataset, data.item);
+      refs.detail.dataset.state = "idle";
+      renderListActive(itemKey);
+    } catch (error) {
+      refs.detail.dataset.state = "error";
+      refs.detail.innerHTML = "";
+      refs.detail.appendChild(createNode("p", "yolo-review-empty", `详情加载失败：${error?.message || "未知错误"}`));
+    }
+  }
+
+  function renderListActive(itemKey) {
+    refs.list.querySelectorAll(".yolo-review-item").forEach((node) => {
+      node.classList.toggle("is-active", node.dataset.itemKey === itemKey);
+    });
+  }
+
+  function renderDetail(dataset, item) {
+    refs.detail.innerHTML = "";
+
+    const detailGrid = createNode("div", "yolo-review-detail-grid");
+    const imageBlock = createNode("div", "yolo-review-image-block");
+    const stage = createNode("div", "yolo-review-image-stage");
+    const img = document.createElement("img");
+    img.src = item.image_url;
+    img.alt = item.item_key;
+    const overlay = createNode("div", "yolo-review-overlay");
+    stage.appendChild(img);
+    stage.appendChild(overlay);
+    renderBoxes(overlay, item.labels || []);
+    imageBlock.appendChild(stage);
+    imageBlock.appendChild(createNode("p", "yolo-review-path", item.item_key));
+
+    const meta = createNode("div", "yolo-review-meta-grid");
+    meta.appendChild(metaItem("AI标类别", item.ai_class || item.event_name));
+    meta.appendChild(metaItem("AI答案", item.ai_answer));
+    meta.appendChild(metaItem("YOLO框数", item.label_count));
+    meta.appendChild(metaItem("Split", item.split));
+    meta.appendChild(metaItem("地点", item.device_id || item.archive?.request?.device_id));
+    meta.appendChild(metaItem("相机", item.camera_id || item.archive?.request?.camera_id));
+    meta.appendChild(metaItem("Request", item.request_id || item.archive?.request?.request_id));
+    meta.appendChild(metaItem("Task", item.task_row_id || item.task_id));
+    meta.appendChild(metaItem("模型", item.archive?.request?.model));
+    meta.appendChild(metaItem("时间", formatDate(item.archive?.request?.created_at || item.day)));
+
+    detailGrid.appendChild(imageBlock);
+    detailGrid.appendChild(meta);
+    refs.detail.appendChild(detailGrid);
+
+    const labels = createNode("div", "yolo-review-labels");
+    const labelTitle = createNode("div", "yolo-review-section-head");
+    labelTitle.appendChild(createNode("h3", "", "YOLO 标签"));
+    labelTitle.appendChild(createNode("span", "ai-history-chip tone-idle", dataset.kind === "classify" ? "分类样本" : item.label_rel_path || "无 label"));
+    labels.appendChild(labelTitle);
+    if (dataset.kind === "classify") {
+      labels.appendChild(createNode("p", "yolo-review-label-line", `class: ${item.ai_class || "-"}`));
+    } else if (item.labels?.length) {
+      item.labels.forEach((label) => {
+        labels.appendChild(createNode("p", "yolo-review-label-line", `${label.class_name} · ${label.raw}`));
+      });
+    } else {
+      labels.appendChild(createNode("p", "yolo-review-label-line", "empty label"));
+    }
+    refs.detail.appendChild(labels);
+
+    const sourceGrid = createNode("div", "yolo-review-source-grid");
+    const roiUrl = item.archive?.task?.roi_url || item.manifest?.tasks?.[0]?.roi_url;
+    const frameUrl = item.archive?.request?.image_url || item.manifest?.source_frame_url;
+    const roiCard = sourceImageCard("ROI", roiUrl, item.archive?.task?.crop_box ? `crop ${JSON.stringify(item.archive.task.crop_box)}` : "");
+    const frameCard = sourceImageCard("原始帧", frameUrl, item.archive?.request?.request_id || item.request_id);
+    if (roiCard) sourceGrid.appendChild(roiCard);
+    if (frameCard) sourceGrid.appendChild(frameCard);
+    if (sourceGrid.childElementCount) refs.detail.appendChild(sourceGrid);
+
+    refs.detail.appendChild(renderReviewEditor(dataset, item));
+  }
+
+  function renderReviewEditor(dataset, item) {
+    const wrap = createNode("form", "yolo-review-editor");
+    wrap.addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveReview(item).catch(() => {});
+    });
+
+    const head = createNode("div", "yolo-review-section-head");
+    head.appendChild(createNode("h3", "", "人工校核"));
+    head.appendChild(createNode("span", `ai-history-chip ${reviewTone(item.review_status)}`, reviewText(item.review_status)));
+    wrap.appendChild(head);
+
+    const buttons = createNode("div", "yolo-review-verdicts");
+    [
+      ["correct", "正确"],
+      ["incorrect", "错误"],
+      ["unsure", "不确定"]
+    ].forEach(([value, label]) => {
+      const button = createNode("button", "", label);
+      button.type = "button";
+      button.dataset.verdict = value;
+      button.classList.toggle("is-active", item.review_status === value);
+      button.addEventListener("click", () => {
+        state.selectedVerdict = value;
+        buttons.querySelectorAll("button").forEach((node) => node.classList.toggle("is-active", node.dataset.verdict === value));
+        saveReview(item).catch(() => {});
+      });
+      buttons.appendChild(button);
+    });
+    wrap.appendChild(buttons);
+
+    const classRow = createNode("label", "yolo-review-editor-field");
+    classRow.appendChild(createNode("span", "", "修正类别"));
+    const classSelect = document.createElement("select");
+    classSelect.id = "yolo-review-corrected-class";
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "不修改";
+    classSelect.appendChild(empty);
+    (dataset.classes || []).forEach((className) => {
+      const option = document.createElement("option");
+      option.value = className;
+      option.textContent = className;
+      classSelect.appendChild(option);
+    });
+    classSelect.value = item.review?.corrected_class || "";
+    classRow.appendChild(classSelect);
+    wrap.appendChild(classRow);
+
+    const noteRow = createNode("label", "yolo-review-editor-field");
+    noteRow.appendChild(createNode("span", "", "备注"));
+    const textarea = document.createElement("textarea");
+    textarea.id = "yolo-review-note";
+    textarea.rows = 3;
+    textarea.maxLength = 1000;
+    textarea.value = item.review?.note || "";
+    noteRow.appendChild(textarea);
+    wrap.appendChild(noteRow);
+
+    const save = createNode("button", "yolo-review-save", "保存校核");
+    save.type = "submit";
+    wrap.appendChild(save);
+    return wrap;
+  }
+
+  async function saveReview(item) {
+    const verdict = state.selectedVerdict || item.review?.verdict || item.review_status;
+    if (!["correct", "incorrect", "unsure"].includes(verdict)) {
+      setStatus("请选择校核结论", "error");
+      return;
+    }
+    setStatus("保存校核...", "loading");
+    const note = document.getElementById("yolo-review-note")?.value || "";
+    const correctedClass = document.getElementById("yolo-review-corrected-class")?.value || "";
+    await requestJson(endpoints.reviews, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dataset_id: state.datasetId,
+        item_key: item.item_key,
+        verdict,
+        note,
+        corrected_class: correctedClass
+      })
+    });
+    setStatus("校核已保存", "ok");
+    await loadItems({ resetPage: false });
+    await loadDetail(item.item_key);
+  }
+
+  let queryTimer = null;
+  function scheduleReload() {
+    window.clearTimeout(queryTimer);
+    queryTimer = window.setTimeout(() => {
+      state.selectedItemKey = "";
+      loadItems({ resetPage: true }).catch(() => {});
+    }, 220);
+  }
+
+  refs.dataset?.addEventListener("change", () => {
+    state.datasetId = refs.dataset.value;
+    state.selectedItemKey = "";
+    refs.split.value = "";
+    refs.className.value = "";
+    refs.answer.value = "";
+    refs.reviewStatus.value = "";
+    updateClassOptions();
+    renderSummary(selectedDataset());
+    loadItems({ resetPage: true }).catch(() => {});
+  });
+  refs.split?.addEventListener("change", scheduleReload);
+  refs.className?.addEventListener("change", scheduleReload);
+  refs.answer?.addEventListener("change", scheduleReload);
+  refs.reviewStatus?.addEventListener("change", scheduleReload);
+  refs.query?.addEventListener("input", scheduleReload);
+  refs.refresh?.addEventListener("click", () => loadDatasets().catch(() => {}));
+  refs.prev?.addEventListener("click", () => {
+    if (state.page <= 1) return;
+    state.page -= 1;
+    state.selectedItemKey = "";
+    loadItems().catch(() => {});
+  });
+  refs.next?.addEventListener("click", () => {
+    if (state.page >= state.totalPages) return;
+    state.page += 1;
+    state.selectedItemKey = "";
+    loadItems().catch(() => {});
+  });
+  window.addEventListener("jgzj:auth-change", () => {
+    loadDatasets().catch(() => {});
+  });
+
+  loadDatasets().catch(() => {});
+})();

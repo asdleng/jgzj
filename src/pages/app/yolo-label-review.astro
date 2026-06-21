@@ -1,0 +1,18 @@
+---
+import "../../styles/app.css";
+import EmbeddedYoloLabelReview from "../../components/EmbeddedYoloLabelReview.astro";
+import SiteLayout from "../../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="YOLO 标签校核"
+  description="吉光智界内部 YOLO 训练数据标签校核工作台。"
+  currentPath="/app/yolo-label-review"
+  noindex={true}
+>
+  <main class="page-main grid-bg yolo-review-main">
+    <section class="page-section yolo-review-section reveal" data-reveal>
+      <EmbeddedYoloLabelReview />
+    </section>
+  </main>
+</SiteLayout>
