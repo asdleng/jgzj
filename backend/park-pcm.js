@@ -2990,6 +2990,50 @@ module.exports = function registerParkPcmRoutes(app, options) {
     await fsp.appendFile(crowdIndexLogPath, `${JSON.stringify(entry)}\n`, 'utf8');
   }
 
+  function vehicleEstimateSnapshot(analysis) {
+    if (!analysis || typeof analysis !== 'object') return null;
+    if (analysis.vehicle_estimate && typeof analysis.vehicle_estimate === 'object') {
+      return analysis.vehicle_estimate;
+    }
+    if (!['vehicle_estimate', 'vehicle_estimate_server_reviewed'].includes(analysis.status)) {
+      return null;
+    }
+    return {
+      people_count: analysis.people_count ?? null,
+      max_single_camera_people: analysis.max_single_camera_people ?? null,
+      frame_count_analyzed: analysis.frame_count_analyzed ?? null,
+      confidence: analysis.confidence || null,
+      model: analysis.model || 'vehicle_perception_upload',
+      analyzed_at: analysis.analyzed_at || null,
+      note: analysis.note || null
+    };
+  }
+
+  function preferServerReviewedCrowdAnalysis(analysis) {
+    if (!analysis || typeof analysis !== 'object') return analysis;
+    const serverVlm = analysis.server_vlm && typeof analysis.server_vlm === 'object'
+      ? analysis.server_vlm
+      : null;
+    if (!serverVlm || serverVlm.status !== 'done') {
+      return analysis;
+    }
+    const vehicleEstimate = vehicleEstimateSnapshot(analysis);
+    if (!vehicleEstimate) {
+      return analysis;
+    }
+    const vehicleNote = vehicleEstimate.people_count == null
+      ? ''
+      : `车端初始统计 ${vehicleEstimate.people_count} 人。`;
+    return {
+      ...analysis,
+      ...serverVlm,
+      status: 'vehicle_estimate_server_reviewed',
+      vehicle_estimate: vehicleEstimate,
+      server_vlm: serverVlm,
+      note: [serverVlm.note, vehicleNote].filter(Boolean).join(' ')
+    };
+  }
+
   function mergeCrowdAnalysisIntoSample(sample, analysisState) {
     if (!sample || sample.skipped) return sample;
     const sampleAnalysis = analysisState?.samples?.[sample.sample_id];
@@ -2999,17 +3043,17 @@ module.exports = function registerParkPcmRoutes(app, options) {
       : {};
     return {
       ...sample,
-      analysis: {
+      analysis: preferServerReviewedCrowdAnalysis({
         ...(sample.analysis || {}),
         ...sampleAnalysis.aggregate
-      },
+      }),
       frames: Array.isArray(sample.frames)
         ? sample.frames.map((frame) => ({
             ...frame,
-            analysis: {
+            analysis: preferServerReviewedCrowdAnalysis({
               ...(frame.analysis || {}),
               ...(framesByCaptureId[frame.capture_id] || framesByCaptureId[frame.camera_id] || {})
-            }
+            })
           }))
         : sample.frames
     };
@@ -3026,7 +3070,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
       const serverFrame = frameResults[frameKey] || frameResults[frame.camera_id] || null;
       const existingFrameAnalysis = frame.analysis && typeof frame.analysis === 'object' ? frame.analysis : {};
       if (existingFrameAnalysis.status === 'vehicle_estimate') {
-        mergedFrames[frameKey] = {
+        mergedFrames[frameKey] = preferServerReviewedCrowdAnalysis({
           ...existingFrameAnalysis,
           vehicle_estimate: {
             people_count: existingFrameAnalysis.people_count,
@@ -3037,7 +3081,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
           },
           server_vlm: serverFrame,
           status: serverFrame?.status === 'done' ? 'vehicle_estimate_server_reviewed' : existingFrameAnalysis.status
-        };
+        });
       } else {
         mergedFrames[frameKey] = serverFrame || existingFrameAnalysis;
       }
@@ -3047,7 +3091,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     if (existingAggregate.status === 'vehicle_estimate') {
       return {
         frames: mergedFrames,
-        aggregate: {
+        aggregate: preferServerReviewedCrowdAnalysis({
           ...existingAggregate,
           vehicle_estimate: {
             people_count: existingAggregate.people_count,
@@ -3064,7 +3108,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
           note: serverAnalysis?.aggregate?.status
             ? `${existingAggregate.note || '车端 perception 初始统计。'} 云端复核状态：${serverAnalysis.aggregate.status}。`
             : existingAggregate.note
-        }
+        })
       };
     }
 
@@ -4280,10 +4324,11 @@ module.exports = function registerParkPcmRoutes(app, options) {
         }
         const existing = state.samples[sample.sample_id];
         const existingAggregate = existing?.aggregate || {};
+        const effectiveExistingAggregate = preferServerReviewedCrowdAnalysis(existingAggregate);
         const existingHasCurrentFeatureSchema =
-          existingAggregate.feature_schema === CROWD_ANALYSIS_FEATURE_SCHEMA &&
-          existingAggregate.model === crowdAnalysisModel;
-        if (['done', 'vehicle_estimate_server_reviewed'].includes(existingAggregate.status) && existingHasCurrentFeatureSchema) {
+          effectiveExistingAggregate.feature_schema === CROWD_ANALYSIS_FEATURE_SCHEMA &&
+          effectiveExistingAggregate.model === crowdAnalysisModel;
+        if (['done', 'vehicle_estimate_server_reviewed'].includes(effectiveExistingAggregate.status) && existingHasCurrentFeatureSchema) {
           continue;
         }
         const sampleAnalysis = mergeServerAnalysisWithVehicleEstimate(sample, await analyzeCrowdSample(sample));
