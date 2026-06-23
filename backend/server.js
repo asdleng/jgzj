@@ -171,7 +171,7 @@ const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
     label: '全部YOLO检测',
-    subTasks: ['general_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'smoking_two_stage']
+    subTasks: ['general_yolo', 'pet_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'smoking_two_stage']
   },
   general_yolo: {
     kind: 'detect',
@@ -181,6 +181,15 @@ const yoloModelTestTasks = Object.freeze({
     names: ['car', 'truck', 'non_motor_vehicle', 'pet', 'stall'],
     imgsz: 640,
     conf: 0.25
+  },
+  pet_yolo: {
+    kind: 'detect',
+    label: '宠物识别',
+    model: '/home/sari/jgzj_yolo_runs/pet_yolo_20260623_160655/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/pet_yolo_best.pt',
+    names: ['pet'],
+    imgsz: 640,
+    conf: 0.2
   },
   trash_yolo: {
     kind: 'detect',
