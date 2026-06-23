@@ -171,7 +171,7 @@ const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
     label: '全部YOLO检测',
-    subTasks: ['general_yolo', 'trash_yolo', 'smoking_two_stage']
+    subTasks: ['general_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'smoking_two_stage']
   },
   general_yolo: {
     kind: 'detect',
@@ -185,11 +185,38 @@ const yoloModelTestTasks = Object.freeze({
   trash_yolo: {
     kind: 'detect',
     label: '小垃圾细类',
-    model: '/home/sari/jgzj_yolo_runs/trash_yolo_manual_20260621_034134/weights/best.pt',
+    model: '/home/sari/jgzj_yolo_runs/trash_yolo_20260623_001045/weights/best.pt',
     localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/trash_yolo_best.pt',
     names: ['bottle', 'box', 'paper', 'bag'],
     imgsz: 960,
     conf: 0.15
+  },
+  fire_smoke_yolo: {
+    kind: 'detect',
+    label: '火源烟雾',
+    model: '/home/sari/jgzj_yolo_runs/fire_smoke_yolo_20260623_181458/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_best.pt',
+    names: ['fire', 'smoke'],
+    imgsz: 768,
+    conf: 0.2
+  },
+  phone_yolo: {
+    kind: 'detect',
+    label: '手机识别',
+    model: '/home/sari/jgzj_yolo_runs/phone_yolo_20260623_131012/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/phone_yolo_best.pt',
+    names: ['phone'],
+    imgsz: 640,
+    conf: 0.2
+  },
+  stall_yolo: {
+    kind: 'detect',
+    label: '摆摊识别',
+    model: '/home/sari/jgzj_yolo_runs/stall_yolo_20260623_214426/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/stall_yolo_best.pt',
+    names: ['stall'],
+    imgsz: 960,
+    conf: 0.2
   },
   smoking_candidate: {
     kind: 'detect',
