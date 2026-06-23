@@ -4521,9 +4521,6 @@ const mapEditorLargeJsonPaths = new Set([
   '/api/route-create',
   '/api/route-delete'
 ]);
-const MAP_EDITOR_CHUNK_THRESHOLD_BYTES = 512 * 1024;
-const MAP_EDITOR_CHUNK_SIZE_BYTES = 512 * 1024;
-const MAP_EDITOR_MAX_CHUNKS = 96;
 
 function normalizeMapEditorPath(value) {
   const pathValue = String(value || '/').trim() || '/';
@@ -4547,10 +4544,6 @@ function getMapEditorMaxResponseBytes(editorPath) {
     return 12 * 1024 * 1024;
   }
   return 2 * 1024 * 1024;
-}
-
-function shouldChunkMapEditorPath(editorPath) {
-  return mapEditorBinaryPaths.has(editorPath) || mapEditorLargeJsonPaths.has(editorPath);
 }
 
 function getMapEditorHeader(headers, key) {
@@ -4593,74 +4586,6 @@ async function executeMapEditorTool(vehicleId, toolName, args = {}, timeout_s = 
     },
     []
   );
-}
-
-async function readMapEditorChunkedBody(vehicleId, initialResult, editorPath) {
-  const chunkId = String(initialResult?.chunk_id || '').trim();
-  if (!/^[a-f0-9]{32}$/i.test(chunkId)) {
-    throw new Error('invalid_map_editor_chunk_id');
-  }
-
-  const maxResponseBytes = getMapEditorMaxResponseBytes(editorPath);
-  const totalBytes = toFiniteInteger(initialResult?.body_bytes, -1, {
-    min: 0,
-    max: maxResponseBytes
-  });
-  if (totalBytes < 0) {
-    throw new Error('invalid_map_editor_chunk_size');
-  }
-
-  const chunkSizeBytes = toFiniteInteger(initialResult?.chunk_size_bytes, MAP_EDITOR_CHUNK_SIZE_BYTES, {
-    min: 64 * 1024,
-    max: 2 * 1024 * 1024
-  });
-  const expectedChunks = Math.ceil(totalBytes / chunkSizeBytes);
-  const chunksTotal = toFiniteInteger(initialResult?.chunks_total, expectedChunks, {
-    min: 1,
-    max: MAP_EDITOR_MAX_CHUNKS
-  });
-  if (chunksTotal !== expectedChunks) {
-    throw new Error('map_editor_chunk_count_mismatch');
-  }
-
-  const buffers = [];
-  for (let chunkIndex = 0; chunkIndex < chunksTotal; chunkIndex += 1) {
-    const chunkExecution = await executeMapEditorTool(
-      vehicleId,
-      'map_editor.http_chunk',
-      {
-        chunk_id: chunkId,
-        chunk_index: chunkIndex,
-        chunk_size_bytes: chunkSizeBytes,
-        delete_after: chunkIndex === chunksTotal - 1
-      },
-      35
-    );
-    if (!chunkExecution.ok) {
-      throw new Error(chunkExecution.detail || chunkExecution.error || 'map_editor_chunk_fetch_failed');
-    }
-    const chunkResult = unwrapMapEditorToolResult(chunkExecution);
-    if (!chunkResult || typeof chunkResult !== 'object') {
-      throw new Error('invalid_map_editor_chunk_response');
-    }
-    const chunkBody = chunkResult.body_base64
-      ? Buffer.from(String(chunkResult.body_base64), 'base64')
-      : Buffer.alloc(0);
-    const expectedChunkBytes = toFiniteInteger(chunkResult.chunk_bytes, chunkBody.length, {
-      min: 0,
-      max: chunkSizeBytes
-    });
-    if (chunkBody.length !== expectedChunkBytes) {
-      throw new Error('map_editor_chunk_size_mismatch');
-    }
-    buffers.push(chunkBody);
-  }
-
-  const bodyBuffer = Buffer.concat(buffers);
-  if (bodyBuffer.length !== totalBytes) {
-    throw new Error('map_editor_chunk_total_size_mismatch');
-  }
-  return bodyBuffer;
 }
 
 function renderCloudOpsFallbackReply(_message, execution) {
@@ -6914,15 +6839,11 @@ app.use('/vehicles/:vehicleId/map-editor', authStore.requirePermission('vehicle:
   }
 
   const parsedUrl = new URL(req.originalUrl, 'http://localhost');
-  const useChunkedMapEditorResponse = shouldChunkMapEditorPath(editorPath);
   const args = {
     method: upstreamMethod,
     path: editorPath,
     query: parsedUrl.searchParams.toString(),
-    max_response_bytes: getMapEditorMaxResponseBytes(editorPath),
-    chunk_response: useChunkedMapEditorResponse,
-    chunk_threshold_bytes: MAP_EDITOR_CHUNK_THRESHOLD_BYTES,
-    chunk_size_bytes: MAP_EDITOR_CHUNK_SIZE_BYTES
+    max_response_bytes: getMapEditorMaxResponseBytes(editorPath)
   };
 
   if (method === 'POST') {
@@ -6969,20 +6890,9 @@ app.use('/vehicles/:vehicleId/map-editor', authStore.requirePermission('vehicle:
   const contentType =
     getMapEditorHeader(headers, 'content-type') ||
     (mapEditorBinaryPaths.has(editorPath) ? 'application/octet-stream' : 'text/plain; charset=utf-8');
-  let bodyBuffer;
-  try {
-    bodyBuffer = result.body_chunked
-      ? await readMapEditorChunkedBody(vehicleId, result, editorPath)
-      : result.body_base64
-        ? Buffer.from(String(result.body_base64), 'base64')
-        : Buffer.alloc(0);
-  } catch (error) {
-    return res.status(502).json({
-      ok: false,
-      detail: error.message || 'map_editor_chunk_reassembly_failed',
-      execution
-    });
-  }
+  const bodyBuffer = result.body_base64
+    ? Buffer.from(String(result.body_base64), 'base64')
+    : Buffer.alloc(0);
   if (mapEditorLargeJsonPaths.has(editorPath) || bodyBuffer.length > 1024 * 1024) {
     console.info(
       'map_editor_proxy_result',
@@ -6993,8 +6903,6 @@ app.use('/vehicles/:vehicleId/map-editor', authStore.requirePermission('vehicle:
         body_bytes: result.body_bytes || bodyBuffer.length,
         decoded_bytes: bodyBuffer.length,
         base64_length: result.body_base64 ? String(result.body_base64).length : 0,
-        chunked: Boolean(result.body_chunked),
-        chunks_total: result.chunks_total ?? null,
         duration_ms: result.duration_ms ?? null
       })
     );
