@@ -17,12 +17,23 @@ from ultralytics import YOLO
 
 MODEL_CACHE = {}
 MODEL_CACHE_LOCK = threading.Lock()
-INFER_LOCK = threading.Lock()
+MODEL_INFER_LOCKS = {}
+MODEL_INFER_LOCKS_LOCK = threading.Lock()
 SERVER_STATE = {
     "started_at": time.time(),
     "gpu": os.environ.get("YOLO_MODEL_TEST_GPU_LABEL", "local-gpu"),
     "device": os.environ.get("YOLO_MODEL_TEST_DEVICE", "0"),
 }
+
+
+def infer_lock_for_model(model_path):
+    resolved = os.path.abspath(str(model_path or ""))
+    with MODEL_INFER_LOCKS_LOCK:
+        lock = MODEL_INFER_LOCKS.get(resolved)
+        if lock is None:
+            lock = threading.Lock()
+            MODEL_INFER_LOCKS[resolved] = lock
+        return lock
 
 
 def json_response(handler, status, payload):
@@ -141,8 +152,9 @@ def crop_with_padding(image, xyxy, pad_ratio=0.08):
 
 
 def run_detect(task, image, no_annotated):
-    model = load_model(task.get("model"))
-    with INFER_LOCK:
+    model_path = task.get("model")
+    model = load_model(model_path)
+    with infer_lock_for_model(model_path):
         result = model.predict(
             image,
             imgsz=int(task.get("imgsz") or 640),
@@ -164,8 +176,9 @@ def run_detect(task, image, no_annotated):
 
 
 def run_classify(task, image):
-    model = load_model(task.get("model"))
-    with INFER_LOCK:
+    model_path = task.get("model")
+    model = load_model(model_path)
+    with infer_lock_for_model(model_path):
         result = model.predict(
             image,
             imgsz=int(task.get("imgsz") or 224),
@@ -183,9 +196,11 @@ def run_classify(task, image):
 
 
 def run_smoking_two_stage(task, image, no_annotated):
-    detector = load_model(task.get("model"))
-    classifier = load_model(task.get("classifierModel"))
-    with INFER_LOCK:
+    detector_path = task.get("model")
+    classifier_path = task.get("classifierModel")
+    detector = load_model(detector_path)
+    classifier = load_model(classifier_path)
+    with infer_lock_for_model(detector_path):
         result = detector.predict(
             image,
             imgsz=int(task.get("imgsz") or 640),
@@ -200,12 +215,13 @@ def run_smoking_two_stage(task, image, no_annotated):
                 detection = serialize_box(box, names)
                 crop = crop_with_padding(image, detection["box"]["xyxy"])
                 if crop is not None:
-                    cls_result = classifier.predict(
-                        crop,
-                        imgsz=int(task.get("classifierImgsz") or 224),
-                        device=SERVER_STATE["device"],
-                        verbose=False,
-                    )[0]
+                    with infer_lock_for_model(classifier_path):
+                        cls_result = classifier.predict(
+                            crop,
+                            imgsz=int(task.get("classifierImgsz") or 224),
+                            device=SERVER_STATE["device"],
+                            verbose=False,
+                        )[0]
                     cls_names = getattr(cls_result, "names", getattr(classifier.model, "names", {}))
                     predictions = normalize_predictions(getattr(cls_result, "probs", None), cls_names)
                     top = predictions[0] if predictions else None

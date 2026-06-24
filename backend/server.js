@@ -7654,20 +7654,29 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
   const remoteInputPath = `${remoteRunDir}/input${decoded.ext}`;
   const remoteScriptPath = `${remoteRunDir}/predict.py`;
   let remoteContextReady = false;
+  let remoteContextPromise = null;
 
   const ensureRemoteYoloContext = async () => {
     if (remoteContextReady) return;
-    await fs.mkdir(localRunDir, { recursive: true });
-    await fs.writeFile(localInputPath, decoded.buffer);
-    await fs.writeFile(localScriptPath, yoloModelTestPredictScript);
+    if (!remoteContextPromise) {
+      remoteContextPromise = (async () => {
+        await fs.mkdir(localRunDir, { recursive: true });
+        await fs.writeFile(localInputPath, decoded.buffer);
+        await fs.writeFile(localScriptPath, yoloModelTestPredictScript);
 
-    await runYoloA100Command(`mkdir -p ${shellQuote(remoteRunDir)}`, {
-      timeoutMs: 30000,
-      maxBuffer: 1024 * 1024
-    });
-    await copyYoloFileToA100(localScriptPath, remoteScriptPath);
-    await copyYoloFileToA100(localInputPath, remoteInputPath);
-    remoteContextReady = true;
+        await runYoloA100Command(`mkdir -p ${shellQuote(remoteRunDir)}`, {
+          timeoutMs: 30000,
+          maxBuffer: 1024 * 1024
+        });
+        await copyYoloFileToA100(localScriptPath, remoteScriptPath);
+        await copyYoloFileToA100(localInputPath, remoteInputPath);
+        remoteContextReady = true;
+      })().catch((error) => {
+        remoteContextPromise = null;
+        throw error;
+      });
+    }
+    await remoteContextPromise;
   };
 
   const runYoloPredictionWithFallback = async (currentTaskId, currentTask, options = {}) => {
@@ -7701,22 +7710,47 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
 
   try {
     if (task.kind === 'all_yolo') {
-      const groups = [];
+      const runnableSubTasks = [];
       for (const subTaskId of task.subTasks || []) {
         const subTask = yoloModelTestTasks[subTaskId];
         if (!subTask || subTask.kind === 'all_yolo') {
           continue;
         }
+        runnableSubTasks.push({ subTaskId, subTask });
+      }
+
+      const settledGroups = await Promise.allSettled(runnableSubTasks.map(async ({ subTaskId, subTask }) => {
         const subStartMs = Date.now();
         const payload = await runYoloPredictionWithFallback(subTaskId, subTask, {
           noAnnotated: true,
           timeoutMs: yoloModelTestTimeoutMs,
           maxBuffer: 24 * 1024 * 1024
         });
-        groups.push({
+        return {
           ...buildYoloTaskResponse(subTaskId, subTask, payload, { omitAnnotatedImage: true }),
           duration_ms: Date.now() - subStartMs
+        };
+      }));
+
+      const groups = [];
+      const failures = [];
+      settledGroups.forEach((result, index) => {
+        const { subTaskId, subTask } = runnableSubTasks[index];
+        if (result.status === 'fulfilled') {
+          groups.push(result.value);
+          return;
+        }
+        failures.push({
+          task_id: subTaskId,
+          task_label: subTask.label,
+          error: truncateText(result.reason?.message || String(result.reason), 2000)
         });
+      });
+
+      if (groups.length === 0 && failures.length > 0) {
+        const error = new Error(failures.map((failure) => `${failure.task_id}:${failure.error}`).join('; '));
+        error.failures = failures;
+        throw error;
       }
 
       const durationMs = Date.now() - startMs;
@@ -7739,13 +7773,15 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
         gpu: gpus.join(', ') || yoloA100Gpu,
         backend: backends.join(' + ') || 'a100_ssh',
         groups,
-        detections
+        detections,
+        failures
       };
 
       console.info('yolo_model_test_result', JSON.stringify({
         task_id: taskId,
         mode: responsePayload.mode,
         groups: groups.length,
+        failures: failures.length,
         detections: detections.length,
         duration_ms: durationMs,
         gpu: responsePayload.gpu,

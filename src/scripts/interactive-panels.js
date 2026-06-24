@@ -258,6 +258,46 @@
     );
   }
 
+  function extractCloudOpsToolList(source) {
+    if (!source || typeof source !== "object") {
+      return [];
+    }
+
+    const candidates = [
+      source.tools,
+      source.response?.tools,
+      source.data?.tools,
+      source.data?.response?.tools,
+      source.execution?.tools,
+      source.execution?.data?.tools,
+      source.execution?.data?.response?.tools,
+      source.execution?.data?.vehicle?.hello?.tools,
+      source.execution?.data?.vehicle?.tool_list_result?.response?.tools,
+      source.execution?.data?.vehicle?.tool_list_result?.tools,
+      source.vehicle?.hello?.tools,
+      source.vehicle?.tool_list_result?.response?.tools,
+      source.vehicle?.tool_list_result?.tools,
+      source.hello?.tools,
+      source.tool_list_result?.response?.tools,
+      source.tool_list_result?.tools
+    ];
+
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate) && candidate.length) {
+        return candidate;
+      }
+    }
+    return [];
+  }
+
+  function createCloudOpsToolSet(tools) {
+    return new Set(
+      (Array.isArray(tools) ? tools : [])
+        .map((tool) => String(tool?.name || tool || "").trim())
+        .filter(Boolean)
+    );
+  }
+
   let aiPreviewUrl = "";
   let yoloTestPreviewUrl = "";
   let qwen36mmPreviewUrl = "";
@@ -5730,8 +5770,11 @@
       return;
     }
 
-    cloudOpsContextLoading = true;
-    updateCloudOpsActionAvailability();
+    const showContextLoading = !silent || !cloudOpsAvailableTools.size;
+    if (showContextLoading) {
+      cloudOpsContextLoading = true;
+      updateCloudOpsActionAvailability();
+    }
 
     try {
       if (!silent) {
@@ -5760,24 +5803,20 @@
       }
 
       const vehicleId = cloudOpsCurrentVehicleId;
-      const [detailResult, toolListResult] = await Promise.allSettled([
-        fetchJsonOrThrow(`${CLOUD_OPS_VEHICLES_URL}/${encodeURIComponent(vehicleId)}`),
-        fetchJsonOrThrow(`${CLOUD_OPS_VEHICLES_URL}/${encodeURIComponent(vehicleId)}/tool-list?timeout_s=35`)
+      const detailResult = await Promise.allSettled([
+        fetchJsonOrThrow(`${CLOUD_OPS_VEHICLES_URL}/${encodeURIComponent(vehicleId)}`)
       ]);
 
-      const detailData = detailResult.status === "fulfilled" ? detailResult.value : null;
-      const toolListData = toolListResult.status === "fulfilled" ? toolListResult.value : null;
+      const detailData = detailResult[0]?.status === "fulfilled" ? detailResult[0].value : null;
 
       if (detailData) {
         cloudOpsCurrentDetail = detailData;
-      }
-
-      if (toolListData) {
-        cloudOpsAvailableTools = new Set(
-          (Array.isArray(toolListData?.tools) ? toolListData.tools : [])
-            .map((tool) => String(tool?.name || "").trim())
-            .filter(Boolean)
-        );
+        const cachedTools = extractCloudOpsToolList(detailData);
+        if (cachedTools.length) {
+          cloudOpsAvailableTools = createCloudOpsToolSet(cachedTools);
+        } else if (!cloudOpsAvailableTools.size) {
+          cloudOpsAvailableTools = new Set();
+        }
       } else if (!cloudOpsAvailableTools.size) {
         cloudOpsAvailableTools = new Set();
       }
@@ -5787,22 +5826,20 @@
       updateCloudOpsActionAvailability();
       if (!preserveResult) {
         renderCloudOpsResult(
-          detailData?.summary ||
-            toolListData?.summary ||
-            `${cloudOpsCurrentVehicleId} 的基础状态已加载。`,
+          detailData?.summary || `${cloudOpsCurrentVehicleId} 的基础状态已加载。`,
           {
             vehicle_detail: detailData?.execution || cloudOpsCurrentDetail?.execution || null,
-            tool_list: toolListData?.execution || null
+            tool_list: null
           },
           "ok"
         );
       }
-      if (detailData || toolListData) {
+      if (detailData) {
         if (!silent) {
           setCloudOpsStatus("控制台已就绪", "ok");
         }
       } else {
-        throw new Error("vehicle_detail_and_tool_list_unavailable");
+        throw new Error("vehicle_detail_unavailable");
       }
     } catch (error) {
       if (!cloudOpsVehicles.length) {
@@ -5830,8 +5867,10 @@
         );
       }
     } finally {
-      cloudOpsContextLoading = false;
-      updateCloudOpsActionAvailability();
+      if (showContextLoading) {
+        cloudOpsContextLoading = false;
+        updateCloudOpsActionAvailability();
+      }
     }
   }
 
@@ -6444,6 +6483,10 @@
         body: JSON.stringify(plan)
       });
       const resultState = deriveCloudOpsResultState(data);
+      const returnedTools = extractCloudOpsToolList(data);
+      if (returnedTools.length) {
+        cloudOpsAvailableTools = createCloudOpsToolSet(returnedTools);
+      }
       renderCloudOpsResult(data?.summary || "执行完成。", data, resultState);
       setCloudOpsStatus(resultState === "warn" ? "执行完成（需关注）" : "执行完成", resultState);
       if (button.dataset.deployAction) {
