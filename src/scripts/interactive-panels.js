@@ -1294,11 +1294,16 @@
       return false;
     }
 
+    const knownVehicle = cloudOpsVehicles.some(
+      (vehicle) => String(vehicle?.vehicle_id || vehicle?.plate_number || "").trim() === vehicleId
+    );
     upsertCloudOpsVehicleState(vehicleId, {
       telemetry,
       last_seen: source.ts || payload?.ts || telemetry.generated_at || new Date().toISOString()
     });
-    renderCloudOpsVehicleOptions();
+    if (!knownVehicle) {
+      renderCloudOpsVehicleOptions();
+    }
     renderCloudOpsSummary();
     renderCloudOpsLiveState();
     updateCloudOpsActionAvailability();
@@ -1338,11 +1343,10 @@
       return;
     }
 
+    const connectionVehicleId = String(eventData?.vehicle_id || eventData?.plate_number || "").trim();
     if (
-      eventData?.event === "connection.opened" ||
-      eventData?.event === "connection.closed" ||
-      (eventData?.event === "vehicle.message" &&
-        ["hello", "heartbeat", "snapshot"].includes(eventData?.message_type))
+      connectionVehicleId &&
+      (eventData?.event === "connection.opened" || eventData?.event === "connection.closed")
     ) {
       scheduleCloudOpsContextRefresh();
     }
@@ -5693,21 +5697,37 @@
 
   function renderCloudOpsVehicleOptions() {
     if (!cloudOpsVehicleSelect) return;
-    cloudOpsVehicleSelect.innerHTML = "";
-
-    if (!cloudOpsVehicles.length) {
-      cloudOpsVehicleSelect.appendChild(new Option("暂无在线车辆", ""));
-      cloudOpsCurrentVehicleId = "";
-      return;
-    }
-
     const ids = cloudOpsVehicles
       .map((vehicle) => String(vehicle?.vehicle_id || vehicle?.plate_number || "").trim())
       .filter(Boolean);
+
+    if (!ids.length) {
+      cloudOpsCurrentVehicleId = "";
+      const alreadyEmpty =
+        cloudOpsVehicleSelect.options.length === 1 &&
+        cloudOpsVehicleSelect.options[0]?.value === "" &&
+        cloudOpsVehicleSelect.value === "";
+      if (alreadyEmpty) {
+        return;
+      }
+      cloudOpsVehicleSelect.innerHTML = "";
+      cloudOpsVehicleSelect.appendChild(new Option("暂无在线车辆", ""));
+      return;
+    }
+
     if (!ids.includes(cloudOpsCurrentVehicleId)) {
       cloudOpsCurrentVehicleId = ids[0] || "";
     }
 
+    const currentOptionIds = Array.from(cloudOpsVehicleSelect.options).map((option) => option.value);
+    const sameOptions =
+      currentOptionIds.length === ids.length &&
+      currentOptionIds.every((id, index) => id === ids[index]);
+    if (sameOptions && cloudOpsVehicleSelect.value === cloudOpsCurrentVehicleId) {
+      return;
+    }
+
+    cloudOpsVehicleSelect.innerHTML = "";
     ids.forEach((id) => {
       cloudOpsVehicleSelect.appendChild(new Option(id, id));
     });
