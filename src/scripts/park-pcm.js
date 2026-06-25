@@ -1014,6 +1014,7 @@
         sample_count: 0,
         recognized_count: 0,
         people_total: 0,
+        heat_point_count: 0,
         max_people: 0
       };
       const peopleCount = samplePeopleCount(sample);
@@ -1021,6 +1022,7 @@
       if (peopleCount != null) {
         current.recognized_count += 1;
         current.people_total += Number(peopleCount);
+        if (Number(peopleCount) > 0) current.heat_point_count += 1;
         current.max_people = Math.max(current.max_people, Number(peopleCount));
       }
       stats.set(key, current);
@@ -1044,6 +1046,7 @@
           sample_count: 0,
           recognized_count: 0,
           people_total: 0,
+          heat_point_count: 0,
           max_people: 0
         }
       );
@@ -1087,7 +1090,7 @@
     if (heatmapDateLabelEl) heatmapDateLabelEl.textContent = formatDayLabel(active.key);
     if (heatmapDateSummaryEl) {
       heatmapDateSummaryEl.textContent = active.sample_count
-        ? `当天 ${active.sample_count} 条 · 已识别 ${active.recognized_count} 条/${active.people_total} 人 · 峰值 ${active.max_people} 人`
+        ? `当天 ${active.sample_count} 条 · 已识别 ${active.recognized_count} 条/${active.people_total} 人 · 热力点 ${active.heat_point_count} 个 · 峰值 ${active.max_people} 人`
         : "当天暂无采集点。";
     }
     if (heatmapDateRangeEl) {
@@ -1625,7 +1628,7 @@
       longitude: position.longitude,
       latitude: position.latitude,
       people_count: peopleCount,
-      heat_count: peopleCount == null ? 1 : Math.max(1, peopleCount),
+      heat_count: peopleCount == null ? 0 : Math.max(0, peopleCount),
       collected_at: sample.collected_at,
       sample
     };
@@ -1677,6 +1680,13 @@
     void AMap;
     const heatData = heatDataFromPoints(samplePoints);
     if (!heatData.length) {
+      amapLastHeatData = [];
+      amapLastHeatMax = 0;
+      if (customHeatmapCanvas) {
+        const ctx = customHeatmapCanvas.getContext("2d");
+        if (ctx) ctx.clearRect(0, 0, customHeatmapCanvas.width, customHeatmapCanvas.height);
+        customHeatmapCanvas.hidden = true;
+      }
       if (heatLegendEl) heatLegendEl.hidden = true;
       return {
         count: 0,
