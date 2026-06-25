@@ -16,6 +16,7 @@
     split: document.getElementById("yolo-review-split"),
     className: document.getElementById("yolo-review-class"),
     answer: document.getElementById("yolo-review-answer"),
+    qwenLabel: document.getElementById("yolo-review-qwen-label"),
     query: document.getElementById("yolo-review-query"),
     fireSmokeCard: document.getElementById("yolo-fire-smoke-card"),
     fireSmokeOpen: document.getElementById("yolo-fire-smoke-open"),
@@ -84,6 +85,42 @@
 
   function answerTone(answer) {
     return answer === "YES" ? "tone-yes" : answer === "NO" ? "tone-no" : "tone-idle";
+  }
+
+  const qwenLabelNames = {
+    person: "人",
+    fire: "火",
+    smoke: "烟",
+    trash: "垃圾",
+    pet: "宠物",
+    stall: "摆摊",
+    phone: "手机",
+    smoking: "抽烟",
+    vehicle: "车辆",
+    nonmotor: "非机动车",
+    empty_scene: "空场景",
+    hard_negative: "困难负样本",
+    fire_smoke_candidate: "烟火候选",
+    trash_candidate: "垃圾候选",
+    small_object_candidate: "小目标候选",
+    "quality:good": "质量好",
+    "quality:dark": "夜间/偏暗",
+    "quality:blur": "模糊",
+    "quality:blocked": "遮挡"
+  };
+
+  function qwenLabelText(value) {
+    return qwenLabelNames[value] || value;
+  }
+
+  function qwenCountSummary(item) {
+    const counts = item?.qwen_label?.counts || {};
+    const parts = Object.entries(counts)
+      .filter(([, count]) => Number(count) > 0)
+      .map(([name, count]) => `${qwenLabelText(name)} ${count}`);
+    if (parts.length) return parts.join(" / ");
+    if (Array.isArray(item?.qwen_flags) && item.qwen_flags.includes("empty_scene")) return "空场景";
+    return item?.qwen_label_status === "done" ? "无目标" : "";
   }
 
   function datasetLabel(dataset) {
@@ -175,7 +212,9 @@
     if (refs.split) refs.split.value = "";
     if (refs.className) refs.className.value = "";
     if (refs.answer) refs.answer.value = "";
+    if (refs.qwenLabel) refs.qwenLabel.value = "";
     updateClassOptions();
+    updateQwenOptions();
     renderSummary(selectedDataset());
     renderFireSmokeCard();
     loadItems({ resetPage: true }).catch(() => {});
@@ -219,6 +258,12 @@
       ["AI YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
       ["AI NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"]
     ];
+    if (dataset.qwen_label || dataset.summary?.qwen_label) {
+      const qwen = dataset.qwen_label || dataset.summary.qwen_label;
+      cells.push(["Qwen已标", compactNumber(qwen.cached_images)]);
+      cells.push(["Qwen待标", compactNumber(qwen.pending_images)]);
+      cells.push(["Qwen候选", compactNumber(qwen.positive_images)]);
+    }
 
     cells.forEach(([label, value]) => {
       const item = createNode("div", "yolo-review-summary-item");
@@ -259,6 +304,7 @@
       }
       refs.dataset.value = state.datasetId;
       updateClassOptions();
+      updateQwenOptions();
       renderFireSmokeCard();
       renderSummary(selectedDataset());
       await loadItems({ resetPage: true });
@@ -281,6 +327,19 @@
     );
   }
 
+  function updateQwenOptions() {
+    const dataset = selectedDataset();
+    const options = dataset?.qwen_label?.filter_options || dataset?.summary?.qwen_label?.filter_options || [];
+    setSelectOptions(
+      refs.qwenLabel,
+      (Array.isArray(options) ? options : []).map((item) => ({
+        value: item.value || item,
+        label: qwenLabelText(item.label || item.value || item)
+      })),
+      { allLabel: "全部" }
+    );
+  }
+
   function updateSplitOptions(splits) {
     setSelectOptions(
       refs.split,
@@ -297,6 +356,7 @@
     if (refs.split.value) params.set("split", refs.split.value);
     if (refs.className.value) params.set("class_name", refs.className.value);
     if (refs.answer.value) params.set("ai_answer", refs.answer.value);
+    if (refs.qwenLabel?.value) params.set("qwen_label", refs.qwenLabel.value);
     if (refs.query.value.trim()) params.set("q", refs.query.value.trim());
     return `${endpoints.items}?${params.toString()}`;
   }
@@ -356,7 +416,7 @@
 
       const body = createNode("div", "yolo-review-item-body");
       const top = createNode("div", "yolo-review-item-top");
-      top.appendChild(createNode("p", "yolo-review-item-title", item.ai_class || item.event_name || item.source_label || "-"));
+      top.appendChild(createNode("p", "yolo-review-item-title", qwenCountSummary(item) || item.ai_class || item.event_name || item.source_label || "-"));
       top.appendChild(createNode("span", `ai-history-chip ${answerTone(item.ai_answer)}`, item.ai_answer || "-"));
       body.appendChild(top);
       const metaText = item.source_type === "vehicle_collection"
@@ -370,6 +430,15 @@
       if (item.auto_label_status) {
         chips.appendChild(createNode("span", `ai-history-chip ${item.auto_label_status === "done" ? "tone-yes" : "tone-idle"}`, item.auto_label_status === "done" ? "已预标注" : "待预标注"));
       }
+      if (item.qwen_label_status) {
+        chips.appendChild(createNode("span", `ai-history-chip ${item.qwen_label_status === "done" ? "tone-yes" : "tone-idle"}`, item.qwen_label_status === "done" ? "Qwen已标" : item.qwen_label_status === "pending" ? "Qwen待标" : "Qwen不适用"));
+      }
+      if (item.qwen_quality) {
+        chips.appendChild(createNode("span", "ai-history-chip tone-idle", qwenLabelText(`quality:${item.qwen_quality}`)));
+      }
+      (item.qwen_flags || []).slice(0, 2).forEach((flag) => {
+        chips.appendChild(createNode("span", "ai-history-chip tone-idle", qwenLabelText(flag)));
+      });
       body.appendChild(chips);
 
       button.appendChild(thumb);
@@ -383,6 +452,43 @@
     item.appendChild(createNode("p", "yolo-review-meta-label", label));
     item.appendChild(createNode("p", "yolo-review-meta-value", value == null || value === "" ? "-" : String(value)));
     return item;
+  }
+
+  function renderQwenLabelSection(item) {
+    const wrap = createNode("div", "yolo-review-labels");
+    const head = createNode("div", "yolo-review-section-head");
+    head.appendChild(createNode("h3", "", "Qwen 语义筛选"));
+    const status = item.qwen_label_status === "done" ? "已标注" : item.qwen_label_status === "pending" ? "待标注" : "不适用";
+    head.appendChild(createNode("span", `ai-history-chip ${item.qwen_label_status === "done" ? "tone-yes" : "tone-idle"}`, status));
+    wrap.appendChild(head);
+
+    const qwen = item.qwen_label;
+    if (!qwen) {
+      wrap.appendChild(createNode("p", "yolo-review-label-line", item.qwen_label_status === "pending" ? "等待增量标注任务处理。" : "该样本没有 Qwen 自动标注。"));
+      return wrap;
+    }
+
+    const countSummary = qwenCountSummary(item);
+    wrap.appendChild(createNode("p", "yolo-review-label-line", `质量: ${qwenLabelText(`quality:${qwen.quality}`)} · 候选: ${countSummary || "无目标"} · 无框`));
+    if (Array.isArray(qwen.flags) && qwen.flags.length) {
+      wrap.appendChild(createNode("p", "yolo-review-label-line", `flags: ${qwen.flags.map(qwenLabelText).join(" / ")}`));
+    }
+    if (Array.isArray(qwen.tags) && qwen.tags.length) {
+      wrap.appendChild(createNode("p", "yolo-review-label-line", `tags: ${qwen.tags.join(" / ")}`));
+    }
+    if (Array.isArray(qwen.risk) && qwen.risk.length) {
+      wrap.appendChild(createNode("p", "yolo-review-label-line", `risk: ${qwen.risk.join(" / ")}`));
+    }
+    const trace = [
+      qwen.model || "",
+      qwen.duration_ms != null ? `${qwen.duration_ms}ms` : "",
+      qwen.annotated_at ? formatDate(qwen.annotated_at) : "",
+      item.qwen_label_rel_path || ""
+    ].filter(Boolean).join(" · ");
+    if (trace) {
+      wrap.appendChild(createNode("p", "yolo-review-label-line", trace));
+    }
+    return wrap;
   }
 
   function clampPercent(value) {
@@ -547,6 +653,8 @@
     meta.appendChild(metaItem("AI标类别", item.ai_class || item.event_name));
     meta.appendChild(metaItem("AI答案", item.ai_answer));
     meta.appendChild(metaItem("YOLO框数", item.label_count));
+    meta.appendChild(metaItem("Qwen标注", qwenCountSummary(item)));
+    meta.appendChild(metaItem("Qwen质量", item.qwen_quality ? qwenLabelText(`quality:${item.qwen_quality}`) : ""));
     meta.appendChild(metaItem("Split", item.split));
     if (isVehicleCollection) {
       meta.appendChild(metaItem("车辆", item.vehicle_id || item.device_id));
@@ -567,19 +675,25 @@
 
     const labels = createNode("div", "yolo-review-labels");
     const labelTitle = createNode("div", "yolo-review-section-head");
-    labelTitle.appendChild(createNode("h3", "", "YOLO 标签"));
+    labelTitle.appendChild(createNode("h3", "", "YOLO 带框标签"));
     labelTitle.appendChild(createNode("span", "ai-history-chip tone-idle", item.auto_label_status === "pending" ? "待预标注" : dataset.kind === "classify" ? "分类样本" : item.label_rel_path || "无 label"));
     labels.appendChild(labelTitle);
     if (dataset.kind === "classify") {
       labels.appendChild(createNode("p", "yolo-review-label-line", `class: ${item.ai_class || "-"}`));
     } else if (item.labels?.length) {
       item.labels.forEach((label) => {
-        labels.appendChild(createNode("p", "yolo-review-label-line", `${label.class_name} · ${label.raw}`));
+        const confidence = Number(label.confidence);
+        const confidenceText = Number.isFinite(confidence) ? ` · ${(confidence * 100).toFixed(0)}%` : "";
+        const modelText = label.model_task ? ` · ${label.model_task}` : "";
+        labels.appendChild(createNode("p", "yolo-review-label-line", `${label.class_name}${confidenceText}${modelText} · ${label.raw}`));
       });
     } else {
       labels.appendChild(createNode("p", "yolo-review-label-line", "empty label"));
     }
     refs.detail.appendChild(labels);
+    if (isVehicleCollection || item.qwen_label_status) {
+      refs.detail.appendChild(renderQwenLabelSection(item));
+    }
 
     const sourceGrid = createNode("div", "yolo-review-source-grid");
     const roiUrl = item.archive?.task?.roi_url || item.manifest?.tasks?.[0]?.roi_url;
@@ -607,7 +721,9 @@
     refs.split.value = "";
     refs.className.value = "";
     refs.answer.value = "";
+    if (refs.qwenLabel) refs.qwenLabel.value = "";
     updateClassOptions();
+    updateQwenOptions();
     renderSummary(selectedDataset());
     renderFireSmokeCard();
     loadItems({ resetPage: true }).catch(() => {});
@@ -617,8 +733,10 @@
     refs.split.value = "";
     refs.className.value = "";
     refs.answer.value = "";
+    if (refs.qwenLabel) refs.qwenLabel.value = "";
     refreshDatasetOptions();
     updateClassOptions();
+    updateQwenOptions();
     renderSummary(selectedDataset());
     renderFireSmokeCard();
     loadItems({ resetPage: true }).catch(() => {});
@@ -626,6 +744,7 @@
   refs.split?.addEventListener("change", scheduleReload);
   refs.className?.addEventListener("change", scheduleReload);
   refs.answer?.addEventListener("change", scheduleReload);
+  refs.qwenLabel?.addEventListener("change", scheduleReload);
   refs.query?.addEventListener("input", scheduleReload);
   refs.refresh?.addEventListener("click", () => loadDatasets().catch(() => {}));
   refs.fireSmokeOpen?.addEventListener("click", openFireSmokeDataset);

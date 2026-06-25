@@ -206,12 +206,38 @@ def task_predictions(base_url, task, image_b64, timeout):
     }
 
 
+def cache_result_task_ids(payload):
+    if not isinstance(payload, dict):
+        return set()
+    task_ids = set()
+    for result in payload.get("results") or []:
+        task_id = str((result or {}).get("task_id") or "").strip()
+        if task_id:
+            task_ids.add(task_id)
+    for label in payload.get("labels") or []:
+        task_id = str((label or {}).get("model_task") or "").strip()
+        if task_id:
+            task_ids.add(task_id)
+    return task_ids
+
+
+def cache_covers_tasks(path, tasks):
+    payload = load_json(path)
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("schema") and payload.get("schema") != SCHEMA:
+        return False
+    existing = cache_result_task_ids(payload)
+    required = {task["task_id"] for task in tasks}
+    return bool(required) and required.issubset(existing)
+
+
 def annotate_one(row, args, tasks):
     meta = row["meta"]
     out_path = cache_path(args.output_root, meta.get("image_sha256"))
     if out_path is None:
         return "skip:no_sha"
-    if out_path.exists() and not args.refresh:
+    if out_path.exists() and not args.refresh and cache_covers_tasks(out_path, tasks):
         return "skip:cached"
     raw = row["image_path"].read_bytes()
     image_b64 = base64.b64encode(raw).decode("ascii")
@@ -233,7 +259,8 @@ def annotate_one(row, args, tasks):
         "camera_id": meta.get("camera_id"),
         "collected_at": meta.get("collected_at"),
         "annotated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "model_bundle": "person_and_current_yolo_v1",
+        "model_bundle": "current_yolo_multitask_v2",
+        "task_ids": [task["task_id"] for task in tasks],
         "labels": labels,
         "results": sorted(results, key=lambda item: item.get("task_id") or ""),
     }

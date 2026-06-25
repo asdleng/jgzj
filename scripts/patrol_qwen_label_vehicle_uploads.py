@@ -351,13 +351,27 @@ def main():
     parser.add_argument("--jpeg-quality", type=int, default=70)
     parser.add_argument("--max-tokens", type=int, default=192)
     parser.add_argument("--store-raw", action="store_true")
+    parser.add_argument("--only-missing", action="store_true", help="Only submit images without an existing cache file.")
     args = parser.parse_args()
 
     rows = list(iter_rows(args.frames_root, args.source, args.vehicle))
     rows.sort(key=lambda row: str(row["meta"].get("collected_at") or ""), reverse=True)
+    source_rows = len(rows)
+    if args.only_missing and not args.refresh:
+        rows = [
+            row for row in rows
+            if (cache_path(args.output_root, row["meta"].get("image_sha256")) is not None
+                and not cache_path(args.output_root, row["meta"].get("image_sha256")).exists())
+        ]
     if args.limit > 0:
         rows = rows[:args.limit]
-    log(f"rows={len(rows)} source={args.source or 'all'} vehicle={args.vehicle or 'all'} workers={args.workers} output={args.output_root}")
+    log(
+        f"source_rows={source_rows} rows={len(rows)} only_missing={args.only_missing} "
+        f"source={args.source or 'all'} vehicle={args.vehicle or 'all'} "
+        f"workers={args.workers} output={args.output_root}"
+    )
+    if not rows:
+        return
 
     counts = {}
     started = time.time()
