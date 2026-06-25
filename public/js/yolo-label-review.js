@@ -17,6 +17,8 @@
     className: document.getElementById("yolo-review-class"),
     answer: document.getElementById("yolo-review-answer"),
     query: document.getElementById("yolo-review-query"),
+    fireSmokeCard: document.getElementById("yolo-fire-smoke-card"),
+    fireSmokeOpen: document.getElementById("yolo-fire-smoke-open"),
     summary: document.getElementById("yolo-review-summary"),
     list: document.getElementById("yolo-review-list"),
     detail: document.getElementById("yolo-review-detail"),
@@ -95,6 +97,90 @@
     return state.datasets.find((item) => item.id === state.datasetId) || null;
   }
 
+  function isFireSmokeDataset(dataset) {
+    const classes = Array.isArray(dataset?.classes)
+      ? dataset.classes.map((item) => normalizeClassToken(item))
+      : [];
+    const haystack = [
+      dataset?.id,
+      dataset?.name,
+      dataset?.parent_name,
+      dataset?.profile
+    ].join(" ").toLowerCase();
+    return (classes.includes("fire") && classes.includes("smoke")) || /fire[_-\s]?smoke|烟雾|火焰|火源/.test(haystack);
+  }
+
+  function latestFireSmokeDataset() {
+    const candidates = state.allDatasets.filter(isFireSmokeDataset);
+    candidates.sort((left, right) => {
+      const leftTime = Date.parse(left.created_at || "") || 0;
+      const rightTime = Date.parse(right.created_at || "") || 0;
+      if (leftTime !== rightTime) return rightTime - leftTime;
+      return String(right.id || "").localeCompare(String(left.id || ""));
+    });
+    return candidates[0] || null;
+  }
+
+  function sumObjectValues(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
+    return Object.values(value).reduce((total, item) => total + Number(item || 0), 0);
+  }
+
+  function renderFireSmokeCard() {
+    if (!refs.fireSmokeCard) return;
+    const dataset = latestFireSmokeDataset();
+    const metrics = refs.fireSmokeCard.querySelector(".yolo-review-focus-metrics");
+    const desc = refs.fireSmokeCard.querySelector(".yolo-review-focus-desc");
+    const open = refs.fireSmokeOpen;
+    if (!dataset) {
+      refs.fireSmokeCard.dataset.state = "empty";
+      if (desc) desc.textContent = "还没有扫描到 fire/smoke 数据集。";
+      if (metrics) metrics.innerHTML = "";
+      if (open) open.disabled = true;
+      return;
+    }
+
+    refs.fireSmokeCard.dataset.state = state.datasetId === dataset.id ? "active" : "ready";
+    if (desc) {
+      desc.textContent = `${dataset.source_label || "数据集"} · ${dataset.profile || dataset.name || "fire/smoke"} · ${formatDate(dataset.created_at)}`;
+    }
+    if (metrics) {
+      metrics.innerHTML = "";
+      [
+        ["样本", compactNumber(dataset.total_images)],
+        ["框", compactNumber(sumObjectValues(dataset.boxes))],
+        ["YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
+        ["NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"]
+      ].forEach(([label, value]) => {
+        const item = createNode("div", "yolo-review-focus-metric");
+        item.appendChild(createNode("span", "", label));
+        item.appendChild(createNode("strong", "", value));
+        metrics.appendChild(item);
+      });
+    }
+    if (open) {
+      open.disabled = false;
+      open.textContent = state.datasetId === dataset.id ? "正在查看" : "查看";
+    }
+  }
+
+  function openFireSmokeDataset() {
+    const dataset = latestFireSmokeDataset();
+    if (!dataset) return;
+    if (refs.source) refs.source.value = "";
+    refreshDatasetOptions();
+    state.datasetId = dataset.id;
+    if (refs.dataset) refs.dataset.value = dataset.id;
+    state.selectedItemKey = "";
+    if (refs.split) refs.split.value = "";
+    if (refs.className) refs.className.value = "";
+    if (refs.answer) refs.answer.value = "";
+    updateClassOptions();
+    renderSummary(selectedDataset());
+    renderFireSmokeCard();
+    loadItems({ resetPage: true }).catch(() => {});
+  }
+
   function setSelectOptions(select, items, options = {}) {
     if (!select) return;
     const previous = select.value;
@@ -159,6 +245,7 @@
       state.datasetId = state.datasets[0]?.id || "";
     }
     refs.dataset.value = state.datasetId;
+    renderFireSmokeCard();
   }
 
   async function loadDatasets() {
@@ -172,6 +259,7 @@
       }
       refs.dataset.value = state.datasetId;
       updateClassOptions();
+      renderFireSmokeCard();
       renderSummary(selectedDataset());
       await loadItems({ resetPage: true });
       setStatus("已加载", "ok");
@@ -521,6 +609,7 @@
     refs.answer.value = "";
     updateClassOptions();
     renderSummary(selectedDataset());
+    renderFireSmokeCard();
     loadItems({ resetPage: true }).catch(() => {});
   });
   refs.source?.addEventListener("change", () => {
@@ -531,6 +620,7 @@
     refreshDatasetOptions();
     updateClassOptions();
     renderSummary(selectedDataset());
+    renderFireSmokeCard();
     loadItems({ resetPage: true }).catch(() => {});
   });
   refs.split?.addEventListener("change", scheduleReload);
@@ -538,6 +628,7 @@
   refs.answer?.addEventListener("change", scheduleReload);
   refs.query?.addEventListener("input", scheduleReload);
   refs.refresh?.addEventListener("click", () => loadDatasets().catch(() => {}));
+  refs.fireSmokeOpen?.addEventListener("click", openFireSmokeDataset);
   refs.prev?.addEventListener("click", () => {
     if (state.page <= 1) return;
     state.page -= 1;
