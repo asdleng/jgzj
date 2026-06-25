@@ -54,15 +54,21 @@
     </label>
   </div>
 
-  <section id="yolo-fire-smoke-card" class="yolo-review-focus-card" data-state="loading">
-    <div class="yolo-review-focus-main">
-      <p class="yolo-review-focus-kicker">SPECIAL DATASET</p>
-      <h2>烟雾火焰数据集</h2>
-      <p class="yolo-review-focus-desc">正在读取数据集统计。</p>
-    </div>
-    <div class="yolo-review-focus-metrics"></div>
-    <button id="yolo-fire-smoke-open" class="cloud-chat-close" type="button" disabled>查看</button>
-  </section>
+  <div class="yolo-review-focus-slot">
+    <section
+      id="yolo-fire-smoke-card"
+      class="yolo-review-focus-card yolo-review-focus-card--standalone"
+      data-state="loading"
+    >
+      <div class="yolo-review-focus-main">
+        <p class="yolo-review-focus-kicker">SPECIAL DATASET</p>
+        <h2>烟雾火焰数据集</h2>
+        <p class="yolo-review-focus-desc">正在读取数据集统计。</p>
+      </div>
+      <div class="yolo-review-focus-metrics"></div>
+      <button id="yolo-fire-smoke-open" class="cloud-chat-close" type="button" disabled>查看</button>
+    </section>
+  </div>
 
   <div class="yolo-review-summary" id="yolo-review-summary"></div>
 
@@ -84,4 +90,4 @@
   </div>
 </section>
 
-<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260625-3" defer></script>
+<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260625-5" defer></script>

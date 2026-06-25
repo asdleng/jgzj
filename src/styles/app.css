@@ -3524,6 +3524,12 @@
   box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
 }
 
+.yolo-review-focus-slot {
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.35);
+  background: rgba(2, 6, 23, 0.24);
+}
+
 .yolo-review-focus-card {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) auto auto;
@@ -3536,8 +3542,21 @@
     radial-gradient(circle at 12% 50%, rgba(249, 115, 22, 0.18), transparent 28%);
 }
 
+.yolo-review-focus-card--standalone {
+  border: 1px solid rgba(251, 146, 60, 0.36);
+  border-bottom-color: rgba(251, 146, 60, 0.36);
+  border-radius: 8px;
+  box-shadow: 0 16px 44px rgba(2, 6, 23, 0.28);
+}
+
 .yolo-review-focus-card[data-state="active"] {
   box-shadow: inset 4px 0 0 rgba(251, 146, 60, 0.92);
+}
+
+.yolo-review-focus-card--standalone[data-state="active"] {
+  box-shadow:
+    inset 4px 0 0 rgba(251, 146, 60, 0.92),
+    0 16px 44px rgba(2, 6, 23, 0.28);
 }
 
 .yolo-review-focus-main {
