@@ -48,16 +48,18 @@
         </div>
         <p data-park-pcm-heatmap-date-summary>按天查看热力图。</p>
       </div>
-      <input
-        type="range"
-        min="0"
-        max="0"
-        step="1"
-        value="0"
-        aria-label="选择人流热力日期"
-        data-park-pcm-heatmap-date-range
-      />
-      <div class="park-pcm-date-ticks" data-park-pcm-heatmap-date-ticks></div>
+      <div class="park-pcm-date-axis" data-park-pcm-heatmap-date-axis>
+        <input
+          type="range"
+          min="0"
+          max="0"
+          step="1"
+          value="0"
+          aria-label="选择人流热力日期"
+          data-park-pcm-heatmap-date-range
+        />
+        <div class="park-pcm-date-ticks" data-park-pcm-heatmap-date-ticks></div>
+      </div>
     </div>
     <div class="park-pcm-vehicle-detail" data-park-pcm-vehicle-detail>
       <p class="park-pcm-empty">选择车辆后显示人流统计。</p>
@@ -515,10 +517,74 @@
     overflow-wrap: anywhere;
   }
 
+  .park-pcm-date-axis {
+    --park-pcm-date-thumb-size: 18px;
+    --park-pcm-date-tick-width: 56px;
+    --park-pcm-date-axis-offset: calc(var(--park-pcm-date-thumb-size) / 2);
+    position: relative;
+    min-width: 320px;
+    padding-inline: calc(var(--park-pcm-date-tick-width) / 2);
+    display: grid;
+    gap: 8px;
+  }
+
+  .park-pcm-date-axis::before {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    top: calc((var(--park-pcm-date-thumb-size) / 2) - 2px);
+    left: calc((var(--park-pcm-date-tick-width) / 2) + var(--park-pcm-date-axis-offset));
+    right: calc((var(--park-pcm-date-tick-width) / 2) + var(--park-pcm-date-axis-offset));
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.32);
+    pointer-events: none;
+  }
+
   .park-pcm-date-control input[type="range"] {
+    appearance: none;
+    -webkit-appearance: none;
     width: 100%;
-    accent-color: #38bdf8;
+    height: var(--park-pcm-date-thumb-size);
+    margin: 0;
+    position: relative;
+    z-index: 1;
+    background: transparent;
     cursor: pointer;
+  }
+
+  .park-pcm-date-control input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+    background: transparent;
+  }
+
+  .park-pcm-date-control input[type="range"]::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+    width: var(--park-pcm-date-thumb-size);
+    height: var(--park-pcm-date-thumb-size);
+    margin-top: -7px;
+    border: 2px solid rgba(15, 23, 42, 0.96);
+    border-radius: 50%;
+    background: #38bdf8;
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.16);
+  }
+
+  .park-pcm-date-control input[type="range"]::-moz-range-track {
+    height: 4px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+  }
+
+  .park-pcm-date-control input[type="range"]::-moz-range-thumb {
+    width: var(--park-pcm-date-thumb-size);
+    height: var(--park-pcm-date-thumb-size);
+    border: 2px solid rgba(15, 23, 42, 0.96);
+    border-radius: 50%;
+    background: #38bdf8;
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.16);
   }
 
   .park-pcm-date-control input[type="range"]:disabled {
@@ -527,14 +593,20 @@
   }
 
   .park-pcm-date-ticks {
+    position: relative;
     min-width: 0;
-    display: grid;
-    align-items: start;
-    gap: 0;
+    height: 38px;
+    margin-inline: var(--park-pcm-date-axis-offset);
+    overflow: visible;
   }
 
   .park-pcm-date-tick {
+    position: absolute;
+    top: 0;
+    left: var(--tick-left, 0%);
+    width: var(--tick-width, 56px);
     min-width: 0;
+    transform: translateX(-50%);
     display: grid;
     justify-items: center;
     gap: 5px;
@@ -542,6 +614,7 @@
     font-size: 0.72rem;
     line-height: 1.2;
     text-align: center;
+    white-space: nowrap;
   }
 
   .park-pcm-date-tick::before {

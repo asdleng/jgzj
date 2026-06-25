@@ -1103,13 +1103,17 @@
     }
     if (heatmapDateTicksEl) {
       clearElement(heatmapDateTicksEl);
-      heatmapDateTicksEl.style.gridTemplateColumns = `repeat(${days.length}, minmax(0, 1fr))`;
-      heatmapDateTicksEl.style.minWidth = `${Math.max(320, days.length * 58)}px`;
-      days.forEach((day) => {
+      const tickWidth = Math.max(44, Math.min(72, Math.floor(360 / Math.max(1, days.length))));
+      const axisWidth = Math.max(320, (days.length - 1) * 58 + tickWidth);
+      heatmapDateTicksEl.parentElement?.style.setProperty("min-width", `${axisWidth}px`);
+      heatmapDateTicksEl.parentElement?.style.setProperty("--park-pcm-date-tick-width", `${tickWidth}px`);
+      days.forEach((day, index) => {
         const tick = document.createElement("span");
         tick.className = "park-pcm-date-tick";
         tick.dataset.active = day.key === active.key ? "true" : "false";
         tick.dataset.hasData = day.sample_count > 0 ? "true" : "false";
+        tick.style.setProperty("--tick-left", days.length > 1 ? `${(index / (days.length - 1)) * 100}%` : "50%");
+        tick.style.setProperty("--tick-width", `${tickWidth}px`);
         tick.title = `${formatDayLabel(day.key)} · ${day.sample_count} 条`;
         tick.textContent = formatDayShortLabel(day.key);
         heatmapDateTicksEl.appendChild(tick);
