@@ -477,6 +477,33 @@ const yoloDatasetRootSpecs = [
   }
 ];
 const yoloImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp']);
+const yoloReviewPatrolDatasetId = 'patrol:vehicle-self-collected';
+const yoloReviewPatrolDatasetRel = 'vehicle-self-collected';
+const yoloReviewRuntimeRoot = path.resolve(
+  process.env.YOLO_LABEL_REVIEW_RUNTIME_ROOT || path.join(projectRoot, '.runtime/yolo_label_review')
+);
+const parkCrowdRuntimeRoot = path.resolve(
+  process.env.PARK_CROWD_RUNTIME_ROOT || process.env.PARK_PCM_RUNTIME_ROOT || path.join(projectRoot, '.runtime/park-pcm')
+);
+const parkCrowdFramesRoot = path.join(parkCrowdRuntimeRoot, 'crowd-frames');
+const patrolAutoLabelRoot = path.join(yoloReviewRuntimeRoot, 'patrol_auto_labels');
+const patrolAutoLabelSchema = 'jgzj_patrol_yolo_auto_label.v1';
+const yoloPatrolClasses = [
+  'person',
+  'car',
+  'truck',
+  'non_motor_vehicle',
+  'pet',
+  'stall',
+  'bottle',
+  'box',
+  'paper',
+  'bag',
+  'fire',
+  'smoke',
+  'phone',
+  'smoking'
+];
 const authStore = createAuthStore({
   rootDir: projectRoot,
   storePath: process.env.JGZJ_AUTH_STORE_PATH || undefined,
@@ -1163,6 +1190,211 @@ async function readTextFile(filePath, fallback = '') {
   }
 }
 
+function safeSourceLabelForPatrol(source) {
+  const value = String(source || '').trim();
+  if (value === 'auto_ad_patrol_flow_upload') {
+    return '车端落盘上传';
+  }
+  if (value === 'cloud_camera_capture' || !value) {
+    return '云端触发抓拍';
+  }
+  return value;
+}
+
+function yoloReviewSourceLabel(sourceType) {
+  if (sourceType === 'vehicle_collection') {
+    return '车辆自采图片';
+  }
+  if (sourceType === 'checker_archive') {
+    return '车端校核数据';
+  }
+  return 'YOLO数据集';
+}
+
+function patrolAutoLabelCachePathForSha(imageSha256) {
+  const sha = String(imageSha256 || '').trim().toLowerCase().replace(/[^a-f0-9]/g, '');
+  if (!sha) {
+    return null;
+  }
+  return path.join(patrolAutoLabelRoot, sha.slice(0, 2), `${sha}.json`);
+}
+
+async function readPatrolAutoLabelCache(meta) {
+  const cachePath = patrolAutoLabelCachePathForSha(meta?.image_sha256);
+  if (!cachePath) {
+    return null;
+  }
+  const payload = await readJsonFile(cachePath, null);
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (payload.schema && payload.schema !== patrolAutoLabelSchema) {
+    return null;
+  }
+  return payload;
+}
+
+function normalizePatrolLabel(raw, index = 0) {
+  const box = raw?.box || {};
+  const x = Number(raw?.x ?? raw?.x_center ?? box.x_center);
+  const y = Number(raw?.y ?? raw?.y_center ?? box.y_center);
+  const w = Number(raw?.w ?? raw?.width ?? box.width);
+  const h = Number(raw?.h ?? raw?.height ?? box.height);
+  const className = String(raw?.class_name || raw?.label || raw?.name || '').trim();
+  const confidence = Number(raw?.confidence);
+  const modelTask = String(raw?.model_task || raw?.task || raw?.model || '').trim();
+  const labelName = className || (raw?.class_id != null ? raw.class_id : index);
+  const rawLine = `${labelName} ${Number.isFinite(x) ? x.toFixed(6) : ''} ${Number.isFinite(y) ? y.toFixed(6) : ''} ${Number.isFinite(w) ? w.toFixed(6) : ''} ${Number.isFinite(h) ? h.toFixed(6) : ''}`.trim();
+  return {
+    index,
+    raw: raw?.raw || rawLine,
+    class_id: Number.isFinite(Number(raw?.class_id)) ? Number(raw.class_id) : null,
+    class_name: className,
+    confidence: Number.isFinite(confidence) ? confidence : null,
+    model_task: modelTask,
+    x: Number.isFinite(x) ? x : null,
+    y: Number.isFinite(y) ? y : null,
+    w: Number.isFinite(w) ? w : null,
+    h: Number.isFinite(h) ? h : null
+  };
+}
+
+async function collectPatrolMetaFiles(rootDir = parkCrowdFramesRoot, depth = 0) {
+  let entries = [];
+  try {
+    entries = await fs.readdir(rootDir, { withFileTypes: true });
+  } catch (_error) {
+    return [];
+  }
+  const out = [];
+  for (const entry of entries) {
+    const entryPath = path.join(rootDir, entry.name);
+    if (entry.isFile() && entry.name.toLowerCase().endsWith('.json')) {
+      out.push(entryPath);
+      continue;
+    }
+    if (entry.isDirectory() && depth < 4) {
+      out.push(...await collectPatrolMetaFiles(entryPath, depth + 1));
+    }
+  }
+  return out;
+}
+
+function patrolImageRelFromMeta(meta, metaPath) {
+  const rel = normalizeApiRelPath(meta?.image_path || '');
+  if (rel) {
+    return rel;
+  }
+  const parsed = path.parse(metaPath);
+  return normalizeApiRelPath(path.relative(parkCrowdFramesRoot, path.join(parsed.dir, `${parsed.name}.jpg`)));
+}
+
+async function readPatrolMetaRows() {
+  const metaFiles = await collectPatrolMetaFiles();
+  const rows = [];
+  for (const metaPath of metaFiles) {
+    const meta = await readJsonFile(metaPath, null);
+    if (!meta || typeof meta !== 'object') {
+      continue;
+    }
+    const imageRelPath = patrolImageRelFromMeta(meta, metaPath);
+    if (!imageRelPath) {
+      continue;
+    }
+    const imageAbsPath = path.resolve(parkCrowdFramesRoot, imageRelPath);
+    if (!isPathWithinRoot(parkCrowdFramesRoot, imageAbsPath) || !isYoloImagePath(imageAbsPath) || !fsSync.existsSync(imageAbsPath)) {
+      continue;
+    }
+    rows.push({
+      meta,
+      meta_path: metaPath,
+      image_rel_path: imageRelPath,
+      image_abs_path: imageAbsPath
+    });
+  }
+  rows.sort((left, right) => {
+    const lt = Date.parse(left.meta.collected_at || '') || 0;
+    const rt = Date.parse(right.meta.collected_at || '') || 0;
+    if (lt !== rt) return rt - lt;
+    return right.image_rel_path.localeCompare(left.image_rel_path);
+  });
+  return rows;
+}
+
+function splitFromPatrolRelPath(rel) {
+  const first = normalizeApiRelPath(rel).split('/')[0] || '';
+  return first.match(/^\d{8}$/) ? first : 'patrol';
+}
+
+function buildPatrolBaseItem(dataset, row) {
+  const meta = row.meta || {};
+  const source = String(meta.source || 'cloud_camera_capture');
+  return {
+    item_key: row.image_rel_path,
+    image_rel_path: row.image_rel_path,
+    split: splitFromPatrolRelPath(row.image_rel_path),
+    ai_class: '',
+    event_name: '车辆自采图片',
+    day: splitFromPatrolRelPath(row.image_rel_path),
+    request_id: meta.sample_id || meta.capture_id || '',
+    task_id: '',
+    task_row_id: null,
+    device_id: meta.vehicle_id || '',
+    vehicle_id: meta.vehicle_id || '',
+    camera_id: meta.camera_id || '',
+    collected_at: meta.collected_at || null,
+    position: meta.position || null,
+    source_type: dataset.source_type,
+    source_label: dataset.source_label,
+    capture_source: source,
+    collection_mode_label: safeSourceLabelForPatrol(source),
+    patrol_meta: meta
+  };
+}
+
+async function resolveYoloPatrolDataset() {
+  const rows = await readPatrolMetaRows();
+  let cached = 0;
+  let yes = 0;
+  let boxes = 0;
+  for (const row of rows) {
+    const cache = await readPatrolAutoLabelCache(row.meta);
+    const labels = Array.isArray(cache?.labels) ? cache.labels : [];
+    if (cache) cached += 1;
+    if (labels.length) {
+      yes += 1;
+      boxes += labels.length;
+    }
+  }
+  return {
+    id: yoloReviewPatrolDatasetId,
+    source: 'patrol',
+    source_type: 'vehicle_collection',
+    source_label: yoloReviewSourceLabel('vehicle_collection'),
+    root: parkCrowdFramesRoot,
+    dir: parkCrowdFramesRoot,
+    name: yoloReviewPatrolDatasetRel,
+    profile: '车辆自采巡逻图预标注',
+    kind: 'detect',
+    classes: yoloPatrolClasses,
+    summary: {
+      profile: '车辆自采巡逻图预标注',
+      kind: 'detect',
+      source_type: 'vehicle_collection',
+      source_label: yoloReviewSourceLabel('vehicle_collection'),
+      images: { patrol: rows.length },
+      boxes: { auto_label: boxes },
+      answers: { YES: yes, NO: Math.max(0, cached - yes), NULL: Math.max(0, rows.length - cached) },
+      auto_label: {
+        schema: patrolAutoLabelSchema,
+        cached_images: cached,
+        pending_images: Math.max(0, rows.length - cached)
+      }
+    },
+    rows
+  };
+}
+
 async function findFilesNamed(root, fileName, maxDepth = 4, depth = 0) {
   let entries = [];
   try {
@@ -1236,6 +1468,8 @@ async function listYoloDatasets() {
       datasets.push({
         id,
         source: spec.alias,
+        source_type: 'checker_archive',
+        source_label: yoloReviewSourceLabel('checker_archive'),
         name: path.basename(datasetDir),
         parent_name: path.basename(path.dirname(datasetDir)),
         profile: summary.profile || path.basename(datasetDir),
@@ -1253,7 +1487,36 @@ async function listYoloDatasets() {
     }
   }
 
+  try {
+    const patrolDataset = await resolveYoloPatrolDataset();
+    datasets.push({
+      id: patrolDataset.id,
+      source: patrolDataset.source,
+      source_type: patrolDataset.source_type,
+      source_label: patrolDataset.source_label,
+      name: patrolDataset.name,
+      parent_name: 'park-pcm',
+      profile: patrolDataset.profile,
+      kind: patrolDataset.kind,
+      created_at: null,
+      classes: patrolDataset.classes,
+      images: patrolDataset.summary.images,
+      positive_images: null,
+      boxes: patrolDataset.summary.boxes,
+      answers: patrolDataset.summary.answers,
+      by_class_yes: null,
+      max_task_id: null,
+      total_images: patrolDataset.rows.length,
+      auto_label: patrolDataset.summary.auto_label
+    });
+  } catch (error) {
+    console.warn('yolo_patrol_dataset_unavailable', error.message || error);
+  }
+
   datasets.sort((left, right) => {
+    if (left.source_type !== right.source_type) {
+      return left.source_type === 'vehicle_collection' ? -1 : 1;
+    }
     const leftTime = Date.parse(left.created_at || '') || 0;
     const rightTime = Date.parse(right.created_at || '') || 0;
     if (leftTime !== rightTime) {
@@ -1265,6 +1528,9 @@ async function listYoloDatasets() {
 }
 
 async function resolveYoloDataset(datasetId) {
+  if (String(datasetId || '').trim() === yoloReviewPatrolDatasetId) {
+    return resolveYoloPatrolDataset();
+  }
   const parsed = splitDatasetId(datasetId);
   if (!parsed) {
     throw Object.assign(new Error('invalid_dataset_id'), { status: 400 });
@@ -1286,6 +1552,8 @@ async function resolveYoloDataset(datasetId) {
   return {
     id: `${spec.alias}:${toForwardSlashPath(path.relative(spec.root, datasetDir))}`,
     source: spec.alias,
+    source_type: 'checker_archive',
+    source_label: yoloReviewSourceLabel('checker_archive'),
     root: spec.root,
     dir: datasetDir,
     name: path.basename(datasetDir),
@@ -1301,8 +1569,9 @@ function resolveYoloDatasetRelPath(dataset, relativePath) {
   if (!rel || rel.split('/').includes('..')) {
     throw Object.assign(new Error('invalid_dataset_path'), { status: 400 });
   }
-  const absolutePath = path.resolve(dataset.dir, rel);
-  if (!isPathWithinRoot(dataset.dir, absolutePath)) {
+  const root = dataset.source === 'patrol' ? parkCrowdFramesRoot : dataset.dir;
+  const absolutePath = path.resolve(root, rel);
+  if (!isPathWithinRoot(root, absolutePath)) {
     throw Object.assign(new Error('dataset_path_out_of_range'), { status: 400 });
   }
   return { rel, absolutePath };
@@ -1434,6 +1703,22 @@ function parseYoloLabelText(labelText, classes = []) {
 }
 
 async function readYoloLabelsForItem(dataset, imageRelPath) {
+  if (dataset.source === 'patrol') {
+    const { absolutePath } = resolveYoloDatasetRelPath(dataset, imageRelPath);
+    const metaPath = path.join(path.dirname(absolutePath), `${path.parse(absolutePath).name}.json`);
+    const meta = await readJsonFile(metaPath, null);
+    const cache = await readPatrolAutoLabelCache(meta);
+    const labels = Array.isArray(cache?.labels)
+      ? cache.labels.map((label, index) => normalizePatrolLabel(label, index))
+      : [];
+    return {
+      label_rel_path: cache ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, patrolAutoLabelCachePathForSha(meta?.image_sha256) || yoloReviewRuntimeRoot)) : null,
+      label_text: labels.map((label) => label.raw).join('\n'),
+      labels,
+      auto_label_status: cache ? 'done' : 'pending',
+      auto_label: cache || null
+    };
+  }
   const labelRelPath = yoloLabelRelPathForImage(dataset, imageRelPath);
   if (!labelRelPath) {
     return { label_rel_path: null, label_text: '', labels: [] };
@@ -1521,6 +1806,10 @@ function buildYoloBaseItem(dataset, rel, manifestItem = null) {
 }
 
 async function yoloBaseItems(dataset) {
+  if (dataset.source === 'patrol') {
+    const rows = Array.isArray(dataset.rows) ? dataset.rows : await readPatrolMetaRows();
+    return rows.map((row) => buildPatrolBaseItem(dataset, row));
+  }
   const manifestItems = await readYoloManifestItems(dataset);
   const rows = manifestItems.length
     ? manifestItems
@@ -1542,7 +1831,12 @@ function yoloItemMatchesQuery(item, q) {
     item.ai_class,
     item.event_name,
     item.device_id,
-    item.camera_id
+    item.vehicle_id,
+    item.camera_id,
+    item.collected_at,
+    item.capture_source,
+    item.collection_mode_label,
+    item.source_label
   ]
     .map((value) => String(value || '').toLowerCase())
     .some((value) => value.includes(needle));
@@ -1551,6 +1845,7 @@ function yoloItemMatchesQuery(item, q) {
 async function enrichYoloItem(dataset, item, options = {}) {
   const labelsPayload = options.includeLabels ? await readYoloLabelsForItem(dataset, item.image_rel_path) : null;
   const labels = labelsPayload?.labels || [];
+  const labelClasses = [...new Set(labels.map((label) => label.class_name).filter(Boolean))];
   const aiAnswer =
     item.manifest?.tasks?.[0]?.answer ||
     answerFromYoloItem(dataset.kind, item.ai_class, labels);
@@ -1560,6 +1855,11 @@ async function enrichYoloItem(dataset, item, options = {}) {
     label_rel_path: labelsPayload?.label_rel_path || yoloLabelRelPathForImage(dataset, item.image_rel_path),
     label_count: labels.length,
     labels: options.includeLabels ? labels : undefined,
+    ai_class: item.ai_class || labelClasses.join(', '),
+    auto_label_status: labelsPayload?.auto_label_status || undefined,
+    auto_label: labelsPayload?.auto_label || undefined,
+    source_type: item.source_type || dataset.source_type,
+    source_label: item.source_label || dataset.source_label,
     ai_answer: aiAnswer,
     is_positive: aiAnswer === 'YES'
   };
@@ -1573,7 +1873,7 @@ async function listYoloReviewItems(datasetId, query = {}) {
   const className = normalizeClassToken(query.class_name || '');
   const aiAnswer = String(query.ai_answer || '').trim().toUpperCase();
   const q = String(query.q || '').trim();
-  const needsLabelBeforePagination = ['YES', 'NO'].includes(aiAnswer);
+  const needsLabelBeforePagination = ['YES', 'NO'].includes(aiAnswer) || (dataset.source === 'patrol' && Boolean(className));
 
   const allItems = await yoloBaseItems(dataset);
   let items = allItems;
@@ -1581,7 +1881,7 @@ async function listYoloReviewItems(datasetId, query = {}) {
     if (split && item.split !== split) {
       return false;
     }
-    if (className && normalizeClassToken(item.ai_class) !== className) {
+    if (className && dataset.source !== 'patrol' && normalizeClassToken(item.ai_class) !== className) {
       return false;
     }
     return yoloItemMatchesQuery(item, q);
@@ -1591,7 +1891,9 @@ async function listYoloReviewItems(datasetId, query = {}) {
     const enrichedForAnswer = [];
     for (const item of items) {
       const enriched = await enrichYoloItem(dataset, item, { includeLabels: true });
-      if (enriched.ai_answer === aiAnswer) {
+      const classMatched = !className || (enriched.labels || []).some((label) => normalizeClassToken(label.class_name) === className);
+      const answerMatched = !['YES', 'NO'].includes(aiAnswer) || enriched.ai_answer === aiAnswer;
+      if (classMatched && answerMatched) {
         enrichedForAnswer.push(enriched);
       }
     }
@@ -1615,6 +1917,8 @@ async function listYoloReviewItems(datasetId, query = {}) {
       profile: dataset.profile,
       kind: dataset.kind,
       classes: dataset.classes,
+      source_type: dataset.source_type,
+      source_label: dataset.source_label,
       summary: dataset.summary
     },
     page: safePage,
@@ -1744,6 +2048,34 @@ async function getYoloReviewItemDetail(datasetId, itemKey) {
     throw Object.assign(new Error('item_not_found'), { status: 404 });
   }
 
+  if (dataset.source === 'patrol') {
+    const metaPath = path.join(path.dirname(absolutePath), `${path.parse(absolutePath).name}.json`);
+    const meta = await readJsonFile(metaPath, null);
+    const base = buildPatrolBaseItem(dataset, {
+      meta: meta || {},
+      meta_path: metaPath,
+      image_rel_path: rel,
+      image_abs_path: absolutePath
+    });
+    const enriched = await enrichYoloItem(dataset, base, { includeLabels: true });
+    return {
+      dataset: {
+        id: dataset.id,
+        profile: dataset.profile,
+        kind: dataset.kind,
+        classes: dataset.classes,
+        source_type: dataset.source_type,
+        source_label: dataset.source_label,
+        summary: dataset.summary
+      },
+      item: {
+        ...enriched,
+        patrol_meta: meta || null,
+        archive: null
+      }
+    };
+  }
+
   const manifestItems = await readYoloManifestItems(dataset);
   const manifest = manifestItems.find((item) => item.rel === rel)?.item || null;
   const base = buildYoloBaseItem(dataset, rel, manifest);
@@ -1757,6 +2089,8 @@ async function getYoloReviewItemDetail(datasetId, itemKey) {
       profile: dataset.profile,
       kind: dataset.kind,
       classes: dataset.classes,
+      source_type: dataset.source_type,
+      source_label: dataset.source_label,
       summary: dataset.summary
     },
     item: {

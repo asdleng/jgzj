@@ -16,6 +16,14 @@
   </header>
 
   <div class="yolo-review-toolbar">
+    <label class="yolo-review-field" for="yolo-review-source">
+      <span>来源</span>
+      <select id="yolo-review-source">
+        <option value="">全部</option>
+        <option value="checker_archive">车端校核数据</option>
+        <option value="vehicle_collection">车辆自采图片</option>
+      </select>
+    </label>
     <label class="yolo-review-field" for="yolo-review-dataset">
       <span>数据集</span>
       <select id="yolo-review-dataset"></select>
@@ -66,4 +74,4 @@
   </div>
 </section>
 
-<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260621-2" defer></script>
+<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260625-1" defer></script>
