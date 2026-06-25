@@ -7,6 +7,12 @@ const { pathToFileURL } = require('url');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const express = require('express');
+let sharp = null;
+try {
+  sharp = require('sharp');
+} catch (_error) {
+  sharp = null;
+}
 const { createAuthStore } = require('./auth-store');
 const { createMailer } = require('./mailer');
 const { createOperationAuditStore, normalizeRecord } = require('./operation-audit-store');
@@ -487,7 +493,14 @@ const parkCrowdRuntimeRoot = path.resolve(
 );
 const parkCrowdFramesRoot = path.join(parkCrowdRuntimeRoot, 'crowd-frames');
 const patrolAutoLabelRoot = path.join(yoloReviewRuntimeRoot, 'patrol_auto_labels');
+const yoloReviewThumbRoot = path.join(yoloReviewRuntimeRoot, 'thumbs');
 const patrolAutoLabelSchema = 'jgzj_patrol_yolo_auto_label.v1';
+const yoloReviewPatrolCacheTtlMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_CACHE_TTL_MS || 60000);
+let yoloReviewPatrolCache = {
+  loaded_at_ms: 0,
+  dataset: null,
+  promise: null
+};
 const yoloPatrolClasses = [
   'person',
   'car',
@@ -1166,12 +1179,85 @@ function splitDatasetId(datasetId) {
   return { alias, rel };
 }
 
-function toYoloDatasetFileUrl(datasetId, relativePath) {
+function toYoloDatasetFileUrl(datasetId, relativePath, options = {}) {
   const rel = normalizeApiRelPath(relativePath);
   if (!datasetId || !rel) {
     return null;
   }
-  return `/api/yolo-label-review/file?dataset_id=${encodeURIComponent(datasetId)}&path=${encodeURIComponent(rel)}`;
+  const params = new URLSearchParams({
+    dataset_id: String(datasetId),
+    path: rel
+  });
+  if (options.thumb) {
+    params.set('thumb', '1');
+  }
+  if (options.width) {
+    params.set('w', String(options.width));
+  }
+  return `/api/yolo-label-review/file?${params.toString()}`;
+}
+
+function isYoloReviewPatrolDatasetId(datasetId) {
+  return String(datasetId || '').trim() === yoloReviewPatrolDatasetId;
+}
+
+function resolveYoloPatrolFilePath(relativePath) {
+  const rel = normalizeApiRelPath(relativePath);
+  if (!rel || rel.split('/').includes('..')) {
+    throw Object.assign(new Error('invalid_dataset_path'), { status: 400 });
+  }
+  const absolutePath = path.resolve(parkCrowdFramesRoot, rel);
+  if (!isPathWithinRoot(parkCrowdFramesRoot, absolutePath)) {
+    throw Object.assign(new Error('dataset_path_out_of_range'), { status: 400 });
+  }
+  return { rel, absolutePath };
+}
+
+function yoloThumbWidth(value) {
+  const width = Number.parseInt(String(value || ''), 10);
+  if (!Number.isFinite(width)) {
+    return 360;
+  }
+  return Math.max(120, Math.min(960, width));
+}
+
+function wantsYoloThumb(req) {
+  const value = String(req?.query?.thumb || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes';
+}
+
+async function sendYoloImageFile(req, res, absolutePath) {
+  if (!wantsYoloThumb(req) || !sharp) {
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.sendFile(absolutePath);
+  }
+
+  const width = yoloThumbWidth(req.query.w);
+  const stat = await fs.stat(absolutePath);
+  const cacheKey = crypto
+    .createHash('sha1')
+    .update(`${absolutePath}|${stat.size}|${Number(stat.mtimeMs).toFixed(0)}|${width}`)
+    .digest('hex');
+  const thumbPath = path.join(yoloReviewThumbRoot, cacheKey.slice(0, 2), `${cacheKey}.jpg`);
+  try {
+    await fs.access(thumbPath);
+  } catch (_error) {
+    await fs.mkdir(path.dirname(thumbPath), { recursive: true });
+    const tmpPath = `${thumbPath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      await sharp(absolutePath)
+        .rotate()
+        .resize({ width, height: width, fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 72, mozjpeg: true })
+        .toFile(tmpPath);
+      await fs.rename(tmpPath, thumbPath);
+    } catch (error) {
+      await fs.rm(tmpPath, { force: true }).catch(() => {});
+      throw error;
+    }
+  }
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  return res.sendFile(thumbPath);
 }
 
 async function readJsonFile(filePath, fallback = null) {
@@ -1329,11 +1415,17 @@ function splitFromPatrolRelPath(rel) {
 function buildPatrolBaseItem(dataset, row) {
   const meta = row.meta || {};
   const source = String(meta.source || 'cloud_camera_capture');
+  const labels = Array.isArray(row.auto_labels) ? row.auto_labels : [];
+  const labelClasses = Array.isArray(row.auto_label_classes) ? row.auto_label_classes : [];
   return {
     item_key: row.image_rel_path,
     image_rel_path: row.image_rel_path,
     split: splitFromPatrolRelPath(row.image_rel_path),
-    ai_class: '',
+    ai_class: labelClasses.join(', '),
+    label_classes: labelClasses,
+    label_count: labels.length,
+    auto_label_status: row.auto_label_status || 'pending',
+    ai_answer: row.ai_answer && row.ai_answer !== 'NULL' ? row.ai_answer : '',
     event_name: '车辆自采图片',
     day: splitFromPatrolRelPath(row.image_rel_path),
     request_id: meta.sample_id || meta.capture_id || '',
@@ -1352,20 +1444,41 @@ function buildPatrolBaseItem(dataset, row) {
   };
 }
 
-async function resolveYoloPatrolDataset() {
+async function buildYoloPatrolDataset() {
   const rows = await readPatrolMetaRows();
+  const rowByKey = new Map();
   let cached = 0;
   let yes = 0;
   let boxes = 0;
+  const boxesByClass = {};
+
   for (const row of rows) {
     const cache = await readPatrolAutoLabelCache(row.meta);
-    const labels = Array.isArray(cache?.labels) ? cache.labels : [];
+    const labels = Array.isArray(cache?.labels)
+      ? cache.labels.map((label, index) => normalizePatrolLabel(label, index))
+      : [];
+    const cachePath = cache ? patrolAutoLabelCachePathForSha(row.meta?.image_sha256) : null;
+    const labelClasses = [...new Set(labels.map((label) => label.class_name).filter(Boolean))];
+    row.auto_label_cache = cache || null;
+    row.auto_labels = labels;
+    row.auto_label_status = cache ? 'done' : 'pending';
+    row.auto_label_rel_path = cachePath
+      ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, cachePath))
+      : null;
+    row.auto_label_classes = labelClasses;
+    row.ai_answer = labels.length ? 'YES' : cache ? 'NO' : 'NULL';
     if (cache) cached += 1;
     if (labels.length) {
       yes += 1;
       boxes += labels.length;
     }
+    for (const label of labels) {
+      const name = label.class_name || String(label.class_id ?? 'unknown');
+      boxesByClass[name] = (boxesByClass[name] || 0) + 1;
+    }
+    rowByKey.set(row.image_rel_path, row);
   }
+
   return {
     id: yoloReviewPatrolDatasetId,
     source: 'patrol',
@@ -1383,7 +1496,7 @@ async function resolveYoloPatrolDataset() {
       source_type: 'vehicle_collection',
       source_label: yoloReviewSourceLabel('vehicle_collection'),
       images: { patrol: rows.length },
-      boxes: { auto_label: boxes },
+      boxes: Object.keys(boxesByClass).length ? boxesByClass : { auto_label: boxes },
       answers: { YES: yes, NO: Math.max(0, cached - yes), NULL: Math.max(0, rows.length - cached) },
       auto_label: {
         schema: patrolAutoLabelSchema,
@@ -1391,8 +1504,34 @@ async function resolveYoloPatrolDataset() {
         pending_images: Math.max(0, rows.length - cached)
       }
     },
-    rows
+    rows,
+    row_by_key: rowByKey,
+    loaded_at_ms: Date.now()
   };
+}
+
+async function resolveYoloPatrolDataset(options = {}) {
+  const now = Date.now();
+  const force = Boolean(options.force);
+  if (!force && yoloReviewPatrolCache.dataset && now - yoloReviewPatrolCache.loaded_at_ms < yoloReviewPatrolCacheTtlMs) {
+    return yoloReviewPatrolCache.dataset;
+  }
+  if (!force && yoloReviewPatrolCache.promise) {
+    return yoloReviewPatrolCache.promise;
+  }
+  const promise = buildYoloPatrolDataset()
+    .then((dataset) => {
+      yoloReviewPatrolCache.dataset = dataset;
+      yoloReviewPatrolCache.loaded_at_ms = Date.now();
+      return dataset;
+    })
+    .finally(() => {
+      if (yoloReviewPatrolCache.promise === promise) {
+        yoloReviewPatrolCache.promise = null;
+      }
+    });
+  yoloReviewPatrolCache.promise = promise;
+  return promise;
 }
 
 async function findFilesNamed(root, fileName, maxDepth = 4, depth = 0) {
@@ -1704,6 +1843,18 @@ function parseYoloLabelText(labelText, classes = []) {
 
 async function readYoloLabelsForItem(dataset, imageRelPath) {
   if (dataset.source === 'patrol') {
+    const rel = normalizeApiRelPath(imageRelPath);
+    const indexed = dataset.row_by_key?.get(rel);
+    if (indexed) {
+      const labels = Array.isArray(indexed.auto_labels) ? indexed.auto_labels : [];
+      return {
+        label_rel_path: indexed.auto_label_rel_path || null,
+        label_text: labels.map((label) => label.raw).join('\n'),
+        labels,
+        auto_label_status: indexed.auto_label_status || 'pending',
+        auto_label: indexed.auto_label_cache || null
+      };
+    }
     const { absolutePath } = resolveYoloDatasetRelPath(dataset, imageRelPath);
     const metaPath = path.join(path.dirname(absolutePath), `${path.parse(absolutePath).name}.json`);
     const meta = await readJsonFile(metaPath, null);
@@ -1845,18 +1996,26 @@ function yoloItemMatchesQuery(item, q) {
 async function enrichYoloItem(dataset, item, options = {}) {
   const labelsPayload = options.includeLabels ? await readYoloLabelsForItem(dataset, item.image_rel_path) : null;
   const labels = labelsPayload?.labels || [];
-  const labelClasses = [...new Set(labels.map((label) => label.class_name).filter(Boolean))];
+  const labelClasses = labelsPayload
+    ? [...new Set(labels.map((label) => label.class_name).filter(Boolean))]
+    : Array.isArray(item.label_classes) ? item.label_classes : [];
+  const labelCount = labelsPayload
+    ? labels.length
+    : Number.isFinite(Number(item.label_count)) ? Number(item.label_count) : labels.length;
   const aiAnswer =
+    item.ai_answer ||
     item.manifest?.tasks?.[0]?.answer ||
     answerFromYoloItem(dataset.kind, item.ai_class, labels);
+  const imageUrl = toYoloDatasetFileUrl(dataset.id, item.image_rel_path);
   return {
     ...item,
-    image_url: toYoloDatasetFileUrl(dataset.id, item.image_rel_path),
-    label_rel_path: labelsPayload?.label_rel_path || yoloLabelRelPathForImage(dataset, item.image_rel_path),
-    label_count: labels.length,
+    image_url: imageUrl,
+    thumb_url: toYoloDatasetFileUrl(dataset.id, item.image_rel_path, { thumb: true, width: 360 }) || imageUrl,
+    label_rel_path: labelsPayload?.label_rel_path || item.label_rel_path || yoloLabelRelPathForImage(dataset, item.image_rel_path),
+    label_count: labelCount,
     labels: options.includeLabels ? labels : undefined,
     ai_class: item.ai_class || labelClasses.join(', '),
-    auto_label_status: labelsPayload?.auto_label_status || undefined,
+    auto_label_status: labelsPayload?.auto_label_status || item.auto_label_status || undefined,
     auto_label: labelsPayload?.auto_label || undefined,
     source_type: item.source_type || dataset.source_type,
     source_label: item.source_label || dataset.source_label,
@@ -1873,7 +2032,7 @@ async function listYoloReviewItems(datasetId, query = {}) {
   const className = normalizeClassToken(query.class_name || '');
   const aiAnswer = String(query.ai_answer || '').trim().toUpperCase();
   const q = String(query.q || '').trim();
-  const needsLabelBeforePagination = ['YES', 'NO'].includes(aiAnswer) || (dataset.source === 'patrol' && Boolean(className));
+  const needsLabelBeforePagination = dataset.source !== 'patrol' && (['YES', 'NO'].includes(aiAnswer) || Boolean(className));
 
   const allItems = await yoloBaseItems(dataset);
   let items = allItems;
@@ -1881,7 +2040,17 @@ async function listYoloReviewItems(datasetId, query = {}) {
     if (split && item.split !== split) {
       return false;
     }
-    if (className && dataset.source !== 'patrol' && normalizeClassToken(item.ai_class) !== className) {
+    if (className) {
+      if (dataset.source === 'patrol') {
+        const classes = Array.isArray(item.label_classes) ? item.label_classes : [];
+        if (!classes.some((value) => normalizeClassToken(value) === className)) {
+          return false;
+        }
+      } else if (normalizeClassToken(item.ai_class) !== className) {
+        return false;
+      }
+    }
+    if (['YES', 'NO'].includes(aiAnswer) && dataset.source === 'patrol' && item.ai_answer !== aiAnswer) {
       return false;
     }
     return yoloItemMatchesQuery(item, q);
@@ -7434,16 +7603,20 @@ app.get('/api/yolo-label-review/item', async (req, res) => {
 
 app.get('/api/yolo-label-review/file', async (req, res) => {
   try {
-    const dataset = await resolveYoloDataset(req.query.dataset_id);
-    const { absolutePath } = resolveYoloDatasetRelPath(dataset, req.query.path);
+    let absolutePath = '';
+    if (isYoloReviewPatrolDatasetId(req.query.dataset_id)) {
+      absolutePath = resolveYoloPatrolFilePath(req.query.path).absolutePath;
+    } else {
+      const dataset = await resolveYoloDataset(req.query.dataset_id);
+      absolutePath = resolveYoloDatasetRelPath(dataset, req.query.path).absolutePath;
+    }
     if (!isYoloImagePath(absolutePath)) {
       return res.status(400).json({
         ok: false,
         error: 'not_an_image_file'
       });
     }
-    res.setHeader('Cache-Control', 'private, max-age=300');
-    return res.sendFile(absolutePath);
+    return sendYoloImageFile(req, res, absolutePath);
   } catch (error) {
     return res.status(error.status || 404).json({
       ok: false,

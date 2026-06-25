@@ -260,9 +260,10 @@
 
       const thumb = createNode("div", "yolo-review-thumb");
       const img = document.createElement("img");
-      img.src = item.image_url;
+      img.src = item.thumb_url || item.image_url;
       img.alt = item.item_key;
       img.loading = "lazy";
+      img.decoding = "async";
       thumb.appendChild(img);
 
       const body = createNode("div", "yolo-review-item-body");
