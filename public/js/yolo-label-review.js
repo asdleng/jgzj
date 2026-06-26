@@ -17,6 +17,7 @@
     className: document.getElementById("yolo-review-class"),
     answer: document.getElementById("yolo-review-answer"),
     qwenLabel: document.getElementById("yolo-review-qwen-label"),
+    hasBox: document.getElementById("yolo-review-has-box"),
     query: document.getElementById("yolo-review-query"),
     fireSmokeCard: document.getElementById("yolo-fire-smoke-card"),
     fireSmokeOpen: document.getElementById("yolo-fire-smoke-open"),
@@ -364,6 +365,7 @@
     if (refs.className.value) params.set("class_name", refs.className.value);
     if (refs.answer.value) params.set("ai_answer", refs.answer.value);
     if (refs.qwenLabel?.value) params.set("qwen_label", refs.qwenLabel.value);
+    if (refs.hasBox?.checked) params.set("has_box", "1");
     if (refs.query.value.trim()) params.set("q", refs.query.value.trim());
     return `${endpoints.items}?${params.toString()}`;
   }
@@ -389,8 +391,9 @@
       refs.prev.disabled = state.page <= 1;
       refs.next.disabled = state.page >= state.totalPages;
       setStatus("样本就绪", "ok");
-      if (!state.selectedItemKey && data.items?.[0]?.item_key) {
-        loadDetail(data.items[0].item_key).catch(() => {});
+      if (!state.selectedItemKey) {
+        refs.detail.innerHTML = "";
+        refs.detail.appendChild(createNode("p", "yolo-review-empty", "点击左侧样本后加载原图和标注框。"));
       }
     } catch (error) {
       setStatus(`样本加载失败：${error?.message || "未知错误"}`, "error");
@@ -531,7 +534,12 @@
 
   function enableDragView(stage, content) {
     if (!stage || !content) return;
+    const img = content.querySelector("img");
+    const maxScale = 8;
+    const baseScale = 1;
+    const panSlackAtFit = 180;
     let dragging = false;
+    let pointerId = null;
     let startX = 0;
     let startY = 0;
     let offsetX = 0;
@@ -540,51 +548,102 @@
     let baseY = 0;
     let scale = 1;
 
+    function preventNativeDrag(event) {
+      event.preventDefault();
+    }
+
+    if (img) {
+      img.draggable = false;
+      img.addEventListener("dragstart", preventNativeDrag);
+    }
+    content.addEventListener("dragstart", preventNativeDrag);
+
+    function clampOffsets() {
+      const stageRect = stage.getBoundingClientRect();
+      const contentWidth = content.offsetWidth || stageRect.width || 1;
+      const contentHeight = content.offsetHeight || stageRect.height || 1;
+      const fitSlack = scale <= baseScale + 0.01 ? panSlackAtFit : 0;
+      const maxX = Math.max(fitSlack, (contentWidth * scale - stageRect.width) / 2);
+      const maxY = Math.max(fitSlack, (contentHeight * scale - stageRect.height) / 2);
+      offsetX = Math.max(-maxX, Math.min(maxX, offsetX));
+      offsetY = Math.max(-maxY, Math.min(maxY, offsetY));
+    }
+
     function apply() {
-      content.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+      clampOffsets();
+      content.style.transform = `translate3d(${offsetX}px, ${offsetY}px, 0) scale(${scale})`;
+      stage.dataset.zoom = scale.toFixed(2);
+    }
+
+    function zoomAt(clientX, clientY, nextScale) {
+      const previousScale = scale;
+      const clampedScale = Math.max(baseScale, Math.min(maxScale, nextScale));
+      if (Math.abs(clampedScale - previousScale) < 0.001) return;
+      const rect = stage.getBoundingClientRect();
+      const cursorX = clientX - rect.left - rect.width / 2;
+      const cursorY = clientY - rect.top - rect.height / 2;
+      scale = clampedScale;
+      if (scale <= baseScale + 0.001) {
+        scale = baseScale;
+        offsetX = 0;
+        offsetY = 0;
+      } else {
+        const ratio = scale / previousScale;
+        offsetX = cursorX + (offsetX - cursorX) * ratio;
+        offsetY = cursorY + (offsetY - cursorY) * ratio;
+      }
+      apply();
     }
 
     stage.addEventListener("pointerdown", (event) => {
+      if (event.button != null && event.button !== 0) return;
+      event.preventDefault();
       dragging = true;
+      pointerId = event.pointerId;
       startX = event.clientX;
       startY = event.clientY;
       baseX = offsetX;
       baseY = offsetY;
       stage.classList.add("is-dragging");
-      stage.setPointerCapture?.(event.pointerId);
+      document.body?.classList.add("yolo-review-is-panning");
+      stage.setPointerCapture?.(pointerId);
     });
 
     stage.addEventListener("pointermove", (event) => {
-      if (!dragging) return;
+      if (!dragging || event.pointerId !== pointerId) return;
+      event.preventDefault();
       offsetX = baseX + event.clientX - startX;
       offsetY = baseY + event.clientY - startY;
       apply();
     });
 
     function stopDrag(event) {
+      if (!dragging || (event?.pointerId != null && pointerId != null && event.pointerId !== pointerId)) return;
       dragging = false;
       stage.classList.remove("is-dragging");
-      if (event?.pointerId != null) stage.releasePointerCapture?.(event.pointerId);
+      document.body?.classList.remove("yolo-review-is-panning");
+      const capturedPointerId = pointerId;
+      pointerId = null;
+      if (event?.type !== "lostpointercapture" && capturedPointerId != null && stage.hasPointerCapture?.(capturedPointerId)) {
+        stage.releasePointerCapture?.(capturedPointerId);
+      }
     }
 
     stage.addEventListener("pointerup", stopDrag);
     stage.addEventListener("pointercancel", stopDrag);
+    stage.addEventListener("lostpointercapture", stopDrag);
     stage.addEventListener("wheel", (event) => {
       event.preventDefault();
-      const delta = event.deltaY > 0 ? -0.12 : 0.12;
-      scale = Math.max(1, Math.min(4, scale + delta));
-      if (scale === 1) {
-        offsetX = 0;
-        offsetY = 0;
-      }
-      apply();
+      const direction = event.deltaY > 0 ? 0.88 : 1.12;
+      zoomAt(event.clientX, event.clientY, scale * direction);
     }, { passive: false });
     stage.addEventListener("dblclick", () => {
-      scale = 1;
+      scale = baseScale;
       offsetX = 0;
       offsetY = 0;
       apply();
     });
+    img?.addEventListener("load", apply);
     apply();
   }
 
@@ -648,6 +707,9 @@
     const img = document.createElement("img");
     img.src = item.image_url;
     img.alt = item.item_key;
+    img.loading = "eager";
+    img.decoding = "async";
+    img.draggable = false;
     const overlay = createNode("div", "yolo-review-overlay");
     panContent.appendChild(img);
     panContent.appendChild(overlay);
@@ -759,6 +821,7 @@
   refs.className?.addEventListener("change", scheduleReload);
   refs.answer?.addEventListener("change", scheduleReload);
   refs.qwenLabel?.addEventListener("change", scheduleReload);
+  refs.hasBox?.addEventListener("change", scheduleReload);
   refs.query?.addEventListener("input", scheduleReload);
   refs.refresh?.addEventListener("click", () => loadDatasets().catch(() => {}));
   refs.fireSmokeOpen?.addEventListener("click", openFireSmokeDataset);

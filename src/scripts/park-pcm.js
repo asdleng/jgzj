@@ -70,6 +70,8 @@
   let routeOverlayRaf = 0;
   let amapControlsReady = false;
   let amapHeatmapEventsBound = false;
+  let amapUserInteracted = false;
+  let amapPointerActive = false;
   let amapLastHeatData = [];
   let amapLastHeatMax = 0;
   let amapLastRoutes = [];
@@ -1491,6 +1493,15 @@
     drawRouteOverlay();
   }
 
+  function redrawMapOverlaysNow() {
+    if (!amapMap || (!amapLastHeatData.length && !amapLastRoutes.length)) return;
+    if (heatmapRefreshTimer) {
+      window.clearTimeout(heatmapRefreshTimer);
+      heatmapRefreshTimer = null;
+    }
+    refreshPeopleHeatmap(false);
+  }
+
   function schedulePeopleHeatmapRefresh(delayMs, resetMap) {
     if (!amapMap || (!amapLastHeatData.length && !amapLastRoutes.length)) return;
     if (heatmapRefreshTimer) window.clearTimeout(heatmapRefreshTimer);
@@ -1502,10 +1513,44 @@
 
   function bindAmapHeatmapRefreshEvents() {
     if (!amapMap || amapHeatmapEventsBound || typeof amapMap.on !== "function") return;
-    ["moveend", "zoomend", "resize", "complete"].forEach((eventName) => {
-      amapMap.on(eventName, () => schedulePeopleHeatmapRefresh(50, true));
+    [
+      "mapmove",
+      "movestart",
+      "moveend",
+      "dragstart",
+      "dragging",
+      "dragend",
+      "zoomstart",
+      "zoomchange",
+      "zoomend",
+      "moving",
+      "zooming",
+      "resize",
+      "complete"
+    ].forEach((eventName) => {
+      amapMap.on(eventName, redrawMapOverlaysNow);
     });
     amapHeatmapEventsBound = true;
+  }
+
+  function bindMapUserInteractionEvents() {
+    if (!mapEl || mapEl.dataset.parkPcmInteractionBound === "true") return;
+    const markInteracted = () => {
+      amapUserInteracted = true;
+    };
+    mapEl.addEventListener("pointerdown", () => {
+      amapPointerActive = true;
+      markInteracted();
+    }, { passive: true });
+    mapEl.addEventListener("pointerup", () => {
+      amapPointerActive = false;
+    }, { passive: true });
+    mapEl.addEventListener("pointercancel", () => {
+      amapPointerActive = false;
+    }, { passive: true });
+    mapEl.addEventListener("wheel", markInteracted, { passive: true });
+    mapEl.addEventListener("touchstart", markInteracted, { passive: true });
+    mapEl.dataset.parkPcmInteractionBound = "true";
   }
 
   function waitForAmapComplete(timeoutMs) {
@@ -1920,6 +1965,8 @@
     const viewDayKey = selectedDayKey;
     const routeRequestId = routeLoadRequestId + 1;
     routeLoadRequestId = routeRequestId;
+    amapUserInteracted = false;
+    amapPointerActive = false;
     const samples = visibleCrowdSamples();
     const samplePoints = samples
       .map((sample) => sampleMapPoint(sample))
@@ -1972,6 +2019,7 @@
       if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey) return;
       enableMapInteraction();
       bindAmapHeatmapRefreshEvents();
+      bindMapUserInteractionEvents();
       clearMapOverlays();
       let routePayload = {
         routes: [],
@@ -1986,14 +2034,14 @@
       if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey || routeRequestId !== routeLoadRequestId) return;
       amapLastRoutes = Array.isArray(routePayload.routes) ? routePayload.routes : [];
       const routePoints = routeMapPoints(amapLastRoutes);
-      fitHeatmapView(AMap, samplePoints.concat(routePoints), center);
+      if (!amapUserInteracted) fitHeatmapView(AMap, samplePoints.concat(routePoints), center);
       const heatStats = await renderPeopleHeatmap(AMap, samplePoints);
       drawRouteOverlay();
       schedulePeopleHeatmapRefresh(160, true);
       [120, 420].forEach((delayMs) => {
         window.setTimeout(() => {
           if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey || !amapMap || (!amapLastHeatData.length && !amapLastRoutes.length)) return;
-          fitHeatmapView(AMap, samplePoints.concat(routeMapPoints(amapLastRoutes)), center);
+          if (!amapUserInteracted && !amapPointerActive) fitHeatmapView(AMap, samplePoints.concat(routeMapPoints(amapLastRoutes)), center);
           drawCustomHeatmap();
           drawRouteOverlay();
         }, delayMs);

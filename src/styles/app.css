@@ -3484,7 +3484,7 @@
 
 .yolo-review-toolbar {
   display: grid;
-  grid-template-columns: minmax(150px, 0.58fr) minmax(280px, 1.25fr) repeat(3, minmax(132px, 0.55fr)) minmax(220px, 0.9fr);
+  grid-template-columns: minmax(150px, 0.58fr) minmax(280px, 1.25fr) repeat(4, minmax(126px, 0.52fr)) minmax(116px, 0.42fr) minmax(220px, 0.9fr);
   gap: 10px;
   align-items: end;
   padding: 14px 18px;
@@ -3522,6 +3522,35 @@
 .yolo-review-editor-field textarea:focus {
   border-color: rgba(45, 212, 191, 0.72);
   box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
+}
+
+.yolo-review-field--toggle {
+  min-width: 116px;
+}
+
+.yolo-review-toggle-control {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  background: rgba(2, 6, 23, 0.78);
+  color: #e2e8f0;
+  padding: 7px 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.yolo-review-field--toggle input[type="checkbox"] {
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border-radius: 4px;
+  accent-color: #14b8a6;
+  box-shadow: none;
 }
 
 .yolo-review-focus-slot {
@@ -3831,13 +3860,15 @@
   position: relative;
   width: 100%;
   transform-origin: center center;
-  transition: transform 0.08s linear;
+  transition: transform 0.08s ease-out;
 }
 
 .yolo-review-image-stage--draggable {
   cursor: grab;
   touch-action: none;
   user-select: none;
+  -webkit-user-select: none;
+  overscroll-behavior: contain;
 }
 
 .yolo-review-image-stage--draggable.is-dragging {
@@ -3846,6 +3877,14 @@
 
 .yolo-review-image-stage--draggable .yolo-review-pan-content {
   will-change: transform;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+
+.yolo-review-image-stage--draggable.is-dragging .yolo-review-pan-content {
+  transition: none;
 }
 
 .yolo-review-image-stage img {
@@ -3853,6 +3892,18 @@
   max-height: 68vh;
   object-fit: contain;
   display: block;
+}
+
+.yolo-review-image-stage--draggable img,
+.yolo-review-image-stage--draggable .yolo-review-overlay,
+body.yolo-review-is-panning {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+
+body.yolo-review-is-panning {
+  cursor: grabbing;
 }
 
 .yolo-review-drag-hint {
