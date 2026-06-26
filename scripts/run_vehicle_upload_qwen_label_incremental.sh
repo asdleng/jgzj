@@ -13,6 +13,7 @@ SERVICE_URL="${QWEN_LABEL_SERVICE_URL:-http://127.0.0.1:18016}"
 MAX_NEW="${VEHICLE_QWEN_LABEL_MAX_NEW:-120}"
 WORKERS="${VEHICLE_QWEN_LABEL_WORKERS:-2}"
 TIMEOUT_S="${VEHICLE_QWEN_LABEL_TIMEOUT_S:-120}"
+MAX_TOKENS="${VEHICLE_QWEN_LABEL_MAX_TOKENS:-768}"
 
 timestamp() {
   date '+%Y-%m-%d %H:%M:%S'
@@ -33,15 +34,19 @@ timestamp() {
   if command -v ionice >/dev/null 2>&1; then
     ionice -c2 -n7 nice -n 10 python3 scripts/patrol_qwen_label_vehicle_uploads.py \
       --service-url "$SERVICE_URL" \
+      --only-missing \
       --limit "$MAX_NEW" \
       --workers "$WORKERS" \
-      --timeout-s "$TIMEOUT_S"
+      --timeout-s "$TIMEOUT_S" \
+      --max-tokens "$MAX_TOKENS"
   else
     nice -n 10 python3 scripts/patrol_qwen_label_vehicle_uploads.py \
       --service-url "$SERVICE_URL" \
+      --only-missing \
       --limit "$MAX_NEW" \
       --workers "$WORKERS" \
-      --timeout-s "$TIMEOUT_S"
+      --timeout-s "$TIMEOUT_S" \
+      --max-tokens "$MAX_TOKENS"
   fi
   echo "[$(timestamp)] done vehicle_upload_qwen_bbox_incremental"
 } 9>"$LOCK" >>"$LOG" 2>&1

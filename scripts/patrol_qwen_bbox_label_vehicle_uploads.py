@@ -29,34 +29,35 @@ CLASSES = (
     "nonmotor",
 )
 
-LABEL_PROMPT = """Detect objects for YOLO pre-labeling in this autonomous patrol vehicle image.
-Return one compact JSON object only. No markdown. No explanation.
+LABEL_PROMPT = """Detect YOLO pre-label boxes in this autonomous patrol vehicle image.
+Return exactly one compact JSON object only. No markdown. No explanation.
 
 Schema:
-{"quality":"good|blur|dark|blocked|bad","boxes":[{"class":"person","bbox":[x1,y1,x2,y2],"score":0.0,"note":""}]}
+{"q":"good","b":[["person",12,34,56,78,0.9]]}
 
-Coordinate rules:
-- bbox is [x1,y1,x2,y2] in integer 0-1000 image coordinates.
-- (0,0) is the top-left of the full image and (1000,1000) is the bottom-right.
-- Use tight boxes around the visible evidence. Clamp to image bounds. x2 must be greater than x1, y2 greater than y1.
+Fields:
+- q is one of: good, blur, dark, blocked, bad.
+- b has at most 20 boxes.
+- each box is [class,x1,y1,x2,y2,score].
+- coordinates are integer 0-1000 xyxy on the full image. Clamp to bounds.
+- x2>x1 and y2>y1. Use tight visible-object boxes.
 
-Allowed classes:
-- person: whole visible human body or visible body part if partly occluded.
-- vehicle: car, truck, bus, van, or parked vehicle.
-- nonmotor: bicycle, e-bike, scooter, wheelchair, cart.
+Classes:
+person, vehicle, nonmotor, fire, smoke, trash, pet, stall, phone, smoking.
+
+Class rules:
+- vehicle: car/truck/bus/van/parked vehicle.
+- nonmotor: bicycle/e-bike/scooter/wheelchair/cart.
 - fire: visible flame only.
-- smoke: visible smoke plume or smoke region, not clouds/fog/glare.
-- trash: visible litter/garbage object or a tight cluster of litter.
-- pet: visible dog/cat/animal.
-- stall: street vendor, booth, temporary stall, cart used as stall.
-- phone: visible phone or phone-in-hand evidence; if tiny, box the hand-phone evidence region.
-- smoking: visible cigarette/smoking action evidence; box cigarette/hand-mouth/smoke evidence region, not the whole person unless only that is visible.
+- smoke: smoke plume/region only, not clouds/fog/glare.
+- phone: visible phone or hand-phone evidence.
+- smoking: cigarette/smoking evidence region, not whole person unless only that is visible.
 
 Rules:
-- Do not invent boxes. If uncertain, omit the box.
-- Ignore sky, trees, buildings, road surface, shadows, reflections, traffic lights, and text unless they are part of an allowed target.
-- Prefer fewer precise boxes over many loose boxes.
-- If no allowed targets are visible, return {"quality":"good","boxes":[]}.
+- Do not invent boxes. If uncertain, omit.
+- Ignore sky, trees, buildings, road, shadows, reflections, traffic lights, and text unless part of a target.
+- Prefer fewer precise boxes. In crowded scenes keep the 20 largest/clearest targets.
+- If no allowed targets are visible, return {"q":"good","b":[]}.
 """
 
 
@@ -146,6 +147,55 @@ def encode_image(path, max_side, jpeg_quality):
     }
 
 
+def salvage_truncated_annotation(text):
+    clean = str(text or "")
+    quality = None
+    quality_match = re.search(r'"(?:q|quality)"\s*:\s*"(good|blur|dark|blocked|bad)"', clean, re.I)
+    if quality_match:
+        quality = quality_match.group(1).lower()
+
+    num = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
+    compact_re = re.compile(
+        rf'\[\s*"([^"]+)"\s*,\s*({num})\s*,\s*({num})\s*,\s*({num})\s*,\s*({num})(?:\s*,\s*({num}))?\s*\]'
+    )
+    compact_boxes = []
+    for match in compact_re.finditer(clean):
+        class_name = match.group(1)
+        coords = [float(match.group(i)) for i in range(2, 6)]
+        score = match.group(6)
+        item = [class_name] + coords
+        if score is not None:
+            item.append(float(score))
+        compact_boxes.append(item)
+        if len(compact_boxes) >= 20:
+            break
+    if compact_boxes:
+        return {"q": quality or "bad", "b": compact_boxes}
+
+    dict_re = re.compile(
+        rf'\{{\s*"(?:class|class_name|label)"\s*:\s*"([^"]+)"\s*,\s*"(?:bbox|box|xyxy)"\s*:\s*'
+        rf'\[\s*({num})\s*,\s*({num})\s*,\s*({num})\s*,\s*({num})\s*\]'
+        rf'(?:\s*,\s*"(?:score|confidence)"\s*:\s*({num}))?',
+        re.I,
+    )
+    boxes = []
+    for match in dict_re.finditer(clean):
+        class_name = match.group(1)
+        coords = [float(match.group(i)) for i in range(2, 6)]
+        score = match.group(6)
+        item = {"class": class_name, "bbox": coords}
+        if score is not None:
+            item["score"] = float(score)
+        boxes.append(item)
+        if len(boxes) >= 20:
+            break
+    if boxes:
+        return {"quality": quality or "bad", "boxes": boxes}
+    if quality and re.search(r'"(?:b|boxes)"\s*:\s*\[\s*\]', clean):
+        return {"q": quality, "b": []}
+    return None
+
+
 def extract_json(text):
     if not text:
         return None
@@ -159,11 +209,11 @@ def extract_json(text):
         pass
     match = re.search(r"\{.*\}", clean, re.S)
     if not match:
-        return None
+        return salvage_truncated_annotation(clean)
     try:
         return json.loads(match.group(0))
     except Exception:
-        return None
+        return salvage_truncated_annotation(clean)
 
 
 def clamp(value, low, high):
@@ -171,9 +221,28 @@ def clamp(value, low, high):
 
 
 def normalize_box(item, index):
-    if not isinstance(item, dict):
+    score = None
+    note = ""
+    if isinstance(item, (list, tuple)):
+        if len(item) >= 5 and isinstance(item[0], str):
+            class_name = str(item[0]).strip().lower()
+            bbox = list(item[1:5])
+            if len(item) >= 6:
+                score = item[5]
+        elif len(item) >= 2 and isinstance(item[0], str) and isinstance(item[1], (list, tuple)):
+            class_name = str(item[0]).strip().lower()
+            bbox = list(item[1])
+            if len(item) >= 3:
+                score = item[2]
+        else:
+            return None
+    elif isinstance(item, dict):
+        class_name = str(item.get("class") or item.get("class_name") or item.get("label") or "").strip().lower()
+        bbox = item.get("bbox") or item.get("box") or item.get("xyxy")
+        score = item.get("score", item.get("confidence", None))
+        note = str(item.get("note") or "").strip()[:160]
+    else:
         return None
-    class_name = str(item.get("class") or item.get("class_name") or item.get("label") or "").strip().lower()
     class_name = class_name.replace("-", "_").replace(" ", "_")
     if class_name in {"car", "truck", "bus", "van"}:
         class_name = "vehicle"
@@ -181,7 +250,6 @@ def normalize_box(item, index):
         class_name = "nonmotor"
     if class_name not in CLASSES:
         return None
-    bbox = item.get("bbox") or item.get("box") or item.get("xyxy")
     if not isinstance(bbox, list) or len(bbox) != 4:
         return None
     try:
@@ -200,7 +268,6 @@ def normalize_box(item, index):
     y = ((y1 + y2) / 2.0) / 1000.0
     w = (x2 - x1) / 1000.0
     h = (y2 - y1) / 1000.0
-    score = item.get("score", item.get("confidence", None))
     try:
         score = float(score)
     except Exception:
@@ -225,7 +292,7 @@ def normalize_box(item, index):
             "height": h,
             "bbox_1000": [round(x1), round(y1), round(x2), round(y2)],
         },
-        "note": str(item.get("note") or "").strip()[:160],
+        "note": note,
         "index": index,
     }
 
@@ -236,7 +303,9 @@ def normalize_annotation(parsed):
     quality = str(parsed.get("quality") or parsed.get("q") or "bad").strip().lower()
     if quality not in {"good", "blur", "dark", "blocked", "bad"}:
         quality = "bad"
-    boxes = parsed.get("boxes")
+    boxes = parsed.get("b")
+    if not isinstance(boxes, list):
+        boxes = parsed.get("boxes")
     if not isinstance(boxes, list):
         boxes = []
     labels = []
@@ -316,7 +385,7 @@ def annotate_one(row, args):
         "quality": quality or "bad",
         "labels": labels,
         "raw_json": parsed if args.store_raw else None,
-        "raw_text": raw_text if (args.store_raw or not ok) else "",
+        "raw_text": raw_text if (args.store_raw or not ok or choice.get("finish_reason") == "length") else "",
         "finish_reason": choice.get("finish_reason"),
         "duration_ms": int((time.time() - started) * 1000),
     }
@@ -338,14 +407,25 @@ def main():
     parser.add_argument("--max-side", type=int, default=960)
     parser.add_argument("--jpeg-quality", type=int, default=82)
     parser.add_argument("--timeout-s", type=int, default=120)
-    parser.add_argument("--max-tokens", type=int, default=512)
+    parser.add_argument("--max-tokens", type=int, default=768)
+    parser.add_argument("--only-missing", action="store_true", help="Only submit images without an existing valid qwen bbox cache.")
     args = parser.parse_args()
 
     rows = list(iter_rows(args.frames_root, args.source, args.vehicle))
     rows.sort(key=lambda row: str(row["meta"].get("collected_at") or ""), reverse=True)
+    source_rows = len(rows)
+    if args.only_missing and not args.refresh:
+        rows = [
+            row for row in rows
+            if (cache_path(args.output_root, row["meta"].get("image_sha256")) is not None
+                and not cache_has_qwen_bbox(cache_path(args.output_root, row["meta"].get("image_sha256"))))
+        ]
     if args.limit > 0:
         rows = rows[:args.limit]
-    log(f"rows={len(rows)} source={args.source or 'all'} workers={args.workers} output={args.output_root}")
+    log(
+        f"source_rows={source_rows} rows={len(rows)} only_missing={args.only_missing} "
+        f"source={args.source or 'all'} workers={args.workers} output={args.output_root}"
+    )
 
     counts = {}
     started = time.time()

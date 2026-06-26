@@ -38,6 +38,7 @@ const DEFAULT_CROWD_STORAGE_MAX_BYTES = 12 * 1024 * 1024 * 1024;
 const DEFAULT_CROWD_STORAGE_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_PATROL_FLOW_UPLOAD_MAX_BYTES = 128 * 1024 * 1024;
 const DEFAULT_PATROL_FLOW_MAX_FRAME_ROWS = 4000;
+const DEFAULT_CROWD_ROUTE_MAX_POINTS = 700;
 const PATROL_FLOW_SCHEMA_V1 = 'auto_ad_patrol_flow_session.v1';
 const VEHICLE_PATROL_FLOW_SAMPLE_SOURCE = 'auto_ad_patrol_flow_upload';
 
@@ -3147,6 +3148,154 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return samples.map((sample) => mergeCrowdAnalysisIntoSample(sample, analysisState));
   }
 
+  function routeFileNameCandidates(routeId) {
+    const raw = String(routeId || '').trim();
+    const candidates = new Set();
+    if (!raw) return [];
+    const push = (value) => {
+      const text = String(value || '').trim();
+      if (!text) return;
+      candidates.add(text.endsWith('.json') ? text : `${text}.json`);
+    };
+    push(sanitizeName(raw, 'route'));
+    const base = path.basename(raw).replace(/\.(csv|json)$/i, '');
+    push(sanitizeName(base, 'route'));
+    const timestampMatch = raw.match(/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/);
+    if (timestampMatch) push(`route_${timestampMatch[1]}`);
+    const routeIdMatch = raw.match(/(route_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/);
+    if (routeIdMatch) push(routeIdMatch[1]);
+    return [...candidates];
+  }
+
+  function routeDataMatchesRequest(routeData, routeId) {
+    const requested = String(routeId || '').trim();
+    if (!requested || !routeData || typeof routeData !== 'object') return false;
+    const requestedBase = path.basename(requested);
+    const requestedStem = requestedBase.replace(/\.(csv|json)$/i, '').split('&')[0];
+    const candidates = [
+      routeData.route_id,
+      routeData.id,
+      routeData.route_name,
+      routeData.file_name,
+      routeData.file_path,
+      routeData.path,
+      routeData.source_path
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    return candidates.some((candidate) => {
+      if (candidate === requested) return true;
+      const candidateBase = path.basename(candidate);
+      const candidateStem = candidateBase.replace(/\.(csv|json)$/i, '').split('&')[0];
+      return Boolean(
+        requestedBase && candidateBase && candidateBase === requestedBase ||
+        requestedStem && candidateStem && candidateStem === requestedStem ||
+        requestedStem && candidate.includes(requestedStem)
+      );
+    });
+  }
+
+  function normalizePatrolRoutePoint(point) {
+    if (!point || typeof point !== 'object') return null;
+    const rawLatitude = firstFiniteNumber([point.lat, point.latitude, point.Lattitude]);
+    const rawLongitude = firstFiniteNumber([point.lng, point.lon, point.longitude, point.Longitude]);
+    const suppliedGaodeLat = firstFiniteNumber([point.gaode_latitude, point.gcj02_latitude]);
+    const suppliedGaodeLng = firstFiniteNumber([point.gaode_longitude, point.gcj02_longitude]);
+    const gcj = suppliedGaodeLat != null && suppliedGaodeLng != null
+      ? { latitude: suppliedGaodeLat, longitude: suppliedGaodeLng }
+      : rawLatitude != null && rawLongitude != null
+        ? wgs84ToGcj02(rawLatitude, rawLongitude)
+        : { latitude: null, longitude: null };
+    if (!Number.isFinite(gcj.latitude) || !Number.isFinite(gcj.longitude)) return null;
+    return {
+      latitude: gcj.latitude,
+      longitude: gcj.longitude,
+      raw_latitude: rawLatitude,
+      raw_longitude: rawLongitude,
+      x: firstFiniteNumber([point.x, point.position_x]),
+      y: firstFiniteNumber([point.y, point.position_y]),
+      s: firstFiniteNumber([point.s, point.distance, point.progress_m])
+    };
+  }
+
+  function samplePatrolRoutePoints(points, maxPoints) {
+    const normalized = (Array.isArray(points) ? points : []).map(normalizePatrolRoutePoint).filter(Boolean);
+    const limit = toFiniteInteger(maxPoints, DEFAULT_CROWD_ROUTE_MAX_POINTS, { min: 80, max: 2000 });
+    if (normalized.length <= limit) return normalized;
+    const sampled = [];
+    const lastIndex = normalized.length - 1;
+    for (let slot = 0; slot < limit; slot += 1) {
+      const index = Math.round((slot * lastIndex) / Math.max(1, limit - 1));
+      sampled.push(normalized[index]);
+    }
+    return sampled;
+  }
+
+  async function readPatrolRouteFile(sessionId, routeId, maxPoints) {
+    const normalizedSessionId = sanitizeName(sessionId, '');
+    const requestedRouteId = String(routeId || '').trim();
+    if (!normalizedSessionId || !requestedRouteId) return null;
+    const sessionsRoot = path.join(crowdUploadsRoot, 'sessions');
+    const sessionRoot = path.join(sessionsRoot, normalizedSessionId);
+    const resolvedSessionRoot = path.resolve(sessionRoot);
+    if (!resolvedSessionRoot.startsWith(path.resolve(sessionsRoot) + path.sep)) return null;
+    const routesRoot = path.join(sessionRoot, 'routes');
+    let entries = [];
+    try {
+      entries = await fsp.readdir(routesRoot, { withFileTypes: true });
+    } catch (_error) {
+      return null;
+    }
+    const jsonNames = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.json')).map((entry) => entry.name);
+    const orderedNames = [];
+    const seenNames = new Set();
+    const addName = (name) => {
+      if (!name || seenNames.has(name) || !jsonNames.includes(name)) return;
+      seenNames.add(name);
+      orderedNames.push(name);
+    };
+    routeFileNameCandidates(requestedRouteId).forEach(addName);
+    jsonNames.forEach(addName);
+    for (const fileName of orderedNames) {
+      const filePath = path.join(routesRoot, fileName);
+      const data = await readJsonFile(filePath);
+      if (!data || data.unknown === true) continue;
+      if (!routeFileNameCandidates(requestedRouteId).includes(fileName) && !routeDataMatchesRequest(data, requestedRouteId)) continue;
+      const points = samplePatrolRoutePoints(data.points, maxPoints);
+      if (!points.length) continue;
+      return {
+        session_id: normalizedSessionId,
+        requested_route_id: requestedRouteId,
+        route_id: String(data.route_id || data.id || requestedRouteId),
+        route_name: firstNonEmpty([data.route_name_trimmed, data.route_name, data.name, data.file_name]) || null,
+        file_name: data.file_name || fileName,
+        length_m: firstFiniteNumber([data.length_m, data.distance_m]),
+        point_count: firstFiniteNumber([data.point_count, Array.isArray(data.points) ? data.points.length : null]),
+        returned_point_count: points.length,
+        points
+      };
+    }
+    return null;
+  }
+
+  function normalizeRouteRequestItems(body) {
+    const sourceItems = Array.isArray(body?.routes)
+      ? body.routes
+      : Array.isArray(body?.items)
+        ? body.items
+        : [];
+    const seen = new Set();
+    const items = [];
+    sourceItems.forEach((item) => {
+      const sessionId = String(item?.session_id || item?.upload_session_id || '').trim();
+      const routeId = String(item?.route_id || item?.requested_route_id || '').trim();
+      if (!sessionId || !routeId) return;
+      const key = `${sessionId}\n${routeId}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      items.push({ session_id: sessionId, route_id: routeId });
+    });
+    return items.slice(0, 40);
+  }
+
   async function buildCrowdPatrolStatus(params) {
     params = params || {};
     const startedAt = Date.now();
@@ -5003,6 +5152,30 @@ module.exports = function registerParkPcmRoutes(app, options) {
       return res.status(error.status || 502).json({
         ok: false,
         error: error.message || 'park_pcm_crowd_samples_failed'
+      });
+    }
+  });
+
+  app.post('/api/park-pcm/crowd/routes', requirePermission('vehicle:read'), async (req, res) => {
+    try {
+      const requested = normalizeRouteRequestItems(req.body || {});
+      const maxPoints = toFiniteInteger(req.body?.max_points, DEFAULT_CROWD_ROUTE_MAX_POINTS, { min: 80, max: 2000 });
+      const routes = await mapWithConcurrency(requested, 4, async (item) => (
+        readPatrolRouteFile(item.session_id, item.route_id, maxPoints)
+      ));
+      const foundRoutes = routes.filter(Boolean);
+      return res.json({
+        ok: true,
+        requested_count: requested.length,
+        route_count: foundRoutes.length,
+        missing_count: Math.max(0, requested.length - foundRoutes.length),
+        max_points: maxPoints,
+        routes: foundRoutes
+      });
+    } catch (error) {
+      return res.status(error.status || 502).json({
+        ok: false,
+        error: error.message || 'park_pcm_crowd_routes_failed'
       });
     }
   });

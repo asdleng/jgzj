@@ -5,6 +5,7 @@
   const AUTH_URL = "/api/auth/me";
   const CROWD_VEHICLES_URL = "/api/park-pcm/crowd/vehicles";
   const CROWD_SAMPLES_URL = "/api/park-pcm/crowd/samples";
+  const CROWD_ROUTES_URL = "/api/park-pcm/crowd/routes";
   const CROWD_PATROLS_URL = "/api/park-pcm/crowd/patrols";
   const CROWD_UPLOADS_URL = "/api/park-pcm/crowd/uploads";
   const PATROL_FLOW_COLLECTORS_URL = "/api/park-pcm/crowd/patrol-flow/collectors";
@@ -16,6 +17,8 @@
   const CROWD_SAMPLE_VEHICLE_LIMIT = 500;
   const HEATMAP_RADIUS_PX = 36;
   const HEATMAP_PIXEL_BUCKET = 18;
+  const ROUTE_OVERLAY_MAX_POINTS = 700;
+  const ROUTE_OVERLAY_MAX_REQUESTS = 12;
   const HEATMAP_TIME_ZONE = "Asia/Shanghai";
   const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -63,16 +66,20 @@
   let amapHeatmap = null;
   let customHeatmapCanvas = null;
   let customHeatmapRaf = 0;
+  let routeOverlayCanvas = null;
+  let routeOverlayRaf = 0;
   let amapControlsReady = false;
   let amapHeatmapEventsBound = false;
   let amapLastHeatData = [];
   let amapLastHeatMax = 0;
+  let amapLastRoutes = [];
   let heatmapRefreshTimer = null;
   let selectedVehicleId = "";
   let selectedSampleId = "";
   let selectedDayKey = "";
   let heatmapDateTouched = false;
   let sampleLoadRequestId = 0;
+  let routeLoadRequestId = 0;
   let latestCrowdSamples = [];
   let knownHeatmapDayBounds = {
     min_ms: null,
@@ -971,11 +978,21 @@
       if (ctx) ctx.clearRect(0, 0, customHeatmapCanvas.width, customHeatmapCanvas.height);
       customHeatmapCanvas.hidden = true;
     }
+    if (routeOverlayCanvas) {
+      const ctx = routeOverlayCanvas.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, routeOverlayCanvas.width, routeOverlayCanvas.height);
+      routeOverlayCanvas.hidden = true;
+    }
     amapLastHeatData = [];
     amapLastHeatMax = 0;
+    amapLastRoutes = [];
     if (customHeatmapRaf) {
       window.cancelAnimationFrame(customHeatmapRaf);
       customHeatmapRaf = 0;
+    }
+    if (routeOverlayRaf) {
+      window.cancelAnimationFrame(routeOverlayRaf);
+      routeOverlayRaf = 0;
     }
     if (heatmapRefreshTimer) {
       window.clearTimeout(heatmapRefreshTimer);
@@ -1471,10 +1488,11 @@
   function refreshPeopleHeatmap(resetMap) {
     void resetMap;
     drawCustomHeatmap();
+    drawRouteOverlay();
   }
 
   function schedulePeopleHeatmapRefresh(delayMs, resetMap) {
-    if (!amapMap || !amapLastHeatData.length) return;
+    if (!amapMap || (!amapLastHeatData.length && !amapLastRoutes.length)) return;
     if (heatmapRefreshTimer) window.clearTimeout(heatmapRefreshTimer);
     heatmapRefreshTimer = window.setTimeout(() => {
       heatmapRefreshTimer = null;
@@ -1514,6 +1532,17 @@
     mapEl.appendChild(canvas);
     customHeatmapCanvas = canvas;
     return customHeatmapCanvas;
+  }
+
+  function ensureRouteOverlayCanvas() {
+    if (routeOverlayCanvas || !mapEl) return routeOverlayCanvas;
+    const canvas = document.createElement("canvas");
+    canvas.className = "park-pcm-route-overlay";
+    canvas.setAttribute("aria-hidden", "true");
+    canvas.hidden = true;
+    mapEl.appendChild(canvas);
+    routeOverlayCanvas = canvas;
+    return routeOverlayCanvas;
   }
 
   function heatmapContainerPoint(lng, lat) {
@@ -1622,6 +1651,101 @@
     });
   }
 
+  function routePointToMapPoint(point) {
+    const longitude = Number(point && point.longitude);
+    const latitude = Number(point && point.latitude);
+    if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
+    return {
+      longitude,
+      latitude
+    };
+  }
+
+  function routeMapPoints(routes) {
+    return (Array.isArray(routes) ? routes : []).flatMap((route) => (
+      Array.isArray(route && route.points) ? route.points.map(routePointToMapPoint).filter(Boolean) : []
+    ));
+  }
+
+  function drawRouteOverlayNow() {
+    const canvas = ensureRouteOverlayCanvas();
+    if (!canvas || !mapEl || !amapMap) return;
+    const rect = mapEl.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const pixelWidth = Math.max(1, Math.round(width * dpr));
+    const pixelHeight = Math.max(1, Math.round(height * dpr));
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const routes = Array.isArray(amapLastRoutes) ? amapLastRoutes : [];
+    if (!routes.length) {
+      canvas.hidden = true;
+      return;
+    }
+    const palette = [
+      { line: "rgba(14, 165, 233, 0.92)", fill: "rgba(14, 165, 233, 0.95)" },
+      { line: "rgba(168, 85, 247, 0.82)", fill: "rgba(168, 85, 247, 0.9)" },
+      { line: "rgba(34, 197, 94, 0.78)", fill: "rgba(34, 197, 94, 0.86)" }
+    ];
+    routes.forEach((route, routeIndex) => {
+      const points = Array.isArray(route && route.points)
+        ? route.points.map((point) => heatmapContainerPoint(point.longitude, point.latitude)).filter(Boolean)
+        : [];
+      if (points.length < 2) return;
+      const color = palette[routeIndex % palette.length];
+      const drawPath = () => {
+        ctx.beginPath();
+        points.forEach((point, index) => {
+          if (index === 0) ctx.moveTo(point.x, point.y);
+          else ctx.lineTo(point.x, point.y);
+        });
+      };
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      drawPath();
+      ctx.strokeStyle = "rgba(2, 6, 23, 0.72)";
+      ctx.lineWidth = 7;
+      ctx.stroke();
+      drawPath();
+      ctx.strokeStyle = color.line;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      const start = points[0];
+      const end = points[points.length - 1];
+      [
+        { point: start, radius: 4.8, fill: "rgba(16, 185, 129, 0.96)" },
+        { point: end, radius: 5.5, fill: color.fill }
+      ].forEach((marker) => {
+        ctx.beginPath();
+        ctx.arc(marker.point.x, marker.point.y, marker.radius + 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(2, 6, 23, 0.78)";
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(marker.point.x, marker.point.y, marker.radius, 0, Math.PI * 2);
+        ctx.fillStyle = marker.fill;
+        ctx.fill();
+      });
+    });
+    canvas.hidden = false;
+  }
+
+  function drawRouteOverlay() {
+    if (routeOverlayRaf) window.cancelAnimationFrame(routeOverlayRaf);
+    routeOverlayRaf = window.requestAnimationFrame(() => {
+      routeOverlayRaf = 0;
+      drawRouteOverlayNow();
+    });
+  }
+
   function sampleMapPoint(sample) {
     const position = samplePosition(sample);
     if (!position) return null;
@@ -1678,6 +1802,55 @@
         count: heatWeight(point)
       }))
       .filter((point) => Number.isFinite(point.lng) && Number.isFinite(point.lat) && Number.isFinite(point.count) && point.count > 0);
+  }
+
+  function pushRouteId(target, routeId) {
+    const text = String(routeId || "").trim();
+    if (text) target.push(text);
+  }
+
+  function routeRequestsFromSamples(samples) {
+    const requests = [];
+    const seen = new Set();
+    (Array.isArray(samples) ? samples : []).forEach((sample) => {
+      const sessionId = String(sample && (sample.upload_session_id || sample.upload_manifest && sample.upload_manifest.session_id) || "").trim();
+      if (!sessionId) return;
+      const routeIds = [];
+      pushRouteId(routeIds, sample.route && (sample.route.primary_route_id || sample.route.route_id));
+      (sample.route && Array.isArray(sample.route.route_ids) ? sample.route.route_ids : []).forEach((routeId) => pushRouteId(routeIds, routeId));
+      (sample.patrol_state && sample.patrol_state.fields && Array.isArray(sample.patrol_state.fields.route_ids) ? sample.patrol_state.fields.route_ids : []).forEach((routeId) => pushRouteId(routeIds, routeId));
+      (Array.isArray(sample.frames) ? sample.frames : []).forEach((frame) => {
+        pushRouteId(routeIds, frame.route && frame.route.route_id);
+        (frame.route && Array.isArray(frame.route.route_ids) ? frame.route.route_ids : []).forEach((routeId) => pushRouteId(routeIds, routeId));
+      });
+      routeIds.forEach((routeId) => {
+        const key = `${sessionId}\n${routeId}`;
+        if (seen.has(key) || requests.length >= ROUTE_OVERLAY_MAX_REQUESTS) return;
+        seen.add(key);
+        requests.push({
+          session_id: sessionId,
+          route_id: routeId
+        });
+      });
+    });
+    return requests;
+  }
+
+  async function loadVehicleRoutes(samples) {
+    const routes = routeRequestsFromSamples(samples);
+    if (!routes.length) {
+      return {
+        requested_count: 0,
+        routes: []
+      };
+    }
+    return fetchJson(CROWD_ROUTES_URL, {
+      method: "POST",
+      body: {
+        routes,
+        max_points: ROUTE_OVERLAY_MAX_POINTS
+      }
+    });
   }
 
   async function renderPeopleHeatmap(AMap, samplePoints) {
@@ -1745,6 +1918,8 @@
     const opts = options || {};
     const viewVehicleId = selectedVehicleId;
     const viewDayKey = selectedDayKey;
+    const routeRequestId = routeLoadRequestId + 1;
+    routeLoadRequestId = routeRequestId;
     const samples = visibleCrowdSamples();
     const samplePoints = samples
       .map((sample) => sampleMapPoint(sample))
@@ -1798,20 +1973,42 @@
       enableMapInteraction();
       bindAmapHeatmapRefreshEvents();
       clearMapOverlays();
-      fitHeatmapView(AMap, samplePoints, center);
+      let routePayload = {
+        routes: [],
+        requested_count: 0,
+        missing_count: 0
+      };
+      try {
+        routePayload = await loadVehicleRoutes(samples);
+      } catch (routeError) {
+        console.warn("park-pcm vehicle route load failed", routeError);
+      }
+      if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey || routeRequestId !== routeLoadRequestId) return;
+      amapLastRoutes = Array.isArray(routePayload.routes) ? routePayload.routes : [];
+      const routePoints = routeMapPoints(amapLastRoutes);
+      fitHeatmapView(AMap, samplePoints.concat(routePoints), center);
       const heatStats = await renderPeopleHeatmap(AMap, samplePoints);
+      drawRouteOverlay();
+      schedulePeopleHeatmapRefresh(160, true);
       [120, 420].forEach((delayMs) => {
         window.setTimeout(() => {
-          if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey || !amapMap || !amapLastHeatData.length) return;
-          fitHeatmapView(AMap, samplePoints, center);
+          if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey || !amapMap || (!amapLastHeatData.length && !amapLastRoutes.length)) return;
+          fitHeatmapView(AMap, samplePoints.concat(routeMapPoints(amapLastRoutes)), center);
           drawCustomHeatmap();
+          drawRouteOverlay();
         }, delayMs);
       });
       enableMapInteraction();
+      const routeCount = amapLastRoutes.length;
+      const routeText = routeCount
+        ? ` · 车端路线 ${routeCount} 条`
+        : routePayload.requested_count
+          ? ` · 车端路线未匹配 ${routePayload.missing_count || routePayload.requested_count} 条`
+          : "";
       setMapStatus(
         heatStats.count
-          ? `${viewVehicleId} · ${formatDayLabel(viewDayKey)} 记录 ${samplePoints.length} · 热力点 ${heatStats.count} · 峰值 ${heatStats.max} 人`
-          : `${viewVehicleId} · ${formatDayLabel(viewDayKey)} 记录 ${samplePoints.length} · 暂无可用热力`
+          ? `${viewVehicleId} · ${formatDayLabel(viewDayKey)} 记录 ${samplePoints.length} · 热力点 ${heatStats.count} · 峰值 ${heatStats.max} 人${routeText}`
+          : `${viewVehicleId} · ${formatDayLabel(viewDayKey)} 记录 ${samplePoints.length} · 暂无可用热力${routeText}`
       );
     } catch (error) {
       setMapStatus("热力地图加载失败");
