@@ -14,9 +14,9 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 
-SCHEMA = "jgzj_vehicle_upload_qwen_sensitive_bbox.v4"
+SCHEMA = "jgzj_vehicle_upload_qwen_sensitive_bbox.v5"
 MODEL = "Qwen3.6-27B-Labeler"
-MODEL_BUNDLE = "qwen_bbox_sensitive_v4_teacher_verify"
+MODEL_BUNDLE = "qwen_bbox_sensitive_v5_teacher_verify"
 TARGET_CLASSES = ("smoke", "trash", "stall", "phone", "smoking")
 
 CLASS_RULES = {
@@ -50,7 +50,9 @@ CLASS_RULES = {
         ),
         "negative": (
             "Do NOT label trash bins/cans, waste bins, fixed boxes, signs, posters, benches, flower pots, leaves, "
-            "branches, drain covers, manhole covers, shadows, road markings, bags carried by people, or normal facilities."
+            "branches, drain covers, manhole covers, shadows, road markings, bags carried by people, normal facilities, "
+            "garden maintenance carts, wheelbarrows, leaf/branch piles, gardening debris, rocks/stones, sandbags, weights, "
+            "doorstops, or work materials."
         ),
         "evidence": (
             "discarded_plastic_bag, loose_trash_bag, discarded_paper, paper_litter, discarded_cardboard, "
@@ -59,10 +61,13 @@ CLASS_RULES = {
         "teacher": (
             "Teacher feedback: keep loose blue/black/white bags, paper, cardboard, and loose paper-package trash on the ground. "
             "Reject fallen signs/facility parts even if they lie on the ground. Reject tiny colored specks or unknown tiny objects. "
-            "Reject anything being carried by a person."
+            "Reject anything being carried by a person. Reject bags or debris inside garden maintenance carts/wheelbarrows. "
+            "Reject leaf piles, branch piles, rocks/stones, sandbags, counterweights, and doorstops even if they look like bags. "
+            "Especially reject red/orange plastic bags attached to or inside a wheelbarrow/garden cart, or next to freshly cut leaves/branches; "
+            "do not crop only the bag and ignore the surrounding cart/maintenance context."
         ),
         "accept_re": r"discarded_(plastic_)?bag|plastic_bag|trash_bag|black_trash_bag|blue_plastic_bag|white_plastic_bag|discarded_paper|paper_litter|discarded_cardboard|cardboard_piece|cardboard_box|discarded_bottle|discarded_cup|food_container|loose_food_container|loose_package|loose_litter|paper_bag",
-        "reject_re": r"bin|trash_can|waste_bin|garbage_can|dustbin|sign|signboard|poster|bench|flower|pot|leaf|leaves|branch|drain|manhole|shadow|fixture|facility|road_mark|pavement_mark|carried|handheld|tiny|small_yellow|unknown|unclear|uncertain|not_trash|clear_evidence",
+        "reject_re": r"bin|trash_can|waste_bin|garbage_can|dustbin|sign|signboard|poster|bench|flower|pot|leaf|leaves|branch|drain|manhole|shadow|fixture|facility|road_mark|pavement_mark|carried|handheld|cart|wheelbarrow|maintenance|garden|yard|debris|rock|stone|sandbag|weight|counterweight|doorstop|work_material|tiny|small_yellow|unknown|unclear|uncertain|not_trash|clear_evidence",
     },
     "stall": {
         "threshold": 0.90,
@@ -74,15 +79,17 @@ CLASS_RULES = {
         ),
         "negative": (
             "Do NOT label permanent kiosks, fixed booths, information/security booths, storefronts, buildings, scenic facilities, "
-            "signboards, trash bins, normal parked carts, benches, flower stands, or fixed decorations."
+            "signboards, trash bins, normal parked carts, sightseeing carts, shuttle carts, golf carts, tourist vehicles, "
+            "service/maintenance vehicles, benches, flower stands, or fixed decorations."
         ),
         "evidence": "temporary_vendor_cart, temporary_table_with_goods, vending_umbrella, goods_laid_out_for_sale, active_vendor_setup",
         "teacher": (
             "Teacher feedback: previous false positives were fixed kiosks, signs, booths, facilities, and normal parked objects. "
-            "A valid stall must look temporary and must show goods or vending setup."
+            "A valid stall must look temporary and must show goods or vending setup. Sightseeing/shuttle/tourist carts or parked vehicles "
+            "are not stalls unless goods for sale are clearly laid out."
         ),
         "accept_re": r"temporary_vendor|vendor_cart|temporary_table|vending_umbrella|goods_laid_out|active_vendor|stall_setup",
-        "reject_re": r"permanent|fixed|kiosk|security|information|storefront|building|scenic|facility|sign|signboard|trash|bin|bench|decoration|parked|unclear|uncertain|not_stall|clear_evidence",
+        "reject_re": r"permanent|fixed|kiosk|security|information|storefront|building|scenic|facility|sign|signboard|trash|bin|bench|decoration|parked|sightseeing|shuttle|golf_cart|tourist|vehicle|service|maintenance|unclear|uncertain|not_stall|clear_evidence",
     },
     "phone": {
         "threshold": 0.90,
@@ -374,6 +381,56 @@ def normalize_box(class_name, item, index):
     }, ""
 
 
+def bbox_intersection(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    return float((ix2 - ix1) * (iy2 - iy1))
+
+
+def bbox_area_1000(box):
+    if not box or len(box) != 4:
+        return 0.0
+    return max(0.0, float(box[2] - box[0])) * max(0.0, float(box[3] - box[1]))
+
+
+def suppress_duplicate_labels(labels):
+    kept = []
+    dropped = []
+    ordered = sorted(
+        labels,
+        key=lambda label: (
+            float(label.get("confidence") or 0.0),
+            bbox_area_1000((label.get("box") or {}).get("bbox_1000")),
+        ),
+        reverse=True,
+    )
+    for label in ordered:
+        box = (label.get("box") or {}).get("bbox_1000")
+        area = bbox_area_1000(box)
+        duplicate_of = None
+        for prev in kept:
+            prev_box = (prev.get("box") or {}).get("bbox_1000")
+            prev_area = bbox_area_1000(prev_box)
+            inter = bbox_intersection(box, prev_box)
+            union = max(1.0, area + prev_area - inter)
+            iou = inter / union
+            contained = inter / max(1.0, min(area, prev_area))
+            if iou >= 0.55 or contained >= 0.82:
+                duplicate_of = prev
+                break
+        if duplicate_of:
+            dropped.append((label, duplicate_of))
+        else:
+            kept.append(label)
+    return kept, dropped
+
+
 def call_qwen(service_url, image_b64, class_name, timeout_s, max_tokens, prompt_text=None):
     payload = {
         "model": MODEL,
@@ -499,6 +556,17 @@ def annotate_task(args_tuple):
                     "raw": label if args.store_raw else None,
                 })
         labels = verified_labels
+    if len(labels) > 1:
+        labels, duplicate_drops = suppress_duplicate_labels(labels)
+        for label, duplicate_of in duplicate_drops:
+            filtered_boxes.append({
+                "index": label.get("index"),
+                "reason": "duplicate_box",
+                "raw": {
+                    "dropped": label,
+                    "kept_bbox_1000": (duplicate_of.get("box") or {}).get("bbox_1000"),
+                } if args.store_raw else None,
+            })
     return image_rel, class_name, {
         "ok": isinstance(parsed, dict),
         "quality": quality,
@@ -516,7 +584,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--frames-root", type=Path, default=Path("/home/admin1/jgzj/.runtime/park-pcm/crowd-frames"))
     parser.add_argument("--source-cache-root", type=Path, default=Path("/home/admin1/jgzj/.runtime/yolo_label_review/vehicle_upload_qwen_bbox_labels_v1"))
-    parser.add_argument("--output-root", type=Path, default=Path("/home/admin1/jgzj/.runtime/yolo_label_review/vehicle_upload_qwen_sensitive_bbox_v3"))
+    parser.add_argument("--output-root", type=Path, default=Path("/home/admin1/jgzj/.runtime/yolo_label_review/vehicle_upload_qwen_sensitive_bbox_v5"))
     parser.add_argument("--service-url", default="http://127.0.0.1:18016")
     parser.add_argument("--classes", default=",".join(TARGET_CLASSES))
     parser.add_argument("--limit", type=int, default=0)
