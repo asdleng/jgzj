@@ -88,6 +88,17 @@
     return answer === "YES" ? "tone-yes" : answer === "NO" ? "tone-no" : "tone-idle";
   }
 
+  function labelSourceText(source) {
+    if (source === "qwen_bbox_verified") return "Qwen校验框";
+    if (source === "qwen_bbox") return "Qwen框";
+    if (source === "yolo_auto") return "YOLO模型预标";
+    return "";
+  }
+
+  function labelSourceTone(source) {
+    return source === "qwen_bbox_verified" || source === "qwen_bbox" ? "tone-yes" : "tone-idle";
+  }
+
   const qwenLabelNames = {
     person: "人",
     fire: "火",
@@ -265,6 +276,11 @@
       cells.push(["Qwen框待标", compactNumber(qwenBbox.pending_images)]);
       cells.push(["Qwen框阳性", compactNumber(qwenBbox.positive_images)]);
       cells.push(["Qwen框数", compactNumber(qwenBbox.boxes)]);
+      if (qwenBbox.verified_sensitive) {
+        cells.push(["Qwen校验覆盖", compactNumber(qwenBbox.verified_sensitive.cached_images)]);
+        cells.push(["校验敏感阳性", compactNumber(qwenBbox.verified_sensitive.positive_images)]);
+        cells.push(["校验敏感框", compactNumber(qwenBbox.verified_sensitive.boxes)]);
+      }
     }
     if (dataset.qwen_label || dataset.summary?.qwen_label) {
       const qwen = dataset.qwen_label || dataset.summary.qwen_label;
@@ -437,8 +453,9 @@
       const chips = createNode("div", "yolo-review-item-chips");
       chips.appendChild(createNode("span", "ai-history-chip tone-idle", item.source_label || "数据源"));
       chips.appendChild(createNode("span", "ai-history-chip tone-idle", `${item.label_count || 0} 框`));
-      if (item.label_source === "qwen_bbox") {
-        chips.appendChild(createNode("span", "ai-history-chip tone-yes", "Qwen框"));
+      const labelSource = labelSourceText(item.label_source);
+      if (labelSource) {
+        chips.appendChild(createNode("span", `ai-history-chip ${labelSourceTone(item.label_source)}`, labelSource));
       } else if (item.label_source === "yolo_auto") {
         chips.appendChild(createNode("span", "ai-history-chip tone-idle", "YOLO预标"));
       }
@@ -727,7 +744,7 @@
     meta.appendChild(metaItem("AI标类别", item.ai_class || item.event_name));
     meta.appendChild(metaItem("AI答案", item.ai_answer));
     meta.appendChild(metaItem("YOLO框数", item.label_count));
-    meta.appendChild(metaItem("框来源", item.label_source === "qwen_bbox" ? "Qwen框" : item.label_source === "yolo_auto" ? "YOLO模型预标" : ""));
+    meta.appendChild(metaItem("框来源", labelSourceText(item.label_source)));
     meta.appendChild(metaItem("Qwen标注", qwenCountSummary(item)));
     meta.appendChild(metaItem("Qwen质量", item.qwen_quality ? qwenLabelText(`quality:${item.qwen_quality}`) : ""));
     meta.appendChild(metaItem("Split", item.split));
@@ -751,8 +768,8 @@
     const labels = createNode("div", "yolo-review-labels");
     const labelTitle = createNode("div", "yolo-review-section-head");
     labelTitle.appendChild(createNode("h3", "", "YOLO 带框标签"));
-    const labelBadge = item.label_source === "qwen_bbox" ? "Qwen框" : item.auto_label_status === "pending" ? "待预标注" : dataset.kind === "classify" ? "分类样本" : item.label_rel_path || "无 label";
-    labelTitle.appendChild(createNode("span", `ai-history-chip ${item.label_source === "qwen_bbox" ? "tone-yes" : "tone-idle"}`, labelBadge));
+    const labelBadge = labelSourceText(item.label_source) || (item.auto_label_status === "pending" ? "待预标注" : dataset.kind === "classify" ? "分类样本" : item.label_rel_path || "无 label");
+    labelTitle.appendChild(createNode("span", `ai-history-chip ${labelSourceTone(item.label_source)}`, labelBadge));
     labels.appendChild(labelTitle);
     if (dataset.kind === "classify") {
       labels.appendChild(createNode("p", "yolo-review-label-line", `class: ${item.ai_class || "-"}`));

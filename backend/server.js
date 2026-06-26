@@ -495,12 +495,18 @@ const parkCrowdFramesRoot = path.join(parkCrowdRuntimeRoot, 'crowd-frames');
 const patrolAutoLabelRoot = path.join(yoloReviewRuntimeRoot, 'patrol_auto_labels');
 const vehicleUploadQwenLabelRoot = path.join(yoloReviewRuntimeRoot, 'vehicle_upload_qwen_labels_v2');
 const vehicleUploadQwenBboxLabelRoot = path.join(yoloReviewRuntimeRoot, 'vehicle_upload_qwen_bbox_labels_v1');
+const vehicleUploadQwenSensitiveBboxLabelRoot = path.join(
+  yoloReviewRuntimeRoot,
+  'vehicle_upload_qwen_sensitive_bbox_v6_reviewed_20260626'
+);
 const yoloReviewThumbRoot = path.join(yoloReviewRuntimeRoot, 'thumbs');
 const yoloReviewPatrolIndexPath = path.join(yoloReviewRuntimeRoot, 'patrol_dataset_index.json');
 const patrolAutoLabelSchema = 'jgzj_patrol_yolo_auto_label.v1';
 const vehicleUploadQwenLabelSchema = 'jgzj_vehicle_upload_qwen_label.v2';
 const vehicleUploadQwenBboxLabelSchema = 'jgzj_vehicle_upload_qwen_bbox_label.v1';
-const yoloReviewPatrolIndexSchema = 'jgzj_yolo_patrol_dataset_index.v1';
+const vehicleUploadQwenSensitiveBboxLabelSchema = 'jgzj_vehicle_upload_qwen_sensitive_bbox.v6_reviewed';
+const vehicleUploadQwenSensitiveBboxClasses = new Set(['smoke', 'trash', 'stall', 'phone', 'smoking']);
+const yoloReviewPatrolIndexSchema = 'jgzj_yolo_patrol_dataset_index.v3';
 const yoloReviewPatrolCacheTtlMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_CACHE_TTL_MS || 10 * 60 * 1000);
 const yoloReviewPatrolIndexFreshMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_INDEX_FRESH_MS || 5 * 60 * 1000);
 const yoloReviewDatasetListCacheTtlMs = Number(process.env.YOLO_LABEL_REVIEW_DATASET_LIST_CACHE_TTL_MS || 5 * 60 * 1000);
@@ -1362,6 +1368,14 @@ function vehicleUploadQwenBboxLabelCachePathForSha(imageSha256) {
   return path.join(vehicleUploadQwenBboxLabelRoot, sha.slice(0, 2), `${sha}.json`);
 }
 
+function vehicleUploadQwenSensitiveBboxLabelCachePathForSha(imageSha256) {
+  const sha = String(imageSha256 || '').trim().toLowerCase().replace(/[^a-f0-9]/g, '');
+  if (!sha) {
+    return null;
+  }
+  return path.join(vehicleUploadQwenSensitiveBboxLabelRoot, sha.slice(0, 2), `${sha}.json`);
+}
+
 async function readPatrolAutoLabelCache(meta) {
   const cachePath = patrolAutoLabelCachePathForSha(meta?.image_sha256);
   if (!cachePath) {
@@ -1408,6 +1422,24 @@ async function readVehicleUploadQwenBboxLabelCache(meta) {
     return null;
   }
   if (payload.schema && payload.schema !== vehicleUploadQwenBboxLabelSchema) {
+    return null;
+  }
+  return payload;
+}
+
+async function readVehicleUploadQwenSensitiveBboxLabelCache(meta) {
+  if (String(meta?.source || '') !== 'auto_ad_patrol_flow_upload') {
+    return null;
+  }
+  const cachePath = vehicleUploadQwenSensitiveBboxLabelCachePathForSha(meta?.image_sha256);
+  if (!cachePath) {
+    return null;
+  }
+  const payload = await readJsonFile(cachePath, null);
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (payload.schema && payload.schema !== vehicleUploadQwenSensitiveBboxLabelSchema) {
     return null;
   }
   return payload;
@@ -1479,6 +1511,26 @@ function normalizeQwenBboxLabel(raw, index = 0) {
     model_task: String(raw?.model_task || 'qwen_bbox').trim() || 'qwen_bbox',
     source: 'qwen_bbox'
   };
+}
+
+function normalizeQwenSensitiveBboxLabel(raw, index = 0) {
+  return {
+    ...normalizePatrolLabel(raw, index),
+    model_task: String(raw?.model_task || 'qwen_sensitive_bbox').trim() || 'qwen_sensitive_bbox',
+    source: 'qwen_bbox_verified'
+  };
+}
+
+function isQwenSensitiveBboxClass(className) {
+  return vehicleUploadQwenSensitiveBboxClasses.has(String(className || '').trim());
+}
+
+function mergeQwenBboxLabelsWithVerifiedSensitive(rawLabels = [], verifiedSensitiveLabels = []) {
+  const nonSensitiveRawLabels = rawLabels.filter((label) => !isQwenSensitiveBboxClass(label.class_name));
+  return [
+    ...nonSensitiveRawLabels,
+    ...verifiedSensitiveLabels
+  ];
 }
 
 async function collectPatrolMetaFiles(rootDir = parkCrowdFramesRoot, depth = 0) {
@@ -1566,6 +1618,8 @@ function buildPatrolBaseItem(dataset, row) {
     qwen_bbox_status: row.qwen_bbox_status || (source === 'auto_ad_patrol_flow_upload' ? 'pending' : 'not_applicable'),
     qwen_bbox_rel_path: row.qwen_bbox_rel_path || null,
     qwen_bbox_quality: row.qwen_bbox_quality || '',
+    qwen_bbox_verified_status: row.qwen_bbox_verified_status || 'not_applicable',
+    qwen_bbox_verified_rel_path: row.qwen_bbox_verified_rel_path || null,
     ai_answer: row.ai_answer && row.ai_answer !== 'NULL' ? row.ai_answer : '',
     qwen_label_status: row.qwen_label_status || (source === 'auto_ad_patrol_flow_upload' ? 'pending' : 'not_applicable'),
     qwen_label: qwenLabel,
@@ -1606,8 +1660,12 @@ async function buildYoloPatrolDataset() {
   let qwenBboxCached = 0;
   let qwenBboxPositive = 0;
   let qwenBboxBoxes = 0;
+  let qwenBboxVerifiedCached = 0;
+  let qwenBboxVerifiedPositive = 0;
+  let qwenBboxVerifiedBoxes = 0;
   const boxesByClass = {};
   const qwenBboxBoxesByClass = {};
+  const qwenBboxVerifiedBoxesByClass = {};
   const qwenBboxQuality = {};
   const qwenCountsByClass = {};
   const qwenImagesByClass = {};
@@ -1624,10 +1682,22 @@ async function buildYoloPatrolDataset() {
     const cachePath = cache ? patrolAutoLabelCachePathForSha(row.meta?.image_sha256) : null;
     const qwenBboxCache = await readVehicleUploadQwenBboxLabelCache(row.meta);
     const qwenBboxCachePath = qwenBboxCache ? vehicleUploadQwenBboxLabelCachePathForSha(row.meta?.image_sha256) : null;
-    const qwenBboxLabels = Array.isArray(qwenBboxCache?.labels)
+    const rawQwenBboxLabels = Array.isArray(qwenBboxCache?.labels)
       ? qwenBboxCache.labels.map((label, index) => normalizeQwenBboxLabel(label, index))
       : [];
-    const labels = qwenBboxCache ? qwenBboxLabels : yoloLabels;
+    const qwenBboxVerifiedCache = await readVehicleUploadQwenSensitiveBboxLabelCache(row.meta);
+    const qwenBboxVerifiedCachePath = qwenBboxVerifiedCache
+      ? vehicleUploadQwenSensitiveBboxLabelCachePathForSha(row.meta?.image_sha256)
+      : null;
+    const qwenBboxVerifiedLabels = Array.isArray(qwenBboxVerifiedCache?.labels)
+      ? qwenBboxVerifiedCache.labels.map((label, index) => normalizeQwenSensitiveBboxLabel(label, index))
+      : [];
+    const qwenBboxLabels = mergeQwenBboxLabelsWithVerifiedSensitive(
+      rawQwenBboxLabels,
+      qwenBboxVerifiedLabels
+    );
+    const hasEffectiveQwenBboxCache = Boolean(qwenBboxCache || qwenBboxVerifiedCache);
+    const labels = hasEffectiveQwenBboxCache ? qwenBboxLabels : yoloLabels;
     const qwenCache = await readVehicleUploadQwenLabelCache(row.meta);
     const qwenCachePath = qwenCache ? vehicleUploadQwenLabelCachePathForSha(row.meta?.image_sha256) : null;
     const qwenLabel = normalizeVehicleQwenAnnotation(
@@ -1638,36 +1708,55 @@ async function buildYoloPatrolDataset() {
     row.yolo_auto_label_cache = cache || null;
     row.yolo_auto_labels = yoloLabels;
     row.qwen_bbox_cache = qwenBboxCache || null;
+    row.qwen_bbox_raw_labels = rawQwenBboxLabels;
+    row.qwen_bbox_verified_cache = qwenBboxVerifiedCache || null;
+    row.qwen_bbox_verified_labels = qwenBboxVerifiedLabels;
     row.qwen_bbox_labels = qwenBboxLabels;
-    row.auto_label_cache = qwenBboxCache || cache || null;
+    row.auto_label_cache = qwenBboxVerifiedCache || qwenBboxCache || cache || null;
     row.auto_labels = labels;
-    row.label_source = qwenBboxCache ? 'qwen_bbox' : (cache ? 'yolo_auto' : 'pending');
-    row.auto_label_status = qwenBboxCache || cache ? 'done' : 'pending';
-    row.auto_label_rel_path = (qwenBboxCachePath || cachePath)
-      ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, qwenBboxCachePath || cachePath))
+    row.label_source = qwenBboxVerifiedCache ? 'qwen_bbox_verified' : (qwenBboxCache ? 'qwen_bbox' : (cache ? 'yolo_auto' : 'pending'));
+    row.auto_label_status = hasEffectiveQwenBboxCache || cache ? 'done' : 'pending';
+    row.auto_label_rel_path = (qwenBboxVerifiedCachePath || qwenBboxCachePath || cachePath)
+      ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, qwenBboxVerifiedCachePath || qwenBboxCachePath || cachePath))
       : null;
     row.auto_label_classes = labelClasses;
-    row.ai_answer = labels.length ? 'YES' : (qwenBboxCache || cache ? 'NO' : 'NULL');
-    row.qwen_bbox_status = qwenBboxCache ? 'done' : (String(row.meta?.source || '') === 'auto_ad_patrol_flow_upload' ? 'pending' : 'not_applicable');
-    row.qwen_bbox_rel_path = qwenBboxCachePath
-      ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, qwenBboxCachePath))
+    row.ai_answer = labels.length ? 'YES' : (hasEffectiveQwenBboxCache || cache ? 'NO' : 'NULL');
+    row.qwen_bbox_status = hasEffectiveQwenBboxCache ? 'done' : (String(row.meta?.source || '') === 'auto_ad_patrol_flow_upload' ? 'pending' : 'not_applicable');
+    row.qwen_bbox_rel_path = (qwenBboxVerifiedCachePath || qwenBboxCachePath)
+      ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, qwenBboxVerifiedCachePath || qwenBboxCachePath))
       : null;
-    row.qwen_bbox_quality = qwenBboxCache?.quality || '';
+    row.qwen_bbox_quality = qwenBboxVerifiedCache?.quality || qwenBboxCache?.quality || '';
+    row.qwen_bbox_verified_status = qwenBboxVerifiedCache ? 'done' : (qwenBboxCache ? 'not_reviewed' : row.qwen_bbox_status);
+    row.qwen_bbox_verified_rel_path = qwenBboxVerifiedCachePath
+      ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, qwenBboxVerifiedCachePath))
+      : null;
     row.qwen_label_cache = qwenCache || null;
     row.qwen_label = qwenLabel;
     row.qwen_label_status = qwenLabel ? qwenLabel.status : (String(row.meta?.source || '') === 'auto_ad_patrol_flow_upload' ? 'pending' : 'not_applicable');
     row.qwen_label_rel_path = qwenLabel?.rel_path || null;
-    if (qwenBboxCache || cache) cached += 1;
-    if (qwenBboxCache) {
+    if (hasEffectiveQwenBboxCache || cache) cached += 1;
+    if (hasEffectiveQwenBboxCache) {
       qwenBboxCached += 1;
       qwenBboxBoxes += qwenBboxLabels.length;
       if (qwenBboxLabels.length) {
         qwenBboxPositive += 1;
       }
-      qwenBboxQuality[qwenBboxCache.quality || 'unknown'] = (qwenBboxQuality[qwenBboxCache.quality || 'unknown'] || 0) + 1;
+      const qualityKey = qwenBboxVerifiedCache ? 'verified_sensitive' : (qwenBboxCache?.quality || 'unknown');
+      qwenBboxQuality[qualityKey] = (qwenBboxQuality[qualityKey] || 0) + 1;
       for (const label of qwenBboxLabels) {
         const name = label.class_name || String(label.class_id ?? 'unknown');
         qwenBboxBoxesByClass[name] = (qwenBboxBoxesByClass[name] || 0) + 1;
+      }
+    }
+    if (qwenBboxVerifiedCache) {
+      qwenBboxVerifiedCached += 1;
+      qwenBboxVerifiedBoxes += qwenBboxVerifiedLabels.length;
+      if (qwenBboxVerifiedLabels.length) {
+        qwenBboxVerifiedPositive += 1;
+      }
+      for (const label of qwenBboxVerifiedLabels) {
+        const name = label.class_name || String(label.class_id ?? 'unknown');
+        qwenBboxVerifiedBoxesByClass[name] = (qwenBboxVerifiedBoxesByClass[name] || 0) + 1;
       }
     }
     if (labels.length) {
@@ -1732,6 +1821,7 @@ async function buildYoloPatrolDataset() {
       },
       qwen_bbox: {
         schema: vehicleUploadQwenBboxLabelSchema,
+        effective_schema: `${vehicleUploadQwenBboxLabelSchema}+${vehicleUploadQwenSensitiveBboxLabelSchema}`,
         cached_images: qwenBboxCached,
         pending_images: Math.max(0, qwenApplicable - qwenBboxCached),
         applicable_images: qwenApplicable,
@@ -1739,7 +1829,16 @@ async function buildYoloPatrolDataset() {
         boxes: qwenBboxBoxes,
         boxes_by_class: qwenBboxBoxesByClass,
         quality: qwenBboxQuality,
-        root: toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, vehicleUploadQwenBboxLabelRoot))
+        root: toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, vehicleUploadQwenBboxLabelRoot)),
+        verified_sensitive: {
+          schema: vehicleUploadQwenSensitiveBboxLabelSchema,
+          cached_images: qwenBboxVerifiedCached,
+          positive_images: qwenBboxVerifiedPositive,
+          boxes: qwenBboxVerifiedBoxes,
+          boxes_by_class: qwenBboxVerifiedBoxesByClass,
+          covered_classes: [...vehicleUploadQwenSensitiveBboxClasses],
+          root: toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, vehicleUploadQwenSensitiveBboxLabelRoot))
+        }
       },
       qwen_label: {
         schema: vehicleUploadQwenLabelSchema,
@@ -1791,6 +1890,8 @@ function compactYoloPatrolIndexRow(row = {}) {
     qwen_bbox_status: row.qwen_bbox_status || 'not_applicable',
     qwen_bbox_rel_path: row.qwen_bbox_rel_path || null,
     qwen_bbox_quality: row.qwen_bbox_quality || '',
+    qwen_bbox_verified_status: row.qwen_bbox_verified_status || 'not_applicable',
+    qwen_bbox_verified_rel_path: row.qwen_bbox_verified_rel_path || null,
     qwen_label: row.qwen_label || null,
     qwen_label_status: row.qwen_label_status || 'not_applicable',
     qwen_label_rel_path: row.qwen_label_rel_path || null
