@@ -16,6 +16,7 @@ from PIL import Image
 
 SCHEMA = "jgzj_vehicle_upload_qwen_bbox_label.v1"
 MODEL = "Qwen3.6-27B-Labeler"
+MODEL_BUNDLE = "qwen_bbox_v2_strict"
 CLASSES = (
     "person",
     "fire",
@@ -29,18 +30,19 @@ CLASSES = (
     "nonmotor",
 )
 
-LABEL_PROMPT = """Detect YOLO pre-label boxes in this autonomous patrol vehicle image.
+LABEL_PROMPT = """Detect high-precision YOLO pre-label boxes in this autonomous patrol vehicle image.
 Return exactly one compact JSON object only. No markdown. No explanation.
 
 Schema:
-{"q":"good","b":[["person",12,34,56,78,0.9]]}
+{"q":"good","b":[["person",12,34,56,78,0.9,"live_person"]]}
 
 Fields:
 - q is one of: good, blur, dark, blocked, bad.
 - b has at most 20 boxes.
-- each box is [class,x1,y1,x2,y2,score].
+- each box is [class,x1,y1,x2,y2,score,evidence].
 - coordinates are integer 0-1000 xyxy on the full image. Clamp to bounds.
 - x2>x1 and y2>y1. Use tight visible-object boxes.
+- evidence is a short snake_case phrase proving the object is real and visible.
 
 Classes:
 person, vehicle, nonmotor, fire, smoke, trash, pet, stall, phone, smoking.
@@ -50,15 +52,29 @@ Class rules:
 - nonmotor: bicycle/e-bike/scooter/wheelchair/cart.
 - fire: visible flame only.
 - smoke: smoke plume/region only, not clouds/fog/glare.
+- trash: discarded waste on ground only, not signs, bins, leaves, normal fixtures.
+- pet: LIVE pet animal only, mainly dog/cat. Must show live-animal evidence such as body posture, fur, legs/head, leash, or interaction with a person.
+- Never label animal statues, sculptures, toys, dolls, mascots, mannequins, animal pictures, signs, decorations, white stone/resin animals, or repeated fixed animal-shaped objects as pet.
+- Never label birds, ducks, geese, chickens, wild animals, or livestock sculptures as pet.
+- If the scene contains white goat/sheep/dog statues on grass or beside a path, return no pet boxes for them.
 - phone: visible phone or hand-phone evidence.
 - smoking: cigarette/smoking evidence region, not whole person unless only that is visible.
 
 Rules:
-- Do not invent boxes. If uncertain, omit.
+- Do not invent boxes. If uncertain, omit. Prefer false negatives over false positives.
 - Ignore sky, trees, buildings, road, shadows, reflections, traffic lights, and text unless part of a target.
 - Prefer fewer precise boxes. In crowded scenes keep the 20 largest/clearest targets.
+- For small/distant ambiguous objects, omit unless the target class is visually clear.
 - If no allowed targets are visible, return {"q":"good","b":[]}.
 """
+
+PET_REJECT_NOTE_RE = re.compile(
+    r"statue|sculpture|toy|doll|mascot|mannequin|picture|poster|sign|decoration|"
+    r"stone|resin|fake|white_goat|white_sheep|goat_statue|sheep_statue|dog_statue|"
+    r"bird|goose|duck|chicken|livestock",
+    re.I,
+)
+TRASH_REJECT_NOTE_RE = re.compile(r"bin|trash_can|garbage_can|waste_bin|dustbin|sign|poster|leaf|leaves", re.I)
 
 
 def log(message):
@@ -126,6 +142,17 @@ def iter_rows(frames_root, source, vehicle):
         }
 
 
+def load_image_list(path):
+    if not path:
+        return None
+    values = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = normalize_rel(line.split("#", 1)[0].strip())
+        if line:
+            values.add(line)
+    return values
+
+
 def encode_image(path, max_side, jpeg_quality):
     with Image.open(path) as image:
         image = image.convert("RGB")
@@ -156,16 +183,22 @@ def salvage_truncated_annotation(text):
 
     num = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
     compact_re = re.compile(
-        rf'\[\s*"([^"]+)"\s*,\s*({num})\s*,\s*({num})\s*,\s*({num})\s*,\s*({num})(?:\s*,\s*({num}))?\s*\]'
+        rf'\[\s*"([^"]+)"\s*,\s*({num})\s*,\s*({num})\s*,\s*({num})\s*,\s*({num})'
+        rf'(?:\s*,\s*({num}))?(?:\s*,\s*"([^"]*)")?\s*\]'
     )
     compact_boxes = []
     for match in compact_re.finditer(clean):
         class_name = match.group(1)
         coords = [float(match.group(i)) for i in range(2, 6)]
         score = match.group(6)
+        evidence = match.group(7)
         item = [class_name] + coords
         if score is not None:
             item.append(float(score))
+        if evidence is not None:
+            if score is None:
+                item.append(None)
+            item.append(evidence)
         compact_boxes.append(item)
         if len(compact_boxes) >= 20:
             break
@@ -228,7 +261,12 @@ def normalize_box(item, index):
             class_name = str(item[0]).strip().lower()
             bbox = list(item[1:5])
             if len(item) >= 6:
-                score = item[5]
+                if isinstance(item[5], str) and not re.fullmatch(r"\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)\s*", item[5]):
+                    note = str(item[5] or "").strip()[:160]
+                else:
+                    score = item[5]
+            if len(item) >= 7:
+                note = str(item[6] or "").strip()[:160]
         elif len(item) >= 2 and isinstance(item[0], str) and isinstance(item[1], (list, tuple)):
             class_name = str(item[0]).strip().lower()
             bbox = list(item[1])
@@ -274,6 +312,13 @@ def normalize_box(item, index):
         score = None
     if score is not None:
         score = clamp(score, 0.0, 1.0)
+    if class_name == "pet":
+        if score is None or score < 0.95:
+            return None
+        if PET_REJECT_NOTE_RE.search(note):
+            return None
+    if class_name == "trash" and TRASH_REJECT_NOTE_RE.search(note):
+        return None
     raw = f"{class_name} {x:.6f} {y:.6f} {w:.6f} {h:.6f}"
     return {
         "model_task": "qwen_bbox",
@@ -297,6 +342,37 @@ def normalize_box(item, index):
     }
 
 
+def box_iou(a, b):
+    ax1, ay1, ax2, ay2 = a["box"]["bbox_1000"]
+    bx1, by1, bx2, by2 = b["box"]["bbox_1000"]
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def dedupe_labels(labels):
+    kept = []
+    ordered = sorted(labels, key=lambda item: item["confidence"] if item["confidence"] is not None else 0.0, reverse=True)
+    for label in ordered:
+        duplicate = False
+        for old in kept:
+            if old["class_name"] == label["class_name"] and box_iou(old, label) >= 0.55:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        label["index"] = len(kept)
+        kept.append(label)
+    return kept
+
+
 def normalize_annotation(parsed):
     if not isinstance(parsed, dict):
         return None, []
@@ -313,6 +389,7 @@ def normalize_annotation(parsed):
         label = normalize_box(item, index)
         if label:
             labels.append(label)
+    labels = dedupe_labels(labels)
     labels.sort(key=lambda item: (item["class_name"], -(item["confidence"] if item["confidence"] is not None else 0.0)))
     return quality, labels
 
@@ -378,7 +455,7 @@ def annotate_one(row, args):
         "meta_path": normalize_rel(row["meta_path"].relative_to(args.frames_root)),
         "annotated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "model": MODEL,
-        "model_bundle": "qwen_bbox_v1",
+        "model_bundle": MODEL_BUNDLE,
         "service_url": args.service_url,
         "image_request": image_request,
         "ok": ok,
@@ -409,9 +486,13 @@ def main():
     parser.add_argument("--timeout-s", type=int, default=120)
     parser.add_argument("--max-tokens", type=int, default=768)
     parser.add_argument("--only-missing", action="store_true", help="Only submit images without an existing valid qwen bbox cache.")
+    parser.add_argument("--image-list", type=Path, default=None, help="Optional newline-delimited image_path list relative to frames root.")
     args = parser.parse_args()
 
     rows = list(iter_rows(args.frames_root, args.source, args.vehicle))
+    image_filter = load_image_list(args.image_list)
+    if image_filter is not None:
+        rows = [row for row in rows if row["image_rel"] in image_filter]
     rows.sort(key=lambda row: str(row["meta"].get("collected_at") or ""), reverse=True)
     source_rows = len(rows)
     if args.only_missing and not args.refresh:
