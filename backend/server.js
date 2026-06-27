@@ -173,11 +173,37 @@ const yoloLocalServiceUrl = process.env.YOLO_LOCAL_SERVICE_URL || 'http://127.0.
 const yoloLocalServiceEnabled = String(process.env.YOLO_LOCAL_SERVICE_ENABLED || 'true').toLowerCase() !== 'false';
 const yoloLocalServiceTimeoutMs = Number(process.env.YOLO_LOCAL_SERVICE_TIMEOUT_MS || 60000);
 const yoloLocalGpuLabel = process.env.YOLO_LOCAL_GPU_LABEL || 'server-proxy-gpu2';
+const yoloModelRegistryPath = path.resolve(
+  process.env.YOLO_MODEL_REGISTRY_PATH ||
+    path.join(projectRoot, '.runtime/yolo_model_service/model_registry.json')
+);
+const yoloModelDownloadRoot = path.resolve(
+  process.env.YOLO_MODEL_DOWNLOAD_ROOT ||
+    path.join(projectRoot, '.runtime/yolo_model_service/downloads')
+);
 const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
     label: '全部YOLO检测',
-    subTasks: ['general_yolo', 'pet_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'smoking_two_stage']
+    subTasks: ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'smoking_two_stage']
+  },
+  person_yolo: {
+    kind: 'detect',
+    label: '人员识别',
+    model: '/home/sari/jgzj_yolo_runs/person_yolo_coco2017_v1_server_20260623_231402/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/person_yolo_best.pt',
+    names: ['person'],
+    imgsz: 640,
+    conf: 0.25
+  },
+  vehicle_yolo: {
+    kind: 'detect',
+    label: '车辆识别',
+    model: '/home/sari/jgzj_yolo_runs/vehicle_yolo_20260624_v1_20260624_022424/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/general_yolo_best.pt',
+    names: ['car', 'truck', 'non_motor_vehicle'],
+    imgsz: 640,
+    conf: 0.25
   },
   general_yolo: {
     kind: 'detect',
@@ -952,6 +978,129 @@ function buildYoloTaskResponse(taskId, task, payload, options = {}) {
   }
 
   return responsePayload;
+}
+
+function yoloDownloadUrlForFile(fileName) {
+  const cleanName = path.basename(String(fileName || ''));
+  if (!cleanName) return null;
+  return `/api/yolo-model-test/models/download/${encodeURIComponent(cleanName)}`;
+}
+
+async function readYoloModelRegistryFile() {
+  try {
+    const raw = await fs.readFile(yoloModelRegistryPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.warn('yolo_model_registry_read_failed', error.message);
+    }
+    return null;
+  }
+}
+
+async function fileInfoForPath(filePath) {
+  if (!filePath) return null;
+  try {
+    const stat = await fs.stat(filePath);
+    return {
+      size_bytes: stat.size,
+      updated_at: stat.mtime.toISOString()
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function buildFallbackYoloModelEntries() {
+  const taskIds = ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo'];
+  const entries = [];
+  for (const taskId of taskIds) {
+    const task = yoloModelTestTasks[taskId];
+    if (!task) continue;
+    const localWeight = task.localModel || task.model || '';
+    const info = await fileInfoForPath(localWeight);
+    entries.push({
+      task_id: taskId,
+      title: task.label,
+      model_family: path.basename(localWeight || task.model || '').replace(/\.pt$/i, '') || 'unknown',
+      status: info ? 'available' : 'missing',
+      metric_source: 'current_workbench_weight',
+      local_weight: localWeight,
+      weight_size_bytes: info?.size_bytes || null,
+      deployed_at: info?.updated_at || null,
+      updated_at: info?.updated_at || null
+    });
+  }
+  return entries;
+}
+
+async function normalizeYoloModelRegistryEntry(entry) {
+  const normalized = {
+    task_id: String(entry?.task_id || '').trim(),
+    title: String(entry?.title || entry?.task_label || entry?.task_id || '').trim(),
+    model_family: String(entry?.model_family || entry?.model || '').trim(),
+    status: String(entry?.status || 'unknown').trim(),
+    metric_source: String(entry?.metric_source || '').trim(),
+    metrics: entry?.metrics && typeof entry.metrics === 'object' ? entry.metrics : {},
+    train_progress: entry?.train_progress && typeof entry.train_progress === 'object' ? entry.train_progress : null,
+    source_run: String(entry?.source_run || '').trim(),
+    best_weight: String(entry?.best_weight || '').trim(),
+    local_weight: String(entry?.local_weight || '').trim(),
+    download_file: path.basename(String(entry?.download_file || '')),
+    deployed_at: entry?.deployed_at || null,
+    updated_at: entry?.updated_at || null,
+    note: String(entry?.note || '').trim()
+  };
+  if (!normalized.title && yoloModelTestTasks[normalized.task_id]) {
+    normalized.title = yoloModelTestTasks[normalized.task_id].label;
+  }
+  if (normalized.download_file) {
+    const downloadPath = path.join(yoloModelDownloadRoot, normalized.download_file);
+    const info = await fileInfoForPath(downloadPath);
+    normalized.download_url = info ? yoloDownloadUrlForFile(normalized.download_file) : null;
+    normalized.weight_size_bytes = info?.size_bytes || entry?.weight_size_bytes || null;
+  } else {
+    normalized.download_url = null;
+    normalized.weight_size_bytes = entry?.weight_size_bytes || null;
+  }
+  return normalized;
+}
+
+async function buildYoloModelRegistryPayload() {
+  const registry = await readYoloModelRegistryFile();
+  const fallbackEntries = await buildFallbackYoloModelEntries();
+  const mergedByTask = new Map(fallbackEntries.map((entry) => [entry.task_id, entry]));
+
+  if (Array.isArray(registry?.entries)) {
+    for (const entry of registry.entries) {
+      const taskId = String(entry?.task_id || '').trim();
+      if (!taskId) continue;
+      mergedByTask.set(taskId, {
+        ...mergedByTask.get(taskId),
+        ...entry
+      });
+    }
+  }
+
+  const preferredOrder = ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo'];
+  const entries = [];
+  for (const taskId of preferredOrder) {
+    if (!mergedByTask.has(taskId)) continue;
+    entries.push(await normalizeYoloModelRegistryEntry(mergedByTask.get(taskId)));
+    mergedByTask.delete(taskId);
+  }
+  for (const entry of mergedByTask.values()) {
+    entries.push(await normalizeYoloModelRegistryEntry(entry));
+  }
+
+  return {
+    ok: true,
+    schema: registry?.schema || 'jgzj_yolo_model_registry.v1',
+    updated_at: registry?.updated_at || null,
+    monitor_status: registry?.monitor_status || null,
+    entries
+  };
 }
 
 function extractJsonObject(text) {
@@ -8695,6 +8844,38 @@ app.post('/api/qwen36-mm-check', authStore.requirePermission('ai:detect'), async
     });
   } finally {
     guard.release();
+  }
+});
+
+app.get('/api/yolo-model-test/models', authStore.requirePermission('ai:detect'), async (_req, res) => {
+  try {
+    return res.json(await buildYoloModelRegistryPayload());
+  } catch (error) {
+    console.warn('yolo_model_registry_failed', error.message);
+    return res.status(500).json({
+      ok: false,
+      error: 'yolo_model_registry_failed',
+      detail: error.message || '读取YOLO模型列表失败。'
+    });
+  }
+});
+
+app.get('/api/yolo-model-test/models/download/:fileName', authStore.requirePermission('ai:detect'), async (req, res) => {
+  const fileName = path.basename(String(req.params.fileName || ''));
+  if (!fileName || fileName !== String(req.params.fileName || '')) {
+    return res.status(400).json({ ok: false, error: 'invalid_file_name' });
+  }
+
+  const filePath = path.resolve(yoloModelDownloadRoot, fileName);
+  if (!filePath.startsWith(`${yoloModelDownloadRoot}${path.sep}`)) {
+    return res.status(400).json({ ok: false, error: 'invalid_file_path' });
+  }
+
+  try {
+    await fs.access(filePath, fsSync.constants.R_OK);
+    return res.download(filePath, fileName);
+  } catch (_error) {
+    return res.status(404).json({ ok: false, error: 'model_file_not_found' });
   }
 });
 

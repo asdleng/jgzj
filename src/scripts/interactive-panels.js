@@ -18,6 +18,7 @@
   const AI_CHECK_HISTORY_URL = "/api/ai-check-history";
   const QWEN36_MM_CHECK_URL = "/api/qwen36-mm-check";
   const YOLO_MODEL_TEST_URL = "/api/yolo-model-test";
+  const YOLO_MODEL_REGISTRY_URL = "/api/yolo-model-test/models";
   const AI_CHECK_HISTORY_PAGE_SIZE = 5;
   const DEFAULT_VEHICLE_ID = "car-web";
   const QWEN_CHECK_PATH = "/ws/qwen/check";
@@ -138,6 +139,10 @@
   const yoloTestDetail = document.getElementById("yolo-test-detail");
   const yoloTestResult = document.getElementById("yolo-test-result");
   const yoloTestOutput = document.getElementById("yolo-test-output");
+  const yoloModelRegistryPanel = document.getElementById("yolo-model-registry");
+  const yoloModelRegistryStatus = document.getElementById("yolo-model-registry-status");
+  const yoloModelRegistryList = document.getElementById("yolo-model-registry-list");
+  const yoloModelRegistryRefresh = document.getElementById("yolo-model-registry-refresh");
 
   const qwen36mmForm = document.getElementById("qwen36mm-form");
   const qwen36mmImageInput = document.getElementById("qwen36mm-image");
@@ -7384,6 +7389,134 @@
     return `${Math.round(numeric * 1000) / 10}%`;
   }
 
+  function formatYoloMetric(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "-";
+    return `${(numeric * 100).toFixed(1)}%`;
+  }
+
+  function formatYoloBytes(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return "";
+    const units = ["B", "KB", "MB", "GB"];
+    let amount = numeric;
+    let unitIndex = 0;
+    while (amount >= 1024 && unitIndex < units.length - 1) {
+      amount /= 1024;
+      unitIndex += 1;
+    }
+    return `${amount.toFixed(unitIndex === 0 ? 0 : 1)}${units[unitIndex]}`;
+  }
+
+  function formatYoloModelTime(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  function yoloModelMetricText(entry) {
+    const metrics = entry?.metrics || {};
+    const p = metrics.test_precision ?? metrics.val_precision ?? metrics.precision;
+    const r = metrics.test_recall ?? metrics.val_recall ?? metrics.recall;
+    const map50 = metrics.test_map50 ?? metrics.val_map50 ?? metrics.map50;
+    const map95 = metrics.test_map50_95 ?? metrics.val_map50_95 ?? metrics.map50_95;
+    const parts = [
+      `P ${formatYoloMetric(p)}`,
+      `R ${formatYoloMetric(r)}`,
+      `mAP50 ${formatYoloMetric(map50)}`,
+      `mAP50-95 ${formatYoloMetric(map95)}`
+    ];
+    return parts.join(" · ");
+  }
+
+  function yoloModelProgressText(entry) {
+    const progress = entry?.train_progress || {};
+    const epoch = progress.epoch ?? progress.last_epoch;
+    const total = progress.total_epochs ?? progress.epochs;
+    if (epoch !== undefined && total !== undefined) {
+      return `训练 ${epoch}/${total}`;
+    }
+    if (entry?.status === "training") return "训练中";
+    return "";
+  }
+
+  function renderYoloModelRegistry(entries, updatedAt) {
+    if (!yoloModelRegistryList || !yoloModelRegistryStatus || !yoloModelRegistryPanel) return;
+    yoloModelRegistryList.innerHTML = "";
+    const list = Array.isArray(entries) ? entries : [];
+    if (!list.length) {
+      yoloModelRegistryPanel.dataset.state = "empty";
+      yoloModelRegistryStatus.textContent = "暂无模型版本信息。";
+      return;
+    }
+
+    yoloModelRegistryPanel.dataset.state = "ready";
+    yoloModelRegistryStatus.textContent = updatedAt
+      ? `已更新 ${formatYoloModelTime(updatedAt)}`
+      : "已读取当前工作台权重。";
+
+    list.forEach((entry) => {
+      const item = createNode("article", "yolo-model-card");
+      const top = createNode("div", "yolo-model-card-top");
+      const titleWrap = createNode("div", "yolo-model-card-title");
+      titleWrap.appendChild(createNode("strong", "", entry.title || entry.task_id || "YOLO模型"));
+      const modelLine = [
+        entry.model_family || "",
+        entry.status || "",
+        yoloModelProgressText(entry)
+      ].filter(Boolean).join(" · ");
+      titleWrap.appendChild(createNode("span", "", modelLine || "当前版本"));
+      top.appendChild(titleWrap);
+
+      if (entry.download_url) {
+        const link = createNode("a", "yolo-model-download", `下载${entry.weight_size_bytes ? ` ${formatYoloBytes(entry.weight_size_bytes)}` : ""}`);
+        link.href = entry.download_url;
+        link.download = entry.download_file || "";
+        top.appendChild(link);
+      } else {
+        top.appendChild(createNode("span", "yolo-model-download is-disabled", "暂无下载"));
+      }
+      item.appendChild(top);
+
+      item.appendChild(createNode("p", "yolo-model-metrics", yoloModelMetricText(entry)));
+      const footText = [
+        entry.metric_source || "",
+        entry.deployed_at ? `部署 ${formatYoloModelTime(entry.deployed_at)}` : "",
+        entry.updated_at && !entry.deployed_at ? `更新 ${formatYoloModelTime(entry.updated_at)}` : ""
+      ].filter(Boolean).join(" · ");
+      if (footText) item.appendChild(createNode("p", "yolo-model-meta", footText));
+      if (entry.note) item.appendChild(createNode("p", "yolo-model-meta", entry.note));
+      yoloModelRegistryList.appendChild(item);
+    });
+  }
+
+  async function loadYoloModelRegistry() {
+    if (!yoloModelRegistryPanel || !yoloModelRegistryStatus || !yoloModelRegistryList) return;
+    yoloModelRegistryPanel.dataset.state = "loading";
+    yoloModelRegistryStatus.textContent = "正在读取模型列表。";
+    try {
+      const response = await fetch(YOLO_MODEL_REGISTRY_URL, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(30000)
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.detail || data?.error || `HTTP ${response.status}`);
+      }
+      renderYoloModelRegistry(data.entries, data.updated_at);
+    } catch (error) {
+      yoloModelRegistryPanel.dataset.state = "error";
+      yoloModelRegistryStatus.textContent = `模型列表读取失败：${error?.message || "未知错误"}`;
+      yoloModelRegistryList.innerHTML = "";
+    }
+  }
+
   function normalizeYoloBox(box) {
     if (!box || typeof box !== "object") return "";
     const xCenter = Number(box.x_center);
@@ -8537,6 +8670,11 @@
       handleYoloTaskClick(button);
     });
   });
+
+  yoloModelRegistryRefresh?.addEventListener("click", () => {
+    loadYoloModelRegistry();
+  });
+  loadYoloModelRegistry();
 
   qwen36mmImageInput?.addEventListener("change", () => {
     const file = qwen36mmImageInput.files?.[0];

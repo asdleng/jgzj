@@ -25,7 +25,15 @@
         <div class="yolo-task-grid" aria-label="YOLO固定任务">
           <button class="yolo-task-button yolo-task-button--wide" type="button" data-yolo-task="all_yolo">
             <span class="yolo-task-title">全部YOLO检测</span>
-            <span class="yolo-task-meta">通用 / 宠物 / 垃圾 / 烟火 / 手机 / 摆摊 / 吸烟</span>
+            <span class="yolo-task-meta">人员 / 车辆 / 宠物 / 垃圾 / 烟火 / 手机 / 摆摊 / 吸烟</span>
+          </button>
+          <button class="yolo-task-button" type="button" data-yolo-task="person_yolo">
+            <span class="yolo-task-title">人员识别</span>
+            <span class="yolo-task-meta">行人 / 人群 / 远距离人员</span>
+          </button>
+          <button class="yolo-task-button" type="button" data-yolo-task="vehicle_yolo">
+            <span class="yolo-task-title">车辆识别</span>
+            <span class="yolo-task-meta">汽车 / 货车 / 非机动车</span>
           </button>
           <button class="yolo-task-button" type="button" data-yolo-task="general_yolo">
             <span class="yolo-task-title">通用事件</span>
@@ -57,6 +65,14 @@
           </button>
         </div>
       </div>
+      <section id="yolo-model-registry" class="yolo-model-registry" data-state="loading">
+        <div class="yolo-model-registry-head">
+          <p class="ai-check-result-label">模型版本</p>
+          <button id="yolo-model-registry-refresh" class="cloud-chat-close" type="button">刷新</button>
+        </div>
+        <p id="yolo-model-registry-status" class="yolo-test-empty">正在读取模型列表。</p>
+        <div id="yolo-model-registry-list" class="yolo-model-registry-list"></div>
+      </section>
       <section id="yolo-test-result" class="ai-check-result yolo-test-result" data-state="idle">
         <p class="ai-check-result-label">测试结果</p>
         <p id="yolo-test-answer" class="ai-check-answer">等待测试</p>
