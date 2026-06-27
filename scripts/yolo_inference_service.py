@@ -151,6 +151,16 @@ def crop_with_padding(image, xyxy, pad_ratio=0.08):
     return image[top:bottom, left:right]
 
 
+def accepted_behavior_classes(task):
+    values = task.get("behaviorClasses")
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, (list, tuple, set)):
+        values = []
+    classes = {str(value).strip().lower() for value in values if str(value).strip()}
+    return classes or {"phone_use", "smoking"}
+
+
 def run_detect(task, image, no_annotated):
     model_path = task.get("model")
     model = load_model(model_path)
@@ -248,6 +258,7 @@ def run_person_behavior_two_stage(task, image, no_annotated):
     classifier_path = task.get("classifierModel")
     min_box_height = float(task.get("minBoxHeight") if task.get("minBoxHeight") is not None else 0.12)
     min_box_area = float(task.get("minBoxArea") if task.get("minBoxArea") is not None else 0.025)
+    accepted_classes = accepted_behavior_classes(task)
     detector = load_model(detector_path)
     classifier = load_model(classifier_path)
     with infer_lock_for_model(detector_path):
@@ -286,7 +297,7 @@ def run_person_behavior_two_stage(task, image, no_annotated):
                 detection["stage2"] = {"predictions": predictions, "top": top}
                 detection["accepted"] = bool(
                     top
-                    and top_name in {"phone_use", "smoking"}
+                    and top_name in accepted_classes
                     and float(top.get("confidence", 0.0)) >= float(task.get("classifierThreshold") or 0.55)
                 )
             else:
@@ -301,6 +312,7 @@ def run_person_behavior_two_stage(task, image, no_annotated):
         "person_candidates": person_candidates,
         "behavior_candidates": len(detections),
         "classifier_threshold": float(task.get("classifierThreshold") or 0.55),
+        "behavior_classes": sorted(accepted_classes),
         "annotated_image": None if no_annotated else encode_annotated_image(result),
     }
 

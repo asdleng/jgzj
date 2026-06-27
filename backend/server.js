@@ -306,18 +306,21 @@ const yoloModelTestTasks = Object.freeze({
     registryNote: '两阶段人员行为分类：先检测 person，再对人员ROI分类 other / phone_use / smoking。'
   },
   smoking_two_stage: {
-    kind: 'smoking_two_stage',
+    kind: 'person_behavior_two_stage',
     label: '吸烟检测',
-    model: '/home/sari/jgzj_yolo_runs/smoking_candidate_yolo_small_manual_20260621_063036/weights/best.pt',
-    classifierModel: '/home/sari/jgzj_yolo_runs/smoking_cls_small_manual_20260621_064107/weights/best.pt',
-    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/smoking_candidate_best.pt',
-    localClassifierModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/smoking_cls_best.pt',
-    names: ['smoking'],
-    classifierNames: ['not_smoking', 'smoking'],
+    model: '/home/sari/jgzj_yolo_runs/person_yolo_coco2017_v1_server_20260623_231402/weights/best.pt',
+    classifierModel: '/home/sari/jgzj_yolo_runs_person_behavior/person_behavior_yolov8n_cls_20260627_v11_clean_all_other_dual_person/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/person_yolo_best.pt',
+    localClassifierModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/person_behavior_cls_best.pt',
+    names: ['person'],
+    classifierNames: ['other', 'phone_use', 'smoking'],
     imgsz: 640,
-    conf: 0.18,
+    conf: 0.25,
     classifierImgsz: 224,
-    classifierThreshold: 0.55
+    classifierThreshold: 0.55,
+    minBoxHeight: 0.12,
+    minBoxArea: 0.025,
+    behaviorClasses: ['smoking']
   }
 });
 const yoloModelTestPredictScript = String.raw`import argparse
@@ -443,6 +446,12 @@ def crop_with_padding(image, xyxy, pad_ratio=0.08):
     return image[top:bottom, left:right]
 
 
+def accepted_behavior_classes(args):
+    values = getattr(args, "behavior_class", None) or []
+    classes = {str(value).strip().lower() for value in values if str(value).strip()}
+    return classes or {"phone_use", "smoking"}
+
+
 def run_smoking_two_stage(args):
     import cv2
 
@@ -504,6 +513,7 @@ def run_person_behavior_two_stage(args):
     classifier = YOLO(args.classifier_model)
     min_box_height = float(args.min_box_height)
     min_box_area = float(args.min_box_area)
+    accepted_classes = accepted_behavior_classes(args)
     result = detector.predict(
         args.image,
         imgsz=args.imgsz,
@@ -538,7 +548,7 @@ def run_person_behavior_two_stage(args):
                 detection["stage2"] = {"predictions": predictions, "top": top}
                 detection["accepted"] = bool(
                     top
-                    and top_name in {"phone_use", "smoking"}
+                    and top_name in accepted_classes
                     and float(top.get("confidence", 0.0)) >= args.cls_threshold
                 )
             else:
@@ -553,6 +563,7 @@ def run_person_behavior_two_stage(args):
         "person_candidates": person_candidates,
         "behavior_candidates": len(detections),
         "classifier_threshold": args.cls_threshold,
+        "behavior_classes": sorted(accepted_classes),
         "annotated_image": None if args.no_annotated else encode_annotated_image(result),
     }
 
@@ -570,6 +581,7 @@ def main():
     parser.add_argument("--cls-threshold", type=float, default=0.55)
     parser.add_argument("--min-box-height", type=float, default=0.12)
     parser.add_argument("--min-box-area", type=float, default=0.025)
+    parser.add_argument("--behavior-class", action="append", default=[])
     parser.add_argument("--no-annotated", action="store_true")
     args = parser.parse_args()
 
@@ -960,6 +972,11 @@ function buildYoloRemotePredictCommand({ task, remoteScriptPath, remoteInputPath
   if (task.minBoxArea !== undefined) {
     args.push('--min-box-area', shellQuote(task.minBoxArea));
   }
+  if (Array.isArray(task.behaviorClasses)) {
+    for (const behaviorClass of task.behaviorClasses) {
+      args.push('--behavior-class', shellQuote(behaviorClass));
+    }
+  }
   if (noAnnotated) {
     args.push('--no-annotated');
   }
@@ -1012,6 +1029,9 @@ function buildLocalYoloTask(task) {
   }
   if (task.minBoxArea !== undefined) {
     localTask.minBoxArea = task.minBoxArea;
+  }
+  if (Array.isArray(task.behaviorClasses)) {
+    localTask.behaviorClasses = task.behaviorClasses;
   }
   return localTask;
 }
@@ -1084,6 +1104,18 @@ function buildYoloTaskResponse(taskId, task, payload, options = {}) {
     if (payload.annotated_image?.error) {
       responsePayload.annotated_image_error = payload.annotated_image.error;
     }
+  }
+  if (payload.person_candidates !== undefined) {
+    responsePayload.person_candidates = payload.person_candidates;
+  }
+  if (payload.behavior_candidates !== undefined) {
+    responsePayload.behavior_candidates = payload.behavior_candidates;
+  }
+  if (payload.classifier_threshold !== undefined) {
+    responsePayload.classifier_threshold = payload.classifier_threshold;
+  }
+  if (Array.isArray(payload.behavior_classes)) {
+    responsePayload.behavior_classes = payload.behavior_classes;
   }
 
   return responsePayload;

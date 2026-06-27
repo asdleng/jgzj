@@ -7674,6 +7674,7 @@
 
   function renderYoloTestData(data) {
     const taskLabel = data.task_label || "YOLO任务";
+    const taskId = String(data.task_id || "").toLowerCase();
     const mode = data.mode || "";
 
     if (mode === "all_yolo") {
@@ -7699,7 +7700,7 @@
         return;
       }
       const topName = String(top.class_name || "").toLowerCase();
-      const isBehaviorClassify = String(data.task_id || "").toLowerCase() === "person_behavior_cls";
+      const isBehaviorClassify = taskId === "person_behavior_cls";
       const isPositive = isBehaviorClassify
         ? topName === "phone_use" || topName === "smoking"
         : topName === "smoking";
@@ -7720,7 +7721,25 @@
       const threshold = data.classifier_threshold ?? 0.55;
       const phoneCount = detections.filter((detection) => detection.accepted && detection.stage2?.top?.class_name === "phone_use").length;
       const smokingCount = detections.filter((detection) => detection.accepted && detection.stage2?.top?.class_name === "smoking").length;
-      if (phoneCount || smokingCount) {
+      const behaviorClasses = new Set(
+        (Array.isArray(data.behavior_classes) ? data.behavior_classes : [])
+          .map((item) => String(item || "").toLowerCase())
+          .filter(Boolean)
+      );
+      const smokingOnly = taskId === "smoking_two_stage" || (behaviorClasses.size === 1 && behaviorClasses.has("smoking"));
+      if (smokingOnly) {
+        if (smokingCount) {
+          setYoloTestResult(
+            "吸烟确认",
+            `${taskLabel}: 候选人员 ${personCandidateCount} 个，显示阈值 ${formatYoloConfidence(threshold)}，确认吸烟 ${smokingCount} 个，耗时 ${data.duration_ms ?? "-"}ms。`,
+            "yes"
+          );
+        } else if (personCandidateCount > 0) {
+          setYoloTestResult("未确认吸烟", `${taskLabel}: 候选人员 ${personCandidateCount} 个，抽烟低于 ${formatYoloConfidence(threshold)} 或判为其他行为，不显示框。耗时 ${data.duration_ms ?? "-"}ms。`, "ok");
+        } else {
+          setYoloTestResult("未检出人员", `${taskLabel}: 未检出人员，不进行吸烟确认，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+        }
+      } else if (phoneCount || smokingCount) {
         setYoloTestResult(
           "行为命中",
           `${taskLabel}: 候选人员 ${personCandidateCount} 个，显示阈值 ${formatYoloConfidence(threshold)}，玩手机 ${phoneCount} 个，抽烟 ${smokingCount} 个，耗时 ${data.duration_ms ?? "-"}ms。`,
