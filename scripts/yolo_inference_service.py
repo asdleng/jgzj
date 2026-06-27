@@ -243,6 +243,68 @@ def run_smoking_two_stage(task, image, no_annotated):
     }
 
 
+def run_person_behavior_two_stage(task, image, no_annotated):
+    detector_path = task.get("model")
+    classifier_path = task.get("classifierModel")
+    min_box_height = float(task.get("minBoxHeight") if task.get("minBoxHeight") is not None else 0.12)
+    min_box_area = float(task.get("minBoxArea") if task.get("minBoxArea") is not None else 0.025)
+    detector = load_model(detector_path)
+    classifier = load_model(classifier_path)
+    with infer_lock_for_model(detector_path):
+        result = detector.predict(
+            image,
+            imgsz=int(task.get("imgsz") or 640),
+            conf=float(task.get("conf") if task.get("conf") is not None else 0.25),
+            device=SERVER_STATE["device"],
+            verbose=False,
+        )[0]
+    names = getattr(result, "names", getattr(detector.model, "names", {}))
+    detections = []
+    person_candidates = 0
+    if result.boxes is not None:
+        for box in result.boxes:
+            detection = serialize_box(box, names)
+            box_info = detection.get("box") or {}
+            box_width = float(box_info.get("width") or 0.0)
+            box_height = float(box_info.get("height") or 0.0)
+            if box_height < min_box_height or box_width * box_height < min_box_area:
+                continue
+            person_candidates += 1
+            crop = crop_with_padding(image, detection["box"]["xyxy"])
+            if crop is not None:
+                with infer_lock_for_model(classifier_path):
+                    cls_result = classifier.predict(
+                        crop,
+                        imgsz=int(task.get("classifierImgsz") or 224),
+                        device=SERVER_STATE["device"],
+                        verbose=False,
+                    )[0]
+                cls_names = getattr(cls_result, "names", getattr(classifier.model, "names", {}))
+                predictions = normalize_predictions(getattr(cls_result, "probs", None), cls_names)
+                top = predictions[0] if predictions else None
+                top_name = str((top or {}).get("class_name", "")).lower()
+                detection["stage2"] = {"predictions": predictions, "top": top}
+                detection["accepted"] = bool(
+                    top
+                    and top_name in {"phone_use", "smoking"}
+                    and float(top.get("confidence", 0.0)) >= float(task.get("classifierThreshold") or 0.55)
+                )
+            else:
+                detection["stage2"] = {"predictions": [], "top": None, "error": "empty_crop"}
+                detection["accepted"] = False
+            if detection["accepted"]:
+                detections.append(detection)
+    return {
+        "ok": True,
+        "mode": "person_behavior_two_stage",
+        "detections": detections,
+        "person_candidates": person_candidates,
+        "behavior_candidates": len(detections),
+        "classifier_threshold": float(task.get("classifierThreshold") or 0.55),
+        "annotated_image": None if no_annotated else encode_annotated_image(result),
+    }
+
+
 def run_prediction(payload):
     task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
     kind = str(task.get("kind") or "")
@@ -250,6 +312,8 @@ def run_prediction(payload):
     no_annotated = bool(payload.get("no_annotated"))
     if kind == "classify":
         result = run_classify(task, image)
+    elif kind == "person_behavior_two_stage":
+        result = run_person_behavior_two_stage(task, image, no_annotated)
     elif kind == "smoking_two_stage":
         result = run_smoking_two_stage(task, image, no_annotated)
     elif kind == "detect":

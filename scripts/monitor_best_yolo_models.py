@@ -88,6 +88,27 @@ TARGETS = {
         ],
         "keywords": ["fire", "smoke", "yolo12s"],
     },
+    "person_behavior_cls": {
+        "title": "人员行为分类",
+        "local_weight": str(RUNTIME_ROOT / "weights" / "person_behavior_cls_best.pt"),
+        "download_file": "person_behavior_cls_best.pt",
+        "static_only": True,
+        "static_model_family": "yolov8n-cls",
+        "static_metric_source": "test",
+        "static_metrics": {
+            "test_top1": 0.9000,
+            "other_precision": 0.8738,
+            "other_recall": 0.8824,
+            "phone_use_precision": 0.8776,
+            "phone_use_recall": 0.9348,
+            "smoking_precision": 0.9297,
+            "smoking_recall": 0.9015,
+        },
+        "static_note": "二阶段人员行为分类：other / phone_use / smoking；用于人员ROI分类。",
+        "roots": [],
+        "summary_roots": [],
+        "keywords": [],
+    },
 }
 
 

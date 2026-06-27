@@ -276,6 +276,35 @@ const yoloModelTestTasks = Object.freeze({
     names: ['not_smoking', 'smoking'],
     imgsz: 224
   },
+  person_behavior_cls: {
+    kind: 'person_behavior_two_stage',
+    label: '人员行为分类',
+    model: '/home/sari/jgzj_yolo_runs/person_yolo_coco2017_v1_server_20260623_231402/weights/best.pt',
+    classifierModel: '/home/sari/jgzj_yolo_runs_person_behavior/person_behavior_yolov8n_cls_20260627_v11_clean_all_other_dual_person/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/person_yolo_best.pt',
+    localClassifierModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/person_behavior_cls_best.pt',
+    names: ['person'],
+    classifierNames: ['other', 'phone_use', 'smoking'],
+    imgsz: 640,
+    conf: 0.25,
+    classifierImgsz: 224,
+    classifierThreshold: 0.55,
+    minBoxHeight: 0.12,
+    minBoxArea: 0.025,
+    downloadFile: 'person_behavior_cls_best.pt',
+    registryModelFamily: 'yolov8n-cls',
+    registryMetricSource: 'test',
+    registryMetrics: {
+      test_top1: 0.9000,
+      other_precision: 0.8738,
+      other_recall: 0.8824,
+      phone_use_precision: 0.8776,
+      phone_use_recall: 0.9348,
+      smoking_precision: 0.9297,
+      smoking_recall: 0.9015
+    },
+    registryNote: '两阶段人员行为分类：先检测 person，再对人员ROI分类 other / phone_use / smoking。'
+  },
   smoking_two_stage: {
     kind: 'smoking_two_stage',
     label: '吸烟检测',
@@ -464,9 +493,73 @@ def run_smoking_two_stage(args):
     }
 
 
+def run_person_behavior_two_stage(args):
+    import cv2
+
+    image = cv2.imread(args.image)
+    if image is None:
+        raise RuntimeError("image_decode_failed")
+
+    detector = YOLO(args.model)
+    classifier = YOLO(args.classifier_model)
+    min_box_height = float(args.min_box_height)
+    min_box_area = float(args.min_box_area)
+    result = detector.predict(
+        args.image,
+        imgsz=args.imgsz,
+        conf=args.conf,
+        device=args.device,
+        verbose=False,
+    )[0]
+    names = getattr(result, "names", getattr(detector.model, "names", {}))
+    detections = []
+    person_candidates = 0
+    if result.boxes is not None:
+        for box in result.boxes:
+            detection = serialize_box(box, names)
+            box_info = detection.get("box") or {}
+            box_width = float(box_info.get("width") or 0.0)
+            box_height = float(box_info.get("height") or 0.0)
+            if box_height < min_box_height or box_width * box_height < min_box_area:
+                continue
+            person_candidates += 1
+            crop = crop_with_padding(image, detection["box"]["xyxy"])
+            if crop is not None:
+                cls_result = classifier.predict(
+                    crop,
+                    imgsz=args.cls_imgsz,
+                    device=args.device,
+                    verbose=False,
+                )[0]
+                cls_names = getattr(cls_result, "names", getattr(classifier.model, "names", {}))
+                predictions = normalize_predictions(getattr(cls_result, "probs", None), cls_names)
+                top = predictions[0] if predictions else None
+                top_name = str((top or {}).get("class_name", "")).lower()
+                detection["stage2"] = {"predictions": predictions, "top": top}
+                detection["accepted"] = bool(
+                    top
+                    and top_name in {"phone_use", "smoking"}
+                    and float(top.get("confidence", 0.0)) >= args.cls_threshold
+                )
+            else:
+                detection["stage2"] = {"predictions": [], "top": None, "error": "empty_crop"}
+                detection["accepted"] = False
+            if detection["accepted"]:
+                detections.append(detection)
+    return {
+        "ok": True,
+        "mode": "person_behavior_two_stage",
+        "detections": detections,
+        "person_candidates": person_candidates,
+        "behavior_candidates": len(detections),
+        "classifier_threshold": args.cls_threshold,
+        "annotated_image": None if args.no_annotated else encode_annotated_image(result),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", required=True, choices=["detect", "classify", "smoking_two_stage"])
+    parser.add_argument("--mode", required=True, choices=["detect", "classify", "smoking_two_stage", "person_behavior_two_stage"])
     parser.add_argument("--model", required=True)
     parser.add_argument("--classifier-model", default="")
     parser.add_argument("--image", required=True)
@@ -475,11 +568,15 @@ def main():
     parser.add_argument("--device", default="0")
     parser.add_argument("--cls-imgsz", type=int, default=224)
     parser.add_argument("--cls-threshold", type=float, default=0.55)
+    parser.add_argument("--min-box-height", type=float, default=0.12)
+    parser.add_argument("--min-box-area", type=float, default=0.025)
     parser.add_argument("--no-annotated", action="store_true")
     args = parser.parse_args()
 
     if args.mode == "classify":
         payload = run_classify(args)
+    elif args.mode == "person_behavior_two_stage":
+        payload = run_person_behavior_two_stage(args)
     elif args.mode == "smoking_two_stage":
         payload = run_smoking_two_stage(args)
     else:
@@ -857,6 +954,12 @@ function buildYoloRemotePredictCommand({ task, remoteScriptPath, remoteInputPath
     args.push('--cls-imgsz', shellQuote(task.classifierImgsz || 224));
     args.push('--cls-threshold', shellQuote(task.classifierThreshold || 0.55));
   }
+  if (task.minBoxHeight !== undefined) {
+    args.push('--min-box-height', shellQuote(task.minBoxHeight));
+  }
+  if (task.minBoxArea !== undefined) {
+    args.push('--min-box-area', shellQuote(task.minBoxArea));
+  }
   if (noAnnotated) {
     args.push('--no-annotated');
   }
@@ -903,6 +1006,12 @@ function buildLocalYoloTask(task) {
     localTask.classifierNames = task.classifierNames || [];
     localTask.classifierImgsz = task.classifierImgsz || 224;
     localTask.classifierThreshold = task.classifierThreshold || 0.55;
+  }
+  if (task.minBoxHeight !== undefined) {
+    localTask.minBoxHeight = task.minBoxHeight;
+  }
+  if (task.minBoxArea !== undefined) {
+    localTask.minBoxArea = task.minBoxArea;
   }
   return localTask;
 }
@@ -1013,7 +1122,7 @@ async function fileInfoForPath(filePath) {
 }
 
 async function buildFallbackYoloModelEntries() {
-  const taskIds = ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo'];
+  const taskIds = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo'];
   const entries = [];
   for (const taskId of taskIds) {
     const task = yoloModelTestTasks[taskId];
@@ -1023,13 +1132,16 @@ async function buildFallbackYoloModelEntries() {
     entries.push({
       task_id: taskId,
       title: task.label,
-      model_family: path.basename(localWeight || task.model || '').replace(/\.pt$/i, '') || 'unknown',
-      status: info ? 'available' : 'missing',
-      metric_source: 'current_workbench_weight',
+      model_family: task.registryModelFamily || path.basename(localWeight || task.model || '').replace(/\.pt$/i, '') || 'unknown',
+      status: info ? (task.registryStatus || 'available') : 'missing',
+      metric_source: task.registryMetricSource || 'current_workbench_weight',
+      metrics: task.registryMetrics || {},
       local_weight: localWeight,
+      download_file: task.downloadFile || path.basename(localWeight || ''),
       weight_size_bytes: info?.size_bytes || null,
       deployed_at: info?.updated_at || null,
-      updated_at: info?.updated_at || null
+      updated_at: info?.updated_at || null,
+      note: task.registryNote || ''
     });
   }
   return entries;
@@ -1083,7 +1195,7 @@ async function buildYoloModelRegistryPayload() {
     }
   }
 
-  const preferredOrder = ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo'];
+  const preferredOrder = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo'];
   const entries = [];
   for (const taskId of preferredOrder) {
     if (!mergedByTask.has(taskId)) continue;
