@@ -28,6 +28,8 @@ TARGETS = {
         "title": "人员识别",
         "local_weight": str(RUNTIME_ROOT / "weights" / "person_yolo_best.pt"),
         "download_file": "person_yolo_best.pt",
+        "score_metric": "val_map50_95",
+        "metric_source_override": "val",
         "roots": [
             "/home/sari/jgzj_yolo_runs_person_v2",
             "/home/sari/jgzj_yolo_runs",
@@ -186,6 +188,13 @@ def summary_candidates(task_id, cfg):
                     "val_map50_95": fnum(row.get("val_map50_95")),
                 }
                 model = row.get("model") or model_family_from_text(best_weight)
+                score_metric = cfg.get("score_metric")
+                if score_metric:
+                    score = metrics.get(score_metric)
+                    metric_source = cfg.get("metric_source_override") or score_metric.split("_", 1)[0]
+                else:
+                    score = metrics.get("test_map50_95") or metrics.get("val_map50_95") or -1
+                    metric_source = "test" if metrics.get("test_map50_95") is not None else "val"
                 out.append({
                     "task_id": task_id,
                     "title": cfg.get("title", task_id),
@@ -196,8 +205,8 @@ def summary_candidates(task_id, cfg):
                     "source_run": row.get("run_dir", ""),
                     "best_weight": best_weight,
                     "metrics": metrics,
-                    "score": metrics.get("test_map50_95") or metrics.get("val_map50_95") or -1,
-                    "metric_source": "test" if metrics.get("test_map50_95") is not None else "val",
+                    "score": score if score is not None else -1,
+                    "metric_source": metric_source,
                     "train_seconds": fnum(row.get("train_seconds")),
                 })
     return out
@@ -229,6 +238,8 @@ def results_candidate(task_id, cfg, run):
     epochs_done = len(rows)
     # Treat old completed baselines as deployable when they reached the usual 80 epochs.
     status = "completed" if epochs_done >= 80 else "training"
+    score_metric = cfg.get("score_metric")
+    score = metrics.get(score_metric) if score_metric else metrics.get("val_map50_95")
     return {
         "task_id": task_id,
         "title": cfg.get("title", task_id),
@@ -238,8 +249,8 @@ def results_candidate(task_id, cfg, run):
         "source_run": str(run),
         "best_weight": str(best_weight),
         "metrics": metrics,
-        "score": metrics.get("val_map50_95") or -1,
-        "metric_source": "val",
+        "score": score if score is not None else -1,
+        "metric_source": cfg.get("metric_source_override") or "val",
         "train_progress": {
             "epoch": int(float(last.get("epoch", epochs_done - 1))) + 1 if str(last.get("epoch", "")).strip() else epochs_done,
             "total_epochs": 80,
