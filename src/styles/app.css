@@ -3979,6 +3979,181 @@
   color: #f8fafc;
 }
 
+.yolo-review-dataset-strip {
+  display: grid;
+  gap: 10px;
+  padding: 12px 18px 14px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.35);
+  background: rgba(15, 23, 42, 0.56);
+}
+
+.yolo-review-dataset-strip-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.yolo-review-dataset-title,
+.yolo-review-dataset-status,
+.yolo-review-dataset-card-title strong,
+.yolo-review-dataset-card-title span,
+.yolo-review-dataset-classes,
+.yolo-review-dataset-card-foot {
+  margin: 0;
+}
+
+.yolo-review-dataset-title {
+  color: #f8fafc;
+  font-size: 0.98rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.yolo-review-dataset-status {
+  margin-top: 3px;
+  color: #94a3b8;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.yolo-review-dataset-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 10px;
+  max-height: 310px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.yolo-review-dataset-card {
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  border-radius: 8px;
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  background: rgba(2, 6, 23, 0.56);
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.yolo-review-dataset-card:hover {
+  border-color: rgba(45, 212, 191, 0.62);
+  background: rgba(8, 15, 31, 0.88);
+  transform: translateY(-1px);
+}
+
+.yolo-review-dataset-card.is-active {
+  border-color: rgba(45, 212, 191, 0.88);
+  background: rgba(19, 78, 74, 0.34);
+  box-shadow: inset 3px 0 0 rgba(45, 212, 191, 0.9);
+}
+
+.yolo-review-dataset-card-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.yolo-review-dataset-card-title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.yolo-review-dataset-card-title strong {
+  color: #f8fafc;
+  font-size: 0.9rem;
+  line-height: 1.24;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.yolo-review-dataset-card-title span {
+  color: #94a3b8;
+  font-size: 0.68rem;
+  line-height: 1.25;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.yolo-review-dataset-kind {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.72);
+  font-size: 0.66rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.yolo-review-dataset-classes {
+  min-height: 18px;
+  color: #99f6e4;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
+}
+
+.yolo-review-dataset-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.yolo-review-dataset-metric {
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.7);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.yolo-review-dataset-metric span,
+.yolo-review-dataset-metric strong {
+  display: block;
+}
+
+.yolo-review-dataset-metric span {
+  color: #94a3b8;
+  font-size: 0.62rem;
+  line-height: 1.2;
+  font-weight: 800;
+}
+
+.yolo-review-dataset-metric strong {
+  margin-top: 3px;
+  color: #f8fafc;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.yolo-review-dataset-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  color: #94a3b8;
+  font-size: 0.64rem;
+  line-height: 1.25;
+  font-weight: 800;
+}
+
+.yolo-review-dataset-card-foot span {
+  min-width: 0;
+}
+
 .yolo-review-summary {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -4451,6 +4626,10 @@ body.yolo-review-is-panning {
     align-items: stretch;
   }
 
+  .yolo-review-dataset-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .yolo-review-summary {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
@@ -4481,6 +4660,13 @@ body.yolo-review-is-panning {
 
   .yolo-review-head {
     display: grid;
+  }
+
+  .yolo-review-dataset-cards {
+    grid-template-columns: 1fr;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .yolo-review-summary {

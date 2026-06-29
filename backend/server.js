@@ -2724,6 +2724,58 @@ function inferYoloDatasetKind(datasetDir, summary = {}) {
   return fsSync.existsSync(path.join(datasetDir, 'images')) ? 'detect' : 'classify';
 }
 
+function yoloClassifySplitRoot(datasetDir) {
+  return ['train', 'val', 'test'].some((split) => fsSync.existsSync(path.join(datasetDir, split)))
+    ? datasetDir
+    : null;
+}
+
+function resolveYoloDataDir(datasetDir, summary = {}) {
+  const kind = inferYoloDatasetKind(datasetDir, summary);
+  if (kind === 'detect') {
+    if (fsSync.existsSync(path.join(datasetDir, 'images'))) {
+      return datasetDir;
+    }
+  } else {
+    const splitRoot = yoloClassifySplitRoot(datasetDir);
+    if (splitRoot) {
+      return splitRoot;
+    }
+  }
+
+  let entries = [];
+  try {
+    entries = fsSync.readdirSync(datasetDir, { withFileTypes: true });
+  } catch (_error) {
+    return datasetDir;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(datasetDir, entry.name);
+    if (kind === 'detect' && fsSync.existsSync(path.join(candidate, 'images'))) {
+      return candidate;
+    }
+    if (kind === 'classify' && yoloClassifySplitRoot(candidate)) {
+      return candidate;
+    }
+  }
+  return datasetDir;
+}
+
+function yoloDataRelPrefix(dataset) {
+  if (!dataset?.data_dir || dataset.data_dir === dataset.dir) {
+    return '';
+  }
+  return toForwardSlashPath(path.relative(dataset.dir, dataset.data_dir));
+}
+
+function yoloJoinRel(...parts) {
+  return parts
+    .map((part) => normalizeApiRelPath(part))
+    .filter(Boolean)
+    .join('/');
+}
+
 function sumYoloImageCounts(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -2750,6 +2802,8 @@ async function buildYoloDatasetList() {
       }
 
       const id = datasetIdForDir(spec, datasetDir);
+      const kind = inferYoloDatasetKind(datasetDir, summary);
+      const dataDir = resolveYoloDataDir(datasetDir, summary);
       const classes = await readYoloClasses(datasetDir, summary);
       const totalImages = sumYoloImageCounts(summary.images);
       datasets.push({
@@ -2760,7 +2814,8 @@ async function buildYoloDatasetList() {
         name: path.basename(datasetDir),
         parent_name: path.basename(path.dirname(datasetDir)),
         profile: summary.profile || path.basename(datasetDir),
-        kind: inferYoloDatasetKind(datasetDir, summary),
+        kind,
+        data_dir: toForwardSlashPath(path.relative(datasetDir, dataDir)),
         created_at: summary.created_at || null,
         classes,
         images: summary.images || {},
@@ -2862,6 +2917,8 @@ async function resolveYoloDataset(datasetId) {
     throw Object.assign(new Error('dataset_not_found'), { status: 404 });
   }
   const classes = await readYoloClasses(datasetDir, summary);
+  const kind = inferYoloDatasetKind(datasetDir, summary);
+  const dataDir = resolveYoloDataDir(datasetDir, summary);
   return {
     id: `${spec.alias}:${toForwardSlashPath(path.relative(spec.root, datasetDir))}`,
     source: spec.alias,
@@ -2869,9 +2926,10 @@ async function resolveYoloDataset(datasetId) {
     source_label: yoloReviewSourceLabel('checker_archive'),
     root: spec.root,
     dir: datasetDir,
+    data_dir: dataDir,
     name: path.basename(datasetDir),
     profile: summary.profile || path.basename(datasetDir),
-    kind: inferYoloDatasetKind(datasetDir, summary),
+    kind,
     summary,
     classes
   };
@@ -2918,15 +2976,16 @@ async function collectImageRelPaths(rootDir, baseRel, maxDepth = 2, depth = 0) {
 }
 
 async function listYoloImageRelPaths(dataset) {
+  const dataPrefix = yoloDataRelPrefix(dataset);
   if (dataset.kind === 'detect') {
-    const imageRoot = path.join(dataset.dir, 'images');
-    const rels = await collectImageRelPaths(imageRoot, 'images', 3);
+    const imageRoot = path.join(dataset.data_dir || dataset.dir, 'images');
+    const rels = await collectImageRelPaths(imageRoot, yoloJoinRel(dataPrefix, 'images'), 3);
     return rels.sort().reverse();
   }
 
   const rels = [];
   for (const split of ['train', 'val', 'test']) {
-    rels.push(...await collectImageRelPaths(path.join(dataset.dir, split), split, 2));
+    rels.push(...await collectImageRelPaths(path.join(dataset.data_dir || dataset.dir, split), yoloJoinRel(dataPrefix, split), 2));
   }
   return rels.sort().reverse();
 }
@@ -2934,16 +2993,20 @@ async function listYoloImageRelPaths(dataset) {
 function yoloSplitFromRelPath(kind, rel) {
   const value = normalizeApiRelPath(rel);
   if (kind === 'detect') {
-    const match = value.match(/^images\/([^/]+)\//);
+    const match = value.match(/(?:^|\/)images\/([^/]+)\//);
     return match?.[1] || '';
   }
-  return value.split('/')[0] || '';
+  const parts = value.split('/');
+  const splitIndex = parts.findIndex((part) => ['train', 'val', 'test'].includes(part));
+  return splitIndex >= 0 ? parts[splitIndex] : parts[0] || '';
 }
 
 function yoloClassFromRelPath(kind, rel, metadata = {}) {
   const value = normalizeApiRelPath(rel);
   if (kind === 'classify') {
-    return value.split('/')[1] || '';
+    const parts = value.split('/');
+    const splitIndex = parts.findIndex((part) => ['train', 'val', 'test'].includes(part));
+    return splitIndex >= 0 ? parts[splitIndex + 1] || '' : parts[1] || '';
   }
   return metadata.event_name || '';
 }

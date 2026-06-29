@@ -23,6 +23,8 @@
     eventButtons: Array.from(document.querySelectorAll("[data-yolo-review-event]")),
     fireSmokeCard: document.getElementById("yolo-fire-smoke-card"),
     fireSmokeOpen: document.getElementById("yolo-fire-smoke-open"),
+    datasetStatus: document.getElementById("yolo-review-dataset-status"),
+    datasetCards: document.getElementById("yolo-review-dataset-cards"),
     summary: document.getElementById("yolo-review-summary"),
     list: document.getElementById("yolo-review-list"),
     detail: document.getElementById("yolo-review-detail"),
@@ -245,6 +247,31 @@
     return `[${source}] ${profile}${parent} · ${dataset.kind || "dataset"} · ${compactNumber(dataset.total_images)}张`;
   }
 
+  function datasetTotalBoxes(dataset) {
+    return dataset?.boxes ? sumObjectValues(dataset.boxes) : 0;
+  }
+
+  function datasetKindText(dataset) {
+    return dataset?.kind === "classify" ? "分类" : "检测";
+  }
+
+  function datasetMetricValue(dataset, path, fallback = "-") {
+    const parts = String(path || "").split(".");
+    let value = dataset;
+    for (const part of parts) {
+      value = value?.[part];
+      if (value == null) return fallback;
+    }
+    return compactNumber(value);
+  }
+
+  function datasetClassSummary(dataset) {
+    const classes = Array.isArray(dataset?.classes) ? dataset.classes.filter(Boolean) : [];
+    if (!classes.length) return "无类别";
+    if (classes.length <= 4) return classes.join(" / ");
+    return `${classes.slice(0, 4).join(" / ")} +${classes.length - 4}`;
+  }
+
   function selectedDataset() {
     return state.datasets.find((item) => item.id === state.datasetId) || null;
   }
@@ -332,6 +359,7 @@
     updateQwenOptions();
     renderSummary(selectedDataset());
     renderFireSmokeCard();
+    renderDatasetCards();
     loadItems({ resetPage: true }).catch(() => {});
   }
 
@@ -424,8 +452,85 @@
 
     renderSummary(selectedDataset());
     renderFireSmokeCard();
+    renderDatasetCards();
     updateEventButtons();
     loadItems({ resetPage: true }).catch(() => {});
+  }
+
+  function renderDatasetCards() {
+    if (!refs.datasetCards) return;
+    refs.datasetCards.innerHTML = "";
+    const visible = state.datasets;
+    const total = state.allDatasets.length;
+    if (refs.datasetStatus) {
+      const source = refs.source?.value
+        ? refs.source.options[refs.source.selectedIndex]?.textContent || refs.source.value
+        : "全部来源";
+      refs.datasetStatus.textContent = `${source} · ${compactNumber(visible.length)} / ${compactNumber(total)} 个数据集`;
+    }
+    if (!visible.length) {
+      refs.datasetCards.appendChild(createNode("p", "yolo-review-empty", "当前来源下没有数据集。"));
+      return;
+    }
+    visible.forEach((dataset) => {
+      const button = createNode("button", "yolo-review-dataset-card");
+      button.type = "button";
+      button.dataset.datasetId = dataset.id;
+      button.classList.toggle("is-active", dataset.id === state.datasetId);
+      button.addEventListener("click", () => {
+        if (dataset.id === state.datasetId) return;
+        markCustomEventFilter();
+        state.datasetId = dataset.id;
+        state.selectedItemKey = "";
+        if (refs.dataset) refs.dataset.value = dataset.id;
+        if (refs.split) refs.split.value = "";
+        if (refs.className) refs.className.value = "";
+        if (refs.answer) refs.answer.value = "";
+        if (refs.qwenLabel) refs.qwenLabel.value = "";
+        updateClassOptions();
+        updateQwenOptions();
+        renderSummary(selectedDataset());
+        renderFireSmokeCard();
+        renderDatasetCards();
+        loadItems({ resetPage: true }).catch(() => {});
+      });
+
+      const head = createNode("div", "yolo-review-dataset-card-head");
+      const title = createNode("div", "yolo-review-dataset-card-title");
+      title.appendChild(createNode("strong", "", dataset.profile || dataset.name || "dataset"));
+      title.appendChild(createNode("span", "", dataset.parent_name && dataset.parent_name !== dataset.profile ? dataset.parent_name : dataset.source_label || dataset.source_type || "数据集"));
+      head.appendChild(title);
+      head.appendChild(createNode("span", "yolo-review-dataset-kind", datasetKindText(dataset)));
+      button.appendChild(head);
+
+      const classes = createNode("p", "yolo-review-dataset-classes", datasetClassSummary(dataset));
+      button.appendChild(classes);
+
+      const metrics = createNode("div", "yolo-review-dataset-metrics");
+      [
+        ["样本", compactNumber(dataset.total_images)],
+        ["框", compactNumber(datasetTotalBoxes(dataset))],
+        ["YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
+        ["NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"],
+        ["语义已标", datasetMetricValue(dataset, "qwen_label.cached_images")],
+        ["框已标", datasetMetricValue(dataset, "qwen_bbox.cached_images")]
+      ].forEach(([label, value]) => {
+        const metric = createNode("div", "yolo-review-dataset-metric");
+        metric.appendChild(createNode("span", "", label));
+        metric.appendChild(createNode("strong", "", value));
+        metrics.appendChild(metric);
+      });
+      button.appendChild(metrics);
+
+      const foot = createNode("div", "yolo-review-dataset-card-foot");
+      foot.appendChild(createNode("span", "", `语义待标 ${datasetMetricValue(dataset, "qwen_label.pending_images", "0")}`));
+      foot.appendChild(createNode("span", "", `框待标 ${datasetMetricValue(dataset, "qwen_bbox.pending_images", "0")}`));
+      if (dataset.created_at) {
+        foot.appendChild(createNode("span", "", formatDate(dataset.created_at)));
+      }
+      button.appendChild(foot);
+      refs.datasetCards.appendChild(button);
+    });
   }
 
   function renderSummary(dataset) {
@@ -490,6 +595,7 @@
     }
     refs.dataset.value = state.datasetId;
     renderFireSmokeCard();
+    renderDatasetCards();
   }
 
   async function loadDatasets() {
@@ -505,6 +611,7 @@
       updateClassOptions();
       updateQwenOptions();
       renderFireSmokeCard();
+      renderDatasetCards();
       renderSummary(selectedDataset());
       updateEventButtons();
       await loadItems({ resetPage: true });
@@ -1002,6 +1109,7 @@
     updateQwenOptions();
     renderSummary(selectedDataset());
     renderFireSmokeCard();
+    renderDatasetCards();
     loadItems({ resetPage: true }).catch(() => {});
   });
   refs.source?.addEventListener("change", () => {
@@ -1016,6 +1124,7 @@
     updateQwenOptions();
     renderSummary(selectedDataset());
     renderFireSmokeCard();
+    renderDatasetCards();
     loadItems({ resetPage: true }).catch(() => {});
   });
   refs.split?.addEventListener("change", () => {
