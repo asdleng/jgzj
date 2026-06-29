@@ -6243,6 +6243,113 @@ const mapEditorLargeJsonPaths = new Set([
 const MAP_EDITOR_CHUNK_THRESHOLD_BYTES = 512 * 1024;
 const MAP_EDITOR_CHUNK_SIZE_BYTES = 512 * 1024;
 const MAP_EDITOR_MAX_CHUNKS = 96;
+const MAP_EDITOR_ROUTE_SAMPLE_MAX_POINTS = 30000;
+const MAP_EDITOR_ROUTE_SMOOTH_MARKER = 'jgzj-route-smooth-server-v1';
+const MAP_EDITOR_ROUTE_SMOOTH_MAX_OFFSET_M = 0.35;
+const MAP_EDITOR_ROUTE_SMOOTH_RADIUS_MULTIPLIER = 2.5;
+const MAP_EDITOR_ROUTE_SMOOTH_MIN_RADIUS_M = 2.0;
+const MAP_EDITOR_ROUTE_SMOOTH_MAX_RADIUS_M = 8.0;
+const MAP_EDITOR_ROUTE_SMOOTH_JS_INJECTION = String.raw`
+/* jgzj-route-smooth-server-v1 */
+function routeSmoothSpacingValue() {
+  const value = Number(els.routeControlSpacing ? els.routeControlSpacing.value : 1);
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(1, Math.min(100, value));
+}
+
+function routeSmoothSetButtons() {
+  if (els.smoothRouteBtn) els.smoothRouteBtn.disabled = !els.routeSelect.value;
+  if (els.applySmoothedRouteBtn) {
+    els.applySmoothedRouteBtn.disabled = !state.route.editing || !state.route.smoothReady || state.route.dirty;
+  }
+}
+
+function routeSmoothMeta(data, prefix = "平滑预览已生成") {
+  const stats = data && data.stats ? data.stats : {};
+  return prefix
+    + " | 控制点 " + (data.control_count || (data.controls || []).length)
+    + " 个 | 间距 " + fmt(data.spacing_m, 1)
+    + "m | 最大偏移 " + fmt(stats.max_offset_m, 2)
+    + "m | 平均偏移 " + fmt(stats.avg_offset_m, 2) + "m";
+}
+
+async function requestServerRouteSmooth(apply = false) {
+  const fileName = els.routeSelect.value;
+  if (!fileName) {
+    els.routeEditMeta.textContent = "没有 route CSV";
+    return;
+  }
+  if (state.newRoute.drawing) {
+    els.routeEditMeta.textContent = "请先保存或取消正在新建的路径";
+    return;
+  }
+  if (!apply && state.route.editing && state.route.dirty) {
+    const confirmed = window.confirm("平滑预览会替换当前未保存的路径控制点，是否继续？");
+    if (!confirmed) return;
+  }
+  if (apply) {
+    const confirmed = window.confirm("覆盖控制器上的路径 " + fileName + "？云端会先重新计算平滑结果，车端会备份原 route CSV。");
+    if (!confirmed) return;
+  }
+  if (state.route.file !== fileName || !state.route.points.length) {
+    await loadRoute(fileName);
+  }
+
+  if (apply && els.applySmoothedRouteBtn) els.applySmoothedRouteBtn.disabled = true;
+  if (els.smoothRouteBtn) els.smoothRouteBtn.disabled = true;
+  els.routeEditMeta.textContent = apply ? "云端正在计算并覆盖控制器路径..." : "云端正在计算平滑预览...";
+  try {
+    const data = await fetchJSON("api/route-smooth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_name: fileName,
+        spacing_m: routeSmoothSpacingValue(),
+        apply,
+      }),
+    });
+
+    if (apply) {
+      state.route.file = data.file_name || fileName;
+      state.route.points = data.points || [];
+      state.route.bounds = data.bounds || boundsFromPoints(state.route.points);
+      state.route.meta = data;
+      state.route.controls = [];
+      state.route.preview = [];
+      state.route.editing = false;
+      state.route.smoothReady = false;
+      setRouteDirty(false);
+      els.routeMeta.textContent = (data.source || "--") + " | " + (data.route_name || fileName) + " | " + (data.point_count || state.route.points.length) + " points | " + fmt(data.length_m, 1) + " m | POI " + (data.poi_count || 0);
+      els.routeEditMeta.textContent = routeSmoothMeta(data.smooth || data, "已覆盖控制器路径") + " | 备份：" + (data.backup_path || "--");
+      log("控制器路径已覆盖：" + (data.path || fileName) + (data.backup_path ? "；备份：" + data.backup_path : ""));
+      try {
+        await refreshRouteCatalog(data.file_name || fileName);
+      } catch (err) {
+        log("路径已覆盖，但路径目录刷新失败：" + err.message);
+      }
+      draw();
+      return;
+    }
+
+    state.route.controls = data.controls || [];
+    state.route.preview = data.points || [];
+    state.route.editing = true;
+    state.route.dirty = false;
+    state.route.smoothReady = true;
+    state.interaction.selected = null;
+    state.interaction.hover = null;
+    els.showRoute.checked = true;
+    els.showHandles.checked = true;
+    syncSelectionInputs();
+    setRouteDirty(false);
+    els.routeEditMeta.textContent = routeSmoothMeta(data) + " | 点击“覆盖控制器”写回；拖点后请用“保存路径”";
+    log("云端平滑预览完成：" + data.control_count + " controls，max offset " + fmt(data.stats?.max_offset_m, 2) + "m");
+    draw();
+  } finally {
+    routeSmoothSetButtons();
+  }
+}
+`;
 
 function normalizeMapEditorPath(value) {
   const pathValue = String(value || '/').trim() || '/';
@@ -6378,6 +6485,479 @@ async function readMapEditorChunkedBody(vehicleId, initialResult, editorPath) {
   const bodyBuffer = Buffer.concat(buffers);
   if (bodyBuffer.length !== totalBytes) {
     throw new Error('map_editor_chunk_total_size_mismatch');
+  }
+  return bodyBuffer;
+}
+
+function toFiniteNumber(value, fallback, options = {}) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return fallback;
+  }
+  const min = Number.isFinite(options.min) ? options.min : num;
+  const max = Number.isFinite(options.max) ? options.max : num;
+  return Math.min(max, Math.max(min, num));
+}
+
+function validateMapEditorRouteFileName(fileName) {
+  const value = String(fileName || '').trim();
+  if (
+    !value ||
+    value.includes('\0') ||
+    value.includes('/') ||
+    value.includes('\\') ||
+    value.split(/[/\\]/).includes('..') ||
+    value.includes('..')
+  ) {
+    return '';
+  }
+  return value;
+}
+
+async function executeMapEditorJsonRequest(vehicleId, method, editorPath, options = {}) {
+  const normalizedPath = normalizeMapEditorPath(editorPath);
+  if (!normalizedPath) {
+    throw new Error('invalid_map_editor_path');
+  }
+  const query = options.query instanceof URLSearchParams
+    ? options.query.toString()
+    : String(options.query || '');
+  const upperMethod = String(method || 'GET').toUpperCase();
+  const chunkResponse = Boolean(options.chunkResponse ?? shouldChunkMapEditorPath(normalizedPath));
+  const args = {
+    method: upperMethod,
+    path: normalizedPath,
+    query,
+    max_response_bytes: options.maxResponseBytes || getMapEditorMaxResponseBytes(normalizedPath),
+    chunk_response: chunkResponse,
+    chunk_threshold_bytes: MAP_EDITOR_CHUNK_THRESHOLD_BYTES,
+    chunk_size_bytes: MAP_EDITOR_CHUNK_SIZE_BYTES
+  };
+
+  if (upperMethod === 'POST') {
+    const bodyText = JSON.stringify(options.body || {});
+    args.headers = { 'content-type': 'application/json' };
+    args.body_base64 = Buffer.from(bodyText, 'utf8').toString('base64');
+  }
+
+  const execution = await executeMapEditorTool(
+    vehicleId,
+    'map_editor.http',
+    args,
+    options.timeout_s || (chunkResponse ? 60 : 35)
+  );
+  if (!execution.ok) {
+    const error = new Error(execution.detail || execution.error || 'map_editor_proxy_failed');
+    error.status = 502;
+    error.execution = execution;
+    throw error;
+  }
+
+  const result = unwrapMapEditorToolResult(execution);
+  if (!result || typeof result !== 'object') {
+    const error = new Error('invalid_map_editor_response');
+    error.status = 502;
+    error.execution = execution;
+    throw error;
+  }
+
+  const statusCode = toFiniteInteger(result.status, 502, { min: 100, max: 599 });
+  const bodyBuffer = result.body_chunked
+    ? await readMapEditorChunkedBody(vehicleId, result, normalizedPath)
+    : result.body_base64
+      ? Buffer.from(String(result.body_base64), 'base64')
+      : Buffer.alloc(0);
+  const bodyText = bodyBuffer.toString('utf8');
+  let data;
+  try {
+    data = JSON.parse(bodyText);
+  } catch (_error) {
+    const error = new Error(`${normalizedPath} returned non-json`);
+    error.status = 502;
+    error.body = bodyText.slice(0, 500);
+    throw error;
+  }
+  if (statusCode < 200 || statusCode >= 300 || data?.ok === false) {
+    const error = new Error(data?.error || data?.detail || `${normalizedPath} failed (${statusCode})`);
+    error.status = statusCode >= 400 ? statusCode : 502;
+    error.payload = data;
+    throw error;
+  }
+  return data;
+}
+
+function mapEditorRoutePointAtS(points, s) {
+  if (!points.length) return null;
+  const target = Number(s || 0);
+  if (target <= Number(points[0].s || 0)) return { ...points[0] };
+  if (target >= Number(points[points.length - 1].s || 0)) return { ...points[points.length - 1] };
+
+  let lo = 0;
+  let hi = points.length - 1;
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    if (Number(points[mid].s || 0) <= target) lo = mid;
+    else hi = mid;
+  }
+
+  const a = points[lo];
+  const b = points[lo + 1];
+  const s0 = Number(a.s || 0);
+  const s1 = Number(b.s || s0);
+  const t = s1 <= s0 ? 0 : (target - s0) / (s1 - s0);
+  return {
+    ...a,
+    x: Number(a.x || 0) + (Number(b.x || 0) - Number(a.x || 0)) * t,
+    y: Number(a.y || 0) + (Number(b.y || 0) - Number(a.y || 0)) * t,
+    z: Number(a.z || 0) + (Number(b.z || 0) - Number(a.z || 0)) * t,
+    s: target
+  };
+}
+
+function mapEditorRouteTotalS(points) {
+  if (!points.length) return 0;
+  const lastS = Number(points[points.length - 1].s);
+  if (Number.isFinite(lastS) && lastS > 0) return lastS;
+  let total = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    total += Math.hypot(
+      Number(points[i].x || 0) - Number(points[i - 1].x || 0),
+      Number(points[i].y || 0) - Number(points[i - 1].y || 0)
+    );
+  }
+  return total;
+}
+
+function mapEditorRouteLowerBoundS(points, target) {
+  let lo = 0;
+  let hi = points.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (Number(points[mid].s || 0) < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function mapEditorRouteNearestIndex(points, s) {
+  if (!points.length) return -1;
+  const index = mapEditorRouteLowerBoundS(points, s);
+  if (index <= 0) return 0;
+  if (index >= points.length) return points.length - 1;
+  return Math.abs(Number(points[index - 1].s || 0) - s) <= Math.abs(Number(points[index].s || 0) - s)
+    ? index - 1
+    : index;
+}
+
+function mapEditorRouteSourceAtS(points, s) {
+  const sourceIndex = mapEditorRouteNearestIndex(points, s);
+  const fallback = points[sourceIndex] || points[0] || { x: 0, y: 0, z: 0, seq: 0 };
+  const source = mapEditorRoutePointAtS(points, s) || fallback;
+  return {
+    x: Number(source.x || 0),
+    y: Number(source.y || 0),
+    z: Number(source.z || 0),
+    s,
+    seq: fallback.seq ?? sourceIndex,
+    source_index: sourceIndex
+  };
+}
+
+function mapEditorRouteSmoothRadius(spacingM) {
+  return Math.max(
+    MAP_EDITOR_ROUTE_SMOOTH_MIN_RADIUS_M,
+    Math.min(MAP_EDITOR_ROUTE_SMOOTH_MAX_RADIUS_M, spacingM * MAP_EDITOR_ROUTE_SMOOTH_RADIUS_MULTIPLIER)
+  );
+}
+
+function mapEditorRouteWeightedPointAtS(points, s, radiusM) {
+  const start = mapEditorRouteLowerBoundS(points, s - radiusM);
+  let sumW = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
+  for (let i = start; i < points.length; i += 1) {
+    const point = points[i];
+    const pointS = Number(point.s || 0);
+    if (pointS > s + radiusM) break;
+    const u = Math.abs(pointS - s) / Math.max(0.001, radiusM);
+    if (u > 1) continue;
+    const w = (1 - u) * (1 - u);
+    sumW += w;
+    sumX += Number(point.x || 0) * w;
+    sumY += Number(point.y || 0) * w;
+    sumZ += Number(point.z || 0) * w;
+  }
+  if (sumW <= 0) return mapEditorRouteSourceAtS(points, s);
+  return {
+    x: sumX / sumW,
+    y: sumY / sumW,
+    z: sumZ / sumW
+  };
+}
+
+function mapEditorRouteClampOffset(source, target) {
+  const dx = Number(target.x || 0) - Number(source.x || 0);
+  const dy = Number(target.y || 0) - Number(source.y || 0);
+  const dz = Number(target.z || 0) - Number(source.z || 0);
+  const distance = Math.hypot(dx, dy);
+  if (!Number.isFinite(distance) || distance <= MAP_EDITOR_ROUTE_SMOOTH_MAX_OFFSET_M) {
+    return {
+      x: Number(source.x || 0) + dx,
+      y: Number(source.y || 0) + dy,
+      z: Number(source.z || 0) + dz
+    };
+  }
+  const scale = MAP_EDITOR_ROUTE_SMOOTH_MAX_OFFSET_M / Math.max(0.001, distance);
+  return {
+    x: Number(source.x || 0) + dx * scale,
+    y: Number(source.y || 0) + dy * scale,
+    z: Number(source.z || 0) + dz * scale
+  };
+}
+
+function mapEditorRouteSmoothSValues(points, spacingM) {
+  const totalS = mapEditorRouteTotalS(points);
+  const values = [0];
+  for (let s = spacingM; s < totalS; s += spacingM) {
+    values.push(s);
+  }
+  const last = values[values.length - 1];
+  if (totalS > 0 && Math.abs(totalS - last) > 1e-6) {
+    if (totalS - last < spacingM * 0.35 && values.length > 1) values[values.length - 1] = totalS;
+    else values.push(totalS);
+  }
+  return values;
+}
+
+function mapEditorCatmullRomValue(p0, p1, p2, p3, t) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return 0.5 * (
+    (2 * p1)
+    + (-p0 + p2) * t
+    + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+    + (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+  );
+}
+
+function mapEditorEvaluateRouteDelta(deltas, s) {
+  if (!deltas.length) return { dx: 0, dy: 0, dz: 0 };
+  if (deltas.length === 1) return { ...deltas[0] };
+  if (s <= deltas[0].s) return { ...deltas[0] };
+  if (s >= deltas[deltas.length - 1].s) return { ...deltas[deltas.length - 1] };
+  let segment = 0;
+  for (let i = 0; i < deltas.length - 1; i += 1) {
+    if (deltas[i].s <= s && s <= deltas[i + 1].s) {
+      segment = i;
+      break;
+    }
+  }
+  const i0 = Math.max(0, segment - 1);
+  const i1 = segment;
+  const i2 = segment + 1;
+  const i3 = Math.min(deltas.length - 1, segment + 2);
+  const s1 = deltas[i1].s;
+  const s2 = deltas[i2].s;
+  const t = s2 <= s1 ? 0 : (s - s1) / (s2 - s1);
+  return {
+    dx: mapEditorCatmullRomValue(deltas[i0].dx, deltas[i1].dx, deltas[i2].dx, deltas[i3].dx, t),
+    dy: mapEditorCatmullRomValue(deltas[i0].dy, deltas[i1].dy, deltas[i2].dy, deltas[i3].dy, t),
+    dz: mapEditorCatmullRomValue(deltas[i0].dz, deltas[i1].dz, deltas[i2].dz, deltas[i3].dz, t)
+  };
+}
+
+function buildMapEditorSmoothedRoute(points, spacingM) {
+  const normalizedPoints = (Array.isArray(points) ? points : [])
+    .map((point, index) => ({
+      ...point,
+      seq: point.seq ?? index,
+      s: Number.isFinite(Number(point.s)) ? Number(point.s) : index,
+      x: Number(point.x || 0),
+      y: Number(point.y || 0),
+      z: Number(point.z || 0)
+    }))
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+    .sort((a, b) => Number(a.s || 0) - Number(b.s || 0));
+  if (normalizedPoints.length < 2) {
+    throw new Error('route_points_insufficient');
+  }
+
+  const radiusM = mapEditorRouteSmoothRadius(spacingM);
+  const sValues = mapEditorRouteSmoothSValues(normalizedPoints, spacingM);
+  const controls = sValues.map((s, index) => {
+    const source = mapEditorRouteSourceAtS(normalizedPoints, s);
+    const locked = index === 0 || index === sValues.length - 1;
+    const target = locked
+      ? source
+      : mapEditorRouteClampOffset(source, mapEditorRouteWeightedPointAtS(normalizedPoints, s, radiusM));
+    return {
+      id: index,
+      source_index: source.source_index,
+      seq: source.seq,
+      s,
+      x: Number(target.x || 0),
+      y: Number(target.y || 0),
+      z: Number(target.z || 0),
+      original_x: source.x,
+      original_y: source.y,
+      original_z: source.z,
+      locked
+    };
+  });
+
+  const deltas = controls.map((control) => ({
+    s: Number(control.s || 0),
+    dx: Number(control.x || 0) - Number(control.original_x || 0),
+    dy: Number(control.y || 0) - Number(control.original_y || 0),
+    dz: Number(control.z || 0) - Number(control.original_z || 0)
+  }));
+  const previewPoints = normalizedPoints.map((point) => {
+    const delta = mapEditorEvaluateRouteDelta(deltas, Number(point.s || 0));
+    return {
+      ...point,
+      x: Number(point.x || 0) + delta.dx,
+      y: Number(point.y || 0) + delta.dy,
+      z: Number(point.z || 0) + delta.dz
+    };
+  });
+  const offsets = controls
+    .filter((control) => !control.locked)
+    .map((control) => Math.hypot(
+      Number(control.x || 0) - Number(control.original_x || 0),
+      Number(control.y || 0) - Number(control.original_y || 0)
+    ));
+  const offsetSum = offsets.reduce((sum, value) => sum + value, 0);
+
+  return {
+    spacing_m: spacingM,
+    radius_m: radiusM,
+    controls,
+    points: previewPoints,
+    control_count: controls.length,
+    point_count: previewPoints.length,
+    stats: {
+      max_offset_m: offsets.length ? Math.max(...offsets) : 0,
+      avg_offset_m: offsets.length ? offsetSum / offsets.length : 0,
+      max_allowed_offset_m: MAP_EDITOR_ROUTE_SMOOTH_MAX_OFFSET_M
+    }
+  };
+}
+
+async function smoothMapEditorRoute(vehicleId, fileName, options = {}) {
+  const routeFileName = validateMapEditorRouteFileName(fileName);
+  if (!routeFileName) {
+    const error = new Error('route_file_name_required');
+    error.status = 400;
+    throw error;
+  }
+  const spacingM = toFiniteNumber(options.spacing_m, 1, { min: 1, max: 100 });
+  const routeQuery = new URLSearchParams({
+    file: routeFileName,
+    max_points: String(MAP_EDITOR_ROUTE_SAMPLE_MAX_POINTS)
+  });
+  const routeData = await executeMapEditorJsonRequest(vehicleId, 'GET', '/api/route', {
+    query: routeQuery,
+    maxResponseBytes: getMapEditorMaxResponseBytes('/api/route'),
+    chunkResponse: true,
+    timeout_s: 60
+  });
+  const smoothed = buildMapEditorSmoothedRoute(routeData.points || [], spacingM);
+  return {
+    ...smoothed,
+    file_name: routeData.file_name || routeFileName,
+    route_name: routeData.route_name || routeData.name || routeFileName,
+    source: routeData.source,
+    original_point_count: routeData.point_count || (routeData.points || []).length,
+    original_length_m: routeData.length_m,
+    bounds: routeData.bounds || boundsFromPatrolPoints(smoothed.points)
+  };
+}
+
+function boundsFromPatrolPoints(points) {
+  if (!Array.isArray(points) || !points.length) return null;
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  let yMin = Infinity;
+  let yMax = -Infinity;
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  for (const point of points) {
+    const x = Number(point.x);
+    const y = Number(point.y);
+    const z = Number(point.z || 0);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    xMin = Math.min(xMin, x);
+    xMax = Math.max(xMax, x);
+    yMin = Math.min(yMin, y);
+    yMax = Math.max(yMax, y);
+    zMin = Math.min(zMin, z);
+    zMax = Math.max(zMax, z);
+  }
+  if (!Number.isFinite(xMin)) return null;
+  return { x_min: xMin, x_max: xMax, y_min: yMin, y_max: yMax, z_min: zMin, z_max: zMax };
+}
+
+function injectMapEditorRouteSmoothHtml(html) {
+  if (!html || html.includes('id="smoothRouteBtn"')) return html;
+  const target = '<button id="startRouteEditBtn">生成控制点</button>';
+  if (!html.includes(target)) return html;
+  return html.replace(
+    target,
+    `${target}\n          <button id="smoothRouteBtn" disabled title="云端计算平滑预览">平滑预览</button>\n          <button id="applySmoothedRouteBtn" class="danger" disabled title="把云端平滑结果覆盖到控制器路径 CSV">覆盖控制器</button>`
+  );
+}
+
+function injectMapEditorRouteSmoothJs(script) {
+  if (!script || script.includes(MAP_EDITOR_ROUTE_SMOOTH_MARKER)) return script;
+  let injected = script;
+  injected = injected.replace(
+    'deleteRouteBtn: $("deleteRouteBtn"),',
+    'deleteRouteBtn: $("deleteRouteBtn"),\n  smoothRouteBtn: $("smoothRouteBtn"),\n  applySmoothedRouteBtn: $("applySmoothedRouteBtn"),'
+  );
+  injected = injected.replace(
+    'els.discardRouteEditBtn.disabled = !state.route.editing;',
+    'els.discardRouteEditBtn.disabled = !state.route.editing;\n  routeSmoothSetButtons();'
+  );
+  injected = injected.replace(
+    'function newRouteMinControls() {',
+    `${MAP_EDITOR_ROUTE_SMOOTH_JS_INJECTION}\nfunction newRouteMinControls() {`
+  );
+  injected = injected.replace(
+    'state.route.preview = [];\n  state.route.editing = false;',
+    'state.route.preview = [];\n  state.route.smoothReady = false;\n  state.route.editing = false;'
+  );
+  injected = injected.replace(
+    'state.route.controls = data.controls || [];\n  state.route.editing = true;',
+    'state.route.controls = data.controls || [];\n  state.route.smoothReady = false;\n  state.route.editing = true;'
+  );
+  injected = injected.replace(
+    'state.route.preview = [];\n  state.route.editing = false;\n  setRouteDirty(false);',
+    'state.route.preview = [];\n  state.route.smoothReady = false;\n  state.route.editing = false;\n  setRouteDirty(false);'
+  );
+  injected = injected.replace(
+    'els.discardRouteEditBtn.addEventListener("click", discardRouteEdit);',
+    'els.discardRouteEditBtn.addEventListener("click", discardRouteEdit);\n  els.smoothRouteBtn?.addEventListener("click", () => requestServerRouteSmooth(false).catch((err) => log(`路径平滑失败：${err.message}`)));\n  els.applySmoothedRouteBtn?.addEventListener("click", () => requestServerRouteSmooth(true).catch((err) => {\n    log(`控制器路径覆盖失败：${err.message}`);\n    routeSmoothSetButtons();\n  }));'
+  );
+  injected = injected.replace(
+    'els.deleteRouteBtn.disabled = !els.routeSelect.value;\n  });',
+    'els.deleteRouteBtn.disabled = !els.routeSelect.value;\n    state.route.smoothReady = false;\n    routeSmoothSetButtons();\n  });'
+  );
+  return injected;
+}
+
+function injectMapEditorRouteSmoothResponse(editorPath, contentType, bodyBuffer) {
+  if (!Buffer.isBuffer(bodyBuffer) || !bodyBuffer.length) return bodyBuffer;
+  const lowerContentType = String(contentType || '').toLowerCase();
+  if ((editorPath === '/' || editorPath === '/index.html') && lowerContentType.includes('text/html')) {
+    const html = bodyBuffer.toString('utf8');
+    const injected = injectMapEditorRouteSmoothHtml(html);
+    return injected === html ? bodyBuffer : Buffer.from(injected, 'utf8');
+  }
+  if (editorPath === '/app.js' && lowerContentType.includes('javascript')) {
+    const script = bodyBuffer.toString('utf8');
+    const injected = injectMapEditorRouteSmoothJs(script);
+    return injected === script ? bodyBuffer : Buffer.from(injected, 'utf8');
   }
   return bodyBuffer;
 }
@@ -8581,6 +9161,77 @@ app.post('/api/map-editor/:vehicleId/stop', authStore.requirePermission('vehicle
   });
 });
 
+app.post('/vehicles/:vehicleId/map-editor/api/route-smooth', authStore.requirePermission('vehicle:path:write'), async (req, res) => {
+  const vehicleId = String(req.params?.vehicleId || '').trim();
+  const fileName = validateMapEditorRouteFileName(req.body?.file_name || req.query?.file);
+  const apply = req.body?.apply === true || String(req.body?.apply || '').toLowerCase() === 'true';
+  const spacingM = toFiniteNumber(req.body?.spacing_m ?? req.query?.spacing_m, 1, { min: 1, max: 100 });
+
+  if (!vehicleId) {
+    return res.status(400).json({
+      ok: false,
+      detail: 'vehicle_id_required'
+    });
+  }
+  if (!fileName) {
+    return res.status(400).json({
+      ok: false,
+      detail: 'route_file_name_required'
+    });
+  }
+
+  try {
+    const smoothed = await smoothMapEditorRoute(vehicleId, fileName, { spacing_m: spacingM });
+    if (!apply) {
+      return res.json({
+        ok: true,
+        applied: false,
+        ...smoothed
+      });
+    }
+
+    const saveQuery = new URLSearchParams({ file: fileName });
+    const saved = await executeMapEditorJsonRequest(vehicleId, 'POST', '/api/route-edit', {
+      query: saveQuery,
+      body: {
+        file_name: fileName,
+        controls: smoothed.controls,
+        max_points: MAP_EDITOR_ROUTE_SAMPLE_MAX_POINTS
+      },
+      maxResponseBytes: getMapEditorMaxResponseBytes('/api/route-edit'),
+      chunkResponse: true,
+      timeout_s: 75
+    });
+    return res.json({
+      ok: true,
+      applied: true,
+      ...saved,
+      smooth: {
+        spacing_m: smoothed.spacing_m,
+        radius_m: smoothed.radius_m,
+        control_count: smoothed.control_count,
+        point_count: smoothed.point_count,
+        stats: smoothed.stats
+      }
+    });
+  } catch (error) {
+    console.warn(
+      'map_editor_route_smooth_failed',
+      JSON.stringify({
+        vehicle_id: vehicleId,
+        file_name: fileName,
+        apply,
+        detail: error.message || 'route_smooth_failed'
+      })
+    );
+    return res.status(error.status || 502).json({
+      ok: false,
+      detail: error.message || 'route_smooth_failed',
+      payload: sanitizeCloudOpsPayload(error.payload || null)
+    });
+  }
+});
+
 app.get('/vehicles/:vehicleId/map-editor', authStore.requirePermission('vehicle:path:write'), (req, res, next) => {
   const parsedUrl = new URL(req.originalUrl, 'http://localhost');
   if (!parsedUrl.pathname.endsWith('/map-editor')) {
@@ -8701,6 +9352,9 @@ app.use('/vehicles/:vehicleId/map-editor', authStore.requirePermission('vehicle:
       detail: error.message || 'map_editor_chunk_reassembly_failed',
       execution
     });
+  }
+  if (statusCode === 200 && (editorPath === '/' || editorPath === '/index.html' || editorPath === '/app.js')) {
+    bodyBuffer = injectMapEditorRouteSmoothResponse(editorPath, contentType, bodyBuffer);
   }
   if (mapEditorLargeJsonPaths.has(editorPath) || bodyBuffer.length > 1024 * 1024) {
     console.info(

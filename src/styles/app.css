@@ -568,6 +568,7 @@
     border-left: none;
   }
 
+  .yolo-event-grid,
   .yolo-task-grid {
     grid-template-columns: 1fr;
   }
@@ -2816,12 +2817,63 @@
 }
 
 .yolo-task-panel {
+  display: grid;
+  gap: 10px;
   padding: 10px 14px 0;
+}
+
+.yolo-task-section {
+  display: grid;
+  gap: 8px;
+}
+
+.yolo-task-section--events {
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(45, 212, 191, 0.38);
+  background: rgba(8, 47, 73, 0.22);
+}
+
+.yolo-task-section--models {
+  padding: 0 2px;
+}
+
+.yolo-task-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.yolo-task-section-title,
+.yolo-task-section-meta {
+  margin: 0;
+}
+
+.yolo-task-section-title {
+  color: #f8fafc;
+  font-size: 0.9rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.yolo-task-section-meta {
+  color: #94a3b8;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.yolo-event-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .yolo-task-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -2857,8 +2909,32 @@
   box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.18);
 }
 
+.yolo-task-button--event {
+  min-height: 72px;
+  background: rgba(2, 6, 23, 0.58);
+}
+
+.yolo-task-button--event:hover {
+  background: rgba(8, 47, 73, 0.48);
+}
+
+.yolo-task-kind {
+  justify-self: start;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(45, 212, 191, 0.16);
+  color: #99f6e4;
+  font-size: 0.64rem;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .yolo-task-button--wide {
-  grid-column: auto;
+  grid-column: span 2;
 }
 
 .yolo-task-title {
@@ -3652,6 +3728,89 @@
   justify-content: flex-end;
 }
 
+.yolo-review-event-strip {
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.42);
+  background: rgba(8, 47, 73, 0.3);
+}
+
+.yolo-review-event-strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.yolo-review-event-title,
+.yolo-review-event-status {
+  margin: 0;
+}
+
+.yolo-review-event-title {
+  color: #f8fafc;
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.yolo-review-event-status {
+  color: #99f6e4;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.yolo-review-event-grid {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.yolo-review-event-button {
+  min-height: 58px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.78);
+  background: rgba(2, 6, 23, 0.58);
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.yolo-review-event-button:hover {
+  border-color: rgba(45, 212, 191, 0.66);
+  background: rgba(15, 23, 42, 0.92);
+  transform: translateY(-1px);
+}
+
+.yolo-review-event-button.is-active {
+  border-color: rgba(251, 191, 36, 0.78);
+  background: rgba(67, 56, 10, 0.42);
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.16);
+}
+
+.yolo-review-event-button span {
+  color: #f8fafc;
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.yolo-review-event-button strong {
+  color: #99f6e4;
+  font-size: 0.66rem;
+  font-weight: 900;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
 .yolo-review-toolbar {
   display: grid;
   grid-template-columns: minmax(150px, 0.58fr) minmax(280px, 1.25fr) repeat(4, minmax(126px, 0.52fr)) minmax(116px, 0.42fr) minmax(220px, 0.9fr);
@@ -4362,6 +4521,7 @@ body.yolo-review-is-panning {
     border-bottom: 1px solid rgba(71, 85, 105, 0.45);
   }
 
+  .yolo-event-grid,
   .yolo-task-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -4372,6 +4532,16 @@ body.yolo-review-is-panning {
 }
 
 @media (max-width: 720px) {
+  .yolo-review-event-strip-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .yolo-review-event-status {
+    text-align: left;
+  }
+
+  .yolo-review-event-grid,
   .yolo-task-grid,
   .yolo-model-registry-list {
     grid-template-columns: 1fr;

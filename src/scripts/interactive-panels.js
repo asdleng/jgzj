@@ -7636,6 +7636,10 @@
     yoloTestOutput.appendChild(list);
   }
 
+  function yoloYesNoText(isPositive) {
+    return isPositive ? "Yes" : "No";
+  }
+
   function renderYoloClassifyOutput(predictions) {
     if (!yoloTestOutput) return;
     yoloTestOutput.innerHTML = "";
@@ -7731,8 +7735,8 @@
         ? topName === "phone_use" || topName === "smoking"
         : topName === "smoking";
       setYoloTestResult(
-        `${top.class_name || top.class_id}`,
-        `${taskLabel}: top1 ${formatYoloConfidence(top.confidence)}，耗时 ${data.duration_ms ?? "-"}ms。`,
+        yoloYesNoText(isPositive),
+        `${taskLabel}: top1 ${top.class_name || top.class_id} ${formatYoloConfidence(top.confidence)}，耗时 ${data.duration_ms ?? "-"}ms。`,
         isPositive ? "yes" : "no"
       );
       return;
@@ -7774,22 +7778,22 @@
       const scoreText = bestRelation?.score !== undefined ? `，最高关系分 ${(Number(bestRelation.score) * 100).toFixed(1)}%` : "";
       if (acceptedCount > 0) {
         setYoloTestResult(
-          "钓鱼确认",
+          "Yes",
           `${taskLabel}: 检出人员 ${personCount} 个、鱼竿 ${rodCount} 个，确认 ${acceptedCount} 组人-鱼竿关系${scoreText}，耗时 ${data.duration_ms ?? "-"}ms。`,
           "yes"
         );
       } else if (personCount > 0 && rodCount > 0) {
         setYoloTestResult(
-          "关系不成立",
+          "No",
           `${taskLabel}: 检出人员 ${personCount} 个、鱼竿 ${rodCount} 个，但距离/高度/相对位置未达到钓鱼关系阈值${scoreText}，耗时 ${data.duration_ms ?? "-"}ms。`,
-          "ok"
+          "no"
         );
       } else if (personCount > 0) {
-        setYoloTestResult("未检出鱼竿", `${taskLabel}: 检出人员 ${personCount} 个，但未检出鱼竿，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+        setYoloTestResult("No", `${taskLabel}: 检出人员 ${personCount} 个，但未检出鱼竿，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
       } else if (rodCount > 0) {
-        setYoloTestResult("未检出人员", `${taskLabel}: 检出鱼竿 ${rodCount} 个，但未检出相关人员，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+        setYoloTestResult("No", `${taskLabel}: 检出鱼竿 ${rodCount} 个，但未检出相关人员，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
       } else {
-        setYoloTestResult("未检出", `${taskLabel}: 未检出人员和鱼竿，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+        setYoloTestResult("No", `${taskLabel}: 未检出人员和鱼竿，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
       }
       return;
     }
@@ -7808,25 +7812,25 @@
       if (smokingOnly) {
         if (smokingCount) {
           setYoloTestResult(
-            "吸烟确认",
+            "Yes",
             `${taskLabel}: 候选人员 ${personCandidateCount} 个，显示阈值 ${formatYoloConfidence(threshold)}，确认吸烟 ${smokingCount} 个，耗时 ${data.duration_ms ?? "-"}ms。`,
             "yes"
           );
         } else if (personCandidateCount > 0) {
-          setYoloTestResult("未确认吸烟", `${taskLabel}: 候选人员 ${personCandidateCount} 个，抽烟低于 ${formatYoloConfidence(threshold)} 或判为其他行为，不显示框。耗时 ${data.duration_ms ?? "-"}ms。`, "ok");
+          setYoloTestResult("No", `${taskLabel}: 候选人员 ${personCandidateCount} 个，抽烟低于 ${formatYoloConfidence(threshold)} 或判为其他行为，不显示框。耗时 ${data.duration_ms ?? "-"}ms。`, "no");
         } else {
-          setYoloTestResult("未检出人员", `${taskLabel}: 未检出人员，不进行吸烟确认，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+          setYoloTestResult("No", `${taskLabel}: 未检出人员，不进行吸烟确认，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
         }
       } else if (phoneCount || smokingCount) {
         setYoloTestResult(
-          "行为命中",
+          "Yes",
           `${taskLabel}: 候选人员 ${personCandidateCount} 个，显示阈值 ${formatYoloConfidence(threshold)}，玩手机 ${phoneCount} 个，抽烟 ${smokingCount} 个，耗时 ${data.duration_ms ?? "-"}ms。`,
           "yes"
         );
       } else if (personCandidateCount > 0) {
-        setYoloTestResult("未达阈值", `${taskLabel}: 候选人员 ${personCandidateCount} 个，玩手机/抽烟均低于 ${formatYoloConfidence(threshold)}，不显示框。耗时 ${data.duration_ms ?? "-"}ms。`, "ok");
+        setYoloTestResult("No", `${taskLabel}: 候选人员 ${personCandidateCount} 个，玩手机/抽烟均低于 ${formatYoloConfidence(threshold)}，不显示框。耗时 ${data.duration_ms ?? "-"}ms。`, "no");
       } else {
-        setYoloTestResult("未检出人员", `${taskLabel}: 未检出人员，不进行行为分类，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+        setYoloTestResult("No", `${taskLabel}: 未检出人员，不进行行为分类，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
       }
       return;
     }
@@ -7834,11 +7838,11 @@
     if (mode === "smoking_two_stage") {
       const acceptedCount = detections.filter((detection) => detection.accepted).length;
       if (acceptedCount > 0) {
-        setYoloTestResult("吸烟确认", `${taskLabel}: ${acceptedCount}/${detections.length} 个候选通过二级确认，耗时 ${data.duration_ms ?? "-"}ms。`, "yes");
+        setYoloTestResult("Yes", `${taskLabel}: ${acceptedCount}/${detections.length} 个候选通过二级确认，耗时 ${data.duration_ms ?? "-"}ms。`, "yes");
       } else if (detections.length > 0) {
-        setYoloTestResult("二级未确认", `${taskLabel}: ${detections.length} 个一层候选，二级未确认吸烟，耗时 ${data.duration_ms ?? "-"}ms。`, "ok");
+        setYoloTestResult("No", `${taskLabel}: ${detections.length} 个一层候选，二级未确认吸烟，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
       } else {
-        setYoloTestResult("未检出", `${taskLabel}: 没有一层吸烟候选，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+        setYoloTestResult("No", `${taskLabel}: 没有一层吸烟候选，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
       }
       return;
     }
