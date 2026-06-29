@@ -7548,6 +7548,8 @@
 
   function getYoloBoxTone(detection) {
     const source = String(detection.source_task_id || detection.source_task_label || "").toLowerCase();
+    const className = String(detection.class_name || "").toLowerCase();
+    if (className === "license_plate" || source.includes("plate")) return "is-plate";
     if (detection.accepted === true) return "is-accepted";
     if (detection.accepted === false || source.includes("smoking")) return "is-smoking";
     if (source.includes("trash")) return "is-trash";
@@ -7572,10 +7574,32 @@
 
       const sourceLabel = detection.source_task_label || defaultLabel;
       const className = detection.class_name || detection.class_id || "目标";
-      const label = sourceLabel ? `${sourceLabel} / ${className}` : String(className);
+      const ocrPlate = detection.ocr?.plate_no || detection.plate_no || "";
+      const labelText = ocrPlate ? `${className} ${ocrPlate}` : className;
+      const label = sourceLabel ? `${sourceLabel} / ${labelText}` : String(labelText);
       box.appendChild(createNode("span", "yolo-preview-box-label", `${label} ${formatYoloConfidence(detection.confidence)}`));
       overlay.appendChild(box);
     });
+  }
+
+  function yoloDetectionDisplayName(detection, index, taskPrefix = "") {
+    const className = detection.class_name || detection.class_id || "目标";
+    const ocrPlate = detection.ocr?.plate_no || detection.plate_no || "";
+    const plateSuffix = ocrPlate ? ` ${ocrPlate}` : "";
+    return `${index + 1}. ${taskPrefix}${className}${plateSuffix}`;
+  }
+
+  function appendYoloDetectionExtra(item, detection) {
+    if (detection.ocr) {
+      const plate = detection.ocr.plate_no || detection.plate_no || "-";
+      const color = detection.ocr.plate_color || detection.plate_color || "-";
+      const charConf = formatYoloConfidence(detection.ocr.mean_char_confidence);
+      const colorConf = formatYoloConfidence(detection.ocr.color_confidence);
+      item.appendChild(createNode("p", "yolo-detection-stage2 is-accepted", `OCR: ${plate} / ${color}，字符 ${charConf}，颜色 ${colorConf}`));
+    }
+    if (detection.vehicle_class_name) {
+      item.appendChild(createNode("p", "yolo-detection-meta", `关联车辆: ${detection.vehicle_class_name} ${formatYoloConfidence(detection.vehicle_confidence)}`));
+    }
   }
 
   function renderYoloDetectionList(detections) {
@@ -7591,9 +7615,10 @@
       const item = createNode("div", "yolo-detection-item");
       const top = createNode("div", "yolo-detection-top");
       const taskPrefix = detection.source_task_label ? `${detection.source_task_label} / ` : "";
-      top.appendChild(createNode("p", "yolo-detection-name", `${index + 1}. ${taskPrefix}${detection.class_name || detection.class_id}`));
+      top.appendChild(createNode("p", "yolo-detection-name", yoloDetectionDisplayName(detection, index, taskPrefix)));
       top.appendChild(createNode("span", "yolo-detection-confidence", formatYoloConfidence(detection.confidence)));
       item.appendChild(top);
+      appendYoloDetectionExtra(item, detection);
 
       if (detection.stage2?.top) {
         const verdict = detection.accepted ? "二级确认" : "二级未确认";
@@ -7653,9 +7678,10 @@
         const item = createNode("div", "yolo-detection-item");
         const top = createNode("div", "yolo-detection-top");
         const taskPrefix = detection.source_task_label ? `${detection.source_task_label} / ` : "";
-        top.appendChild(createNode("p", "yolo-detection-name", `${index + 1}. ${taskPrefix}${detection.class_name || detection.class_id}`));
+        top.appendChild(createNode("p", "yolo-detection-name", yoloDetectionDisplayName(detection, index, taskPrefix)));
         top.appendChild(createNode("span", "yolo-detection-confidence", formatYoloConfidence(detection.confidence)));
         item.appendChild(top);
+        appendYoloDetectionExtra(item, detection);
         if (detection.stage2?.top) {
           const verdict = detection.accepted ? "二级确认" : "二级未确认";
           item.appendChild(
@@ -7715,6 +7741,29 @@
     const detections = Array.isArray(data.detections) ? data.detections : [];
     renderYoloDetectionOverlay(detections, taskLabel);
     renderYoloDetectionList(detections);
+
+    if (mode === "vehicle_plate_ocr") {
+      const vehicleCount = Number(data.vehicle_candidates || 0);
+      const plateCount = Number(data.plate_candidates || 0);
+      const ocrCount = Number(data.ocr_results || 0);
+      const plates = Array.isArray(data.plates) ? data.plates : detections.filter((item) => item.ocr);
+      const plateText = plates
+        .map((item) => item.ocr?.plate_no || item.plate_no || "")
+        .filter(Boolean)
+        .join("、");
+      if (ocrCount > 0) {
+        setYoloTestResult(
+          plateText || `${ocrCount} 个车牌`,
+          `${taskLabel}: 车辆 ${vehicleCount} 个，车牌 ${plateCount} 个，OCR ${ocrCount} 个，耗时 ${data.duration_ms ?? "-"}ms。`,
+          "yes"
+        );
+      } else if (vehicleCount > 0) {
+        setYoloTestResult("未读到车牌", `${taskLabel}: 检出车辆 ${vehicleCount} 个，但车辆ROI内未完成车牌OCR，耗时 ${data.duration_ms ?? "-"}ms。`, "ok");
+      } else {
+        setYoloTestResult("未检出车辆", `${taskLabel}: 未检出车辆，不执行车牌OCR，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+      }
+      return;
+    }
 
     if (mode === "fishing_relation") {
       const personCount = Number(data.person_candidates || 0);

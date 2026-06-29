@@ -19,6 +19,9 @@ MODEL_CACHE = {}
 MODEL_CACHE_LOCK = threading.Lock()
 MODEL_INFER_LOCKS = {}
 MODEL_INFER_LOCKS_LOCK = threading.Lock()
+PLATE_OCR_CACHE = {}
+PLATE_OCR_CACHE_LOCK = threading.Lock()
+PLATE_OCR_INFER_LOCK = threading.Lock()
 SERVER_STATE = {
     "started_at": time.time(),
     "gpu": os.environ.get("YOLO_MODEL_TEST_GPU_LABEL", "local-gpu"),
@@ -87,6 +90,25 @@ def serialize_box(box, names):
     }
 
 
+def serialize_xyxy_detection(class_id, class_name, confidence, xyxy, image_shape):
+    height, width = image_shape[:2]
+    x1, y1, x2, y2 = [float(value) for value in xyxy]
+    bw = max(0.0, x2 - x1)
+    bh = max(0.0, y2 - y1)
+    return {
+        "class_id": class_id,
+        "class_name": str(class_name),
+        "confidence": float(confidence),
+        "box": {
+            "x_center": ((x1 + x2) / 2.0) / max(width, 1),
+            "y_center": ((y1 + y2) / 2.0) / max(height, 1),
+            "width": bw / max(width, 1),
+            "height": bh / max(height, 1),
+            "xyxy": [x1, y1, x2, y2],
+        },
+    }
+
+
 def encode_annotated_image(result):
     try:
         plotted = result.plot()
@@ -137,6 +159,31 @@ def load_model(model_path):
         return model
 
 
+def load_plate_ocr_model(car2_root, rec_model_path):
+    root = os.path.abspath(str(car2_root or "/home/admin1/car2"))
+    model_path = os.path.abspath(str(rec_model_path or os.path.join(root, "weights", "plate_rec_color.pth")))
+    key = (root, model_path)
+    with PLATE_OCR_CACHE_LOCK:
+        cached = PLATE_OCR_CACHE.get(key)
+        if cached is not None:
+            return cached
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        import torch
+        from plate_recognition.plate_rec import get_plate_result, init_model
+
+        torch_device = torch.device("cuda" if SERVER_STATE["device"] != "cpu" else "cpu")
+        model = init_model(torch_device, model_path, is_color=True)
+        cached = {
+            "device": torch_device,
+            "model": model,
+            "get_plate_result": get_plate_result,
+        }
+        PLATE_OCR_CACHE[key] = cached
+        print(f"plate_ocr_loaded root={root} model={model_path} device={torch_device}", flush=True)
+        return cached
+
+
 def crop_with_padding(image, xyxy, pad_ratio=0.08):
     height, width = image.shape[:2]
     x1, y1, x2, y2 = xyxy
@@ -149,6 +196,75 @@ def crop_with_padding(image, xyxy, pad_ratio=0.08):
     if right <= left or bottom <= top:
         return None
     return image[top:bottom, left:right]
+
+
+def crop_box_absolute(image, xyxy, pad_ratio=0.0):
+    cropped = crop_box_absolute_with_origin(image, xyxy, pad_ratio)
+    if cropped is None:
+        return None
+    return cropped[0]
+
+
+def crop_box_absolute_with_origin(image, xyxy, pad_ratio=0.0):
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = [float(value) for value in xyxy]
+    pad_x = (x2 - x1) * float(pad_ratio or 0.0)
+    pad_y = (y2 - y1) * float(pad_ratio or 0.0)
+    left = max(0, int(round(x1 - pad_x)))
+    top = max(0, int(round(y1 - pad_y)))
+    right = min(width, int(round(x2 + pad_x)))
+    bottom = min(height, int(round(y2 + pad_y)))
+    if right <= left or bottom <= top:
+        return None
+    return image[top:bottom, left:right], left, top
+
+
+def detection_xyxy(detection):
+    box = detection.get("box") or {}
+    xyxy = box.get("xyxy")
+    if isinstance(xyxy, (list, tuple)) and len(xyxy) == 4:
+        return [float(value) for value in xyxy]
+    return None
+
+
+def box_contains_center(outer_xyxy, inner_xyxy, margin_ratio=0.02):
+    ox1, oy1, ox2, oy2 = outer_xyxy
+    ix1, iy1, ix2, iy2 = inner_xyxy
+    cx = (ix1 + ix2) / 2.0
+    cy = (iy1 + iy2) / 2.0
+    pad_x = (ox2 - ox1) * margin_ratio
+    pad_y = (oy2 - oy1) * margin_ratio
+    return (ox1 - pad_x) <= cx <= (ox2 + pad_x) and (oy1 - pad_y) <= cy <= (oy2 + pad_y)
+
+
+def draw_vehicle_plate_overlay(image, vehicles, plates):
+    annotated = image.copy()
+    for index, vehicle in enumerate(vehicles, start=1):
+        xyxy = detection_xyxy(vehicle)
+        if not xyxy:
+            continue
+        x1, y1, x2, y2 = [int(round(value)) for value in xyxy]
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (56, 189, 248), 2)
+        label = f"vehicle {index} {float(vehicle.get('confidence', 0.0)):.2f}"
+        cv2.putText(annotated, label, (x1, max(16, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (56, 189, 248), 2, cv2.LINE_AA)
+    for index, plate in enumerate(plates, start=1):
+        xyxy = detection_xyxy(plate)
+        if not xyxy:
+            continue
+        x1, y1, x2, y2 = [int(round(value)) for value in xyxy]
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (34, 197, 94), 2)
+        plate_no = str((plate.get("ocr") or {}).get("plate_no") or "plate")
+        label = f"plate {index} {float(plate.get('confidence', 0.0)):.2f}"
+        if plate_no:
+            label = f"{label} {plate_no.encode('ascii', 'ignore').decode('ascii') or 'OCR'}"
+        cv2.putText(annotated, label, (x1, max(16, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (34, 197, 94), 2, cv2.LINE_AA)
+    ok, encoded = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+    if not ok:
+        return None
+    return {
+        "mime_type": "image/jpeg",
+        "data_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+    }
 
 
 def accepted_behavior_classes(task):
@@ -317,6 +433,136 @@ def run_person_behavior_two_stage(task, image, no_annotated):
     }
 
 
+def run_vehicle_plate_ocr(task, image, no_annotated):
+    vehicle_model_path = task.get("vehicleModel") or task.get("model")
+    plate_model_path = task.get("plateModel")
+    vehicle_detector = load_model(vehicle_model_path)
+    plate_detector = load_model(plate_model_path)
+    ocr = load_plate_ocr_model(task.get("car2Root"), task.get("recModel"))
+
+    vehicle_classes = {
+        str(value).strip().lower()
+        for value in task.get("vehicleClasses", ["car", "truck", "non_motor_vehicle"])
+        if str(value).strip()
+    }
+    with infer_lock_for_model(vehicle_model_path):
+        vehicle_result = vehicle_detector.predict(
+            image,
+            imgsz=int(task.get("vehicleImgsz") or task.get("imgsz") or 640),
+            conf=float(task.get("vehicleConf") if task.get("vehicleConf") is not None else task.get("conf") if task.get("conf") is not None else 0.25),
+            device=SERVER_STATE["device"],
+            verbose=False,
+        )[0]
+
+    vehicle_names = getattr(vehicle_result, "names", getattr(vehicle_detector.model, "names", {}))
+    vehicles = []
+    if vehicle_result.boxes is not None:
+        for box in vehicle_result.boxes:
+            detection = serialize_box(box, vehicle_names)
+            if str(detection.get("class_name", "")).lower() in vehicle_classes:
+                detection["source_task_id"] = "vehicle_yolo"
+                detection["source_task_label"] = "车辆识别"
+                vehicles.append(detection)
+
+    vehicles.sort(key=lambda item: float(item.get("confidence", 0.0)), reverse=True)
+    max_vehicles = int(task.get("maxVehicles") or 8)
+    vehicles = vehicles[:max_vehicles]
+
+    plates = []
+    for vehicle_index, vehicle in enumerate(vehicles):
+        vehicle_xyxy = detection_xyxy(vehicle)
+        if not vehicle_xyxy:
+            continue
+        vehicle_crop_with_origin = crop_box_absolute_with_origin(image, vehicle_xyxy, float(task.get("vehicleCropPadding") or 0.02))
+        if vehicle_crop_with_origin is None:
+            continue
+        vehicle_crop, crop_origin_x, crop_origin_y = vehicle_crop_with_origin
+        with infer_lock_for_model(plate_model_path):
+            plate_result = plate_detector.predict(
+                vehicle_crop,
+                imgsz=int(task.get("plateImgsz") or 640),
+                conf=float(task.get("plateConf") if task.get("plateConf") is not None else 0.25),
+                device=SERVER_STATE["device"],
+                verbose=False,
+            )[0]
+        if plate_result.boxes is None:
+            vehicle["plates"] = []
+            continue
+        vehicle_plates = []
+        for plate_box in plate_result.boxes:
+            local_xyxy = [float(value) for value in plate_box.xyxy[0].detach().cpu().tolist()]
+            absolute_xyxy = [
+                local_xyxy[0] + crop_origin_x,
+                local_xyxy[1] + crop_origin_y,
+                local_xyxy[2] + crop_origin_x,
+                local_xyxy[3] + crop_origin_y,
+            ]
+            if not box_contains_center(vehicle_xyxy, absolute_xyxy):
+                continue
+            plate_conf = float(plate_box.conf.item()) if plate_box.conf is not None else 0.0
+            crop = crop_box_absolute(image, absolute_xyxy, float(task.get("ocrCropPadding") or 0.0))
+            if crop is None:
+                continue
+            started = time.time()
+            import torch
+            with PLATE_OCR_INFER_LOCK, torch.no_grad():
+                plate_no, rec_prob, plate_color, color_conf = ocr["get_plate_result"](
+                    crop,
+                    ocr["device"],
+                    ocr["model"],
+                    is_color=True,
+                )
+            ocr_ms = int(round((time.time() - started) * 1000))
+            rec_conf = float(np.mean(rec_prob)) if len(rec_prob) else 0.0
+            plate_detection = serialize_xyxy_detection(
+                0,
+                "license_plate",
+                plate_conf,
+                absolute_xyxy,
+                image.shape,
+            )
+            plate_detection.update({
+                "source_task_id": "license_plate_yolo",
+                "source_task_label": "车牌检测",
+                "vehicle_index": vehicle_index,
+                "vehicle_class_name": vehicle.get("class_name"),
+                "vehicle_confidence": vehicle.get("confidence"),
+                "accepted": True,
+                "plate_no": str(plate_no),
+                "plate_color": str(plate_color),
+                "ocr": {
+                    "plate_no": str(plate_no),
+                    "mean_char_confidence": rec_conf,
+                    "plate_color": str(plate_color),
+                    "color_confidence": float(color_conf),
+                    "latency_ms": ocr_ms,
+                    "crop_shape": list(crop.shape[:2]),
+                },
+            })
+            plates.append(plate_detection)
+            vehicle_plates.append(plate_detection)
+        vehicle["plates"] = sorted(vehicle_plates, key=lambda item: float(item.get("confidence", 0.0)), reverse=True)
+
+    plates.sort(key=lambda item: (float((item.get("ocr") or {}).get("mean_char_confidence") or 0.0), float(item.get("confidence") or 0.0)), reverse=True)
+    detections = []
+    for vehicle in vehicles:
+        detections.append(vehicle)
+    for plate in plates:
+        detections.append(plate)
+
+    return {
+        "ok": True,
+        "mode": "vehicle_plate_ocr",
+        "detections": detections,
+        "vehicles": vehicles,
+        "plates": plates,
+        "vehicle_candidates": len(vehicles),
+        "plate_candidates": len(plates),
+        "ocr_results": len([plate for plate in plates if (plate.get("ocr") or {}).get("plate_no")]),
+        "annotated_image": None if no_annotated else draw_vehicle_plate_overlay(image, vehicles, plates),
+    }
+
+
 def run_prediction(payload):
     task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
     kind = str(task.get("kind") or "")
@@ -324,6 +570,8 @@ def run_prediction(payload):
     no_annotated = bool(payload.get("no_annotated"))
     if kind == "classify":
         result = run_classify(task, image)
+    elif kind == "vehicle_plate_ocr":
+        result = run_vehicle_plate_ocr(task, image, no_annotated)
     elif kind == "person_behavior_two_stage":
         result = run_person_behavior_two_stage(task, image, no_annotated)
     elif kind == "smoking_two_stage":

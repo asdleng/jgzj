@@ -185,7 +185,7 @@ const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
     label: '全部YOLO检测',
-    subTasks: ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'fishing_event', 'fishing_rod_yolo', 'smoking_two_stage']
+    subTasks: ['person_yolo', 'vehicle_yolo', 'vehicle_plate_ocr', 'pet_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'fishing_event', 'fishing_rod_yolo', 'smoking_two_stage']
   },
   person_yolo: {
     kind: 'detect',
@@ -295,6 +295,54 @@ const yoloModelTestTasks = Object.freeze({
     minRodAspectRatio: 1.35,
     minRodPersonSizeRatio: 0.32,
     maxRodPersonSizeRatio: 2.8
+  },
+  license_plate_yolo: {
+    kind: 'detect',
+    label: '车牌检测',
+    model: '/home/admin1/jgzj/.runtime/license_plate_yolo_20260629/runs/lp_yolov8n_ccpd2020_640_e50/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/license_plate_yolo_best.pt',
+    names: ['license_plate'],
+    imgsz: 640,
+    conf: 0.25,
+    downloadFile: 'license_plate_yolo_best.pt',
+    registryModelFamily: 'yolov8n',
+    registryMetricSource: 'test',
+    registryMetrics: {
+      test_precision: 0.9973948500035746,
+      test_recall: 0.9991503823279524,
+      test_map50: 0.9943430034129691,
+      test_map50_95: 0.9160720233988353,
+      val_precision: 1.0,
+      val_recall: 1.0,
+      val_map50: 0.995,
+      val_map50_95: 0.923
+    },
+    registryNote: '中国车牌检测：CCPD2020 绿牌数据训练；用于车辆ROI内车牌OCR链路。'
+  },
+  vehicle_plate_ocr: {
+    kind: 'vehicle_plate_ocr',
+    label: '车牌识别链路',
+    model: '/home/sari/jgzj_yolo_runs/vehicle_yolo_20260624_v1_20260624_022424/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/general_yolo_best.pt',
+    vehicleModel: '/home/sari/jgzj_yolo_runs/vehicle_yolo_20260624_v1_20260624_022424/weights/best.pt',
+    localVehicleModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/general_yolo_best.pt',
+    plateModel: '/home/admin1/jgzj/.runtime/license_plate_yolo_20260629/runs/lp_yolov8n_ccpd2020_640_e50/weights/best.pt',
+    localPlateModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/license_plate_yolo_best.pt',
+    recModel: '/home/admin1/car2/weights/plate_rec_color.pth',
+    car2Root: '/home/admin1/car2',
+    names: ['car', 'truck', 'non_motor_vehicle'],
+    plateNames: ['license_plate'],
+    vehicleClasses: ['car', 'truck', 'non_motor_vehicle'],
+    imgsz: 640,
+    vehicleImgsz: 640,
+    plateImgsz: 640,
+    conf: 0.25,
+    vehicleConf: 0.25,
+    plateConf: 0.25,
+    vehicleCropPadding: 0.02,
+    ocrCropPadding: 0.0,
+    maxVehicles: 8,
+    localOnly: true
   },
   smoking_candidate: {
     kind: 'detect',
@@ -967,7 +1015,12 @@ function remapYoloPredictionNames(predictions, names = []) {
 function remapYoloDetectionNames(detections, task) {
   return (Array.isArray(detections) ? detections : []).map((detection) => {
     const classId = Number(detection.class_id);
-    const className = Number.isInteger(classId) && task.names?.[classId] ? task.names[classId] : detection.class_name;
+    const isLicensePlate =
+      String(detection.source_task_id || '').toLowerCase() === 'license_plate_yolo' ||
+      String(detection.class_name || '').toLowerCase() === 'license_plate';
+    const className = isLicensePlate
+      ? 'license_plate'
+      : Number.isInteger(classId) && task.names?.[classId] ? task.names[classId] : detection.class_name;
     const next = {
       ...detection,
       class_id: Number.isInteger(classId) ? classId : detection.class_id,
@@ -1026,6 +1079,9 @@ function buildYoloRemotePredictCommand({ task, remoteScriptPath, remoteInputPath
 }
 
 async function runRemoteYoloPrediction(task, remoteScriptPath, remoteInputPath, options = {}) {
+  if (task.localOnly) {
+    throw new Error('task_requires_local_service');
+  }
   const remoteCommand = buildYoloRemotePredictCommand({
     task,
     remoteScriptPath,
@@ -1055,6 +1111,42 @@ function buildLocalYoloTask(task) {
     imgsz: task.imgsz || 640,
     conf: task.conf ?? 0.25
   };
+  if (task.vehicleModel || task.localVehicleModel) {
+    localTask.vehicleModel = task.localVehicleModel || task.vehicleModel;
+  }
+  if (task.plateModel || task.localPlateModel) {
+    localTask.plateModel = task.localPlateModel || task.plateModel;
+  }
+  if (task.recModel) {
+    localTask.recModel = task.recModel;
+  }
+  if (task.car2Root) {
+    localTask.car2Root = task.car2Root;
+  }
+  if (task.vehicleImgsz !== undefined) {
+    localTask.vehicleImgsz = task.vehicleImgsz;
+  }
+  if (task.plateImgsz !== undefined) {
+    localTask.plateImgsz = task.plateImgsz;
+  }
+  if (task.vehicleConf !== undefined) {
+    localTask.vehicleConf = task.vehicleConf;
+  }
+  if (task.plateConf !== undefined) {
+    localTask.plateConf = task.plateConf;
+  }
+  if (task.vehicleCropPadding !== undefined) {
+    localTask.vehicleCropPadding = task.vehicleCropPadding;
+  }
+  if (task.ocrCropPadding !== undefined) {
+    localTask.ocrCropPadding = task.ocrCropPadding;
+  }
+  if (task.maxVehicles !== undefined) {
+    localTask.maxVehicles = task.maxVehicles;
+  }
+  if (Array.isArray(task.vehicleClasses)) {
+    localTask.vehicleClasses = task.vehicleClasses;
+  }
   if (task.classifierModel || task.localClassifierModel) {
     localTask.classifierModel = task.localClassifierModel || task.classifierModel;
     localTask.classifierNames = task.classifierNames || [];
@@ -1144,6 +1236,21 @@ function buildYoloTaskResponse(taskId, task, payload, options = {}) {
   }
   if (payload.person_candidates !== undefined) {
     responsePayload.person_candidates = payload.person_candidates;
+  }
+  if (payload.vehicle_candidates !== undefined) {
+    responsePayload.vehicle_candidates = payload.vehicle_candidates;
+  }
+  if (payload.plate_candidates !== undefined) {
+    responsePayload.plate_candidates = payload.plate_candidates;
+  }
+  if (payload.ocr_results !== undefined) {
+    responsePayload.ocr_results = payload.ocr_results;
+  }
+  if (Array.isArray(payload.vehicles)) {
+    responsePayload.vehicles = remapYoloDetectionNames(payload.vehicles, task);
+  }
+  if (Array.isArray(payload.plates)) {
+    responsePayload.plates = remapYoloDetectionNames(payload.plates, task);
   }
   if (payload.behavior_candidates !== undefined) {
     responsePayload.behavior_candidates = payload.behavior_candidates;
@@ -1364,7 +1471,7 @@ async function fileInfoForPath(filePath) {
 }
 
 async function buildFallbackYoloModelEntries() {
-  const taskIds = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
+  const taskIds = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'license_plate_yolo', 'pet_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
   const entries = [];
   for (const taskId of taskIds) {
     const task = yoloModelTestTasks[taskId];
@@ -1437,7 +1544,7 @@ async function buildYoloModelRegistryPayload() {
     }
   }
 
-  const preferredOrder = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
+  const preferredOrder = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'license_plate_yolo', 'pet_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
   const entries = [];
   for (const taskId of preferredOrder) {
     if (!mergedByTask.has(taskId)) continue;
@@ -9302,6 +9409,9 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
         task_id: currentTaskId,
         error: localError.message
       }));
+      if (currentTask.localOnly) {
+        throw localError;
+      }
     }
 
     try {
