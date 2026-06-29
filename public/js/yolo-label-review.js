@@ -116,13 +116,13 @@
       hasBox: true
     },
     pet: {
-      label: "宠物事件 · 默认显示框",
+      label: "宠物事件 · 候选优先，带框样本自动显示框",
       source: "vehicle_collection",
       qwenLabel: "pet",
-      className: "pet",
-      answer: "YES",
+      className: "",
+      answer: "",
       query: "",
-      hasBox: true
+      hasBox: false
     },
     fishing: {
       label: "钓鱼事件 · 默认 Yes/No",

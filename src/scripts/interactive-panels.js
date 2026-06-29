@@ -305,6 +305,7 @@
 
   let aiPreviewUrl = "";
   let yoloTestPreviewUrl = "";
+  let yoloTestAnnotatedActive = false;
   let qwen36mmPreviewUrl = "";
   let aiHistoryPageValue = 1;
   let aiHistoryTotalPages = 1;
@@ -7346,6 +7347,7 @@
       yoloTestPreviewUrl = "";
     }
     yoloTestPreview.dataset.empty = "true";
+    yoloTestAnnotatedActive = false;
     yoloTestPreview.innerHTML = '<p class="ai-check-preview-empty">选择图片后会在这里预览</p>';
   }
 
@@ -7356,10 +7358,34 @@
     }
   }
 
+  function restoreYoloOriginalPreview() {
+    if (!yoloTestAnnotatedActive || !yoloTestPreviewUrl) return;
+    const image = yoloTestPreview?.querySelector(".yolo-preview-frame img");
+    if (!image) return;
+    image.src = yoloTestPreviewUrl;
+    yoloTestAnnotatedActive = false;
+  }
+
+  function renderYoloAnnotatedPreview(annotatedImage, altText = "YOLO分割结果") {
+    const dataBase64 = annotatedImage?.data_base64;
+    if (!yoloTestPreview || !dataBase64) {
+      restoreYoloOriginalPreview();
+      return false;
+    }
+    const mimeType = annotatedImage.mime_type || "image/jpeg";
+    const image = yoloTestPreview.querySelector(".yolo-preview-frame img");
+    if (!image) return false;
+    image.src = `data:${mimeType};base64,${dataBase64}`;
+    image.alt = altText;
+    yoloTestAnnotatedActive = true;
+    return true;
+  }
+
   function renderYoloTestPreview(file) {
     if (!yoloTestPreview) return;
     if (yoloTestPreviewUrl) URL.revokeObjectURL(yoloTestPreviewUrl);
     yoloTestPreviewUrl = URL.createObjectURL(file);
+    yoloTestAnnotatedActive = false;
     yoloTestPreview.dataset.empty = "false";
     yoloTestPreview.innerHTML = "";
     const frame = document.createElement("div");
@@ -7422,6 +7448,17 @@
 
   function yoloModelMetricText(entry) {
     const metrics = entry?.metrics || {};
+    if (
+      metrics.server_single_fps !== undefined ||
+      metrics.s100_hbm_fps !== undefined ||
+      metrics.s100_end2end_fps !== undefined
+    ) {
+      return [
+        metrics.server_single_fps !== undefined ? `server ${Number(metrics.server_single_fps).toFixed(1)} FPS` : "",
+        metrics.s100_end2end_fps !== undefined ? `S100端到端 ${Number(metrics.s100_end2end_fps).toFixed(1)} FPS` : "",
+        metrics.s100_hbm_fps !== undefined ? `S100 HBM ${Number(metrics.s100_hbm_fps).toFixed(1)} FPS` : ""
+      ].filter(Boolean).join(" · ");
+    }
     const top1 = metrics.test_top1 ?? metrics.val_top1 ?? metrics.top1;
     if (top1 !== undefined && top1 !== null) {
       return [
@@ -7600,6 +7637,9 @@
     if (detection.vehicle_class_name) {
       item.appendChild(createNode("p", "yolo-detection-meta", `关联车辆: ${detection.vehicle_class_name} ${formatYoloConfidence(detection.vehicle_confidence)}`));
     }
+    if (detection.mask_index !== undefined && detection.mask_index !== null) {
+      item.appendChild(createNode("p", "yolo-detection-meta", `mask #${Number(detection.mask_index) + 1}`));
+    }
   }
 
   function renderYoloDetectionList(detections) {
@@ -7710,6 +7750,7 @@
     if (mode === "all_yolo") {
       const groups = Array.isArray(data.groups) ? data.groups : [];
       const detections = Array.isArray(data.detections) ? data.detections : [];
+      restoreYoloOriginalPreview();
       renderYoloDetectionOverlay(detections, taskLabel);
       renderYoloAllOutput(groups, detections);
       if (detections.length > 0) {
@@ -7723,6 +7764,7 @@
     if (mode === "classify") {
       const predictions = Array.isArray(data.predictions) ? data.predictions : [];
       const top = data.top || predictions[0] || null;
+      restoreYoloOriginalPreview();
       clearYoloDetectionOverlay();
       renderYoloClassifyOutput(predictions);
       if (!top) {
@@ -7743,6 +7785,24 @@
     }
 
     const detections = Array.isArray(data.detections) ? data.detections : [];
+    if (mode === "segment") {
+      const maskCount = Number(data.mask_count ?? detections.length);
+      renderYoloAnnotatedPreview(data.annotated_image, `${taskLabel}结果`);
+      renderYoloDetectionOverlay(detections, taskLabel);
+      renderYoloDetectionList(detections);
+      if (maskCount > 0 || detections.length > 0) {
+        setYoloTestResult(
+          `${maskCount || detections.length} 个 mask`,
+          `${taskLabel}: 已返回实例分割结果，目标 ${detections.length} 个，耗时 ${data.duration_ms ?? "-"}ms。`,
+          "ok"
+        );
+      } else {
+        setYoloTestResult("未分割", `${taskLabel}: 没有返回实例 mask，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+      }
+      return;
+    }
+
+    restoreYoloOriginalPreview();
     renderYoloDetectionOverlay(detections, taskLabel);
     renderYoloDetectionList(detections);
 
@@ -7870,6 +7930,7 @@
     });
     setYoloTestStatus("推理中...", "loading");
     setYoloTestResult("推理中", "正在调用常驻 YOLO 小模型，必要时自动回退 A100。", "loading");
+    restoreYoloOriginalPreview();
     clearYoloDetectionOverlay();
     if (yoloTestOutput) yoloTestOutput.innerHTML = "";
 

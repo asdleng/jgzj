@@ -123,6 +123,22 @@ def encode_annotated_image(result):
         return {"error": str(exc)}
 
 
+def result_mask_count(result):
+    masks = getattr(result, "masks", None)
+    if masks is None:
+        return 0
+    data = getattr(masks, "data", None)
+    if data is not None:
+        try:
+            return int(data.shape[0])
+        except Exception:
+            pass
+    try:
+        return int(len(masks))
+    except Exception:
+        return 0
+
+
 def decode_image(image_payload):
     if not isinstance(image_payload, dict):
         raise ValueError("image_required")
@@ -297,6 +313,33 @@ def run_detect(task, image, no_annotated):
         "ok": True,
         "mode": "detect",
         "detections": detections,
+        "annotated_image": None if no_annotated else encode_annotated_image(result),
+    }
+
+
+def run_segment(task, image, no_annotated):
+    model_path = task.get("model")
+    model = load_model(model_path)
+    with infer_lock_for_model(model_path):
+        result = model.predict(
+            image,
+            imgsz=int(task.get("imgsz") or 640),
+            conf=float(task.get("conf") if task.get("conf") is not None else 0.25),
+            device=SERVER_STATE["device"],
+            verbose=False,
+        )[0]
+    names = getattr(result, "names", getattr(model.model, "names", {}))
+    detections = []
+    if result.boxes is not None:
+        for index, box in enumerate(result.boxes):
+            detection = serialize_box(box, names)
+            detection["mask_index"] = index
+            detections.append(detection)
+    return {
+        "ok": True,
+        "mode": "segment",
+        "detections": detections,
+        "mask_count": result_mask_count(result),
         "annotated_image": None if no_annotated else encode_annotated_image(result),
     }
 
@@ -576,6 +619,8 @@ def run_prediction(payload):
         result = run_person_behavior_two_stage(task, image, no_annotated)
     elif kind == "smoking_two_stage":
         result = run_smoking_two_stage(task, image, no_annotated)
+    elif kind == "segment":
+        result = run_segment(task, image, no_annotated)
     elif kind == "detect":
         result = run_detect(task, image, no_annotated)
     else:

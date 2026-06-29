@@ -6251,6 +6251,10 @@ const MAP_EDITOR_ROUTE_SMOOTH_MIN_RADIUS_M = 2.0;
 const MAP_EDITOR_ROUTE_SMOOTH_MAX_RADIUS_M = 8.0;
 const MAP_EDITOR_ROUTE_SMOOTH_JS_INJECTION = String.raw`
 /* jgzj-route-smooth-server-v1 */
+if (els.routeControlSpacing && Number(els.routeControlSpacing.value || 0) === 10) {
+  els.routeControlSpacing.value = "1";
+}
+
 function routeSmoothSpacingValue() {
   const value = Number(els.routeControlSpacing ? els.routeControlSpacing.value : 1);
   if (!Number.isFinite(value)) return 1;
@@ -6258,10 +6262,11 @@ function routeSmoothSpacingValue() {
 }
 
 function routeSmoothSetButtons() {
-  if (els.smoothRouteBtn) els.smoothRouteBtn.disabled = !els.routeSelect.value;
+  if (els.serverSmoothRouteBtn) els.serverSmoothRouteBtn.disabled = !els.routeSelect.value;
   if (els.applySmoothedRouteBtn) {
-    els.applySmoothedRouteBtn.disabled = !state.route.editing || !state.route.smoothReady || state.route.dirty;
+    els.applySmoothedRouteBtn.disabled = !state.route.editing || state.route.smoothMode !== "reconnect" || state.route.controls.length < 2;
   }
+  if (state.route.smoothMode === "reconnect" && els.saveRouteBtn) els.saveRouteBtn.disabled = true;
 }
 
 function routeSmoothMeta(data, prefix = "平滑预览已生成") {
@@ -6296,7 +6301,7 @@ async function requestServerRouteSmooth(apply = false) {
   }
 
   if (apply && els.applySmoothedRouteBtn) els.applySmoothedRouteBtn.disabled = true;
-  if (els.smoothRouteBtn) els.smoothRouteBtn.disabled = true;
+  if (els.serverSmoothRouteBtn) els.serverSmoothRouteBtn.disabled = true;
   els.routeEditMeta.textContent = apply ? "云端正在计算并覆盖控制器路径..." : "云端正在计算平滑预览...";
   try {
     const data = await fetchJSON("api/route-smooth", {
@@ -6305,6 +6310,7 @@ async function requestServerRouteSmooth(apply = false) {
       body: JSON.stringify({
         file_name: fileName,
         spacing_m: routeSmoothSpacingValue(),
+        controls: state.route.editing && state.route.controls.length >= 2 ? state.route.controls : undefined,
         apply,
       }),
     });
@@ -6318,6 +6324,7 @@ async function requestServerRouteSmooth(apply = false) {
       state.route.preview = [];
       state.route.editing = false;
       state.route.smoothReady = false;
+      state.route.smoothMode = "";
       setRouteDirty(false);
       els.routeMeta.textContent = (data.source || "--") + " | " + (data.route_name || fileName) + " | " + (data.point_count || state.route.points.length) + " points | " + fmt(data.length_m, 1) + " m | POI " + (data.poi_count || 0);
       els.routeEditMeta.textContent = routeSmoothMeta(data.smooth || data, "已覆盖控制器路径") + " | 备份：" + (data.backup_path || "--");
@@ -6336,6 +6343,7 @@ async function requestServerRouteSmooth(apply = false) {
     state.route.editing = true;
     state.route.dirty = false;
     state.route.smoothReady = true;
+    state.route.smoothMode = "reconnect";
     state.interaction.selected = null;
     state.interaction.hover = null;
     els.showRoute.checked = true;
@@ -6349,6 +6357,31 @@ async function requestServerRouteSmooth(apply = false) {
     routeSmoothSetButtons();
   }
 }
+
+const routeSmoothOriginalRebuildRoutePreview = rebuildRoutePreview;
+rebuildRoutePreview = function rebuildRouteReconnectPreview() {
+  if (state.route.smoothMode !== "reconnect") {
+    routeSmoothOriginalRebuildRoutePreview();
+    return;
+  }
+  if (!state.route.editing || state.route.controls.length < 2 || !state.route.points.length) {
+    state.route.preview = [];
+    return;
+  }
+  const controls = state.route.controls.slice().sort((a, b) => Number(a.s || 0) - Number(b.s || 0));
+  state.route.preview = state.route.points
+    .map((point) => {
+      const next = evaluateRouteSpline(controls, Number(point.s || 0));
+      if (!next) return null;
+      return {
+        ...point,
+        x: Number(next.x || 0),
+        y: Number(next.y || 0),
+        z: Number(next.z || 0),
+      };
+    })
+    .filter(Boolean);
+};
 `;
 
 function normalizeMapEditorPath(value) {
@@ -6767,7 +6800,84 @@ function mapEditorEvaluateRouteDelta(deltas, s) {
   };
 }
 
-function buildMapEditorSmoothedRoute(points, spacingM) {
+function mapEditorEvaluateRouteSpline(controls, s) {
+  if (!controls.length) return null;
+  if (controls.length === 1) return { ...controls[0] };
+  if (s <= controls[0].s) return { ...controls[0] };
+  if (s >= controls[controls.length - 1].s) return { ...controls[controls.length - 1] };
+  let segment = 0;
+  for (let i = 0; i < controls.length - 1; i += 1) {
+    if (controls[i].s <= s && s <= controls[i + 1].s) {
+      segment = i;
+      break;
+    }
+  }
+  const i0 = Math.max(0, segment - 1);
+  const i1 = segment;
+  const i2 = segment + 1;
+  const i3 = Math.min(controls.length - 1, segment + 2);
+  const s1 = controls[i1].s;
+  const s2 = controls[i2].s;
+  const t = s2 <= s1 ? 0 : (s - s1) / (s2 - s1);
+  return {
+    x: mapEditorCatmullRomValue(controls[i0].x, controls[i1].x, controls[i2].x, controls[i3].x, t),
+    y: mapEditorCatmullRomValue(controls[i0].y, controls[i1].y, controls[i2].y, controls[i3].y, t),
+    z: mapEditorCatmullRomValue(controls[i0].z || 0, controls[i1].z || 0, controls[i2].z || 0, controls[i3].z || 0, t),
+    s
+  };
+}
+
+function normalizeMapEditorRouteControls(controls, points) {
+  const normalized = (Array.isArray(controls) ? controls : [])
+    .map((control, index) => {
+      const s = Number(control?.s);
+      const x = Number(control?.x);
+      const y = Number(control?.y);
+      if (!Number.isFinite(s) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+      const source = mapEditorRouteSourceAtS(points, s);
+      return {
+        id: index,
+        source_index: Number.isFinite(Number(control.source_index)) ? Number(control.source_index) : source.source_index,
+        seq: control.seq ?? source.seq,
+        s,
+        x,
+        y,
+        z: Number.isFinite(Number(control.z)) ? Number(control.z) : source.z,
+        original_x: Number.isFinite(Number(control.original_x)) ? Number(control.original_x) : source.x,
+        original_y: Number.isFinite(Number(control.original_y)) ? Number(control.original_y) : source.y,
+        original_z: Number.isFinite(Number(control.original_z)) ? Number(control.original_z) : source.z,
+        locked: Boolean(control.locked)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.s - b.s);
+  if (normalized.length >= 2) {
+    normalized[0].locked = true;
+    normalized[normalized.length - 1].locked = true;
+  }
+  return normalized.map((control, index) => ({ ...control, id: index }));
+}
+
+function buildMapEditorRouteEditControlsFromPreview(originalPoints, previewPoints) {
+  return originalPoints.map((source, index) => {
+    const target = previewPoints[index] || source;
+    return {
+      id: index,
+      source_index: index,
+      seq: source.seq ?? index,
+      s: Number(source.s || 0),
+      x: Number(target.x || 0),
+      y: Number(target.y || 0),
+      z: Number(target.z || 0),
+      original_x: Number(source.x || 0),
+      original_y: Number(source.y || 0),
+      original_z: Number(source.z || 0),
+      locked: index === 0 || index === originalPoints.length - 1
+    };
+  });
+}
+
+function buildMapEditorSmoothedRoute(points, spacingM, routeControls = []) {
   const normalizedPoints = (Array.isArray(points) ? points : [])
     .map((point, index) => ({
       ...point,
@@ -6784,41 +6894,38 @@ function buildMapEditorSmoothedRoute(points, spacingM) {
   }
 
   const radiusM = mapEditorRouteSmoothRadius(spacingM);
-  const sValues = mapEditorRouteSmoothSValues(normalizedPoints, spacingM);
-  const controls = sValues.map((s, index) => {
-    const source = mapEditorRouteSourceAtS(normalizedPoints, s);
-    const locked = index === 0 || index === sValues.length - 1;
-    const target = locked
-      ? source
-      : mapEditorRouteClampOffset(source, mapEditorRouteWeightedPointAtS(normalizedPoints, s, radiusM));
-    return {
-      id: index,
-      source_index: source.source_index,
-      seq: source.seq,
-      s,
-      x: Number(target.x || 0),
-      y: Number(target.y || 0),
-      z: Number(target.z || 0),
-      original_x: source.x,
-      original_y: source.y,
-      original_z: source.z,
-      locked
-    };
-  });
+  let controls = normalizeMapEditorRouteControls(routeControls, normalizedPoints);
+  if (controls.length < 2) {
+    const sValues = mapEditorRouteSmoothSValues(normalizedPoints, spacingM);
+    controls = sValues.map((s, index) => {
+      const source = mapEditorRouteSourceAtS(normalizedPoints, s);
+      const locked = index === 0 || index === sValues.length - 1;
+      const target = locked
+        ? source
+        : mapEditorRouteClampOffset(source, mapEditorRouteWeightedPointAtS(normalizedPoints, s, radiusM));
+      return {
+        id: index,
+        source_index: source.source_index,
+        seq: source.seq,
+        s,
+        x: Number(target.x || 0),
+        y: Number(target.y || 0),
+        z: Number(target.z || 0),
+        original_x: source.x,
+        original_y: source.y,
+        original_z: source.z,
+        locked
+      };
+    });
+  }
 
-  const deltas = controls.map((control) => ({
-    s: Number(control.s || 0),
-    dx: Number(control.x || 0) - Number(control.original_x || 0),
-    dy: Number(control.y || 0) - Number(control.original_y || 0),
-    dz: Number(control.z || 0) - Number(control.original_z || 0)
-  }));
   const previewPoints = normalizedPoints.map((point) => {
-    const delta = mapEditorEvaluateRouteDelta(deltas, Number(point.s || 0));
+    const next = mapEditorEvaluateRouteSpline(controls, Number(point.s || 0));
     return {
       ...point,
-      x: Number(point.x || 0) + delta.dx,
-      y: Number(point.y || 0) + delta.dy,
-      z: Number(point.z || 0) + delta.dz
+      x: Number(next?.x || point.x || 0),
+      y: Number(next?.y || point.y || 0),
+      z: Number(next?.z || point.z || 0)
     };
   });
   const offsets = controls
@@ -6862,15 +6969,17 @@ async function smoothMapEditorRoute(vehicleId, fileName, options = {}) {
     chunkResponse: true,
     timeout_s: 60
   });
-  const smoothed = buildMapEditorSmoothedRoute(routeData.points || [], spacingM);
+  const originalPoints = Array.isArray(routeData.points) ? routeData.points : [];
+  const smoothed = buildMapEditorSmoothedRoute(originalPoints, spacingM, options.controls);
   return {
     ...smoothed,
     file_name: routeData.file_name || routeFileName,
     route_name: routeData.route_name || routeData.name || routeFileName,
     source: routeData.source,
-    original_point_count: routeData.point_count || (routeData.points || []).length,
+    original_point_count: routeData.point_count || originalPoints.length,
     original_length_m: routeData.length_m,
-    bounds: routeData.bounds || boundsFromPatrolPoints(smoothed.points)
+    bounds: routeData.bounds || boundsFromPatrolPoints(smoothed.points),
+    original_points: originalPoints
   };
 }
 
@@ -6899,12 +7008,24 @@ function boundsFromPatrolPoints(points) {
 }
 
 function injectMapEditorRouteSmoothHtml(html) {
-  if (!html || html.includes('id="smoothRouteBtn"')) return html;
+  if (!html) return html;
+  let nextHtml = html.replace(
+    /(<input id="routeControlSpacing"[^>]*\bvalue=")10(")/,
+    (_match, prefix, suffix) => `${prefix}1${suffix}`
+  );
+  if (nextHtml.includes('id="serverSmoothRouteBtn"')) return nextHtml;
+  const smoothButtons =
+    '<button id="serverSmoothRouteBtn" disabled title="云端计算平滑预览">平滑预览</button>\n' +
+    '          <button id="applySmoothedRouteBtn" class="danger" disabled title="把云端平滑结果覆盖到控制器路径 CSV">覆盖控制器</button>';
+  const existingSmoothPattern = /<button id="smoothRouteBtn"[^>]*>.*?<\/button>/;
+  if (existingSmoothPattern.test(nextHtml)) {
+    return nextHtml.replace(existingSmoothPattern, smoothButtons);
+  }
   const target = '<button id="startRouteEditBtn">生成控制点</button>';
-  if (!html.includes(target)) return html;
-  return html.replace(
+  if (!nextHtml.includes(target)) return nextHtml;
+  return nextHtml.replace(
     target,
-    `${target}\n          <button id="smoothRouteBtn" disabled title="云端计算平滑预览">平滑预览</button>\n          <button id="applySmoothedRouteBtn" class="danger" disabled title="把云端平滑结果覆盖到控制器路径 CSV">覆盖控制器</button>`
+    `${target}\n          ${smoothButtons}`
   );
 }
 
@@ -6913,7 +7034,7 @@ function injectMapEditorRouteSmoothJs(script) {
   let injected = script;
   injected = injected.replace(
     'deleteRouteBtn: $("deleteRouteBtn"),',
-    'deleteRouteBtn: $("deleteRouteBtn"),\n  smoothRouteBtn: $("smoothRouteBtn"),\n  applySmoothedRouteBtn: $("applySmoothedRouteBtn"),'
+    'deleteRouteBtn: $("deleteRouteBtn"),\n  serverSmoothRouteBtn: $("serverSmoothRouteBtn"),\n  applySmoothedRouteBtn: $("applySmoothedRouteBtn"),'
   );
   injected = injected.replace(
     'els.discardRouteEditBtn.disabled = !state.route.editing;',
@@ -6925,23 +7046,23 @@ function injectMapEditorRouteSmoothJs(script) {
   );
   injected = injected.replace(
     'state.route.preview = [];\n  state.route.editing = false;',
-    'state.route.preview = [];\n  state.route.smoothReady = false;\n  state.route.editing = false;'
+    'state.route.preview = [];\n  state.route.smoothReady = false;\n  state.route.smoothMode = "";\n  state.route.editing = false;'
   );
   injected = injected.replace(
     'state.route.controls = data.controls || [];\n  state.route.editing = true;',
-    'state.route.controls = data.controls || [];\n  state.route.smoothReady = false;\n  state.route.editing = true;'
+    'state.route.controls = data.controls || [];\n  state.route.smoothReady = false;\n  state.route.smoothMode = "";\n  state.route.editing = true;'
   );
   injected = injected.replace(
     'state.route.preview = [];\n  state.route.editing = false;\n  setRouteDirty(false);',
-    'state.route.preview = [];\n  state.route.smoothReady = false;\n  state.route.editing = false;\n  setRouteDirty(false);'
+    'state.route.preview = [];\n  state.route.smoothReady = false;\n  state.route.smoothMode = "";\n  state.route.editing = false;\n  setRouteDirty(false);'
   );
   injected = injected.replace(
     'els.discardRouteEditBtn.addEventListener("click", discardRouteEdit);',
-    'els.discardRouteEditBtn.addEventListener("click", discardRouteEdit);\n  els.smoothRouteBtn?.addEventListener("click", () => requestServerRouteSmooth(false).catch((err) => log(`路径平滑失败：${err.message}`)));\n  els.applySmoothedRouteBtn?.addEventListener("click", () => requestServerRouteSmooth(true).catch((err) => {\n    log(`控制器路径覆盖失败：${err.message}`);\n    routeSmoothSetButtons();\n  }));'
+    'els.discardRouteEditBtn.addEventListener("click", discardRouteEdit);\n  els.serverSmoothRouteBtn?.addEventListener("click", () => requestServerRouteSmooth(false).catch((err) => log(`路径平滑失败：${err.message}`)));\n  els.applySmoothedRouteBtn?.addEventListener("click", () => requestServerRouteSmooth(true).catch((err) => {\n    log(`控制器路径覆盖失败：${err.message}`);\n    routeSmoothSetButtons();\n  }));'
   );
   injected = injected.replace(
     'els.deleteRouteBtn.disabled = !els.routeSelect.value;\n  });',
-    'els.deleteRouteBtn.disabled = !els.routeSelect.value;\n    state.route.smoothReady = false;\n    routeSmoothSetButtons();\n  });'
+    'els.deleteRouteBtn.disabled = !els.routeSelect.value;\n    state.route.smoothReady = false;\n    state.route.smoothMode = "";\n    routeSmoothSetButtons();\n  });'
   );
   return injected;
 }
@@ -9181,21 +9302,26 @@ app.post('/vehicles/:vehicleId/map-editor/api/route-smooth', authStore.requirePe
   }
 
   try {
-    const smoothed = await smoothMapEditorRoute(vehicleId, fileName, { spacing_m: spacingM });
+    const smoothed = await smoothMapEditorRoute(vehicleId, fileName, {
+      spacing_m: spacingM,
+      controls: req.body?.controls
+    });
+    const { original_points: originalPoints, ...publicSmoothed } = smoothed;
     if (!apply) {
       return res.json({
         ok: true,
         applied: false,
-        ...smoothed
+        ...publicSmoothed
       });
     }
 
     const saveQuery = new URLSearchParams({ file: fileName });
+    const routeEditControls = buildMapEditorRouteEditControlsFromPreview(originalPoints || [], smoothed.points || []);
     const saved = await executeMapEditorJsonRequest(vehicleId, 'POST', '/api/route-edit', {
       query: saveQuery,
       body: {
         file_name: fileName,
-        controls: smoothed.controls,
+        controls: routeEditControls,
         max_points: MAP_EDITOR_ROUTE_SAMPLE_MAX_POINTS
       },
       maxResponseBytes: getMapEditorMaxResponseBytes('/api/route-edit'),
