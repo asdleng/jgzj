@@ -185,7 +185,7 @@ const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
     label: '全部YOLO检测',
-    subTasks: ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'fishing_rod_yolo', 'smoking_two_stage']
+    subTasks: ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'fishing_event', 'fishing_rod_yolo', 'smoking_two_stage']
   },
   person_yolo: {
     kind: 'detect',
@@ -281,6 +281,20 @@ const yoloModelTestTasks = Object.freeze({
       val_map50_95: 0.26120290601865953
     },
     registryNote: '钓鱼杆种子模型：Objects365/LVIS公开鱼竿框 + 现场钓鱼NO负样本；用于与人员/水边ROI规则组合判断钓鱼事件。'
+  },
+  fishing_event: {
+    kind: 'fishing_relation',
+    label: '钓鱼事件',
+    personTaskId: 'person_yolo',
+    rodTaskId: 'fishing_rod_yolo',
+    minPersonConfidence: 0.25,
+    minRodConfidence: 0.15,
+    minScore: 0.48,
+    maxCenterDistance: 0.72,
+    minRodLongSideRatio: 0.35,
+    minRodAspectRatio: 1.35,
+    minRodPersonSizeRatio: 0.32,
+    maxRodPersonSizeRatio: 2.8
   },
   smoking_candidate: {
     kind: 'detect',
@@ -1142,6 +1156,179 @@ function buildYoloTaskResponse(taskId, task, payload, options = {}) {
   }
 
   return responsePayload;
+}
+
+function yoloBoxMetrics(detection) {
+  const box = detection?.box || {};
+  const x = Number(box.x_center);
+  const y = Number(box.y_center);
+  const w = Number(box.width);
+  const h = Number(box.height);
+  if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) {
+    return null;
+  }
+  return {
+    x,
+    y,
+    w,
+    h,
+    left: x - w / 2,
+    right: x + w / 2,
+    top: y - h / 2,
+    bottom: y + h / 2,
+    area: w * h
+  };
+}
+
+function normalizedDistance(a, b, scale) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const denominator = Math.max(Number(scale) || 0, 0.08);
+  return Math.sqrt(dx * dx + dy * dy) / denominator;
+}
+
+function overlapRatio1d(a1, a2, b1, b2) {
+  const overlap = Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
+  const span = Math.max(Math.min(a2 - a1, b2 - b1), 1e-6);
+  return overlap / span;
+}
+
+function fishingRelationCandidate(person, rod, task) {
+  const personBox = yoloBoxMetrics(person);
+  const rodBox = yoloBoxMetrics(rod);
+  if (!personBox || !rodBox) return null;
+
+  const personConfidence = Number(person.confidence || 0);
+  const rodConfidence = Number(rod.confidence || 0);
+  if (personConfidence < Number(task.minPersonConfidence || 0)) return null;
+  if (rodConfidence < Number(task.minRodConfidence || 0)) return null;
+
+  const rodLongSide = Math.max(rodBox.w, rodBox.h);
+  const rodShortSide = Math.min(rodBox.w, rodBox.h);
+  const rodAspectRatio = rodLongSide / Math.max(rodShortSide, 1e-6);
+  const rodPersonSizeRatio = rodLongSide / Math.max(personBox.h, 1e-6);
+  const minRodLongSideRatio = Number(task.minRodLongSideRatio || 0);
+  const minRodAspectRatio = Number(task.minRodAspectRatio || 0);
+  const minRodPersonSizeRatio = Number(task.minRodPersonSizeRatio || 0);
+  const maxRodPersonSizeRatio = Number(task.maxRodPersonSizeRatio || 99);
+  if (rodLongSide < minRodLongSideRatio) return null;
+  if (rodAspectRatio < minRodAspectRatio) return null;
+  if (rodPersonSizeRatio < minRodPersonSizeRatio || rodPersonSizeRatio > maxRodPersonSizeRatio) return null;
+
+  const scale = Math.max(personBox.h, rodLongSide, personBox.w + rodShortSide);
+  const centerDistance = normalizedDistance(personBox, rodBox, scale);
+  const maxCenterDistance = Number(task.maxCenterDistance || 0.75);
+  if (centerDistance > maxCenterDistance) return null;
+
+  const verticalOverlap = overlapRatio1d(personBox.top, personBox.bottom, rodBox.top, rodBox.bottom);
+  const horizontalGap = Math.max(0, Math.max(personBox.left - rodBox.right, rodBox.left - personBox.right));
+  const personFootToRodBottom = Math.abs(personBox.bottom - rodBox.bottom);
+  const distanceScore = Math.max(0, 1 - centerDistance / Math.max(maxCenterDistance, 0.01));
+  const sideScore = Math.max(0, 1 - horizontalGap / Math.max(personBox.w * 1.2, 0.01));
+  const verticalScore = Math.min(1, verticalOverlap + Math.max(0, 1 - personFootToRodBottom / Math.max(personBox.h, 0.01)) * 0.25);
+  const shapeScore = Math.min(1, rodAspectRatio / 2.8) * 0.55 + Math.min(1, rodPersonSizeRatio / 0.9) * 0.45;
+  const confidenceScore = Math.sqrt(Math.max(0, personConfidence) * Math.max(0, rodConfidence));
+  const score =
+    confidenceScore * 0.34 +
+    distanceScore * 0.26 +
+    verticalScore * 0.18 +
+    sideScore * 0.12 +
+    shapeScore * 0.10;
+
+  return {
+    accepted: score >= Number(task.minScore || 0.5),
+    score,
+    person,
+    rod,
+    geometry: {
+      center_distance: centerDistance,
+      vertical_overlap: verticalOverlap,
+      horizontal_gap: horizontalGap,
+      rod_aspect_ratio: rodAspectRatio,
+      rod_person_size_ratio: rodPersonSizeRatio,
+      person_foot_to_rod_bottom: personFootToRodBottom,
+      distance_score: distanceScore,
+      vertical_score: verticalScore,
+      side_score: sideScore,
+      shape_score: shapeScore,
+      confidence_score: confidenceScore
+    }
+  };
+}
+
+function buildFishingRelationResponse({ taskId, task, personResponse, rodResponse, durationMs, requestId }) {
+  const persons = (Array.isArray(personResponse?.detections) ? personResponse.detections : [])
+    .filter((detection) => String(detection.class_name || '').toLowerCase() === 'person');
+  const rods = (Array.isArray(rodResponse?.detections) ? rodResponse.detections : [])
+    .filter((detection) => String(detection.class_name || '').toLowerCase() === 'fishing_rod');
+  const relationCandidates = [];
+
+  for (const person of persons) {
+    for (const rod of rods) {
+      const candidate = fishingRelationCandidate(person, rod, task);
+      if (candidate) relationCandidates.push(candidate);
+    }
+  }
+  relationCandidates.sort((a, b) => b.score - a.score);
+
+  const acceptedRelations = relationCandidates.filter((candidate) => candidate.accepted);
+  const detectionMap = new Map();
+  acceptedRelations.forEach((candidate, index) => {
+    const relationId = `fishing_relation_${index + 1}`;
+    const relationScore = Number(candidate.score.toFixed(4));
+    for (const [role, source] of [['person', candidate.person], ['fishing_rod', candidate.rod]]) {
+      const key = `${role}:${JSON.stringify(source.box || {})}:${source.confidence}`;
+      if (!detectionMap.has(key)) {
+        detectionMap.set(key, {
+          ...source,
+          accepted: true,
+          relation_role: role,
+          relation_id: relationId,
+          relation_score: relationScore,
+          source_task_id: role === 'person' ? task.personTaskId : task.rodTaskId,
+          source_task_label: role === 'person'
+            ? yoloModelTestTasks[task.personTaskId]?.label
+            : yoloModelTestTasks[task.rodTaskId]?.label
+        });
+      }
+    }
+  });
+
+  return {
+    ok: true,
+    request_id: requestId,
+    task_id: taskId,
+    task_label: task.label,
+    mode: 'fishing_relation',
+    duration_ms: durationMs,
+    gpu: [personResponse?.gpu, rodResponse?.gpu].filter(Boolean).join(', ') || yoloA100Gpu,
+    backend: [personResponse?.backend, rodResponse?.backend].filter(Boolean).join(' + ') || 'a100_ssh',
+    detections: [...detectionMap.values()],
+    relation_candidates: relationCandidates.slice(0, 12).map((candidate) => ({
+      accepted: candidate.accepted,
+      score: Number(candidate.score.toFixed(4)),
+      person_confidence: candidate.person.confidence,
+      rod_confidence: candidate.rod.confidence,
+      person_box: candidate.person.box,
+      rod_box: candidate.rod.box,
+      geometry: Object.fromEntries(
+        Object.entries(candidate.geometry).map(([key, value]) => [key, Number(Number(value).toFixed(4))])
+      )
+    })),
+    person_candidates: persons.length,
+    rod_candidates: rods.length,
+    accepted_relations: acceptedRelations.length,
+    thresholds: {
+      min_score: task.minScore,
+      min_person_confidence: task.minPersonConfidence,
+      min_rod_confidence: task.minRodConfidence,
+      max_center_distance: task.maxCenterDistance,
+      min_rod_long_side_ratio: task.minRodLongSideRatio,
+      min_rod_aspect_ratio: task.minRodAspectRatio,
+      min_rod_person_size_ratio: task.minRodPersonSizeRatio,
+      max_rod_person_size_ratio: task.maxRodPersonSizeRatio
+    }
+  };
 }
 
 function yoloDownloadUrlForFile(fileName) {
@@ -9146,6 +9333,35 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
 
       const settledGroups = await Promise.allSettled(runnableSubTasks.map(async ({ subTaskId, subTask }) => {
         const subStartMs = Date.now();
+        if (subTask.kind === 'fishing_relation') {
+          const personTask = yoloModelTestTasks[subTask.personTaskId];
+          const rodTask = yoloModelTestTasks[subTask.rodTaskId];
+          if (!personTask || !rodTask) {
+            throw new Error('fishing_relation_task_missing');
+          }
+          const [personPayload, rodPayload] = await Promise.all([
+            runYoloPredictionWithFallback(subTask.personTaskId, personTask, {
+              noAnnotated: true,
+              timeoutMs: yoloModelTestTimeoutMs,
+              maxBuffer: 24 * 1024 * 1024
+            }),
+            runYoloPredictionWithFallback(subTask.rodTaskId, rodTask, {
+              noAnnotated: true,
+              timeoutMs: yoloModelTestTimeoutMs,
+              maxBuffer: 24 * 1024 * 1024
+            })
+          ]);
+          const personResponse = buildYoloTaskResponse(subTask.personTaskId, personTask, personPayload, { omitAnnotatedImage: true });
+          const rodResponse = buildYoloTaskResponse(subTask.rodTaskId, rodTask, rodPayload, { omitAnnotatedImage: true });
+          return buildFishingRelationResponse({
+            taskId: subTaskId,
+            task: subTask,
+            personResponse,
+            rodResponse,
+            durationMs: Date.now() - subStartMs,
+            requestId
+          });
+        }
         const payload = await runYoloPredictionWithFallback(subTaskId, subTask, {
           noAnnotated: true,
           timeoutMs: yoloModelTestTimeoutMs,
@@ -9208,6 +9424,53 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
         groups: groups.length,
         failures: failures.length,
         detections: detections.length,
+        duration_ms: durationMs,
+        gpu: responsePayload.gpu,
+        backend: responsePayload.backend
+      }));
+
+      return res.json(responsePayload);
+    }
+
+    if (task.kind === 'fishing_relation') {
+      const personTask = yoloModelTestTasks[task.personTaskId];
+      const rodTask = yoloModelTestTasks[task.rodTaskId];
+      if (!personTask || !rodTask) {
+        throw new Error('fishing_relation_task_missing');
+      }
+
+      const [personPayload, rodPayload] = await Promise.all([
+        runYoloPredictionWithFallback(task.personTaskId, personTask, {
+          noAnnotated: true,
+          timeoutMs: yoloModelTestTimeoutMs,
+          maxBuffer: 24 * 1024 * 1024
+        }),
+        runYoloPredictionWithFallback(task.rodTaskId, rodTask, {
+          noAnnotated: true,
+          timeoutMs: yoloModelTestTimeoutMs,
+          maxBuffer: 24 * 1024 * 1024
+        })
+      ]);
+
+      const durationMs = Date.now() - startMs;
+      const personResponse = buildYoloTaskResponse(task.personTaskId, personTask, personPayload, { omitAnnotatedImage: true });
+      const rodResponse = buildYoloTaskResponse(task.rodTaskId, rodTask, rodPayload, { omitAnnotatedImage: true });
+      const responsePayload = buildFishingRelationResponse({
+        taskId,
+        task,
+        personResponse,
+        rodResponse,
+        durationMs,
+        requestId
+      });
+
+      console.info('yolo_model_test_result', JSON.stringify({
+        task_id: taskId,
+        mode: responsePayload.mode,
+        person_candidates: responsePayload.person_candidates,
+        rod_candidates: responsePayload.rod_candidates,
+        accepted_relations: responsePayload.accepted_relations,
+        detections: responsePayload.detections.length,
         duration_ms: durationMs,
         gpu: responsePayload.gpu,
         backend: responsePayload.backend

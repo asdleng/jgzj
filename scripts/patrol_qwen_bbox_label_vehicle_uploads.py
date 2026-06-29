@@ -16,7 +16,7 @@ from PIL import Image
 
 SCHEMA = "jgzj_vehicle_upload_qwen_bbox_label.v1"
 MODEL = "Qwen3.6-27B-Labeler"
-MODEL_BUNDLE = "qwen_bbox_v2_strict"
+MODEL_BUNDLE = "qwen_bbox_v5_precision_pet_parse"
 CLASSES = (
     "person",
     "fire",
@@ -33,13 +33,15 @@ CLASSES = (
 LABEL_PROMPT = """Detect high-precision YOLO pre-label boxes in this autonomous patrol vehicle image.
 Return exactly one compact JSON object only. No markdown. No explanation.
 
+Precision is more important than recall. When evidence is weak, return fewer boxes.
+
 Schema:
 {"q":"good","b":[["person",12,34,56,78,0.9,"live_person"]]}
 
 Fields:
 - q is one of: good, blur, dark, blocked, bad.
 - b has at most 20 boxes.
-- each box is [class,x1,y1,x2,y2,score,evidence].
+- each box is [class,x1,y1,x2,y2,score,evidence]. score must be a numeric value from 0.0 to 1.0. evidence must be a double-quoted JSON string.
 - coordinates are integer 0-1000 xyxy on the full image. Clamp to bounds.
 - x2>x1 and y2>y1. Use tight visible-object boxes.
 - evidence is a short snake_case phrase proving the object is real and visible.
@@ -47,34 +49,78 @@ Fields:
 Classes:
 person, vehicle, nonmotor, fire, smoke, trash, pet, stall, phone, smoking.
 
-Class rules:
-- vehicle: car/truck/bus/van/parked vehicle.
-- nonmotor: bicycle/e-bike/scooter/wheelchair/cart.
-- fire: visible flame only.
-- smoke: smoke plume/region only, not clouds/fog/glare.
-- trash: discarded waste on ground only, not signs, bins, leaves, normal fixtures.
-- pet: LIVE pet animal only, mainly dog/cat. Must show live-animal evidence such as body posture, fur, legs/head, leash, or interaction with a person.
-- Never label animal statues, sculptures, toys, dolls, mascots, mannequins, animal pictures, signs, decorations, white stone/resin animals, or repeated fixed animal-shaped objects as pet.
-- Never label birds, ducks, geese, chickens, wild animals, or livestock sculptures as pet.
-- If the scene contains white goat/sheep/dog statues on grass or beside a path, return no pet boxes for them.
-- phone: visible phone or hand-phone evidence.
-- smoking: cigarette/smoking evidence region, not whole person unless only that is visible.
+Positive class rules:
+- person: visible real human body/head/torso/limbs. Do not label posters, mannequins, statues, reflections, or screen images.
+- vehicle: real car/truck/bus/van/parked vehicle. Do not label signs, toy models, vehicle pictures, or reflections.
+- nonmotor: real bicycle/e-bike/scooter/wheelchair/hand cart/stroller. Do not label road markings, sign icons, or distant ambiguous rails.
+- phone: visible handheld mobile phone or clear hand-phone interaction. Do not label black rectangles, dashboards, bags, screens on walls, traffic signs, or car mirrors.
+- smoking: visible cigarette/cigar/vape OR clear smoke from a person's mouth/hand. Box the cigarette/hand-mouth evidence tightly. Do not label a whole person only because a hand is near the mouth.
+
+High-risk classes, use only when visual evidence is very strong:
+- fire: actual visible flame with flame shape and orange/yellow luminous core. Do NOT label red fire extinguisher boxes, hydrants,消防箱, red signs, warning boards, lamps, reflections, taillights, traffic lights, red clothes, cones, or red/orange equipment as fire.
+- smoke: real smoke plume/cloud from burning or exhaust, with semi-transparent rising/flowing shape. Do NOT label fog, mist, steam, water spray, lens haze, glare, clouds, dust, shadows, blur, low-light noise, or bright overexposure as smoke.
+- trash: loose discarded waste lying on the ground/road/path, such as bottle, paper, plastic bag, cardboard, food wrapper. Do NOT label trash bins, garbage cans, recycling boxes, storage boxes, planters, cones, leaves, stones, signs, fixed facilities, parked objects, or construction materials as trash.
+- pet: LIVE pet animal only, mainly dog/cat. Must show live-animal evidence such as head/body/legs/fur/tail/posture/leash/person interaction. Require separately visible animal body parts, e.g. head plus legs/tail/body contour. Do NOT label statues, sculptures, toys, dolls, mascots, mannequins, animal pictures, signs, decorations, white stone/resin animals, repeated fixed animal-shaped objects, low white blurry blobs, birds, ducks, geese, chickens, wild animals, or livestock sculptures. In dark/night frames, omit pet unless the dog/cat is close, large, and unmistakable.
+- stall: temporary vendor stall/booth with selling setup, canopy/table/goods/person operating it. Do NOT label fixed kiosks, guard booths, bus shelters, building entrances, permanent pavilions, ordinary tents, umbrellas, fences, or storage piles as stall.
 
 Rules:
 - Do not invent boxes. If uncertain, omit. Prefer false negatives over false positives.
+- For fire/smoke/pet/trash/stall/phone/smoking, always include numeric score and a double-quoted evidence string that names the visible proof, e.g. "actual_flame", "rising_smoke_plume", "live_dog_leash", "loose_plastic_bottle_on_ground", "vendor_table_goods", "handheld_phone", "visible_cigarette". Boxes without numeric score are invalid.
+- For dark/blurred/blocked frames, do not label pet/trash/stall/phone/smoking unless the object is large and unmistakable.
+- Never use evidence phrases like red_box, red_sign, fire_box, extinguisher, trash_bin, fog, mist, haze, statue, sculpture, fixed_kiosk, or unknown_object as a positive target.
 - Ignore sky, trees, buildings, road, shadows, reflections, traffic lights, and text unless part of a target.
 - Prefer fewer precise boxes. In crowded scenes keep the 20 largest/clearest targets.
 - For small/distant ambiguous objects, omit unless the target class is visually clear.
 - If no allowed targets are visible, return {"q":"good","b":[]}.
 """
 
+FIRE_REJECT_NOTE_RE = re.compile(
+    r"fire[_ -]?box|extinguisher|hydrant|red[_ -]?(?:box|sign|board|panel|cabinet|equipment|object)|"
+    r"warning|notice|poster|banner|traffic[_ -]?light|taillight|lamp|reflection|clothes|cone|orange[_ -]?equipment|"
+    r"消防|灭火器|消防箱|消火栓|警示|告示|标牌",
+    re.I,
+)
+FIRE_ACCEPT_NOTE_RE = re.compile(r"flame|fire_flame|actual_flame|burning|orange_flame|yellow_flame|visible_flame", re.I)
+
+SMOKE_REJECT_NOTE_RE = re.compile(
+    r"fog|mist|steam|water[_ -]?spray|spray|haze|lens|glare|cloud|dust|shadow|blur|noise|overexposure|"
+    r"雾|水汽|蒸汽|水雾|镜头|眩光|云|灰尘|模糊",
+    re.I,
+)
+SMOKE_ACCEPT_NOTE_RE = re.compile(r"smoke|smoke_plume|rising_smoke|exhaust_smoke|burning_smoke", re.I)
+
 PET_REJECT_NOTE_RE = re.compile(
     r"statue|sculpture|toy|doll|mascot|mannequin|picture|poster|sign|decoration|"
     r"stone|resin|fake|white_goat|white_sheep|goat_statue|sheep_statue|dog_statue|"
-    r"bird|goose|duck|chicken|livestock",
+    r"fixed|ornament|bird|goose|duck|chicken|livestock|雕塑|雕像|玩具|装饰|石头|树脂|假|鸟|鸭|鹅|鸡",
     re.I,
 )
-TRASH_REJECT_NOTE_RE = re.compile(r"bin|trash_can|garbage_can|waste_bin|dustbin|sign|poster|leaf|leaves", re.I)
+PET_ACCEPT_NOTE_RE = re.compile(
+    r"live_(?:dog|cat)|dog_(?:with_)?(?:leash|head|legs|tail|body|fur)|cat_(?:head|legs|tail|body|fur)|"
+    r"pet_(?:dog|cat)|leashed_dog|clear_dog|clear_cat",
+    re.I,
+)
+
+TRASH_REJECT_NOTE_RE = re.compile(
+    r"bin|trash_can|garbage_can|waste_bin|dustbin|recycling|box_fixture|storage|container|cabinet|"
+    r"sign|poster|leaf|leaves|stone|rock|cone|planter|fixed|facility|construction|bucket|"
+    r"垃圾桶|果皮箱|回收箱|箱体|标识|树叶|石头|路锥|花箱|固定设施|施工",
+    re.I,
+)
+TRASH_ACCEPT_NOTE_RE = re.compile(r"loose|discarded|ground|road|bottle|paper|plastic|bag|cardboard|wrapper|litter|waste", re.I)
+
+STALL_REJECT_NOTE_RE = re.compile(
+    r"fixed|permanent|kiosk|guard[_ -]?booth|bus[_ -]?shelter|building|entrance|pavilion|fence|storage|pile|"
+    r"固定|永久|岗亭|保安亭|公交亭|建筑入口|亭子|围栏|堆放",
+    re.I,
+)
+STALL_ACCEPT_NOTE_RE = re.compile(r"vendor|stall|booth|selling|goods|table|canopy|market|cart", re.I)
+
+PHONE_REJECT_NOTE_RE = re.compile(r"sign|screen_on_wall|dashboard|mirror|black_rectangle|bag|reflection|traffic", re.I)
+PHONE_ACCEPT_NOTE_RE = re.compile(r"handheld|phone|mobile|smartphone|hand_phone|screen_in_hand", re.I)
+
+SMOKING_REJECT_NOTE_RE = re.compile(r"hand_near_mouth_only|unclear|food|drink|microphone|mask|shadow", re.I)
+SMOKING_ACCEPT_NOTE_RE = re.compile(r"cigarette|cigar|vape|smoke_from_mouth|smoking|lit_tip", re.I)
 
 
 def log(message):
@@ -184,14 +230,14 @@ def salvage_truncated_annotation(text):
     num = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
     compact_re = re.compile(
         rf'\[\s*"([^"]+)"\s*,\s*({num})\s*,\s*({num})\s*,\s*({num})\s*,\s*({num})'
-        rf'(?:\s*,\s*({num}))?(?:\s*,\s*"([^"]*)")?\s*\]'
+        rf'(?:\s*,\s*({num}))?(?:\s*,\s*(?:"([^"]*)"|([A-Za-z_][A-Za-z0-9_ -]*)))?\s*\]'
     )
     compact_boxes = []
     for match in compact_re.finditer(clean):
         class_name = match.group(1)
         coords = [float(match.group(i)) for i in range(2, 6)]
         score = match.group(6)
-        evidence = match.group(7)
+        evidence = match.group(7) or match.group(8)
         item = [class_name] + coords
         if score is not None:
             item.append(float(score))
@@ -312,13 +358,55 @@ def normalize_box(item, index):
         score = None
     if score is not None:
         score = clamp(score, 0.0, 1.0)
+    if class_name == "fire":
+        if score is not None and score < 0.80:
+            return None
+        if FIRE_REJECT_NOTE_RE.search(note):
+            return None
+        if note and not FIRE_ACCEPT_NOTE_RE.search(note):
+            return None
+    if class_name == "smoke":
+        if score is not None and score < 0.85:
+            return None
+        if SMOKE_REJECT_NOTE_RE.search(note):
+            return None
+        if note and not SMOKE_ACCEPT_NOTE_RE.search(note):
+            return None
     if class_name == "pet":
         if score is None or score < 0.95:
             return None
         if PET_REJECT_NOTE_RE.search(note):
             return None
-    if class_name == "trash" and TRASH_REJECT_NOTE_RE.search(note):
-        return None
+        if note and not PET_ACCEPT_NOTE_RE.search(note):
+            return None
+    if class_name == "trash":
+        if score is not None and score < 0.80:
+            return None
+        if TRASH_REJECT_NOTE_RE.search(note):
+            return None
+        if note and not TRASH_ACCEPT_NOTE_RE.search(note):
+            return None
+    if class_name == "stall":
+        if score is not None and score < 0.85:
+            return None
+        if STALL_REJECT_NOTE_RE.search(note):
+            return None
+        if note and not STALL_ACCEPT_NOTE_RE.search(note):
+            return None
+    if class_name == "phone":
+        if score is not None and score < 0.75:
+            return None
+        if PHONE_REJECT_NOTE_RE.search(note):
+            return None
+        if note and not PHONE_ACCEPT_NOTE_RE.search(note):
+            return None
+    if class_name == "smoking":
+        if score is not None and score < 0.80:
+            return None
+        if SMOKING_REJECT_NOTE_RE.search(note):
+            return None
+        if note and not SMOKING_ACCEPT_NOTE_RE.search(note):
+            return None
     raw = f"{class_name} {x:.6f} {y:.6f} {w:.6f} {h:.6f}"
     return {
         "model_task": "qwen_bbox",
@@ -390,6 +478,18 @@ def normalize_annotation(parsed):
         if label:
             labels.append(label)
     labels = dedupe_labels(labels)
+    high_risk = {"fire", "smoke", "pet", "trash", "stall", "phone", "smoking"}
+    filtered = []
+    for label in labels:
+        cls = label["class_name"]
+        if cls in high_risk and label.get("confidence") is None:
+            continue
+        if quality != "good" and cls in {"pet", "trash", "stall", "phone", "smoking"}:
+            continue
+        if cls == "trash" and label.get("w", 0) * label.get("h", 0) < 0.0015:
+            continue
+        filtered.append(label)
+    labels = filtered
     labels.sort(key=lambda item: (item["class_name"], -(item["confidence"] if item["confidence"] is not None else 0.0)))
     return quality, labels
 

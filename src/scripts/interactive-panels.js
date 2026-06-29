@@ -7716,6 +7716,35 @@
     renderYoloDetectionOverlay(detections, taskLabel);
     renderYoloDetectionList(detections);
 
+    if (mode === "fishing_relation") {
+      const personCount = Number(data.person_candidates || 0);
+      const rodCount = Number(data.rod_candidates || 0);
+      const acceptedCount = Number(data.accepted_relations || 0);
+      const relationCandidates = Array.isArray(data.relation_candidates) ? data.relation_candidates : [];
+      const bestRelation = relationCandidates[0] || null;
+      const scoreText = bestRelation?.score !== undefined ? `，最高关系分 ${(Number(bestRelation.score) * 100).toFixed(1)}%` : "";
+      if (acceptedCount > 0) {
+        setYoloTestResult(
+          "钓鱼确认",
+          `${taskLabel}: 检出人员 ${personCount} 个、鱼竿 ${rodCount} 个，确认 ${acceptedCount} 组人-鱼竿关系${scoreText}，耗时 ${data.duration_ms ?? "-"}ms。`,
+          "yes"
+        );
+      } else if (personCount > 0 && rodCount > 0) {
+        setYoloTestResult(
+          "关系不成立",
+          `${taskLabel}: 检出人员 ${personCount} 个、鱼竿 ${rodCount} 个，但距离/高度/相对位置未达到钓鱼关系阈值${scoreText}，耗时 ${data.duration_ms ?? "-"}ms。`,
+          "ok"
+        );
+      } else if (personCount > 0) {
+        setYoloTestResult("未检出鱼竿", `${taskLabel}: 检出人员 ${personCount} 个，但未检出鱼竿，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+      } else if (rodCount > 0) {
+        setYoloTestResult("未检出人员", `${taskLabel}: 检出鱼竿 ${rodCount} 个，但未检出相关人员，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+      } else {
+        setYoloTestResult("未检出", `${taskLabel}: 未检出人员和鱼竿，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+      }
+      return;
+    }
+
     if (mode === "person_behavior_two_stage") {
       const personCandidateCount = Number(data.person_candidates ?? detections.length);
       const threshold = data.classifier_threshold ?? 0.55;
