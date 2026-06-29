@@ -328,6 +328,15 @@ const yoloModelTestTasks = Object.freeze({
     localVehicleModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/general_yolo_best.pt',
     plateModel: '/home/admin1/jgzj/.runtime/license_plate_yolo_20260629/runs/lp_yolov8n_ccpd2020_640_e50/weights/best.pt',
     localPlateModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/license_plate_yolo_best.pt',
+    plateFallbackModels: [
+      {
+        model: '/home/admin1/car2/weights/yolov8s.pt',
+        sourceTaskId: 'license_plate_yolo_car2_fallback',
+        sourceTaskLabel: '车牌检测兜底',
+        role: 'fallback',
+        conf: 0.25
+      }
+    ],
     recModel: '/home/admin1/car2/weights/plate_rec_color.pth',
     car2Root: '/home/admin1/car2',
     names: ['car', 'truck', 'non_motor_vehicle'],
@@ -1116,6 +1125,26 @@ function buildLocalYoloTask(task) {
   }
   if (task.plateModel || task.localPlateModel) {
     localTask.plateModel = task.localPlateModel || task.plateModel;
+  }
+  if (Array.isArray(task.plateFallbackModels)) {
+    localTask.plateFallbackModels = task.plateFallbackModels
+      .map((item) => {
+        if (typeof item === 'string') {
+          return item.trim();
+        }
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+        const model = String(item.localModel || item.model || item.path || '').trim();
+        if (!model) {
+          return null;
+        }
+        return {
+          ...item,
+          model
+        };
+      })
+      .filter(Boolean);
   }
   if (task.recModel) {
     localTask.recModel = task.recModel;
@@ -6249,6 +6278,7 @@ const MAP_EDITOR_ROUTE_SMOOTH_MAX_OFFSET_M = 0.35;
 const MAP_EDITOR_ROUTE_SMOOTH_RADIUS_MULTIPLIER = 2.5;
 const MAP_EDITOR_ROUTE_SMOOTH_MIN_RADIUS_M = 2.0;
 const MAP_EDITOR_ROUTE_SMOOTH_MAX_RADIUS_M = 8.0;
+const MAP_EDITOR_ROUTE_EDIT_BODY_TARGET_BYTES = 900 * 1024;
 const MAP_EDITOR_ROUTE_SMOOTH_JS_INJECTION = String.raw`
 /* jgzj-route-smooth-server-v1 */
 if (els.routeControlSpacing && Number(els.routeControlSpacing.value || 0) === 10) {
@@ -6875,6 +6905,39 @@ function buildMapEditorRouteEditControlsFromPreview(originalPoints, previewPoint
       locked: index === 0 || index === originalPoints.length - 1
     };
   });
+}
+
+function compactMapEditorRouteEditControlsForBody(fileName, controls, maxPoints) {
+  const routeFileName = String(fileName || '');
+  const sourceControls = Array.isArray(controls) ? controls : [];
+  const estimateBytes = (items) => Buffer.byteLength(JSON.stringify({
+    file_name: routeFileName,
+    controls: items,
+    max_points: maxPoints
+  }), 'utf8');
+
+  let step = 1;
+  let compacted = sourceControls;
+  let bodyBytes = estimateBytes(compacted);
+  while (bodyBytes > MAP_EDITOR_ROUTE_EDIT_BODY_TARGET_BYTES && step < sourceControls.length) {
+    step += 1;
+    compacted = sourceControls.filter((control, index) => (
+      index === 0 ||
+      index === sourceControls.length - 1 ||
+      index % step === 0 ||
+      control.locked
+    ));
+    bodyBytes = estimateBytes(compacted);
+  }
+
+  return {
+    controls: compacted,
+    body_bytes: bodyBytes,
+    step,
+    original_control_count: sourceControls.length,
+    control_count: compacted.length,
+    target_body_bytes: MAP_EDITOR_ROUTE_EDIT_BODY_TARGET_BYTES
+  };
 }
 
 function buildMapEditorSmoothedRoute(points, spacingM, routeControls = []) {
@@ -9317,11 +9380,16 @@ app.post('/vehicles/:vehicleId/map-editor/api/route-smooth', authStore.requirePe
 
     const saveQuery = new URLSearchParams({ file: fileName });
     const routeEditControls = buildMapEditorRouteEditControlsFromPreview(originalPoints || [], smoothed.points || []);
+    const compactedRouteEdit = compactMapEditorRouteEditControlsForBody(
+      fileName,
+      routeEditControls,
+      MAP_EDITOR_ROUTE_SAMPLE_MAX_POINTS
+    );
     const saved = await executeMapEditorJsonRequest(vehicleId, 'POST', '/api/route-edit', {
       query: saveQuery,
       body: {
         file_name: fileName,
-        controls: routeEditControls,
+        controls: compactedRouteEdit.controls,
         max_points: MAP_EDITOR_ROUTE_SAMPLE_MAX_POINTS
       },
       maxResponseBytes: getMapEditorMaxResponseBytes('/api/route-edit'),
@@ -9337,7 +9405,12 @@ app.post('/vehicles/:vehicleId/map-editor/api/route-smooth', authStore.requirePe
         radius_m: smoothed.radius_m,
         control_count: smoothed.control_count,
         point_count: smoothed.point_count,
-        stats: smoothed.stats
+        stats: smoothed.stats,
+        write_control_count: compactedRouteEdit.control_count,
+        write_original_control_count: compactedRouteEdit.original_control_count,
+        write_step: compactedRouteEdit.step,
+        write_body_bytes: compactedRouteEdit.body_bytes,
+        write_body_target_bytes: compactedRouteEdit.target_body_bytes
       }
     });
   } catch (error) {

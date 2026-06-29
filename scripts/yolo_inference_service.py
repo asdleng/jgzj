@@ -480,8 +480,35 @@ def run_vehicle_plate_ocr(task, image, no_annotated):
     vehicle_model_path = task.get("vehicleModel") or task.get("model")
     plate_model_path = task.get("plateModel")
     vehicle_detector = load_model(vehicle_model_path)
-    plate_detector = load_model(plate_model_path)
+    load_model(plate_model_path)
     ocr = load_plate_ocr_model(task.get("car2Root"), task.get("recModel"))
+
+    primary_plate_conf = float(task.get("plateConf") if task.get("plateConf") is not None else 0.25)
+    plate_model_specs = [{
+        "path": plate_model_path,
+        "conf": primary_plate_conf,
+        "source_task_id": "license_plate_yolo",
+        "source_task_label": "车牌检测",
+        "role": "primary",
+    }]
+    for item in task.get("plateFallbackModels") or []:
+        if isinstance(item, str):
+            path = item
+            spec = {}
+        elif isinstance(item, dict):
+            path = item.get("model") or item.get("path")
+            spec = item
+        else:
+            continue
+        if not path or path == plate_model_path:
+            continue
+        plate_model_specs.append({
+            "path": path,
+            "conf": float(spec.get("conf") if spec.get("conf") is not None else primary_plate_conf),
+            "source_task_id": str(spec.get("sourceTaskId") or spec.get("source_task_id") or "license_plate_yolo_fallback"),
+            "source_task_label": str(spec.get("sourceTaskLabel") or spec.get("source_task_label") or "车牌检测兜底"),
+            "role": str(spec.get("role") or "fallback"),
+        })
 
     vehicle_classes = {
         str(value).strip().lower()
@@ -520,18 +547,36 @@ def run_vehicle_plate_ocr(task, image, no_annotated):
         if vehicle_crop_with_origin is None:
             continue
         vehicle_crop, crop_origin_x, crop_origin_y = vehicle_crop_with_origin
-        with infer_lock_for_model(plate_model_path):
-            plate_result = plate_detector.predict(
-                vehicle_crop,
-                imgsz=int(task.get("plateImgsz") or 640),
-                conf=float(task.get("plateConf") if task.get("plateConf") is not None else 0.25),
-                device=SERVER_STATE["device"],
-                verbose=False,
-            )[0]
-        if plate_result.boxes is None:
-            vehicle["plates"] = []
-            continue
+        plate_result = None
+        plate_spec = None
+        attempted_plate_models = []
+        for spec in plate_model_specs:
+            current_plate_model_path = spec["path"]
+            current_plate_detector = load_model(current_plate_model_path)
+            with infer_lock_for_model(current_plate_model_path):
+                current_plate_result = current_plate_detector.predict(
+                    vehicle_crop,
+                    imgsz=int(task.get("plateImgsz") or 640),
+                    conf=float(spec["conf"]),
+                    device=SERVER_STATE["device"],
+                    verbose=False,
+                )[0]
+            candidate_count = 0 if current_plate_result.boxes is None else len(current_plate_result.boxes)
+            attempted_plate_models.append({
+                "role": spec["role"],
+                "source_task_id": spec["source_task_id"],
+                "conf": float(spec["conf"]),
+                "candidates": int(candidate_count),
+            })
+            if candidate_count > 0:
+                plate_result = current_plate_result
+                plate_spec = spec
+                break
         vehicle_plates = []
+        if plate_result is None or plate_result.boxes is None or plate_spec is None:
+            vehicle["plates"] = []
+            vehicle["plate_detector_attempts"] = attempted_plate_models
+            continue
         for plate_box in plate_result.boxes:
             local_xyxy = [float(value) for value in plate_box.xyxy[0].detach().cpu().tolist()]
             absolute_xyxy = [
@@ -565,8 +610,11 @@ def run_vehicle_plate_ocr(task, image, no_annotated):
                 image.shape,
             )
             plate_detection.update({
-                "source_task_id": "license_plate_yolo",
-                "source_task_label": "车牌检测",
+                "source_task_id": plate_spec["source_task_id"],
+                "source_task_label": plate_spec["source_task_label"],
+                "plate_detector_role": plate_spec["role"],
+                "plate_detector_model": plate_spec["path"],
+                "plate_detector_conf": float(plate_spec["conf"]),
                 "vehicle_index": vehicle_index,
                 "vehicle_class_name": vehicle.get("class_name"),
                 "vehicle_confidence": vehicle.get("confidence"),
@@ -585,6 +633,7 @@ def run_vehicle_plate_ocr(task, image, no_annotated):
             plates.append(plate_detection)
             vehicle_plates.append(plate_detection)
         vehicle["plates"] = sorted(vehicle_plates, key=lambda item: float(item.get("confidence", 0.0)), reverse=True)
+        vehicle["plate_detector_attempts"] = attempted_plate_models
 
     plates.sort(key=lambda item: (float((item.get("ocr") or {}).get("mean_char_confidence") or 0.0), float(item.get("confidence") or 0.0)), reverse=True)
     detections = []
