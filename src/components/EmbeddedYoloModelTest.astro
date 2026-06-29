@@ -11,17 +11,27 @@
     </div>
   </header>
   <div class="ai-check-workbench yolo-test-workbench">
-    <div class="ai-check-preview-shell">
-      <div id="yolo-test-preview" class="ai-check-preview yolo-test-preview" data-empty="true">
-        <p class="ai-check-preview-empty">选择图片后会在这里预览</p>
-      </div>
-    </div>
-    <div class="ai-check-side">
+    <div class="ai-check-side yolo-test-control-column">
       <div class="ai-check-form yolo-test-form">
         <label class="ai-check-field" for="yolo-test-image">
           <span>上传图片</span>
           <input id="yolo-test-image" type="file" accept="image/*" />
         </label>
+      </div>
+      <section id="yolo-test-result" class="ai-check-result yolo-test-result" data-state="idle">
+        <p class="ai-check-result-label">测试结果</p>
+        <p id="yolo-test-answer" class="ai-check-answer">等待测试</p>
+        <p id="yolo-test-detail" class="ai-check-detail">上传图片后选择一个固定任务。</p>
+        <div id="yolo-test-output" class="yolo-test-output"></div>
+      </section>
+    </div>
+    <div class="yolo-test-visual-column">
+      <div class="ai-check-preview-shell yolo-test-preview-shell">
+        <div id="yolo-test-preview" class="ai-check-preview yolo-test-preview" data-empty="true">
+          <p class="ai-check-preview-empty">选择图片后会在这里预览</p>
+        </div>
+      </div>
+      <div class="yolo-task-panel">
         <div class="yolo-task-grid" aria-label="YOLO固定任务">
           <button class="yolo-task-button yolo-task-button--wide" type="button" data-yolo-task="all_yolo">
             <span class="yolo-task-title">全部YOLO检测</span>
@@ -80,12 +90,6 @@
         </div>
         <p id="yolo-model-registry-status" class="yolo-test-empty">正在读取模型列表。</p>
         <div id="yolo-model-registry-list" class="yolo-model-registry-list"></div>
-      </section>
-      <section id="yolo-test-result" class="ai-check-result yolo-test-result" data-state="idle">
-        <p class="ai-check-result-label">测试结果</p>
-        <p id="yolo-test-answer" class="ai-check-answer">等待测试</p>
-        <p id="yolo-test-detail" class="ai-check-detail">上传图片后选择一个固定任务。</p>
-        <div id="yolo-test-output" class="yolo-test-output"></div>
       </section>
     </div>
   </div>
