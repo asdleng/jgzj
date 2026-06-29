@@ -21,8 +21,6 @@
     query: document.getElementById("yolo-review-query"),
     eventStatus: document.getElementById("yolo-review-event-status"),
     eventButtons: Array.from(document.querySelectorAll("[data-yolo-review-event]")),
-    fireSmokeCard: document.getElementById("yolo-fire-smoke-card"),
-    fireSmokeOpen: document.getElementById("yolo-fire-smoke-open"),
     datasetStatus: document.getElementById("yolo-review-dataset-status"),
     datasetCards: document.getElementById("yolo-review-dataset-cards"),
     summary: document.getElementById("yolo-review-summary"),
@@ -88,7 +86,7 @@
       className: "smoking",
       answer: "YES",
       query: "",
-      hasBox: true
+      hasBox: false
     },
     fire_smoke: {
       label: "烟火事件 · 默认显示框",
@@ -131,7 +129,7 @@
       source: "",
       qwenLabel: "",
       className: "",
-      answer: "",
+      answer: "YES",
       query: "fishing",
       hasBox: false
     }
@@ -243,8 +241,14 @@
   function datasetLabel(dataset) {
     const profile = dataset.profile || dataset.name || "dataset";
     const parent = dataset.parent_name && dataset.parent_name !== profile ? ` / ${dataset.parent_name}` : "";
-    const source = dataset.source_label || dataset.source_type || dataset.source || "数据集";
+    const source = datasetSourceText(dataset);
     return `[${source}] ${profile}${parent} · ${dataset.kind || "dataset"} · ${compactNumber(dataset.total_images)}张`;
+  }
+
+  function datasetSourceText(dataset) {
+    if (dataset?.source_type === "vehicle_collection") return "车端采集";
+    if (dataset?.source_type === "checker_archive") return "云端校核";
+    return dataset?.source_label || dataset?.source_type || dataset?.source || "数据源";
   }
 
   function datasetTotalBoxes(dataset) {
@@ -276,91 +280,9 @@
     return state.datasets.find((item) => item.id === state.datasetId) || null;
   }
 
-  function isFireSmokeDataset(dataset) {
-    const classes = Array.isArray(dataset?.classes)
-      ? dataset.classes.map((item) => normalizeClassToken(item))
-      : [];
-    const haystack = [
-      dataset?.id,
-      dataset?.name,
-      dataset?.parent_name,
-      dataset?.profile
-    ].join(" ").toLowerCase();
-    return (classes.includes("fire") && classes.includes("smoke")) || /fire[_-\s]?smoke|烟雾|火焰|火源/.test(haystack);
-  }
-
-  function latestFireSmokeDataset() {
-    const candidates = state.allDatasets.filter(isFireSmokeDataset);
-    candidates.sort((left, right) => {
-      const leftTime = Date.parse(left.created_at || "") || 0;
-      const rightTime = Date.parse(right.created_at || "") || 0;
-      if (leftTime !== rightTime) return rightTime - leftTime;
-      return String(right.id || "").localeCompare(String(left.id || ""));
-    });
-    return candidates[0] || null;
-  }
-
   function sumObjectValues(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
     return Object.values(value).reduce((total, item) => total + Number(item || 0), 0);
-  }
-
-  function renderFireSmokeCard() {
-    if (!refs.fireSmokeCard) return;
-    const dataset = latestFireSmokeDataset();
-    const metrics = refs.fireSmokeCard.querySelector(".yolo-review-focus-metrics");
-    const desc = refs.fireSmokeCard.querySelector(".yolo-review-focus-desc");
-    const open = refs.fireSmokeOpen;
-    if (!dataset) {
-      refs.fireSmokeCard.dataset.state = "empty";
-      if (desc) desc.textContent = "还没有扫描到 fire/smoke 数据集。";
-      if (metrics) metrics.innerHTML = "";
-      if (open) open.disabled = true;
-      return;
-    }
-
-    refs.fireSmokeCard.dataset.state = state.datasetId === dataset.id ? "active" : "ready";
-    if (desc) {
-      desc.textContent = `${dataset.source_label || "数据集"} · ${dataset.profile || dataset.name || "fire/smoke"} · ${formatDate(dataset.created_at)}`;
-    }
-    if (metrics) {
-      metrics.innerHTML = "";
-      [
-        ["样本", compactNumber(dataset.total_images)],
-        ["框", compactNumber(sumObjectValues(dataset.boxes))],
-        ["YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
-        ["NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"]
-      ].forEach(([label, value]) => {
-        const item = createNode("div", "yolo-review-focus-metric");
-        item.appendChild(createNode("span", "", label));
-        item.appendChild(createNode("strong", "", value));
-        metrics.appendChild(item);
-      });
-    }
-    if (open) {
-      open.disabled = false;
-      open.textContent = state.datasetId === dataset.id ? "正在查看" : "查看";
-    }
-  }
-
-  function openFireSmokeDataset() {
-    const dataset = latestFireSmokeDataset();
-    if (!dataset) return;
-    if (refs.source) refs.source.value = "";
-    refreshDatasetOptions();
-    state.datasetId = dataset.id;
-    if (refs.dataset) refs.dataset.value = dataset.id;
-    state.selectedItemKey = "";
-    if (refs.split) refs.split.value = "";
-    if (refs.className) refs.className.value = "";
-    if (refs.answer) refs.answer.value = "";
-    if (refs.qwenLabel) refs.qwenLabel.value = "";
-    updateClassOptions();
-    updateQwenOptions();
-    renderSummary(selectedDataset());
-    renderFireSmokeCard();
-    renderDatasetCards();
-    loadItems({ resetPage: true }).catch(() => {});
   }
 
   function setSelectOptions(select, items, options = {}) {
@@ -451,7 +373,6 @@
     }
 
     renderSummary(selectedDataset());
-    renderFireSmokeCard();
     renderDatasetCards();
     updateEventButtons();
     loadItems({ resetPage: true }).catch(() => {});
@@ -460,16 +381,15 @@
   function renderDatasetCards() {
     if (!refs.datasetCards) return;
     refs.datasetCards.innerHTML = "";
-    const visible = state.datasets;
+    const visible = state.allDatasets;
     const total = state.allDatasets.length;
     if (refs.datasetStatus) {
-      const source = refs.source?.value
-        ? refs.source.options[refs.source.selectedIndex]?.textContent || refs.source.value
-        : "全部来源";
-      refs.datasetStatus.textContent = `${source} · ${compactNumber(visible.length)} / ${compactNumber(total)} 个数据集`;
+      const vehicleCount = visible.filter((dataset) => dataset.source_type === "vehicle_collection").length;
+      const checkerCount = visible.filter((dataset) => dataset.source_type === "checker_archive").length;
+      refs.datasetStatus.textContent = `全部来源 · ${compactNumber(total)} 个数据集 · 车端采集 ${compactNumber(vehicleCount)} · 云端校核 ${compactNumber(checkerCount)}`;
     }
     if (!visible.length) {
-      refs.datasetCards.appendChild(createNode("p", "yolo-review-empty", "当前来源下没有数据集。"));
+      refs.datasetCards.appendChild(createNode("p", "yolo-review-empty", "还没有扫描到数据集。"));
       return;
     }
     visible.forEach((dataset) => {
@@ -480,6 +400,8 @@
       button.addEventListener("click", () => {
         if (dataset.id === state.datasetId) return;
         markCustomEventFilter();
+        if (refs.source) refs.source.value = dataset.source_type || "";
+        refreshDatasetOptions();
         state.datasetId = dataset.id;
         state.selectedItemKey = "";
         if (refs.dataset) refs.dataset.value = dataset.id;
@@ -490,7 +412,6 @@
         updateClassOptions();
         updateQwenOptions();
         renderSummary(selectedDataset());
-        renderFireSmokeCard();
         renderDatasetCards();
         loadItems({ resetPage: true }).catch(() => {});
       });
@@ -498,7 +419,10 @@
       const head = createNode("div", "yolo-review-dataset-card-head");
       const title = createNode("div", "yolo-review-dataset-card-title");
       title.appendChild(createNode("strong", "", dataset.profile || dataset.name || "dataset"));
-      title.appendChild(createNode("span", "", dataset.parent_name && dataset.parent_name !== dataset.profile ? dataset.parent_name : dataset.source_label || dataset.source_type || "数据集"));
+      const sourceLine = dataset.parent_name && dataset.parent_name !== dataset.profile
+        ? `${datasetSourceText(dataset)} · ${dataset.parent_name}`
+        : datasetSourceText(dataset);
+      title.appendChild(createNode("span", "", sourceLine));
       head.appendChild(title);
       head.appendChild(createNode("span", "yolo-review-dataset-kind", datasetKindText(dataset)));
       button.appendChild(head);
@@ -594,7 +518,6 @@
       state.datasetId = state.datasets[0]?.id || "";
     }
     refs.dataset.value = state.datasetId;
-    renderFireSmokeCard();
     renderDatasetCards();
   }
 
@@ -610,7 +533,6 @@
       refs.dataset.value = state.datasetId;
       updateClassOptions();
       updateQwenOptions();
-      renderFireSmokeCard();
       renderDatasetCards();
       renderSummary(selectedDataset());
       updateEventButtons();
@@ -1108,7 +1030,6 @@
     updateClassOptions();
     updateQwenOptions();
     renderSummary(selectedDataset());
-    renderFireSmokeCard();
     renderDatasetCards();
     loadItems({ resetPage: true }).catch(() => {});
   });
@@ -1123,7 +1044,6 @@
     updateClassOptions();
     updateQwenOptions();
     renderSummary(selectedDataset());
-    renderFireSmokeCard();
     renderDatasetCards();
     loadItems({ resetPage: true }).catch(() => {});
   });
@@ -1152,7 +1072,6 @@
     scheduleReload();
   });
   refs.refresh?.addEventListener("click", () => loadDatasets().catch(() => {}));
-  refs.fireSmokeOpen?.addEventListener("click", openFireSmokeDataset);
   refs.eventButtons.forEach((button) => {
     button.addEventListener("click", () => applyReviewEvent(button.dataset.yoloReviewEvent || "all"));
   });

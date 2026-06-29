@@ -7640,6 +7640,18 @@
     if (detection.mask_index !== undefined && detection.mask_index !== null) {
       item.appendChild(createNode("p", "yolo-detection-meta", `mask #${Number(detection.mask_index) + 1}`));
     }
+    if (detection.ground_filter) {
+      const filter = detection.ground_filter;
+      const reason = filter.reason || (detection.accepted ? "on_ground" : "rejected");
+      const hits = Number(filter.ground_hits ?? 0);
+      item.appendChild(
+        createNode(
+          "p",
+          `yolo-detection-stage2 ${detection.accepted ? "is-accepted" : "is-rejected"}`,
+          `地面判定: ${detection.accepted ? "通过" : "未通过"}，接地点 ${hits}，原因 ${reason}`
+        )
+      );
+    }
   }
 
   function renderYoloDetectionList(detections) {
@@ -7854,6 +7866,28 @@
         setYoloTestResult("No", `${taskLabel}: 检出鱼竿 ${rodCount} 个，但未检出相关人员，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
       } else {
         setYoloTestResult("No", `${taskLabel}: 未检出人员和鱼竿，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+      }
+      return;
+    }
+
+    if (mode === "trash_ground_filter") {
+      const trashCandidates = Number(data.trash_candidates ?? detections.length);
+      const filteredCandidates = Number(data.filtered_candidates ?? trashCandidates);
+      const groundTrashCount = Number(data.ground_trash_count ?? detections.length);
+      if (groundTrashCount > 0) {
+        setYoloTestResult(
+          "Yes",
+          `${taskLabel}: 原始垃圾候选 ${trashCandidates} 个，进入地面过滤 ${filteredCandidates} 个，通过 ${groundTrashCount} 个，耗时 ${data.duration_ms ?? "-"}ms。`,
+          "yes"
+        );
+      } else if (trashCandidates > 0) {
+        setYoloTestResult(
+          "No",
+          `${taskLabel}: 原始垃圾候选 ${trashCandidates} 个，但未满足地面接触/ROI/尺寸约束，耗时 ${data.duration_ms ?? "-"}ms。`,
+          "no"
+        );
+      } else {
+        setYoloTestResult("No", `${taskLabel}: 未检出垃圾候选，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
       }
       return;
     }

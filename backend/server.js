@@ -185,7 +185,7 @@ const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
     label: '全部YOLO检测',
-    subTasks: ['person_yolo', 'vehicle_yolo', 'vehicle_plate_ocr', 'pet_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'fishing_event', 'fishing_rod_yolo', 'smoking_two_stage']
+    subTasks: ['person_yolo', 'vehicle_yolo', 'vehicle_plate_ocr', 'pet_yolo', 'trash_ground_event', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'fishing_event', 'fishing_rod_yolo', 'smoking_two_stage']
   },
   person_yolo: {
     kind: 'detect',
@@ -231,6 +231,22 @@ const yoloModelTestTasks = Object.freeze({
     names: ['bottle', 'box', 'paper', 'bag'],
     imgsz: 960,
     conf: 0.15
+  },
+  trash_ground_event: {
+    kind: 'trash_ground_filter',
+    label: '地面垃圾事件',
+    trashTaskId: 'trash_yolo',
+    minTrashConfidence: 0.18,
+    minBoxBottomY: 0.36,
+    maxBoxArea: 0.04,
+    maxBoxHeight: 0.30,
+    maxBoxWidth: 0.45,
+    minContactPointsInGround: 1,
+    groundSource: 'default_trapezoid',
+    groundPolygons: [
+      [[0.02, 1.0], [0.98, 1.0], [0.88, 0.43], [0.12, 0.43]]
+    ],
+    exclusionPolygons: []
   },
   fire_smoke_yolo: {
     kind: 'detect',
@@ -1464,6 +1480,158 @@ function buildFishingRelationResponse({ taskId, task, personResponse, rodRespons
       min_rod_person_size_ratio: task.minRodPersonSizeRatio,
       max_rod_person_size_ratio: task.maxRodPersonSizeRatio
     }
+  };
+}
+
+function clampNormalized(value, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(1, number));
+}
+
+function normalizeRoiPoint(point) {
+  if (Array.isArray(point) && point.length >= 2) {
+    return { x: clampNormalized(point[0]), y: clampNormalized(point[1]) };
+  }
+  if (point && typeof point === 'object') {
+    return { x: clampNormalized(point.x), y: clampNormalized(point.y) };
+  }
+  return null;
+}
+
+function normalizeRoiPolygon(polygon) {
+  if (!Array.isArray(polygon)) return null;
+  const points = polygon.map(normalizeRoiPoint).filter(Boolean);
+  return points.length >= 3 ? points : null;
+}
+
+function normalizeRoiPolygons(value, fallback = []) {
+  const polygons = Array.isArray(value) ? value.map(normalizeRoiPolygon).filter(Boolean) : [];
+  if (polygons.length) return polygons;
+  return fallback.map(normalizeRoiPolygon).filter(Boolean);
+}
+
+function pointInRoiPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x;
+    const yi = polygon[i].y;
+    const xj = polygon[j].x;
+    const yj = polygon[j].y;
+    const dy = yj - yi;
+    const intersects = Math.abs(dy) > 1e-9 &&
+      ((yi > point.y) !== (yj > point.y)) &&
+      point.x < ((xj - xi) * (point.y - yi)) / dy + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function trashGroundContactPoints(box, task) {
+  const insetRatio = Number(task.contactInsetRatio ?? 0.04);
+  const bottomInset = Math.min(Math.max(insetRatio, 0), 0.2) * box.h;
+  const y = clampNormalized(box.bottom - bottomInset, box.bottom);
+  return [
+    { x: clampNormalized(box.x), y },
+    { x: clampNormalized(box.left + box.w * 0.35), y },
+    { x: clampNormalized(box.right - box.w * 0.35), y }
+  ];
+}
+
+function evaluateTrashGroundCandidate(detection, task) {
+  const box = yoloBoxMetrics(detection);
+  if (!box) {
+    return { accepted: false, reason: 'invalid_box' };
+  }
+
+  const confidence = Number(detection.confidence || 0);
+  const minConfidence = Number(task.minTrashConfidence ?? 0);
+  const minBottomY = Number(task.minBoxBottomY ?? 0);
+  const maxArea = Number(task.maxBoxArea ?? 1);
+  const maxHeight = Number(task.maxBoxHeight ?? 1);
+  const maxWidth = Number(task.maxBoxWidth ?? 1);
+  if (confidence < minConfidence) {
+    return { accepted: false, reason: 'low_confidence', box };
+  }
+  if (box.bottom < minBottomY) {
+    return { accepted: false, reason: 'floating_or_too_high', box };
+  }
+  if (box.area > maxArea || box.h > maxHeight || box.w > maxWidth) {
+    return { accepted: false, reason: 'too_large_for_ground_litter', box };
+  }
+
+  const fallbackGround = [[[0.02, 1.0], [0.98, 1.0], [0.88, 0.43], [0.12, 0.43]]];
+  const groundPolygons = normalizeRoiPolygons(task.groundPolygons, fallbackGround);
+  const exclusionPolygons = normalizeRoiPolygons(task.exclusionPolygons, []);
+  const contactPoints = trashGroundContactPoints(box, task);
+  const groundHits = contactPoints.filter((point) =>
+    groundPolygons.some((polygon) => pointInRoiPolygon(point, polygon))
+  ).length;
+  const exclusionHits = contactPoints.filter((point) =>
+    exclusionPolygons.some((polygon) => pointInRoiPolygon(point, polygon))
+  ).length;
+  const minContactHits = Number(task.minContactPointsInGround ?? 1);
+  const accepted = groundHits >= minContactHits && exclusionHits === 0;
+
+  return {
+    accepted,
+    reason: accepted ? 'on_ground' : exclusionHits > 0 ? 'inside_exclusion_roi' : 'outside_ground_roi',
+    box,
+    contact_points: contactPoints,
+    ground_hits: groundHits,
+    exclusion_hits: exclusionHits,
+    ground_source: task.groundSource || 'default_trapezoid',
+    thresholds: {
+      min_trash_confidence: minConfidence,
+      min_box_bottom_y: minBottomY,
+      max_box_area: maxArea,
+      max_box_height: maxHeight,
+      max_box_width: maxWidth,
+      min_contact_points_in_ground: minContactHits
+    }
+  };
+}
+
+function buildTrashGroundFilterResponse({ taskId, task, trashResponse, durationMs, requestId }) {
+  const rawTrash = Array.isArray(trashResponse?.detections) ? trashResponse.detections : [];
+  const candidates = rawTrash
+    .filter((detection) => Number(detection.confidence || 0) >= Number(task.minTrashConfidence ?? 0))
+    .map((detection) => {
+      const groundFilter = evaluateTrashGroundCandidate(detection, task);
+      return {
+        ...detection,
+        accepted: groundFilter.accepted,
+        ground_filter: groundFilter,
+        source_task_id: task.trashTaskId,
+        source_task_label: yoloModelTestTasks[task.trashTaskId]?.label || '小垃圾细类'
+      };
+    });
+  const accepted = candidates.filter((candidate) => candidate.accepted);
+
+  return {
+    ok: true,
+    request_id: requestId,
+    task_id: taskId,
+    task_label: task.label,
+    mode: 'trash_ground_filter',
+    duration_ms: durationMs,
+    gpu: trashResponse?.gpu || yoloA100Gpu,
+    backend: trashResponse?.backend || 'a100_ssh',
+    detections: accepted,
+    trash_candidates: rawTrash.length,
+    filtered_candidates: candidates.length,
+    ground_trash_count: accepted.length,
+    rejected_candidates: candidates.length - accepted.length,
+    ground_source: task.groundSource || 'default_trapezoid',
+    ground_filter_candidates: candidates.slice(0, 20).map((candidate) => ({
+      class_name: candidate.class_name,
+      confidence: candidate.confidence,
+      accepted: candidate.accepted,
+      reason: candidate.ground_filter?.reason,
+      box: candidate.box,
+      ground_hits: candidate.ground_filter?.ground_hits,
+      exclusion_hits: candidate.ground_filter?.exclusion_hits
+    }))
   };
 }
 
@@ -10388,6 +10556,25 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
             requestId
           });
         }
+        if (subTask.kind === 'trash_ground_filter') {
+          const trashTask = yoloModelTestTasks[subTask.trashTaskId];
+          if (!trashTask) {
+            throw new Error('trash_ground_filter_task_missing');
+          }
+          const trashPayload = await runYoloPredictionWithFallback(subTask.trashTaskId, trashTask, {
+            noAnnotated: true,
+            timeoutMs: yoloModelTestTimeoutMs,
+            maxBuffer: 24 * 1024 * 1024
+          });
+          const trashResponse = buildYoloTaskResponse(subTask.trashTaskId, trashTask, trashPayload, { omitAnnotatedImage: true });
+          return buildTrashGroundFilterResponse({
+            taskId: subTaskId,
+            task: subTask,
+            trashResponse,
+            durationMs: Date.now() - subStartMs,
+            requestId
+          });
+        }
         const payload = await runYoloPredictionWithFallback(subTaskId, subTask, {
           noAnnotated: true,
           timeoutMs: yoloModelTestTimeoutMs,
@@ -10450,6 +10637,43 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
         groups: groups.length,
         failures: failures.length,
         detections: detections.length,
+        duration_ms: durationMs,
+        gpu: responsePayload.gpu,
+        backend: responsePayload.backend
+      }));
+
+      return res.json(responsePayload);
+    }
+
+    if (task.kind === 'trash_ground_filter') {
+      const trashTask = yoloModelTestTasks[task.trashTaskId];
+      if (!trashTask) {
+        throw new Error('trash_ground_filter_task_missing');
+      }
+
+      const trashPayload = await runYoloPredictionWithFallback(task.trashTaskId, trashTask, {
+        noAnnotated: true,
+        timeoutMs: yoloModelTestTimeoutMs,
+        maxBuffer: 24 * 1024 * 1024
+      });
+
+      const durationMs = Date.now() - startMs;
+      const trashResponse = buildYoloTaskResponse(task.trashTaskId, trashTask, trashPayload, { omitAnnotatedImage: true });
+      const responsePayload = buildTrashGroundFilterResponse({
+        taskId,
+        task,
+        trashResponse,
+        durationMs,
+        requestId
+      });
+
+      console.info('yolo_model_test_result', JSON.stringify({
+        task_id: taskId,
+        mode: responsePayload.mode,
+        trash_candidates: responsePayload.trash_candidates,
+        filtered_candidates: responsePayload.filtered_candidates,
+        ground_trash_count: responsePayload.ground_trash_count,
+        detections: responsePayload.detections.length,
         duration_ms: durationMs,
         gpu: responsePayload.gpu,
         backend: responsePayload.backend

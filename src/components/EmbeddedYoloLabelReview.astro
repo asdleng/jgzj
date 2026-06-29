@@ -64,12 +64,24 @@
     </div>
   </section>
 
+  <section class="yolo-review-dataset-strip" aria-label="数据集总览">
+    <div class="yolo-review-dataset-strip-head">
+      <div>
+        <p class="yolo-review-dataset-title">数据集总览</p>
+        <p id="yolo-review-dataset-status" class="yolo-review-dataset-status">正在读取数据集。</p>
+      </div>
+    </div>
+    <div id="yolo-review-dataset-cards" class="yolo-review-dataset-cards">
+      <p class="yolo-review-empty">正在加载数据集。</p>
+    </div>
+  </section>
+
   <div class="yolo-review-toolbar">
     <label class="yolo-review-field" for="yolo-review-source">
       <span>来源</span>
       <select id="yolo-review-source">
         <option value="">全部</option>
-        <option value="checker_archive">车端校核数据</option>
+        <option value="checker_archive">云端校核数据</option>
         <option value="vehicle_collection">车辆自采图片</option>
       </select>
     </label>
@@ -116,34 +128,6 @@
     </label>
   </div>
 
-  <div class="yolo-review-focus-slot">
-    <section
-      id="yolo-fire-smoke-card"
-      class="yolo-review-focus-card yolo-review-focus-card--standalone"
-      data-state="loading"
-    >
-      <div class="yolo-review-focus-main">
-        <p class="yolo-review-focus-kicker">SPECIAL DATASET</p>
-        <h2>烟雾火焰数据集</h2>
-        <p class="yolo-review-focus-desc">正在读取数据集统计。</p>
-      </div>
-      <div class="yolo-review-focus-metrics"></div>
-      <button id="yolo-fire-smoke-open" class="cloud-chat-close" type="button" disabled>查看</button>
-    </section>
-  </div>
-
-  <section class="yolo-review-dataset-strip" aria-label="数据集总览">
-    <div class="yolo-review-dataset-strip-head">
-      <div>
-        <p class="yolo-review-dataset-title">数据集总览</p>
-        <p id="yolo-review-dataset-status" class="yolo-review-dataset-status">正在读取数据集。</p>
-      </div>
-    </div>
-    <div id="yolo-review-dataset-cards" class="yolo-review-dataset-cards">
-      <p class="yolo-review-empty">正在加载数据集。</p>
-    </div>
-  </section>
-
   <div class="yolo-review-summary" id="yolo-review-summary"></div>
 
   <div class="yolo-review-body">
@@ -164,4 +148,4 @@
   </div>
 </section>
 
-<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260629-3" defer></script>
+<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260630-1" defer></script>
