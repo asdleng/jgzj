@@ -185,7 +185,7 @@ const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
     label: '全部YOLO检测',
-    subTasks: ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'smoking_two_stage']
+    subTasks: ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'trash_yolo', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'fishing_rod_yolo', 'smoking_two_stage']
   },
   person_yolo: {
     kind: 'detect',
@@ -258,6 +258,29 @@ const yoloModelTestTasks = Object.freeze({
     names: ['stall'],
     imgsz: 960,
     conf: 0.2
+  },
+  fishing_rod_yolo: {
+    kind: 'detect',
+    label: '钓鱼杆识别',
+    model: '/home/admin1/jgzj/.runtime/yolo_loop/runs/fishing_rod_yolo_experiments_20260629/fishing_rod_yolo_yolo11s_server_gpu6_20260629_105635/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/fishing_rod_yolo_best.pt',
+    names: ['fishing_rod'],
+    imgsz: 960,
+    conf: 0.2,
+    downloadFile: 'fishing_rod_yolo_best.pt',
+    registryModelFamily: 'yolo11s',
+    registryMetricSource: 'test',
+    registryMetrics: {
+      test_precision: 0.5549598053222129,
+      test_recall: 0.5028591603796797,
+      test_map50: 0.4188674051397284,
+      test_map50_95: 0.21177929350877508,
+      val_precision: 0.5438857488382396,
+      val_recall: 0.5333333333333333,
+      val_map50: 0.4653067746732705,
+      val_map50_95: 0.26120290601865953
+    },
+    registryNote: '钓鱼杆种子模型：Objects365/LVIS公开鱼竿框 + 现场钓鱼NO负样本；用于与人员/水边ROI规则组合判断钓鱼事件。'
   },
   smoking_candidate: {
     kind: 'detect',
@@ -1154,7 +1177,7 @@ async function fileInfoForPath(filePath) {
 }
 
 async function buildFallbackYoloModelEntries() {
-  const taskIds = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo'];
+  const taskIds = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
   const entries = [];
   for (const taskId of taskIds) {
     const task = yoloModelTestTasks[taskId];
@@ -1227,7 +1250,7 @@ async function buildYoloModelRegistryPayload() {
     }
   }
 
-  const preferredOrder = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo'];
+  const preferredOrder = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'pet_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
   const entries = [];
   for (const taskId of preferredOrder) {
     if (!mergedByTask.has(taskId)) continue;

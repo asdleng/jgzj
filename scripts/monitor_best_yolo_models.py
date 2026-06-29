@@ -133,6 +133,28 @@ TARGETS = {
         "summary_roots": [],
         "keywords": [],
     },
+    "fishing_rod_yolo": {
+        "title": "钓鱼杆识别",
+        "local_weight": str(RUNTIME_ROOT / "weights" / "fishing_rod_yolo_best.pt"),
+        "download_file": "fishing_rod_yolo_best.pt",
+        "static_only": True,
+        "static_model_family": "yolo11s",
+        "static_metric_source": "test",
+        "static_metrics": {
+            "test_precision": 0.5549598053222129,
+            "test_recall": 0.5028591603796797,
+            "test_map50": 0.4188674051397284,
+            "test_map50_95": 0.21177929350877508,
+            "val_precision": 0.5438857488382396,
+            "val_recall": 0.5333333333333333,
+            "val_map50": 0.4653067746732705,
+            "val_map50_95": 0.26120290601865953,
+        },
+        "static_note": "钓鱼杆种子模型：Objects365/LVIS公开鱼竿框 + 现场钓鱼NO负样本；需结合人员检测与水边ROI规则使用。",
+        "roots": [],
+        "summary_roots": [],
+        "keywords": [],
+    },
 }
 
 
