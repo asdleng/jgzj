@@ -49,14 +49,6 @@ DEFAULT_TASKS = [
         "conf": 0.2,
     },
     {
-        "task_id": "phone_yolo",
-        "kind": "detect",
-        "model": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/phone_yolo_best.pt",
-        "names": ["phone"],
-        "imgsz": 640,
-        "conf": 0.2,
-    },
-    {
         "task_id": "stall_yolo",
         "kind": "detect",
         "model": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/stall_yolo_best.pt",

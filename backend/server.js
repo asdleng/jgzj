@@ -817,15 +817,19 @@ const vehicleUploadQwenSensitiveBboxLabelRoot = path.join(
 );
 const yoloReviewThumbRoot = path.join(yoloReviewRuntimeRoot, 'thumbs');
 const yoloReviewPatrolIndexPath = path.join(yoloReviewRuntimeRoot, 'patrol_dataset_index.json');
+const yoloReviewManualAnnotationRoot = path.join(yoloReviewRuntimeRoot, 'manual_annotations_v1');
+const yoloReviewManualDeletedLogPath = path.join(yoloReviewManualAnnotationRoot, 'deleted_items.jsonl');
 const patrolAutoLabelSchema = 'jgzj_patrol_yolo_auto_label.v1';
 const vehicleUploadQwenLabelSchema = 'jgzj_vehicle_upload_qwen_label.v2';
 const vehicleUploadQwenBboxLabelSchema = 'jgzj_vehicle_upload_qwen_bbox_label.v1';
 const vehicleUploadQwenSensitiveBboxLabelSchema = 'jgzj_vehicle_upload_qwen_sensitive_bbox.v6_reviewed';
+const yoloReviewManualAnnotationSchema = 'jgzj_yolo_manual_annotation.v1';
 const vehicleUploadQwenSensitiveBboxClasses = new Set(['smoke', 'trash', 'stall', 'phone', 'smoking']);
 const yoloReviewPatrolIndexSchema = 'jgzj_yolo_patrol_dataset_index.v3';
 const yoloReviewPatrolCacheTtlMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_CACHE_TTL_MS || 10 * 60 * 1000);
 const yoloReviewPatrolIndexFreshMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_INDEX_FRESH_MS || 5 * 60 * 1000);
 const yoloReviewDatasetListCacheTtlMs = Number(process.env.YOLO_LABEL_REVIEW_DATASET_LIST_CACHE_TTL_MS || 5 * 60 * 1000);
+const yoloReviewManualAnnotationIndexTtlMs = Number(process.env.YOLO_LABEL_REVIEW_MANUAL_INDEX_TTL_MS || 30 * 1000);
 let yoloReviewPatrolCache = {
   loaded_at_ms: 0,
   dataset: null,
@@ -835,6 +839,11 @@ let yoloReviewPatrolCache = {
 let yoloReviewDatasetListCache = {
   loaded_at_ms: 0,
   datasets: null,
+  promise: null
+};
+let yoloReviewManualAnnotationIndexCache = {
+  loaded_at_ms: 0,
+  items: null,
   promise: null
 };
 const yoloPatrolClasses = [
@@ -2274,6 +2283,245 @@ async function readTextFile(filePath, fallback = '') {
   }
 }
 
+async function writeJsonFileAtomic(filePath, payload) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  await fs.rename(tmpPath, filePath);
+}
+
+function yoloReviewManualAnnotationKey(datasetId, itemKey) {
+  return crypto
+    .createHash('sha256')
+    .update(`${String(datasetId || '').trim()}\n${normalizeApiRelPath(itemKey)}`)
+    .digest('hex');
+}
+
+function yoloReviewManualAnnotationPath(datasetId, itemKey) {
+  const key = yoloReviewManualAnnotationKey(datasetId, itemKey);
+  return path.join(yoloReviewManualAnnotationRoot, key.slice(0, 2), `${key}.json`);
+}
+
+function yoloReviewManualAnnotationIndexKey(datasetId, itemKey) {
+  return `${String(datasetId || '').trim()}\n${normalizeApiRelPath(itemKey)}`;
+}
+
+function normalizeYoloManualAnswer(value, fallback = '') {
+  const text = String(value || '').trim().toUpperCase();
+  if (text === 'YES' || text === 'NO') {
+    return text;
+  }
+  return fallback === 'YES' || fallback === 'NO' ? fallback : '';
+}
+
+function clampYoloUnit(value, fallback = 0) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(1, num));
+}
+
+function yoloManualClassIdForName(dataset, className, explicitId = null) {
+  const classes = Array.isArray(dataset?.classes) ? dataset.classes : [];
+  const normalized = normalizeClassToken(className);
+  const foundIndex = classes.findIndex((item) => normalizeClassToken(item) === normalized);
+  if (foundIndex >= 0) {
+    return foundIndex;
+  }
+  const id = Number(explicitId);
+  return Number.isInteger(id) && id >= 0 ? id : null;
+}
+
+function normalizeYoloManualLabel(dataset, raw, index = 0) {
+  const className = String(raw?.class_name || raw?.label || raw?.name || '').trim();
+  const classId = yoloManualClassIdForName(dataset, className, raw?.class_id);
+  const finalClassName = className || (classId != null ? String(dataset.classes?.[classId] || classId) : 'object');
+  const w = Math.max(0.0001, Math.min(1, Number(raw?.w ?? raw?.width ?? 0)));
+  const h = Math.max(0.0001, Math.min(1, Number(raw?.h ?? raw?.height ?? 0)));
+  const x = Math.max(w / 2, Math.min(1 - w / 2, clampYoloUnit(raw?.x ?? raw?.x_center, 0.5)));
+  const y = Math.max(h / 2, Math.min(1 - h / 2, clampYoloUnit(raw?.y ?? raw?.y_center, 0.5)));
+  const rawLine = `${finalClassName} ${x.toFixed(6)} ${y.toFixed(6)} ${w.toFixed(6)} ${h.toFixed(6)}`;
+  return {
+    index,
+    raw: rawLine,
+    class_id: classId,
+    class_name: finalClassName,
+    confidence: null,
+    model_task: 'manual',
+    source: 'manual',
+    x,
+    y,
+    w,
+    h
+  };
+}
+
+function normalizeYoloManualLabels(dataset, labels) {
+  if (dataset.kind !== 'detect') {
+    return [];
+  }
+  return (Array.isArray(labels) ? labels : [])
+    .map((label, index) => normalizeYoloManualLabel(dataset, label, index))
+    .filter((label) => label.class_name && label.w > 0 && label.h > 0);
+}
+
+function normalizeYoloManualAnnotationForResponse(annotation) {
+  if (!annotation || typeof annotation !== 'object') {
+    return null;
+  }
+  return {
+    schema: annotation.schema || yoloReviewManualAnnotationSchema,
+    dataset_id: annotation.dataset_id || '',
+    item_key: annotation.item_key || '',
+    kind: annotation.kind || '',
+    answer: annotation.answer || '',
+    class_name: annotation.class_name || '',
+    class_id: annotation.class_id ?? null,
+    labels: Array.isArray(annotation.labels) ? annotation.labels : [],
+    deleted: Boolean(annotation.deleted),
+    delete_note: annotation.delete_note || '',
+    updated_by: annotation.updated_by || null,
+    updated_at: annotation.updated_at || null,
+    note: annotation.note || '',
+    base_label_source: annotation.base_label_source || null
+  };
+}
+
+async function readYoloManualAnnotation(datasetId, itemKey) {
+  const rel = normalizeApiRelPath(itemKey);
+  if (!datasetId || !rel) {
+    return null;
+  }
+  const index = await loadYoloManualAnnotationIndex();
+  if (index) {
+    return index.get(yoloReviewManualAnnotationIndexKey(datasetId, rel)) || null;
+  }
+  const filePath = yoloReviewManualAnnotationPath(datasetId, rel);
+  const payload = await readJsonFile(filePath, null);
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (payload.schema && payload.schema !== yoloReviewManualAnnotationSchema) {
+    return null;
+  }
+  if (String(payload.dataset_id || '') !== String(datasetId || '') || normalizeApiRelPath(payload.item_key) !== rel) {
+    return null;
+  }
+  return payload;
+}
+
+async function collectYoloManualAnnotationFiles(rootDir = yoloReviewManualAnnotationRoot, depth = 0) {
+  let entries = [];
+  try {
+    entries = await fs.readdir(rootDir, { withFileTypes: true });
+  } catch (_error) {
+    return [];
+  }
+  const files = [];
+  for (const entry of entries) {
+    const entryPath = path.join(rootDir, entry.name);
+    if (entry.isFile() && entry.name.endsWith('.json')) {
+      files.push(entryPath);
+    } else if (entry.isDirectory() && depth < 3) {
+      files.push(...await collectYoloManualAnnotationFiles(entryPath, depth + 1));
+    }
+  }
+  return files;
+}
+
+async function buildYoloManualAnnotationIndex() {
+  const index = new Map();
+  const files = await collectYoloManualAnnotationFiles();
+  for (const filePath of files) {
+    const payload = await readJsonFile(filePath, null);
+    if (!payload || typeof payload !== 'object') {
+      continue;
+    }
+    if (payload.schema && payload.schema !== yoloReviewManualAnnotationSchema) {
+      continue;
+    }
+    const datasetId = String(payload.dataset_id || '').trim();
+    const itemKey = normalizeApiRelPath(payload.item_key);
+    if (!datasetId || !itemKey) {
+      continue;
+    }
+    index.set(yoloReviewManualAnnotationIndexKey(datasetId, itemKey), payload);
+  }
+  return index;
+}
+
+async function loadYoloManualAnnotationIndex(options = {}) {
+  const now = Date.now();
+  if (!options.force && yoloReviewManualAnnotationIndexCache.items && now - yoloReviewManualAnnotationIndexCache.loaded_at_ms < yoloReviewManualAnnotationIndexTtlMs) {
+    return yoloReviewManualAnnotationIndexCache.items;
+  }
+  if (!options.force && yoloReviewManualAnnotationIndexCache.promise) {
+    return yoloReviewManualAnnotationIndexCache.promise;
+  }
+  const promise = buildYoloManualAnnotationIndex()
+    .then((items) => {
+      yoloReviewManualAnnotationIndexCache.items = items;
+      yoloReviewManualAnnotationIndexCache.loaded_at_ms = Date.now();
+      return items;
+    })
+    .finally(() => {
+      if (yoloReviewManualAnnotationIndexCache.promise === promise) {
+        yoloReviewManualAnnotationIndexCache.promise = null;
+      }
+    });
+  yoloReviewManualAnnotationIndexCache.promise = promise;
+  return promise;
+}
+
+function updateYoloManualAnnotationIndex(annotation) {
+  if (!yoloReviewManualAnnotationIndexCache.items) {
+    return;
+  }
+  yoloReviewManualAnnotationIndexCache.items.set(
+    yoloReviewManualAnnotationIndexKey(annotation.dataset_id, annotation.item_key),
+    annotation
+  );
+  yoloReviewManualAnnotationIndexCache.loaded_at_ms = Date.now();
+}
+
+async function writeYoloManualAnnotation(annotation) {
+  const filePath = yoloReviewManualAnnotationPath(annotation.dataset_id, annotation.item_key);
+  await writeJsonFileAtomic(filePath, annotation);
+  updateYoloManualAnnotationIndex(annotation);
+  return {
+    ...annotation,
+    annotation_rel_path: toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, filePath))
+  };
+}
+
+async function markYoloManualItemDeleted(dataset, itemKey, authUser, note = '') {
+  const rel = normalizeApiRelPath(itemKey);
+  const existing = await readYoloManualAnnotation(dataset.id, rel);
+  const now = new Date().toISOString();
+  const annotation = {
+    schema: yoloReviewManualAnnotationSchema,
+    dataset_id: dataset.id,
+    item_key: rel,
+    kind: dataset.kind,
+    answer: existing?.answer || '',
+    labels: Array.isArray(existing?.labels) ? existing.labels : [],
+    deleted: true,
+    delete_note: String(note || '').trim().slice(0, 500),
+    updated_by: authUser?.username || null,
+    updated_at: now,
+    base_label_source: existing?.base_label_source || null
+  };
+  const saved = await writeYoloManualAnnotation(annotation);
+  await fs.mkdir(path.dirname(yoloReviewManualDeletedLogPath), { recursive: true });
+  await fs.appendFile(
+    yoloReviewManualDeletedLogPath,
+    `${JSON.stringify({ at: now, dataset_id: dataset.id, item_key: rel, actor: authUser?.username || null, note: annotation.delete_note })}\n`,
+    'utf8'
+  );
+  return saved;
+}
+
 function safeSourceLabelForPatrol(source) {
   const value = String(source || '').trim();
   if (value === 'auto_ad_patrol_flow_upload') {
@@ -3390,7 +3638,7 @@ function parseYoloLabelText(labelText, classes = []) {
     });
 }
 
-async function readYoloLabelsForItem(dataset, imageRelPath) {
+async function readYoloBaseLabelsForItem(dataset, imageRelPath) {
   if (dataset.source === 'patrol') {
     const rel = normalizeApiRelPath(imageRelPath);
     const indexed = dataset.row_by_key?.get(rel);
@@ -3429,6 +3677,46 @@ async function readYoloLabelsForItem(dataset, imageRelPath) {
     label_rel_path: labelRelPath,
     label_text: labelText,
     labels: parseYoloLabelText(labelText, dataset.classes)
+  };
+}
+
+async function readYoloLabelsForItem(dataset, imageRelPath) {
+  const rel = normalizeApiRelPath(imageRelPath);
+  const basePayload = await readYoloBaseLabelsForItem(dataset, rel);
+  const manual = await readYoloManualAnnotation(dataset.id, rel);
+  if (!manual) {
+    return basePayload;
+  }
+  const manualAnnotation = normalizeYoloManualAnnotationForResponse(manual);
+  const annotationRelPath = toForwardSlashPath(
+    path.relative(yoloReviewRuntimeRoot, yoloReviewManualAnnotationPath(dataset.id, rel))
+  );
+  if (manual.deleted) {
+    return {
+      ...basePayload,
+      labels: [],
+      label_text: '',
+      label_rel_path: annotationRelPath,
+      label_source: 'manual',
+      auto_label_status: 'manual_deleted',
+      manual_annotation: manualAnnotation,
+      manual_annotation_status: 'deleted',
+      deleted: true,
+      manual_answer: manual.answer || ''
+    };
+  }
+  const labels = normalizeYoloManualLabels(dataset, manual.labels || []);
+  return {
+    ...basePayload,
+    labels,
+    label_text: labels.map((label) => label.raw).join('\n'),
+    label_rel_path: annotationRelPath,
+    label_source: 'manual',
+    auto_label_status: 'manual_done',
+    manual_annotation: manualAnnotation,
+    manual_annotation_status: 'saved',
+    deleted: false,
+    manual_answer: normalizeYoloManualAnswer(manual.answer)
   };
 }
 
@@ -3557,11 +3845,10 @@ async function enrichYoloItem(dataset, item, options = {}) {
   const labelCount = labelsPayload
     ? labels.length
     : Number.isFinite(Number(item.label_count)) ? Number(item.label_count) : labels.length;
-  const aiAnswer =
-    item.ai_answer ||
-    item.manifest?.tasks?.[0]?.answer ||
-    answerFromYoloItem(dataset.kind, item.ai_class, labels);
+  const manualAnswer = normalizeYoloManualAnswer(labelsPayload?.manual_answer);
+  const aiAnswer = manualAnswer || item.ai_answer || item.manifest?.tasks?.[0]?.answer || answerFromYoloItem(dataset.kind, item.ai_class, labels);
   const imageUrl = toYoloDatasetFileUrl(dataset.id, item.image_rel_path);
+  const manualClass = labelClasses.length ? labelClasses.join(', ') : (labelsPayload?.manual_annotation?.class_name || '');
   return {
     ...item,
     image_url: imageUrl,
@@ -3569,9 +3856,13 @@ async function enrichYoloItem(dataset, item, options = {}) {
     label_rel_path: labelsPayload?.label_rel_path || item.label_rel_path || yoloLabelRelPathForImage(dataset, item.image_rel_path),
     label_count: labelCount,
     labels: options.includeLabels ? labels : undefined,
-    ai_class: item.ai_class || labelClasses.join(', '),
+    ai_class: labelsPayload?.label_source === 'manual' ? (manualClass || item.ai_class || '') : (item.ai_class || manualClass),
+    label_source: labelsPayload?.label_source || item.label_source,
     auto_label_status: labelsPayload?.auto_label_status || item.auto_label_status || undefined,
     auto_label: labelsPayload?.auto_label || undefined,
+    manual_annotation: labelsPayload?.manual_annotation || null,
+    manual_annotation_status: labelsPayload?.manual_annotation_status || undefined,
+    deleted: Boolean(labelsPayload?.deleted || item.deleted),
     source_type: item.source_type || dataset.source_type,
     source_label: item.source_label || dataset.source_label,
     ai_answer: aiAnswer,
@@ -3589,15 +3880,25 @@ async function listYoloReviewItems(datasetId, query = {}) {
   const aiAnswer = String(query.ai_answer || '').trim().toUpperCase();
   const q = String(query.q || '').trim();
   const hasBoxOnly = ['1', 'true', 'yes', 'on'].includes(String(query.has_box || query.hasBox || '').trim().toLowerCase());
-  const needsLabelBeforePagination = dataset.source !== 'patrol' && (['YES', 'NO'].includes(aiAnswer) || Boolean(className) || hasBoxOnly);
+  const needsLabelBeforePagination = ['YES', 'NO'].includes(aiAnswer) || Boolean(className) || hasBoxOnly;
 
   const allItems = await yoloBaseItems(dataset);
   let items = allItems;
+  const prefilteredItems = [];
+  for (const item of items) {
+    const manual = await readYoloManualAnnotation(dataset.id, item.image_rel_path);
+    if (manual?.deleted) {
+      continue;
+    }
+    prefilteredItems.push(item);
+  }
+  items = prefilteredItems;
+
   items = items.filter((item) => {
     if (split && item.split !== split) {
       return false;
     }
-    if (className) {
+    if (className && !needsLabelBeforePagination) {
       if (dataset.source === 'patrol') {
         const classes = Array.isArray(item.label_classes) ? item.label_classes : [];
         if (!classes.some((value) => normalizeClassToken(value) === className)) {
@@ -3607,10 +3908,10 @@ async function listYoloReviewItems(datasetId, query = {}) {
         return false;
       }
     }
-    if (['YES', 'NO'].includes(aiAnswer) && dataset.source === 'patrol' && item.ai_answer !== aiAnswer) {
+    if (['YES', 'NO'].includes(aiAnswer) && dataset.source === 'patrol' && !needsLabelBeforePagination && item.ai_answer !== aiAnswer) {
       return false;
     }
-    if (hasBoxOnly && dataset.source === 'patrol' && Number(item.label_count || 0) <= 0) {
+    if (hasBoxOnly && dataset.source === 'patrol' && !needsLabelBeforePagination && Number(item.label_count || 0) <= 0) {
       return false;
     }
     if (qwenLabel && dataset.source === 'patrol') {
@@ -3635,7 +3936,9 @@ async function listYoloReviewItems(datasetId, query = {}) {
     const enrichedForAnswer = [];
     for (const item of items) {
       const enriched = await enrichYoloItem(dataset, item, { includeLabels: true });
-      const classMatched = !className || (enriched.labels || []).some((label) => normalizeClassToken(label.class_name) === className);
+      const classMatched = !className ||
+        normalizeClassToken(enriched.ai_class) === className ||
+        (enriched.labels || []).some((label) => normalizeClassToken(label.class_name) === className);
       const answerMatched = !['YES', 'NO'].includes(aiAnswer) || enriched.ai_answer === aiAnswer;
       const boxMatched = !hasBoxOnly || (Array.isArray(enriched.labels) && enriched.labels.length > 0);
       if (classMatched && answerMatched && boxMatched) {
@@ -3852,6 +4155,57 @@ async function getYoloReviewItemDetail(datasetId, itemKey) {
       archive
     }
   };
+}
+
+async function assertYoloReviewItemExists(dataset, itemKey) {
+  const { rel, absolutePath } = resolveYoloDatasetRelPath(dataset, itemKey);
+  if (!isYoloImagePath(absolutePath)) {
+    throw Object.assign(new Error('not_an_image_item'), { status: 400 });
+  }
+  try {
+    const stat = await fs.stat(absolutePath);
+    if (!stat.isFile()) {
+      throw Object.assign(new Error('item_not_found'), { status: 404 });
+    }
+  } catch (error) {
+    if (error.status) {
+      throw error;
+    }
+    throw Object.assign(new Error('item_not_found'), { status: 404 });
+  }
+  return { rel, absolutePath };
+}
+
+async function saveYoloManualAnnotationFromRequest(body, authUser) {
+  const dataset = await resolveYoloDataset(body?.dataset_id);
+  const { rel, absolutePath } = await assertYoloReviewItemExists(dataset, body?.item_key);
+  const existing = await readYoloManualAnnotation(dataset.id, rel);
+  const baseLabels = await readYoloBaseLabelsForItem(dataset, rel).catch(() => null);
+  const labels = normalizeYoloManualLabels(dataset, body?.labels || []);
+  const className = String(body?.class_name || body?.ai_class || '').trim();
+  const classId = yoloManualClassIdForName(dataset, className, body?.class_id);
+  const fallbackAnswer = dataset.kind === 'detect'
+    ? (labels.length ? 'YES' : 'NO')
+    : answerFromYoloItem(dataset.kind, className || existing?.class_name || '', labels);
+  const now = new Date().toISOString();
+  const annotation = {
+    schema: yoloReviewManualAnnotationSchema,
+    dataset_id: dataset.id,
+    item_key: rel,
+    image_sha256: existing?.image_sha256 || null,
+    kind: dataset.kind,
+    answer: normalizeYoloManualAnswer(body?.answer, fallbackAnswer),
+    class_name: className || existing?.class_name || '',
+    class_id: classId,
+    labels,
+    deleted: false,
+    note: String(body?.note || '').trim().slice(0, 500),
+    updated_by: authUser?.username || null,
+    updated_at: now,
+    source_image_path: toForwardSlashPath(absolutePath),
+    base_label_source: existing?.base_label_source || baseLabels?.label_source || baseLabels?.auto_label_status || null
+  };
+  return writeYoloManualAnnotation(annotation);
 }
 
 function normalizeAiCheckTask(task) {
@@ -4849,209 +5203,8 @@ async function writeLastLidarRelocCapture(vehicleId, capture) {
   return capturePath;
 }
 
-function lidarRelocLocalInferReady() {
+function hasLidarRelocServerInfer() {
   return fsSync.existsSync(lidarRelocalizationInferScript);
-}
-
-function lidarRelocMapUploadUrls(vehicleId) {
-  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
-  const uploadUrl = `${lidarRelocalizationMapUploadBaseUrl}/upload/${encodeURIComponent(
-    normalizedVehicleId
-  )}/GlobalMap.pcd`;
-  return {
-    upload_url: uploadUrl,
-    status_url: `${uploadUrl}/status`
-  };
-}
-
-function readLidarRelocRemoteMapSize(status) {
-  return readLidarRelocNumber(
-    status?.map?.pointcloud?.size_bytes,
-    status?.map?.info?.size_bytes,
-    status?.map?.pointcloud?.candidate_status?.find?.((item) => item?.exists)?.size_bytes
-  );
-}
-
-async function ensureLidarRelocVehicleMap(vehicleId, status, options = {}) {
-  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
-  const localBefore = await statLidarRelocMap(normalizedVehicleId);
-  const remoteSize = readLidarRelocRemoteMapSize(status);
-  const sizeMatches =
-    localBefore.available &&
-    (!remoteSize || Math.abs(Number(localBefore.size_bytes || 0) - Number(remoteSize)) <= 1024);
-  if (sizeMatches) {
-    return {
-      ok: true,
-      synced: false,
-      phase: 'local_map_ready',
-      map: localBefore,
-      remote_size_bytes: remoteSize
-    };
-  }
-
-  const toolNames = new Set([
-    ...(Array.isArray(status?.tools?.capture_tools) ? status.tools.capture_tools : []),
-    ...(Array.isArray(status?.tools?.infer_tools) ? status.tools.infer_tools : [])
-  ]);
-  if (status?.tools?.map_pointcloud_meta) {
-    toolNames.add('map.pointcloud.meta');
-  }
-  if (!status?.tools?.map_pointcloud_upload && !toolNames.has('map.pointcloud.upload')) {
-    return {
-      ok: false,
-      synced: false,
-      phase: 'map_upload_tool_missing',
-      detail: '车端未上报 map.pointcloud.upload，服务器无法自动同步全局点云地图。',
-      map: localBefore,
-      remote_size_bytes: remoteSize
-    };
-  }
-
-  const urls = lidarRelocMapUploadUrls(normalizedVehicleId);
-  const uploadArgs = {
-    upload_url: urls.upload_url,
-    status_url: urls.status_url,
-    method: 'POST',
-    staging_dir: '/home/nvidia/auto_ad_ai_map_upload',
-    cleanup: false,
-    chunk_size_bytes: 32 * 1024 * 1024,
-    max_retries: 20,
-    max_single_upload_bytes: 64 * 1024 * 1024,
-    copy_timeout_s: 900,
-    upload_timeout_s: 1800,
-    ...(options.args && typeof options.args === 'object' && !Array.isArray(options.args)
-      ? options.args
-      : {})
-  };
-  const timeout_s = toFiniteInteger(options.timeout_s, 1200, { min: 60, max: 2400 });
-  const execution = await executeLidarRelocTool(
-    normalizedVehicleId,
-    'map.pointcloud.upload',
-    uploadArgs,
-    timeout_s
-  );
-  const localAfter = await statLidarRelocMap(normalizedVehicleId);
-  return {
-    ok: Boolean(execution.ok && localAfter.available),
-    synced: true,
-    phase: execution.ok ? 'map_uploaded' : 'map_upload_failed',
-    map: localAfter,
-    remote_size_bytes: remoteSize,
-    upload: {
-      urls,
-      args: sanitizeCloudOpsPayload(uploadArgs),
-      result: unwrapCloudOpsToolResult(execution),
-      execution: sanitizeCloudOpsPayload(execution)
-    },
-    detail: execution.ok ? undefined : execution.detail || execution.error || 'map.pointcloud.upload_failed'
-  };
-}
-
-async function captureLidarRelocCurrentFrame(vehicleId, status, options = {}) {
-  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
-  const captureTools = Array.isArray(status?.tools?.capture_tools) ? status.tools.capture_tools : [];
-  const toolName = captureTools.find((name) => String(name).startsWith('lidar.')) || '';
-  if (!toolName) {
-    const error = new Error('车端未上报 LiDAR 当前帧抓取工具。');
-    error.status = 501;
-    error.phase = 'lidar_capture_tool_missing';
-    error.required_tools = status?.tools?.missing?.lidar_capture || [
-      'lidar.relocalization_capture',
-      'lidar.capture_current_frame'
-    ];
-    throw error;
-  }
-
-  const requestArgs =
-    options.args && typeof options.args === 'object' && !Array.isArray(options.args)
-      ? options.args
-      : {};
-  const args = {
-    topic: '/filtered_points',
-    timeout_s: 5,
-    max_points: 60000,
-    min_range_m: 0,
-    max_range_m: 120,
-    include_pointcloud: true,
-    include_pose: true,
-    include_localization: true,
-    ...requestArgs
-  };
-  const timeout_s = toFiniteInteger(options.timeout_s, 30, { min: 5, max: 120 });
-  const execution = await executeLidarRelocTool(normalizedVehicleId, toolName, args, timeout_s);
-  const response = unwrapCloudOpsResponse(execution);
-  const result = unwrapCloudOpsToolResult(execution);
-  const capture = {
-    ok: execution.ok,
-    captured_at: new Date().toISOString(),
-    vehicle_id: normalizedVehicleId,
-    tool_name: toolName,
-    args: sanitizeCloudOpsPayload(args),
-    result,
-    response: sanitizeCloudOpsPayload(response),
-    execution: sanitizeCloudOpsPayload(execution)
-  };
-  if (execution.ok) {
-    capture.local_record = await writeLastLidarRelocCapture(normalizedVehicleId, capture);
-  }
-  return {
-    ok: execution.ok,
-    phase: execution.ok ? 'lidar_frame_captured' : 'lidar_frame_capture_failed',
-    capture,
-    detail: execution.ok ? undefined : execution.detail || execution.error || `${toolName}_failed`
-  };
-}
-
-async function runLidarRelocServerInfer(vehicleId, mapPath, capturePath, options = {}) {
-  if (!lidarRelocLocalInferReady()) {
-    const error = new Error('服务器本地 LiDAR 重定位推理脚本不存在。');
-    error.status = 501;
-    error.phase = 'server_infer_script_missing';
-    throw error;
-  }
-  const returnTopk = toFiniteInteger(options.return_topk, 5, { min: 1, max: 20 });
-  const scriptArgs = [
-    lidarRelocalizationInferScript,
-    '--vehicle-id',
-    vehicleId,
-    '--map-pcd',
-    mapPath,
-    '--capture-json',
-    capturePath,
-    '--checkpoint',
-    lidarRelocalizationModelCheckpoint,
-    '--return-topk',
-    String(returnTopk)
-  ];
-  const inferOptions =
-    options.server_args && typeof options.server_args === 'object' && !Array.isArray(options.server_args)
-      ? options.server_args
-      : {};
-  for (const [key, value] of Object.entries(inferOptions)) {
-    if (value === undefined || value === null || value === '') {
-      continue;
-    }
-    const normalizedKey = String(key).replace(/_/g, '-');
-    scriptArgs.push(`--${normalizedKey}`, String(value));
-  }
-  const { stdout, stderr } = await execFileAsync('python3', scriptArgs, {
-    timeout: lidarRelocalizationInferTimeoutMs,
-    maxBuffer: 20 * 1024 * 1024
-  });
-  const line = String(stdout || '')
-    .trim()
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .pop();
-  if (!line) {
-    throw new Error(stderr || 'lidar_relocalization_infer_empty_output');
-  }
-  return {
-    result: parseJsonField(line, null),
-    stdout,
-    stderr,
-    script: lidarRelocalizationInferScript
-  };
 }
 
 async function executeLidarRelocTool(vehicleId, toolName, args = {}, timeout_s = 25) {
@@ -5066,6 +5219,184 @@ async function executeLidarRelocTool(vehicleId, toolName, args = {}, timeout_s =
     },
     []
   );
+}
+
+function getLidarRelocRemoteMapSize(mapPointcloud, mapInfo) {
+  return readLidarRelocNumber(
+    mapPointcloud?.size_bytes,
+    mapPointcloud?.file_size_bytes,
+    mapPointcloud?.bytes,
+    mapInfo?.size_bytes,
+    mapInfo?.file_size_bytes,
+    mapInfo?.bytes
+  );
+}
+
+async function ensureLidarRelocVehicleMap(vehicleId, status) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  const local = await statLidarRelocMap(normalizedVehicleId);
+  const remoteSize = getLidarRelocRemoteMapSize(status?.map?.pointcloud, status?.map?.info);
+
+  if (local.available && (!remoteSize || local.size_bytes === remoteSize)) {
+    return {
+      ok: true,
+      synced: false,
+      phase: 'local_map_ready',
+      map: local,
+      remote_size_bytes: remoteSize || null
+    };
+  }
+
+  const canUpload =
+    status?.tools?.map_pointcloud_upload === true ||
+    (Array.isArray(status?.executions?.tool_list?.data?.response?.tools) &&
+      status.executions.tool_list.data.response.tools.some((tool) => tool?.name === 'map.pointcloud.upload'));
+
+  if (!canUpload && local.available) {
+    return {
+      ok: true,
+      synced: false,
+      phase: 'local_map_ready_without_remote_meta',
+      map: local,
+      remote_size_bytes: remoteSize || null
+    };
+  }
+
+  if (!canUpload) {
+    return {
+      ok: false,
+      synced: false,
+      phase: 'map_upload_tool_missing',
+      map: local,
+      remote_size_bytes: remoteSize || null,
+      detail: '车端未上报 map.pointcloud.upload，服务器也没有本地 GlobalMap.pcd。'
+    };
+  }
+
+  const uploadPath = `/upload/${encodeURIComponent(normalizedVehicleId)}/GlobalMap.pcd`;
+  const uploadUrl = `${lidarRelocalizationMapUploadBaseUrl}${uploadPath}`;
+  const uploadArgs = {
+    upload_url: uploadUrl,
+    status_url: `${uploadUrl}/status`,
+    method: 'POST',
+    staging_dir: '/home/nvidia/auto_ad_ai_map_upload',
+    cleanup: false,
+    chunk_size_bytes: 32 * 1024 * 1024,
+    max_single_upload_bytes: 64 * 1024 * 1024,
+    upload_timeout_s: 1800,
+    copy_timeout_s: 900,
+    max_retries: 20
+  };
+  const execution = await executeLidarRelocTool(
+    normalizedVehicleId,
+    'map.pointcloud.upload',
+    uploadArgs,
+    120
+  );
+  const map = await statLidarRelocMap(normalizedVehicleId);
+
+  return {
+    ok: execution.ok && map.available,
+    synced: execution.ok,
+    phase: execution.ok && map.available ? 'map_synced' : 'map_sync_failed',
+    map,
+    remote_size_bytes: remoteSize || null,
+    result: unwrapCloudOpsToolResult(execution),
+    execution: sanitizeCloudOpsPayload(execution),
+    detail: execution.ok ? undefined : execution.detail || execution.error || 'map.pointcloud.upload_failed'
+  };
+}
+
+function hasLidarRelocPointcloud(result) {
+  const pointcloud = result?.pointcloud || result?.points || {};
+  return (
+    pointcloud?.encoding === 'float32_xyz_zlib_base64' &&
+    typeof pointcloud?.points_base64 === 'string' &&
+    pointcloud.points_base64.length > 0
+  );
+}
+
+async function captureLidarRelocCurrentFrame(vehicleId, status, options = {}) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  const statusTools = Array.isArray(status?.tools?.capture_tools) ? status.tools.capture_tools : [];
+  const toolNames = [
+    ...statusTools.filter((name) => String(name).startsWith('lidar.')),
+    'lidar.relocalization_capture',
+    'lidar.capture_current_frame'
+  ].filter((name, index, arr) => name && arr.indexOf(name) === index);
+
+  let lastFailure = null;
+  for (const toolName of toolNames) {
+    const args = {
+      topic: options.topic || '/filtered_points',
+      include_pointcloud: true,
+      save_file: true,
+      include_pose: true,
+      include_localization: true,
+      max_frames: 1,
+      ...(options.args && typeof options.args === 'object' && !Array.isArray(options.args) ? options.args : {})
+    };
+    const execution = await executeLidarRelocTool(
+      normalizedVehicleId,
+      toolName,
+      args,
+      toFiniteInteger(options.timeout_s, 60, { min: 5, max: 120 })
+    );
+    const response = unwrapCloudOpsResponse(execution);
+    const result = unwrapCloudOpsToolResult(execution);
+    if (execution.ok && hasLidarRelocPointcloud(result)) {
+      const capture = {
+        ok: true,
+        captured_at: new Date().toISOString(),
+        vehicle_id: normalizedVehicleId,
+        tool_name: toolName,
+        args: sanitizeCloudOpsPayload(args),
+        result,
+        response: sanitizeCloudOpsPayload(response),
+        execution: sanitizeCloudOpsPayload(execution)
+      };
+      capture.local_record = await writeLastLidarRelocCapture(normalizedVehicleId, capture);
+      return capture;
+    }
+    lastFailure = execution;
+  }
+
+  const error = new Error(lastFailure?.detail || lastFailure?.error || 'lidar_relocalization_capture_failed');
+  error.execution = sanitizeCloudOpsPayload(lastFailure);
+  throw error;
+}
+
+async function runLidarRelocServerInfer(vehicleId, mapPath, capturePath, options = {}) {
+  if (!hasLidarRelocServerInfer()) {
+    throw new Error('lidar_relocalization_infer_script_missing');
+  }
+  const args = [
+    lidarRelocalizationInferScript,
+    '--vehicle-id',
+    vehicleId,
+    '--map-pcd',
+    mapPath,
+    '--capture-json',
+    capturePath,
+    '--checkpoint',
+    options.checkpoint || lidarRelocalizationModelCheckpoint,
+    '--return-topk',
+    String(toFiniteInteger(options.return_topk, 5, { min: 1, max: 20 }))
+  ];
+
+  const startedAt = Date.now();
+  const { stdout, stderr } = await execFileAsync('python3', args, {
+    timeout: lidarRelocalizationInferTimeoutMs,
+    maxBuffer: 32 * 1024 * 1024
+  });
+  const payload = parseJsonField(stdout, null);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error(stderr || 'lidar_relocalization_infer_empty_output');
+  }
+  return {
+    ...payload,
+    elapsed_ms: payload.elapsed_ms ?? Date.now() - startedAt
+  };
 }
 
 async function collectLidarRelocStatus(vehicleId, options = {}) {
@@ -5085,7 +5416,7 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
   const toolNames = extractCloudAgentToolNamesFromExecution(toolExecution);
   const captureTools = listLidarRelocCaptureTools(toolNames);
   const inferTools = listLidarRelocInferTools(toolNames);
-  const localInferReady = lidarRelocLocalInferReady();
+  const serverInference = hasLidarRelocServerInfer();
 
   const mapLocal = await statLidarRelocMap(normalizedVehicleId);
   let mapInfo = null;
@@ -5134,13 +5465,13 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
       lidar_capture: captureTools.some((name) => name.startsWith('lidar.')),
       context_capture: toolNames.has('vpr.capture_bundle'),
       infer_tools: inferTools,
-      server_inference: localInferReady,
-      inference: inferTools.length > 0 || localInferReady,
+      server_inference: serverInference,
+      inference: inferTools.length > 0 || serverInference,
       missing: {
         lidar_capture: captureTools.some((name) => name.startsWith('lidar.'))
           ? []
           : ['lidar.relocalization_capture', 'lidar.capture_current_frame'],
-        inference: inferTools.length || localInferReady ? [] : ['lidar.relocalization_infer', 'bevplace.infer']
+        inference: inferTools.length || serverInference ? [] : ['lidar.relocalization_infer', 'bevplace.infer']
       }
     },
     map: {
@@ -5158,8 +5489,8 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
       checkpoint: lidarRelocalizationModelCheckpoint,
       fallback_checkpoint: lidarRelocalizationFallbackCheckpoint,
       infer_script: lidarRelocalizationInferScript,
-      service_ready: inferTools.length > 0 || localInferReady,
-      phase: inferTools.length ? 'tool_ready' : localInferReady ? 'server_local_ready' : 'not_deployed'
+      service_ready: inferTools.length > 0 || serverInference,
+      phase: inferTools.length ? 'tool_ready' : serverInference ? 'server_local_ready' : 'not_deployed'
     },
     capture: {
       last: lastCapture
@@ -9332,6 +9663,19 @@ function auditBodySummary(req) {
     };
   }
 
+  if (requestPath.startsWith('/api/yolo-label-review/')) {
+    return {
+      dataset_id: String(body.dataset_id || '').trim(),
+      item_key: String(body.item_key || '').trim(),
+      kind: String(body.kind || '').trim(),
+      answer: String(body.answer || '').trim(),
+      class_name: String(body.class_name || body.ai_class || '').trim(),
+      label_count: Array.isArray(body.labels) ? body.labels.length : 0,
+      deleted: Boolean(body.deleted),
+      note: String(body.note || body.reason || '').trim().slice(0, 200)
+    };
+  }
+
   if (requestPath === '/api/qwen36-chat' || requestPath === '/api/cloud-chat' || requestPath === '/api/openclaw-chat') {
     return {
       message: String(body.message || '').trim().slice(0, 800),
@@ -9523,6 +9867,19 @@ function classifyOperationAuditRequest(req) {
       detail: {
         query: sanitizeCloudOpsPayload(req.query || {})
       }
+    };
+  }
+  if (yoloReviewMatch && ['POST', 'PATCH', 'DELETE'].includes(method)) {
+    const endpoint = String(yoloReviewMatch[1] || '').trim();
+    return {
+      category: 'ai',
+      action: endpoint === 'item' || requestPath.endsWith('/delete')
+        ? 'ai.yolo_label.item.delete'
+        : 'ai.yolo_label.annotation.save',
+      target_type: 'yolo_training_item',
+      target_id: `${String(req.body?.dataset_id || '').trim()}:${String(req.body?.item_key || '').trim()}`,
+      permission: 'ai:yolo:review',
+      detail: auditBodySummary(req)
     };
   }
 
@@ -10212,130 +10569,119 @@ app.post(
       const status = await collectLidarRelocStatus(vehicleId, { tool_timeout_s: 20 });
       const inferTools = Array.isArray(status?.tools?.infer_tools) ? status.tools.infer_tools : [];
       const toolName = inferTools[0] || '';
-      const requestArgs = req.body && typeof req.body === 'object' ? req.body.args : null;
-      const preferCloudTool = req.body?.mode === 'cloud_tool' && Boolean(toolName);
+      const lastCapture = await readLastLidarRelocCapture(vehicleId);
 
-      const mapSync = await ensureLidarRelocVehicleMap(vehicleId, status, {
-        args: req.body?.map_upload_args,
-        timeout_s: req.body?.map_upload_timeout_s
-      });
-      if (!mapSync.ok || !mapSync.map?.available) {
-        return res.status(502).json({
+      if (!toolName) {
+        if (status?.tools?.server_inference) {
+          const mapSync = await ensureLidarRelocVehicleMap(vehicleId, status);
+          if (!mapSync.ok || !mapSync.map?.available) {
+            return res.status(502).json({
+              ok: false,
+              vehicle_id: vehicleId,
+              phase: mapSync.phase || 'map_not_ready',
+              detail: mapSync.detail || '服务器没有可用全局点云地图，且车端地图同步失败。',
+              map_sync: mapSync,
+              model: status.model
+            });
+          }
+
+          const capture = await captureLidarRelocCurrentFrame(vehicleId, status, {
+            args: req.body?.capture_args,
+            timeout_s: req.body?.capture_timeout_s
+          });
+          const result = await runLidarRelocServerInfer(
+            vehicleId,
+            mapSync.map.path,
+            capture.local_record,
+            {
+              checkpoint: req.body?.checkpoint,
+              return_topk: req.body?.return_topk
+            }
+          );
+          const coarsePose =
+            normalizeLidarRelocPose(result?.pose || result?.coarse_pose || result?.best_pose || result) || null;
+          const ok = result?.ok !== false && Boolean(coarsePose);
+
+          return res.status(ok ? 200 : 409).json({
+            ok,
+            vehicle_id: vehicleId,
+            phase: ok ? 'coarse_pose_ready' : result?.phase || 'infer_failed',
+            tool_name: 'server.local_bev',
+            coarse_pose: coarsePose,
+            confidence: readLidarRelocNumber(result?.confidence, result?.score, result?.best_score),
+            candidates: Array.isArray(result?.candidates) ? result.candidates : [],
+            capture: {
+              captured_at: capture.captured_at,
+              tool_name: capture.tool_name,
+              capture_id: capture.result?.capture_id || null,
+              point_count: readLidarRelocNumber(capture.result?.point_count, capture.result?.pointcloud?.point_count),
+              source_point_count: readLidarRelocNumber(capture.result?.source_point_count),
+              pose: normalizeLidarRelocPose(capture.result?.pose || capture.result?.localization)
+            },
+            map_sync: mapSync,
+            result,
+            detail: ok ? undefined : result?.detail || 'server_lidar_relocalization_infer_failed'
+          });
+        }
+
+        return res.status(501).json({
           ok: false,
           vehicle_id: vehicleId,
-          phase: mapSync.phase || 'map_unavailable',
-          detail: mapSync.detail || '服务器没有可用全局点云地图，且自动同步失败。',
-          required_tools: ['map.pointcloud.upload'],
+          phase: 'not_ready',
+          detail: 'BEVPlace++ 推理服务还没有接入 cloud-agent，服务器本地推理脚本也不可用；当前页面不会伪造粗位姿。',
+          required_tools: status?.tools?.missing?.inference || [
+            'lidar.relocalization_infer',
+            'bevplace.infer'
+          ],
           model: status.model,
           map: status.map,
-          map_sync: mapSync
+          localization: status.localization,
+          capture: status.capture
         });
       }
 
-      const liveCapture = await captureLidarRelocCurrentFrame(vehicleId, status, {
-        args:
-          requestArgs && typeof requestArgs.capture === 'object' && !Array.isArray(requestArgs.capture)
-            ? requestArgs.capture
-            : req.body?.capture_args,
-        timeout_s: req.body?.capture_timeout_s
-      });
-      if (!liveCapture.ok || !liveCapture.capture?.local_record) {
-        return res.status(502).json({
+      if (!lastCapture && !req.body?.capture_id && !req.body?.use_live_capture) {
+        return res.status(409).json({
           ok: false,
           vehicle_id: vehicleId,
-          phase: liveCapture.phase || 'lidar_frame_capture_failed',
-          detail: liveCapture.detail || '当前帧 LiDAR 点云抓取失败。',
-          capture: liveCapture.capture,
-          map_sync: mapSync,
-          model: status.model
+          phase: 'no_current_frame',
+          detail: '还没有当前帧/上下文抓取记录，请先抓取当前帧。',
+          model: status.model,
+          map: status.map
         });
       }
 
-      if (preferCloudTool) {
-        const args = {
-          use_last_capture: true,
-          capture_id:
-            liveCapture.capture?.result?.capture_id ||
-            liveCapture.capture?.result?.bundle_id ||
-            null,
-          map_path: mapSync.map.path,
-          map_version: status?.map?.map_version || null,
-          checkpoint: lidarRelocalizationModelCheckpoint,
-          return_topk: 5,
-          ...(requestArgs && typeof requestArgs === 'object' && !Array.isArray(requestArgs) ? requestArgs : {})
-        };
-        const timeout_s = toFiniteInteger(req.body?.timeout_s, 90, { min: 10, max: 120 });
-        const execution = await executeLidarRelocTool(vehicleId, toolName, args, timeout_s);
-        const result = unwrapCloudOpsToolResult(execution);
+      const requestArgs = req.body && typeof req.body === 'object' ? req.body.args : null;
+      const args = {
+        use_last_capture: !req.body?.capture_id,
+        capture_id: req.body?.capture_id || lastCapture?.result?.capture_id || lastCapture?.result?.bundle_id || null,
+        map_path: status?.map?.local?.available ? status.map.local.path : null,
+        map_version: status?.map?.map_version || null,
+        checkpoint: lidarRelocalizationModelCheckpoint,
+        return_topk: 5,
+        ...(requestArgs && typeof requestArgs === 'object' && !Array.isArray(requestArgs) ? requestArgs : {})
+      };
+      const timeout_s = toFiniteInteger(req.body?.timeout_s, 90, { min: 10, max: 120 });
+      const execution = await executeLidarRelocTool(vehicleId, toolName, args, timeout_s);
+      const result = unwrapCloudOpsToolResult(execution);
 
-        return res.status(execution.ok ? 200 : 502).json({
-          ok: execution.ok,
-          vehicle_id: vehicleId,
-          phase: execution.ok ? 'coarse_pose_ready' : 'infer_failed',
-          tool_name: toolName,
-          coarse_pose:
-            normalizeLidarRelocPose(result?.pose || result?.coarse_pose || result?.best_pose || result) || null,
-          confidence: readLidarRelocNumber(result?.confidence, result?.score, result?.best_score),
-          candidates: Array.isArray(result?.candidates) ? result.candidates : [],
-          result,
-          capture: {
-            captured_at: liveCapture.capture.captured_at,
-            tool_name: liveCapture.capture.tool_name,
-            capture_id: liveCapture.capture.result?.capture_id || null,
-            point_count: liveCapture.capture.result?.point_count || null
-          },
-          map_sync,
-          execution: sanitizeCloudOpsPayload(execution),
-          detail: execution.ok ? undefined : execution.detail || execution.error || `${toolName}_failed`
-        });
-      }
-
-      const serverInfer = await runLidarRelocServerInfer(
-        vehicleId,
-        mapSync.map.path,
-        liveCapture.capture.local_record,
-        {
-          return_topk: req.body?.return_topk,
-          server_args:
-            requestArgs && typeof requestArgs.server === 'object' && !Array.isArray(requestArgs.server)
-              ? requestArgs.server
-              : req.body?.server_args
-        }
-      );
-      const result = serverInfer.result || {};
-      const ok = result.ok !== false;
-
-      return res.status(ok ? 200 : 409).json({
-        ok,
+      return res.status(execution.ok ? 200 : 502).json({
+        ok: execution.ok,
         vehicle_id: vehicleId,
-        phase: result.phase || (ok ? 'coarse_pose_ready' : 'infer_failed'),
-        tool_name: 'server.local_bev',
+        phase: execution.ok ? 'coarse_pose_ready' : 'infer_failed',
+        tool_name: toolName,
         coarse_pose:
           normalizeLidarRelocPose(result?.pose || result?.coarse_pose || result?.best_pose || result) || null,
         confidence: readLidarRelocNumber(result?.confidence, result?.score, result?.best_score),
         candidates: Array.isArray(result?.candidates) ? result.candidates : [],
         result,
-        capture: {
-          captured_at: liveCapture.capture.captured_at,
-          tool_name: liveCapture.capture.tool_name,
-          capture_id: liveCapture.capture.result?.capture_id || null,
-          point_count: liveCapture.capture.result?.point_count || null,
-          source_point_count: liveCapture.capture.result?.source_point_count || null,
-          pose: liveCapture.capture.result?.pose || null
-        },
-        map_sync,
-        server_infer: {
-          script: serverInfer.script,
-          stderr: serverInfer.stderr || ''
-        },
-        detail: ok ? undefined : result.detail || 'server_lidar_relocalization_infer_failed'
+        execution: sanitizeCloudOpsPayload(execution),
+        detail: execution.ok ? undefined : execution.detail || execution.error || `${toolName}_failed`
       });
     } catch (error) {
-      return res.status(error?.status || 502).json({
+      return res.status(502).json({
         ok: false,
         vehicle_id: vehicleId,
-        phase: error?.phase || 'infer_failed',
-        required_tools: error?.required_tools,
         detail: error?.message || 'lidar_relocalization_infer_failed'
       });
     }
@@ -10863,6 +11209,45 @@ app.get('/api/yolo-label-review/item', async (req, res) => {
     return res.status(error.status || 502).json({
       ok: false,
       error: error.message || 'yolo_item_unavailable'
+    });
+  }
+});
+
+app.post('/api/yolo-label-review/annotation', async (req, res) => {
+  try {
+    const saved = await saveYoloManualAnnotationFromRequest(req.body || {}, req.jgzjAuth?.user || null);
+    const payload = await getYoloReviewItemDetail(saved.dataset_id, saved.item_key);
+    return res.json({
+      ok: true,
+      annotation: normalizeYoloManualAnnotationForResponse(saved),
+      ...payload
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      ok: false,
+      error: error.message || 'yolo_annotation_save_failed',
+      detail: error.message || 'yolo_annotation_save_failed'
+    });
+  }
+});
+
+app.post('/api/yolo-label-review/item/delete', async (req, res) => {
+  try {
+    const dataset = await resolveYoloDataset(req.body?.dataset_id);
+    const { rel } = await assertYoloReviewItemExists(dataset, req.body?.item_key);
+    const saved = await markYoloManualItemDeleted(dataset, rel, req.jgzjAuth?.user || null, req.body?.reason || req.body?.note || '');
+    return res.json({
+      ok: true,
+      deleted: true,
+      dataset_id: dataset.id,
+      item_key: rel,
+      annotation: normalizeYoloManualAnnotationForResponse(saved)
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      ok: false,
+      error: error.message || 'yolo_item_delete_failed',
+      detail: error.message || 'yolo_item_delete_failed'
     });
   }
 });

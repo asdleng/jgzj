@@ -5,7 +5,9 @@
   const endpoints = {
     datasets: "/api/yolo-label-review/datasets",
     items: "/api/yolo-label-review/items",
-    item: "/api/yolo-label-review/item"
+    item: "/api/yolo-label-review/item",
+    annotation: "/api/yolo-label-review/annotation",
+    deleteItem: "/api/yolo-label-review/item/delete"
   };
 
   const refs = {
@@ -192,6 +194,16 @@
     return data;
   }
 
+  function postJson(url, body) {
+    return requestJson(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body || {})
+    });
+  }
+
   function compactNumber(value) {
     const num = Number(value || 0);
     if (!Number.isFinite(num)) return "0";
@@ -214,6 +226,7 @@
   }
 
   function labelSourceText(source) {
+    if (source === "manual") return "人工标注";
     if (source === "qwen_bbox_verified") return "Qwen校验框";
     if (source === "qwen_bbox") return "Qwen框";
     if (source === "yolo_auto") return "YOLO模型预标";
@@ -221,6 +234,7 @@
   }
 
   function labelSourceTone(source) {
+    if (source === "manual") return "tone-yes";
     return source === "qwen_bbox_verified" || source === "qwen_bbox" ? "tone-yes" : "tone-idle";
   }
 
@@ -873,6 +887,433 @@
     });
   }
 
+  function clampUnit(value, fallback = 0) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.max(0, Math.min(1, num));
+  }
+
+  function normalizeEditorLabel(label, index, dataset) {
+    const classes = Array.isArray(dataset?.classes) ? dataset.classes : [];
+    const className = String(label?.class_name || label?.label || classes[0] || "object").trim() || "object";
+    const classIndex = classes.findIndex((item) => normalizeClassToken(item) === normalizeClassToken(className));
+    const w = Math.max(0.002, Math.min(1, Number(label?.w) || 0.18));
+    const h = Math.max(0.002, Math.min(1, Number(label?.h) || 0.18));
+    const x = Math.max(w / 2, Math.min(1 - w / 2, clampUnit(label?.x, 0.5)));
+    const y = Math.max(h / 2, Math.min(1 - h / 2, clampUnit(label?.y, 0.5)));
+    return {
+      index,
+      class_id: classIndex >= 0 ? classIndex : (Number.isFinite(Number(label?.class_id)) ? Number(label.class_id) : null),
+      class_name: className,
+      x,
+      y,
+      w,
+      h,
+      source: "manual"
+    };
+  }
+
+  function formatCoord(value) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num.toFixed(4) : "0.0000";
+  }
+
+  function labelToBoxStyle(label) {
+    const w = clampUnit(label.w, 0.1);
+    const h = clampUnit(label.h, 0.1);
+    const x = clampUnit(label.x, 0.5);
+    const y = clampUnit(label.y, 0.5);
+    return {
+      left: `${Math.max(0, (x - w / 2) * 100)}%`,
+      top: `${Math.max(0, (y - h / 2) * 100)}%`,
+      width: `${Math.max(0.2, Math.min(100, w * 100))}%`,
+      height: `${Math.max(0.2, Math.min(100, h * 100))}%`
+    };
+  }
+
+  function pointerToOverlayUnit(event, overlay) {
+    const rect = overlay.getBoundingClientRect();
+    const x = rect.width ? (event.clientX - rect.left) / rect.width : 0;
+    const y = rect.height ? (event.clientY - rect.top) / rect.height : 0;
+    return { x: clampUnit(x), y: clampUnit(y) };
+  }
+
+  function makeEditorState(dataset, item) {
+    const labels = (Array.isArray(item.labels) ? item.labels : [])
+      .map((label, index) => normalizeEditorLabel(label, index, dataset));
+    return {
+      dataset,
+      item,
+      labels,
+      selectedIndex: labels.length ? 0 : -1,
+      drawMode: false,
+      dirty: false,
+      answer: answerDisplay(item.ai_answer) === "Yes" ? "YES" : answerDisplay(item.ai_answer) === "No" ? "NO" : (dataset.kind === "detect" ? (labels.length ? "YES" : "NO") : "YES"),
+      className: item.manual_annotation?.class_name || item.ai_class || dataset.classes?.[0] || ""
+    };
+  }
+
+  function renumberLabels(editor) {
+    editor.labels = editor.labels.map((label, index) => ({ ...label, index }));
+    if (editor.selectedIndex >= editor.labels.length) editor.selectedIndex = editor.labels.length - 1;
+  }
+
+  function markEditorDirty(editor, saveButton) {
+    editor.dirty = true;
+    if (saveButton) saveButton.disabled = false;
+  }
+
+  function renderDetectEditor({ dataset, item, editor, overlay, panel, saveButton }) {
+    panel.innerHTML = "";
+    overlay.innerHTML = "";
+    overlay.classList.add("is-editable");
+
+    const toolbar = createNode("div", "yolo-review-edit-toolbar");
+    const addButton = createNode("button", "yolo-review-tool-button", editor.drawMode ? "正在画框" : "新增框");
+    addButton.type = "button";
+    addButton.classList.toggle("is-active", editor.drawMode);
+    const deleteButton = createNode("button", "yolo-review-tool-button yolo-review-tool-button--danger", "删除框");
+    deleteButton.type = "button";
+    deleteButton.disabled = editor.selectedIndex < 0;
+    toolbar.appendChild(addButton);
+    toolbar.appendChild(deleteButton);
+    toolbar.appendChild(createNode("span", "yolo-review-edit-status", `${editor.labels.length} 个框`));
+    panel.appendChild(toolbar);
+
+    const list = createNode("div", "yolo-review-label-editor-list");
+    panel.appendChild(list);
+
+    function rerender() {
+      renumberLabels(editor);
+      renderDetectEditor({ dataset, item, editor, overlay, panel, saveButton });
+    }
+
+    addButton.addEventListener("click", () => {
+      editor.drawMode = !editor.drawMode;
+      rerender();
+    });
+    deleteButton.addEventListener("click", () => {
+      if (editor.selectedIndex < 0) return;
+      editor.labels.splice(editor.selectedIndex, 1);
+      editor.selectedIndex = Math.min(editor.selectedIndex, editor.labels.length - 1);
+      editor.answer = editor.labels.length ? "YES" : "NO";
+      markEditorDirty(editor, saveButton);
+      rerender();
+    });
+
+    editor.labels.forEach((label, index) => {
+      const box = createNode("div", "yolo-review-box yolo-review-box--editable");
+      box.classList.toggle("is-selected", index === editor.selectedIndex);
+      const style = labelToBoxStyle(label);
+      Object.assign(box.style, style);
+      box.dataset.index = String(index);
+      box.appendChild(createNode("span", "", label.class_name || `#${index + 1}`));
+      ["nw", "ne", "sw", "se"].forEach((pos) => {
+        const handle = createNode("i", `yolo-review-box-handle yolo-review-box-handle--${pos}`);
+        handle.dataset.handle = pos;
+        box.appendChild(handle);
+      });
+      overlay.appendChild(box);
+
+      box.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        editor.selectedIndex = index;
+        const handle = event.target?.dataset?.handle || "move";
+        const start = pointerToOverlayUnit(event, overlay);
+        const original = { ...editor.labels[index] };
+        box.setPointerCapture?.(event.pointerId);
+        box.classList.add("is-dragging");
+        function move(moveEvent) {
+          const point = pointerToOverlayUnit(moveEvent, overlay);
+          const dx = point.x - start.x;
+          const dy = point.y - start.y;
+          const next = { ...original };
+          if (handle === "move") {
+            next.x = Math.max(next.w / 2, Math.min(1 - next.w / 2, original.x + dx));
+            next.y = Math.max(next.h / 2, Math.min(1 - next.h / 2, original.y + dy));
+          } else {
+            let left = original.x - original.w / 2;
+            let right = original.x + original.w / 2;
+            let top = original.y - original.h / 2;
+            let bottom = original.y + original.h / 2;
+            if (handle.includes("w")) left = clampUnit(left + dx);
+            if (handle.includes("e")) right = clampUnit(right + dx);
+            if (handle.includes("n")) top = clampUnit(top + dy);
+            if (handle.includes("s")) bottom = clampUnit(bottom + dy);
+            if (right < left) [left, right] = [right, left];
+            if (bottom < top) [top, bottom] = [bottom, top];
+            next.w = Math.max(0.002, right - left);
+            next.h = Math.max(0.002, bottom - top);
+            next.x = Math.max(next.w / 2, Math.min(1 - next.w / 2, (left + right) / 2));
+            next.y = Math.max(next.h / 2, Math.min(1 - next.h / 2, (top + bottom) / 2));
+          }
+          editor.labels[index] = next;
+          Object.assign(box.style, labelToBoxStyle(next));
+          markEditorDirty(editor, saveButton);
+        }
+        function end(endEvent) {
+          box.classList.remove("is-dragging");
+          box.releasePointerCapture?.(endEvent.pointerId);
+          box.removeEventListener("pointermove", move);
+          box.removeEventListener("pointerup", end);
+          box.removeEventListener("pointercancel", end);
+          rerender();
+        }
+        box.addEventListener("pointermove", move);
+        box.addEventListener("pointerup", end);
+        box.addEventListener("pointercancel", end);
+      });
+    });
+
+    let drawing = null;
+    overlay.onpointerdown = (event) => {
+      if (!editor.drawMode || event.target !== overlay) return;
+      event.preventDefault();
+      drawing = pointerToOverlayUnit(event, overlay);
+      const draft = createNode("div", "yolo-review-box yolo-review-box--draft");
+      overlay.appendChild(draft);
+      overlay.setPointerCapture?.(event.pointerId);
+      function move(moveEvent) {
+        const point = pointerToOverlayUnit(moveEvent, overlay);
+        const left = Math.min(drawing.x, point.x);
+        const top = Math.min(drawing.y, point.y);
+        const w = Math.abs(point.x - drawing.x);
+        const h = Math.abs(point.y - drawing.y);
+        Object.assign(draft.style, {
+          left: `${left * 100}%`,
+          top: `${top * 100}%`,
+          width: `${Math.max(0.2, w * 100)}%`,
+          height: `${Math.max(0.2, h * 100)}%`
+        });
+      }
+      function end(endEvent) {
+        const point = pointerToOverlayUnit(endEvent, overlay);
+        draft.remove();
+        overlay.releasePointerCapture?.(endEvent.pointerId);
+        overlay.removeEventListener("pointermove", move);
+        overlay.removeEventListener("pointerup", end);
+        overlay.removeEventListener("pointercancel", end);
+        const left = Math.min(drawing.x, point.x);
+        const right = Math.max(drawing.x, point.x);
+        const top = Math.min(drawing.y, point.y);
+        const bottom = Math.max(drawing.y, point.y);
+        if (right - left > 0.004 && bottom - top > 0.004) {
+          const className = dataset.classes?.[0] || editor.className || "object";
+          editor.labels.push(normalizeEditorLabel({
+            class_name: className,
+            x: (left + right) / 2,
+            y: (top + bottom) / 2,
+            w: right - left,
+            h: bottom - top
+          }, editor.labels.length, dataset));
+          editor.selectedIndex = editor.labels.length - 1;
+          editor.answer = "YES";
+          markEditorDirty(editor, saveButton);
+        }
+        editor.drawMode = false;
+        drawing = null;
+        rerender();
+      }
+      overlay.addEventListener("pointermove", move);
+      overlay.addEventListener("pointerup", end);
+      overlay.addEventListener("pointercancel", end);
+    };
+
+    if (!editor.labels.length) {
+      list.appendChild(createNode("p", "yolo-review-label-line", "当前没有框，可以点击新增框后在图片上拖拽画框。"));
+      return;
+    }
+
+    editor.labels.forEach((label, index) => {
+      const row = createNode("div", "yolo-review-label-editor-row");
+      row.classList.toggle("is-selected", index === editor.selectedIndex);
+      row.addEventListener("click", () => {
+        editor.selectedIndex = index;
+        rerender();
+      });
+      const labelIndex = createNode("strong", "", String(index + 1));
+      row.appendChild(labelIndex);
+      const select = document.createElement("select");
+      const classOptions = dataset.classes?.length ? dataset.classes : [label.class_name || "object"];
+      classOptions.forEach((name) => {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        select.appendChild(option);
+      });
+      if (![...select.options].some((option) => normalizeClassToken(option.value) === normalizeClassToken(label.class_name))) {
+        const option = document.createElement("option");
+        option.value = label.class_name;
+        option.textContent = label.class_name;
+        select.appendChild(option);
+      }
+      select.value = label.class_name;
+      select.addEventListener("change", () => {
+        editor.labels[index] = normalizeEditorLabel({ ...editor.labels[index], class_name: select.value }, index, dataset);
+        editor.selectedIndex = index;
+        markEditorDirty(editor, saveButton);
+        rerender();
+      });
+      row.appendChild(select);
+      select.addEventListener("click", (event) => event.stopPropagation());
+      ["x", "y", "w", "h"].forEach((key) => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "0.0001";
+        input.min = "0";
+        input.max = "1";
+        input.value = formatCoord(label[key]);
+        input.title = key;
+        input.addEventListener("change", () => {
+          editor.labels[index] = normalizeEditorLabel({ ...editor.labels[index], [key]: Number(input.value) }, index, dataset);
+          editor.selectedIndex = index;
+          markEditorDirty(editor, saveButton);
+          rerender();
+        });
+        input.addEventListener("click", (event) => event.stopPropagation());
+        row.appendChild(input);
+      });
+      const remove = createNode("button", "yolo-review-row-delete", "删");
+      remove.type = "button";
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        editor.labels.splice(index, 1);
+        editor.selectedIndex = Math.min(index, editor.labels.length - 1);
+        editor.answer = editor.labels.length ? "YES" : "NO";
+        markEditorDirty(editor, saveButton);
+        rerender();
+      });
+      row.appendChild(remove);
+      list.appendChild(row);
+    });
+  }
+
+  function renderClassifyEditor({ dataset, editor, panel, saveButton }) {
+    panel.innerHTML = "";
+    const verdicts = createNode("div", "yolo-review-verdicts");
+    ["YES", "NO"].forEach((answer) => {
+      const button = createNode("button", "", answer === "YES" ? "Yes" : "No");
+      button.type = "button";
+      button.classList.toggle("is-active", editor.answer === answer);
+      button.addEventListener("click", () => {
+        editor.answer = answer;
+        markEditorDirty(editor, saveButton);
+        renderClassifyEditor({ dataset, editor, panel, saveButton });
+      });
+      verdicts.appendChild(button);
+    });
+    panel.appendChild(verdicts);
+
+    const field = createNode("label", "yolo-review-editor-field");
+    field.appendChild(createNode("span", "", "标签"));
+    const select = document.createElement("select");
+    const classes = dataset.classes?.length ? dataset.classes : [editor.className || "positive"];
+    classes.forEach((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      select.appendChild(option);
+    });
+    if (editor.className && ![...select.options].some((option) => option.value === editor.className)) {
+      const option = document.createElement("option");
+      option.value = editor.className;
+      option.textContent = editor.className;
+      select.appendChild(option);
+    }
+    select.value = editor.className || classes[0] || "";
+    select.addEventListener("change", () => {
+      editor.className = select.value;
+      markEditorDirty(editor, saveButton);
+    });
+    field.appendChild(select);
+    panel.appendChild(field);
+  }
+
+  function renderManualEditor(dataset, item, overlay) {
+    const editor = makeEditorState(dataset, item);
+    const wrap = createNode("div", "yolo-review-editor");
+    const head = createNode("div", "yolo-review-section-head");
+    head.appendChild(createNode("h3", "", "人工编辑"));
+    const stateChip = createNode("span", `ai-history-chip ${item.manual_annotation_status ? "tone-yes" : "tone-idle"}`, item.manual_annotation_status === "saved" ? "已人工保存" : "未人工保存");
+    head.appendChild(stateChip);
+    wrap.appendChild(head);
+
+    const body = createNode("div", "yolo-review-editor-body");
+    wrap.appendChild(body);
+
+    const actions = createNode("div", "yolo-review-editor-actions");
+    const saveButton = createNode("button", "yolo-review-save", "保存标注");
+    saveButton.type = "button";
+    saveButton.disabled = true;
+    const deleteButton = createNode("button", "yolo-review-delete", "删除样本");
+    deleteButton.type = "button";
+    actions.appendChild(saveButton);
+    actions.appendChild(deleteButton);
+    wrap.appendChild(actions);
+
+    if (dataset.kind === "classify") {
+      renderClassifyEditor({ dataset, editor, panel: body, saveButton });
+    } else {
+      renderDetectEditor({ dataset, item, editor, overlay, panel: body, saveButton });
+    }
+
+    saveButton.addEventListener("click", async () => {
+      saveButton.disabled = true;
+      saveButton.textContent = "保存中...";
+      setStatus("保存人工标注...", "loading");
+      try {
+        const payload = {
+          dataset_id: dataset.id,
+          item_key: item.item_key,
+          kind: dataset.kind,
+          answer: dataset.kind === "detect" ? (editor.labels.length ? "YES" : "NO") : editor.answer,
+          class_name: dataset.kind === "classify" ? editor.className : "",
+          labels: editor.labels.map((label) => ({
+            class_name: label.class_name,
+            class_id: label.class_id,
+            x: Number(label.x),
+            y: Number(label.y),
+            w: Number(label.w),
+            h: Number(label.h)
+          }))
+        };
+        const data = await postJson(endpoints.annotation, payload);
+        renderDetail(data.dataset, data.item);
+        await loadItems();
+        renderListActive(item.item_key);
+        setStatus("人工标注已保存", "ok");
+      } catch (error) {
+        saveButton.disabled = false;
+        saveButton.textContent = "保存标注";
+        setStatus(`保存失败：${error?.message || "未知错误"}`, "error");
+      }
+    });
+
+    deleteButton.addEventListener("click", async () => {
+      if (!window.confirm("确认从当前人工审核列表删除这个样本？源图片不会被物理删除。")) return;
+      deleteButton.disabled = true;
+      deleteButton.textContent = "删除中...";
+      setStatus("删除样本...", "loading");
+      try {
+        await postJson(endpoints.deleteItem, {
+          dataset_id: dataset.id,
+          item_key: item.item_key,
+          reason: "manual_review_delete"
+        });
+        resetDetail("样本已从人工审核列表删除。");
+        await loadItems({ resetPage: false });
+        setStatus("样本已删除", "ok");
+      } catch (error) {
+        deleteButton.disabled = false;
+        deleteButton.textContent = "删除样本";
+        setStatus(`删除失败：${error?.message || "未知错误"}`, "error");
+      }
+    });
+
+    return wrap;
+  }
+
   function enableDragView(stage, content) {
     if (!stage || !content) return;
     const img = content.querySelector("img");
@@ -1054,7 +1495,8 @@
     const imageBlock = createNode("div", "yolo-review-image-block");
     const stage = createNode("div", "yolo-review-image-stage");
     const isVehicleCollection = item.source_type === "vehicle_collection" || dataset.source_type === "vehicle_collection";
-    if (isVehicleCollection) {
+    const allowPan = isVehicleCollection && dataset.kind === "classify";
+    if (allowPan) {
       stage.classList.add("yolo-review-image-stage--draggable");
     }
     const panContent = createNode("div", "yolo-review-pan-content");
@@ -1068,9 +1510,11 @@
     panContent.appendChild(img);
     panContent.appendChild(overlay);
     stage.appendChild(panContent);
-    if (isVehicleCollection) {
+    if (allowPan) {
       stage.appendChild(createNode("p", "yolo-review-drag-hint", "拖动查看 · 滚轮缩放 · 双击复位"));
       enableDragView(stage, panContent);
+    } else if (dataset.kind === "detect") {
+      stage.appendChild(createNode("p", "yolo-review-drag-hint", "拖动框移动 · 拖角缩放 · 新增框后拖拽画框"));
     }
     renderBoxes(overlay, item.labels || []);
     imageBlock.appendChild(stage);
@@ -1101,6 +1545,7 @@
     detailGrid.appendChild(imageBlock);
     detailGrid.appendChild(meta);
     refs.detail.appendChild(detailGrid);
+    refs.detail.appendChild(renderManualEditor(dataset, item, overlay));
 
     const labels = createNode("div", "yolo-review-labels");
     const labelTitle = createNode("div", "yolo-review-section-head");
