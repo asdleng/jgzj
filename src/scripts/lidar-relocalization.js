@@ -171,9 +171,15 @@
     const capture = status?.capture?.last || null;
     const captureTools = Array.isArray(tools.capture_tools) ? tools.capture_tools : [];
     const inferTools = Array.isArray(tools.infer_tools) ? tools.infer_tools : [];
+    const serverInference = Boolean(tools.server_inference || model.phase === "server_local_ready");
+    const inferLabel = inferTools.length
+      ? inferTools.join(" / ")
+      : serverInference
+        ? "服务器本地推理"
+        : "未部署";
     addMeta(pipelineNode, "车端工具", tools.count ? `${tools.count} 个` : "-", tools.count ? "ok" : "warn");
     addMeta(pipelineNode, "当前帧抓取", captureTools.length ? captureTools.join(" / ") : "缺 LiDAR 抓取工具", captureTools.length ? "ok" : "warn");
-    addMeta(pipelineNode, "推理工具", inferTools.length ? inferTools.join(" / ") : "未部署", inferTools.length ? "ok" : "warn");
+    addMeta(pipelineNode, "推理工具", inferLabel, inferTools.length || serverInference ? "ok" : "warn");
     addMeta(pipelineNode, "模型阶段", model.phase || "not_deployed", model.service_ready ? "ok" : "warn");
     addMeta(pipelineNode, "最近抓取", capture ? `${capture.tool_name || "-"} · ${formatTime(capture.captured_at)}` : "-");
     addMeta(pipelineNode, "Bundle", capture?.bundle_id || "-");

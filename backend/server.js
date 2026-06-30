@@ -176,6 +176,16 @@ const lidarRelocalizationModelCheckpoint =
 const lidarRelocalizationFallbackCheckpoint =
   process.env.LIDAR_RELOCALIZATION_FALLBACK_CHECKPOINT ||
   `${lidarRelocalizationA100Root}/runs/nclt_2012_02_04_win200ms_5k_20260630_gpu3/model_best.pth.tar`;
+const lidarRelocalizationInferScript = path.resolve(
+  process.env.LIDAR_RELOCALIZATION_INFER_SCRIPT ||
+    path.resolve(__dirname, '../scripts/lidar_relocalization_infer.py')
+);
+const lidarRelocalizationInferTimeoutMs = Number(
+  process.env.LIDAR_RELOCALIZATION_INFER_TIMEOUT_MS || 180000
+);
+const lidarRelocalizationMapUploadBaseUrl = String(
+  process.env.LIDAR_RELOCALIZATION_MAP_UPLOAD_BASE_URL || 'http://100.118.150.2:19080'
+).replace(/\/+$/, '');
 const cloudOpsRouteCatalogCache = new Map();
 const cloudOpsAudioAlsaCache = new Map();
 const projectRoot = path.resolve(__dirname, '..');
@@ -4839,6 +4849,211 @@ async function writeLastLidarRelocCapture(vehicleId, capture) {
   return capturePath;
 }
 
+function lidarRelocLocalInferReady() {
+  return fsSync.existsSync(lidarRelocalizationInferScript);
+}
+
+function lidarRelocMapUploadUrls(vehicleId) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  const uploadUrl = `${lidarRelocalizationMapUploadBaseUrl}/upload/${encodeURIComponent(
+    normalizedVehicleId
+  )}/GlobalMap.pcd`;
+  return {
+    upload_url: uploadUrl,
+    status_url: `${uploadUrl}/status`
+  };
+}
+
+function readLidarRelocRemoteMapSize(status) {
+  return readLidarRelocNumber(
+    status?.map?.pointcloud?.size_bytes,
+    status?.map?.info?.size_bytes,
+    status?.map?.pointcloud?.candidate_status?.find?.((item) => item?.exists)?.size_bytes
+  );
+}
+
+async function ensureLidarRelocVehicleMap(vehicleId, status, options = {}) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  const localBefore = await statLidarRelocMap(normalizedVehicleId);
+  const remoteSize = readLidarRelocRemoteMapSize(status);
+  const sizeMatches =
+    localBefore.available &&
+    (!remoteSize || Math.abs(Number(localBefore.size_bytes || 0) - Number(remoteSize)) <= 1024);
+  if (sizeMatches) {
+    return {
+      ok: true,
+      synced: false,
+      phase: 'local_map_ready',
+      map: localBefore,
+      remote_size_bytes: remoteSize
+    };
+  }
+
+  const toolNames = new Set([
+    ...(Array.isArray(status?.tools?.capture_tools) ? status.tools.capture_tools : []),
+    ...(Array.isArray(status?.tools?.infer_tools) ? status.tools.infer_tools : [])
+  ]);
+  if (status?.tools?.map_pointcloud_meta) {
+    toolNames.add('map.pointcloud.meta');
+  }
+  if (!status?.tools?.map_pointcloud_upload && !toolNames.has('map.pointcloud.upload')) {
+    return {
+      ok: false,
+      synced: false,
+      phase: 'map_upload_tool_missing',
+      detail: '车端未上报 map.pointcloud.upload，服务器无法自动同步全局点云地图。',
+      map: localBefore,
+      remote_size_bytes: remoteSize
+    };
+  }
+
+  const urls = lidarRelocMapUploadUrls(normalizedVehicleId);
+  const uploadArgs = {
+    upload_url: urls.upload_url,
+    status_url: urls.status_url,
+    method: 'POST',
+    staging_dir: '/home/nvidia/auto_ad_ai_map_upload',
+    cleanup: false,
+    chunk_size_bytes: 32 * 1024 * 1024,
+    max_retries: 20,
+    max_single_upload_bytes: 64 * 1024 * 1024,
+    copy_timeout_s: 900,
+    upload_timeout_s: 1800,
+    ...(options.args && typeof options.args === 'object' && !Array.isArray(options.args)
+      ? options.args
+      : {})
+  };
+  const timeout_s = toFiniteInteger(options.timeout_s, 1200, { min: 60, max: 2400 });
+  const execution = await executeLidarRelocTool(
+    normalizedVehicleId,
+    'map.pointcloud.upload',
+    uploadArgs,
+    timeout_s
+  );
+  const localAfter = await statLidarRelocMap(normalizedVehicleId);
+  return {
+    ok: Boolean(execution.ok && localAfter.available),
+    synced: true,
+    phase: execution.ok ? 'map_uploaded' : 'map_upload_failed',
+    map: localAfter,
+    remote_size_bytes: remoteSize,
+    upload: {
+      urls,
+      args: sanitizeCloudOpsPayload(uploadArgs),
+      result: unwrapCloudOpsToolResult(execution),
+      execution: sanitizeCloudOpsPayload(execution)
+    },
+    detail: execution.ok ? undefined : execution.detail || execution.error || 'map.pointcloud.upload_failed'
+  };
+}
+
+async function captureLidarRelocCurrentFrame(vehicleId, status, options = {}) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  const captureTools = Array.isArray(status?.tools?.capture_tools) ? status.tools.capture_tools : [];
+  const toolName = captureTools.find((name) => String(name).startsWith('lidar.')) || '';
+  if (!toolName) {
+    const error = new Error('车端未上报 LiDAR 当前帧抓取工具。');
+    error.status = 501;
+    error.phase = 'lidar_capture_tool_missing';
+    error.required_tools = status?.tools?.missing?.lidar_capture || [
+      'lidar.relocalization_capture',
+      'lidar.capture_current_frame'
+    ];
+    throw error;
+  }
+
+  const requestArgs =
+    options.args && typeof options.args === 'object' && !Array.isArray(options.args)
+      ? options.args
+      : {};
+  const args = {
+    topic: '/filtered_points',
+    timeout_s: 5,
+    max_points: 60000,
+    min_range_m: 0,
+    max_range_m: 120,
+    include_pointcloud: true,
+    include_pose: true,
+    include_localization: true,
+    ...requestArgs
+  };
+  const timeout_s = toFiniteInteger(options.timeout_s, 30, { min: 5, max: 120 });
+  const execution = await executeLidarRelocTool(normalizedVehicleId, toolName, args, timeout_s);
+  const response = unwrapCloudOpsResponse(execution);
+  const result = unwrapCloudOpsToolResult(execution);
+  const capture = {
+    ok: execution.ok,
+    captured_at: new Date().toISOString(),
+    vehicle_id: normalizedVehicleId,
+    tool_name: toolName,
+    args: sanitizeCloudOpsPayload(args),
+    result,
+    response: sanitizeCloudOpsPayload(response),
+    execution: sanitizeCloudOpsPayload(execution)
+  };
+  if (execution.ok) {
+    capture.local_record = await writeLastLidarRelocCapture(normalizedVehicleId, capture);
+  }
+  return {
+    ok: execution.ok,
+    phase: execution.ok ? 'lidar_frame_captured' : 'lidar_frame_capture_failed',
+    capture,
+    detail: execution.ok ? undefined : execution.detail || execution.error || `${toolName}_failed`
+  };
+}
+
+async function runLidarRelocServerInfer(vehicleId, mapPath, capturePath, options = {}) {
+  if (!lidarRelocLocalInferReady()) {
+    const error = new Error('服务器本地 LiDAR 重定位推理脚本不存在。');
+    error.status = 501;
+    error.phase = 'server_infer_script_missing';
+    throw error;
+  }
+  const returnTopk = toFiniteInteger(options.return_topk, 5, { min: 1, max: 20 });
+  const scriptArgs = [
+    lidarRelocalizationInferScript,
+    '--vehicle-id',
+    vehicleId,
+    '--map-pcd',
+    mapPath,
+    '--capture-json',
+    capturePath,
+    '--checkpoint',
+    lidarRelocalizationModelCheckpoint,
+    '--return-topk',
+    String(returnTopk)
+  ];
+  const inferOptions =
+    options.server_args && typeof options.server_args === 'object' && !Array.isArray(options.server_args)
+      ? options.server_args
+      : {};
+  for (const [key, value] of Object.entries(inferOptions)) {
+    if (value === undefined || value === null || value === '') {
+      continue;
+    }
+    const normalizedKey = String(key).replace(/_/g, '-');
+    scriptArgs.push(`--${normalizedKey}`, String(value));
+  }
+  const { stdout, stderr } = await execFileAsync('python3', scriptArgs, {
+    timeout: lidarRelocalizationInferTimeoutMs,
+    maxBuffer: 20 * 1024 * 1024
+  });
+  const line = String(stdout || '')
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .pop();
+  if (!line) {
+    throw new Error(stderr || 'lidar_relocalization_infer_empty_output');
+  }
+  return {
+    result: parseJsonField(line, null),
+    stdout,
+    stderr,
+    script: lidarRelocalizationInferScript
+  };
+}
+
 async function executeLidarRelocTool(vehicleId, toolName, args = {}, timeout_s = 25) {
   return executeCloudOpsAction(
     {
@@ -4870,6 +5085,7 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
   const toolNames = extractCloudAgentToolNamesFromExecution(toolExecution);
   const captureTools = listLidarRelocCaptureTools(toolNames);
   const inferTools = listLidarRelocInferTools(toolNames);
+  const localInferReady = lidarRelocLocalInferReady();
 
   const mapLocal = await statLidarRelocMap(normalizedVehicleId);
   let mapInfo = null;
@@ -4911,18 +5127,20 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
       has_tool_list: toolExecution.ok,
       map_info: toolNames.has('map.info'),
       map_pointcloud_meta: toolNames.has('map.pointcloud.meta'),
+      map_pointcloud_upload: toolNames.has('map.pointcloud.upload'),
       map_preview: toolNames.has('map.preview'),
       status_localization: toolNames.has('status.localization'),
       capture_tools: captureTools,
       lidar_capture: captureTools.some((name) => name.startsWith('lidar.')),
       context_capture: toolNames.has('vpr.capture_bundle'),
       infer_tools: inferTools,
-      inference: inferTools.length > 0,
+      server_inference: localInferReady,
+      inference: inferTools.length > 0 || localInferReady,
       missing: {
         lidar_capture: captureTools.some((name) => name.startsWith('lidar.'))
           ? []
           : ['lidar.relocalization_capture', 'lidar.capture_current_frame'],
-        inference: inferTools.length ? [] : ['lidar.relocalization_infer', 'bevplace.infer']
+        inference: inferTools.length || localInferReady ? [] : ['lidar.relocalization_infer', 'bevplace.infer']
       }
     },
     map: {
@@ -4939,8 +5157,9 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
       label: lidarRelocalizationModelLabel,
       checkpoint: lidarRelocalizationModelCheckpoint,
       fallback_checkpoint: lidarRelocalizationFallbackCheckpoint,
-      service_ready: inferTools.length > 0,
-      phase: inferTools.length ? 'tool_ready' : 'not_deployed'
+      infer_script: lidarRelocalizationInferScript,
+      service_ready: inferTools.length > 0 || localInferReady,
+      phase: inferTools.length ? 'tool_ready' : localInferReady ? 'server_local_ready' : 'not_deployed'
     },
     capture: {
       last: lastCapture
@@ -9993,67 +10212,130 @@ app.post(
       const status = await collectLidarRelocStatus(vehicleId, { tool_timeout_s: 20 });
       const inferTools = Array.isArray(status?.tools?.infer_tools) ? status.tools.infer_tools : [];
       const toolName = inferTools[0] || '';
-      const lastCapture = await readLastLidarRelocCapture(vehicleId);
+      const requestArgs = req.body && typeof req.body === 'object' ? req.body.args : null;
+      const preferCloudTool = req.body?.mode === 'cloud_tool' && Boolean(toolName);
 
-      if (!toolName) {
-        return res.status(501).json({
+      const mapSync = await ensureLidarRelocVehicleMap(vehicleId, status, {
+        args: req.body?.map_upload_args,
+        timeout_s: req.body?.map_upload_timeout_s
+      });
+      if (!mapSync.ok || !mapSync.map?.available) {
+        return res.status(502).json({
           ok: false,
           vehicle_id: vehicleId,
-          phase: 'not_ready',
-          detail: 'BEVPlace++ 推理服务还没有接入 cloud-agent；当前页面已准备好接口合约，但不会伪造粗位姿。',
-          required_tools: status?.tools?.missing?.inference || [
-            'lidar.relocalization_infer',
-            'bevplace.infer'
-          ],
+          phase: mapSync.phase || 'map_unavailable',
+          detail: mapSync.detail || '服务器没有可用全局点云地图，且自动同步失败。',
+          required_tools: ['map.pointcloud.upload'],
           model: status.model,
           map: status.map,
-          localization: status.localization,
-          capture: status.capture
+          map_sync: mapSync
         });
       }
 
-      if (!lastCapture && !req.body?.capture_id && !req.body?.use_live_capture) {
-        return res.status(409).json({
+      const liveCapture = await captureLidarRelocCurrentFrame(vehicleId, status, {
+        args:
+          requestArgs && typeof requestArgs.capture === 'object' && !Array.isArray(requestArgs.capture)
+            ? requestArgs.capture
+            : req.body?.capture_args,
+        timeout_s: req.body?.capture_timeout_s
+      });
+      if (!liveCapture.ok || !liveCapture.capture?.local_record) {
+        return res.status(502).json({
           ok: false,
           vehicle_id: vehicleId,
-          phase: 'no_current_frame',
-          detail: '还没有当前帧/上下文抓取记录，请先抓取当前帧。',
-          model: status.model,
-          map: status.map
+          phase: liveCapture.phase || 'lidar_frame_capture_failed',
+          detail: liveCapture.detail || '当前帧 LiDAR 点云抓取失败。',
+          capture: liveCapture.capture,
+          map_sync: mapSync,
+          model: status.model
         });
       }
 
-      const requestArgs = req.body && typeof req.body === 'object' ? req.body.args : null;
-      const args = {
-        use_last_capture: !req.body?.capture_id,
-        capture_id: req.body?.capture_id || lastCapture?.result?.capture_id || lastCapture?.result?.bundle_id || null,
-        map_path: status?.map?.local?.available ? status.map.local.path : null,
-        map_version: status?.map?.map_version || null,
-        checkpoint: lidarRelocalizationModelCheckpoint,
-        return_topk: 5,
-        ...(requestArgs && typeof requestArgs === 'object' && !Array.isArray(requestArgs) ? requestArgs : {})
-      };
-      const timeout_s = toFiniteInteger(req.body?.timeout_s, 90, { min: 10, max: 120 });
-      const execution = await executeLidarRelocTool(vehicleId, toolName, args, timeout_s);
-      const result = unwrapCloudOpsToolResult(execution);
+      if (preferCloudTool) {
+        const args = {
+          use_last_capture: true,
+          capture_id:
+            liveCapture.capture?.result?.capture_id ||
+            liveCapture.capture?.result?.bundle_id ||
+            null,
+          map_path: mapSync.map.path,
+          map_version: status?.map?.map_version || null,
+          checkpoint: lidarRelocalizationModelCheckpoint,
+          return_topk: 5,
+          ...(requestArgs && typeof requestArgs === 'object' && !Array.isArray(requestArgs) ? requestArgs : {})
+        };
+        const timeout_s = toFiniteInteger(req.body?.timeout_s, 90, { min: 10, max: 120 });
+        const execution = await executeLidarRelocTool(vehicleId, toolName, args, timeout_s);
+        const result = unwrapCloudOpsToolResult(execution);
 
-      return res.status(execution.ok ? 200 : 502).json({
-        ok: execution.ok,
+        return res.status(execution.ok ? 200 : 502).json({
+          ok: execution.ok,
+          vehicle_id: vehicleId,
+          phase: execution.ok ? 'coarse_pose_ready' : 'infer_failed',
+          tool_name: toolName,
+          coarse_pose:
+            normalizeLidarRelocPose(result?.pose || result?.coarse_pose || result?.best_pose || result) || null,
+          confidence: readLidarRelocNumber(result?.confidence, result?.score, result?.best_score),
+          candidates: Array.isArray(result?.candidates) ? result.candidates : [],
+          result,
+          capture: {
+            captured_at: liveCapture.capture.captured_at,
+            tool_name: liveCapture.capture.tool_name,
+            capture_id: liveCapture.capture.result?.capture_id || null,
+            point_count: liveCapture.capture.result?.point_count || null
+          },
+          map_sync,
+          execution: sanitizeCloudOpsPayload(execution),
+          detail: execution.ok ? undefined : execution.detail || execution.error || `${toolName}_failed`
+        });
+      }
+
+      const serverInfer = await runLidarRelocServerInfer(
+        vehicleId,
+        mapSync.map.path,
+        liveCapture.capture.local_record,
+        {
+          return_topk: req.body?.return_topk,
+          server_args:
+            requestArgs && typeof requestArgs.server === 'object' && !Array.isArray(requestArgs.server)
+              ? requestArgs.server
+              : req.body?.server_args
+        }
+      );
+      const result = serverInfer.result || {};
+      const ok = result.ok !== false;
+
+      return res.status(ok ? 200 : 409).json({
+        ok,
         vehicle_id: vehicleId,
-        phase: execution.ok ? 'coarse_pose_ready' : 'infer_failed',
-        tool_name: toolName,
+        phase: result.phase || (ok ? 'coarse_pose_ready' : 'infer_failed'),
+        tool_name: 'server.local_bev',
         coarse_pose:
           normalizeLidarRelocPose(result?.pose || result?.coarse_pose || result?.best_pose || result) || null,
         confidence: readLidarRelocNumber(result?.confidence, result?.score, result?.best_score),
         candidates: Array.isArray(result?.candidates) ? result.candidates : [],
         result,
-        execution: sanitizeCloudOpsPayload(execution),
-        detail: execution.ok ? undefined : execution.detail || execution.error || `${toolName}_failed`
+        capture: {
+          captured_at: liveCapture.capture.captured_at,
+          tool_name: liveCapture.capture.tool_name,
+          capture_id: liveCapture.capture.result?.capture_id || null,
+          point_count: liveCapture.capture.result?.point_count || null,
+          source_point_count: liveCapture.capture.result?.source_point_count || null,
+          pose: liveCapture.capture.result?.pose || null
+        },
+        map_sync,
+        server_infer: {
+          script: serverInfer.script,
+          stderr: serverInfer.stderr || ''
+        },
+        detail: ok ? undefined : result.detail || 'server_lidar_relocalization_infer_failed'
       });
     } catch (error) {
-      return res.status(502).json({
+      return res.status(error?.status || 502).json({
         ok: false,
         vehicle_id: vehicleId,
+        phase: error?.phase || 'infer_failed',
+        required_tools: error?.required_tools,
         detail: error?.message || 'lidar_relocalization_infer_failed'
       });
     }
