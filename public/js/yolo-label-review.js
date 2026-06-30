@@ -70,6 +70,16 @@
       query: "",
       hasBox: true
     },
+    license_plate: {
+      label: "车牌事件 · 默认显示框",
+      source: "checker_archive",
+      datasetQuery: "license_plate",
+      qwenLabel: "",
+      className: "license_plate",
+      answer: "YES",
+      query: "",
+      hasBox: true
+    },
     phone: {
       label: "手机事件 · 默认显示框",
       source: "vehicle_collection",
@@ -332,6 +342,32 @@
     }
   }
 
+  function datasetMatchesPresetQuery(dataset, query) {
+    const needle = normalizeClassToken(query);
+    if (!needle) return false;
+    const tokens = [
+      dataset?.id,
+      dataset?.name,
+      dataset?.parent_name,
+      dataset?.profile,
+      ...(Array.isArray(dataset?.classes) ? dataset.classes : [])
+    ].map((value) => normalizeClassToken(value));
+    return tokens.some((value) => value && value.includes(needle));
+  }
+
+  function selectPresetDataset(preset) {
+    if (!preset?.datasetQuery) return;
+    const match = state.datasets.find((dataset) => datasetMatchesPresetQuery(dataset, preset.datasetQuery))
+      || state.allDatasets.find((dataset) => datasetMatchesPresetQuery(dataset, preset.datasetQuery));
+    if (!match) return;
+    if (refs.source && match.source_type) {
+      refs.source.value = match.source_type;
+      refreshDatasetOptions();
+    }
+    state.datasetId = match.id;
+    if (refs.dataset) refs.dataset.value = match.id;
+  }
+
   function updateEventButtons() {
     refs.eventButtons.forEach((button) => {
       button.classList.toggle("is-active", button.dataset.yoloReviewEvent === state.activeEvent);
@@ -355,6 +391,7 @@
     state.selectedItemKey = "";
 
     selectDatasetForSource(preset.source);
+    selectPresetDataset(preset);
     updateClassOptions();
     updateQwenOptions();
 
