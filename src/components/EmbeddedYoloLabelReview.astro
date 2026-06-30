@@ -71,7 +71,7 @@
   <section class="yolo-review-dataset-strip" aria-label="数据集总览">
     <div class="yolo-review-dataset-strip-head">
       <div>
-        <p class="yolo-review-dataset-title">数据集总览</p>
+        <p class="yolo-review-dataset-title">事件数据集</p>
         <p id="yolo-review-dataset-status" class="yolo-review-dataset-status">正在读取数据集。</p>
       </div>
     </div>
@@ -84,28 +84,29 @@
     <label class="yolo-review-field" for="yolo-review-source">
       <span>来源</span>
       <select id="yolo-review-source">
-        <option value="">全部</option>
-        <option value="checker_archive">云端校核数据</option>
-        <option value="vehicle_collection">车辆自采图片</option>
+        <option value="">全部来源</option>
+        <option value="vehicle_collection">车辆自采</option>
+        <option value="checker_archive">云端校核</option>
+        <option value="public_dataset">公开数据集</option>
       </select>
     </label>
     <label class="yolo-review-field" for="yolo-review-dataset">
       <span>数据集</span>
       <select id="yolo-review-dataset"></select>
     </label>
-    <label class="yolo-review-field" for="yolo-review-split">
+    <label class="yolo-review-field yolo-review-field--advanced" for="yolo-review-split">
       <span>Split</span>
       <select id="yolo-review-split">
         <option value="">全部</option>
       </select>
     </label>
-    <label class="yolo-review-field" for="yolo-review-class">
+    <label class="yolo-review-field yolo-review-field--advanced" for="yolo-review-class">
       <span>AI标类别</span>
       <select id="yolo-review-class">
         <option value="">全部</option>
       </select>
     </label>
-    <label class="yolo-review-field" for="yolo-review-answer">
+    <label class="yolo-review-field yolo-review-field--advanced" for="yolo-review-answer">
       <span>AI答案</span>
       <select id="yolo-review-answer">
         <option value="">全部</option>
@@ -113,20 +114,20 @@
         <option value="NO">NO</option>
       </select>
     </label>
-    <label class="yolo-review-field" for="yolo-review-qwen-label">
+    <label class="yolo-review-field yolo-review-field--advanced" for="yolo-review-qwen-label">
       <span>Qwen标签</span>
       <select id="yolo-review-qwen-label">
         <option value="">全部</option>
       </select>
     </label>
-    <label class="yolo-review-field yolo-review-field--toggle" for="yolo-review-has-box">
+    <label class="yolo-review-field yolo-review-field--toggle yolo-review-field--advanced" for="yolo-review-has-box">
       <span>框过滤</span>
       <span class="yolo-review-toggle-control">
         <input id="yolo-review-has-box" type="checkbox" />
         <span>隐藏无框</span>
       </span>
     </label>
-    <label class="yolo-review-field yolo-review-field--search" for="yolo-review-query">
+    <label class="yolo-review-field yolo-review-field--search yolo-review-field--advanced" for="yolo-review-query">
       <span>搜索</span>
       <input id="yolo-review-query" type="search" maxlength="120" placeholder="request / task / 地点" />
     </label>
@@ -152,4 +153,4 @@
   </div>
 </section>
 
-<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260630-1" defer></script>
+<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260630-4" defer></script>

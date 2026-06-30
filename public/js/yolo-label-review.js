@@ -33,117 +33,136 @@
 
   const state = {
     allDatasets: [],
+    eventDatasets: [],
     datasets: [],
     datasetId: "",
     page: 1,
     pageSize: 24,
     totalPages: 1,
     selectedItemKey: "",
-    activeEvent: "all"
+    activeEvent: "all",
+    detailRequestSeq: 0
   };
 
   const eventPresets = {
     all: {
-      label: "全部图片",
-      source: "",
+      label: "全部事件 · 全部来源",
+      tokens: [],
       qwenLabel: "",
       className: "",
       answer: "",
       query: "",
-      hasBox: false
+      hasBox: false,
+      taskKind: "mixed"
     },
     person: {
-      label: "人员事件 · 默认显示框",
-      source: "vehicle_collection",
+      label: "人员事件 · 全部来源 · 默认显示框",
+      tokens: ["person", "pedestrian", "人员"],
       qwenLabel: "person",
       className: "person",
       answer: "YES",
       query: "",
-      hasBox: true
+      hasBox: true,
+      taskKind: "detect"
     },
     vehicle: {
-      label: "车辆事件 · 默认显示框",
-      source: "vehicle_collection",
+      label: "车辆事件 · 全部来源 · 默认显示框",
+      tokens: ["vehicle", "car", "truck", "bus", "nonmotor", "车辆"],
       qwenLabel: "vehicle",
       className: "vehicle",
       answer: "YES",
       query: "",
-      hasBox: true
+      hasBox: true,
+      taskKind: "detect"
     },
     license_plate: {
-      label: "车牌事件 · 默认显示框",
-      source: "checker_archive",
-      datasetQuery: "license_plate",
+      label: "车牌事件 · 全部来源 · 默认显示框",
+      tokens: ["license_plate", "plate", "ccpd", "车牌"],
       qwenLabel: "",
-      className: "license_plate",
+      className: "",
       answer: "YES",
       query: "",
-      hasBox: true
+      hasBox: true,
+      taskKind: "detect"
     },
     phone: {
-      label: "手机事件 · 默认显示框",
-      source: "vehicle_collection",
+      label: "手机事件 · 全部来源 · 默认显示框",
+      tokens: ["phone", "mobile", "手机"],
       qwenLabel: "phone",
       className: "phone",
       answer: "YES",
       query: "",
-      hasBox: true
+      hasBox: true,
+      taskKind: "detect"
     },
     smoking: {
-      label: "吸烟事件 · 默认 Yes/No",
-      source: "vehicle_collection",
+      label: "吸烟事件 · 全部来源 · 默认 Yes/No",
+      tokens: ["smoking", "smoke_cls", "person_behavior", "吸烟"],
       qwenLabel: "smoking",
       className: "smoking",
       answer: "YES",
       query: "",
-      hasBox: false
+      hasBox: false,
+      taskKind: "classify"
     },
     fire_smoke: {
-      label: "烟火事件 · 默认显示框",
-      source: "vehicle_collection",
+      label: "烟火事件 · 全部来源 · 默认显示框",
+      tokens: ["fire_smoke", "fire", "smoke", "flame", "烟", "火"],
       qwenLabel: "fire_smoke_candidate",
       className: "",
       answer: "",
       query: "",
-      hasBox: true
+      hasBox: true,
+      taskKind: "detect"
     },
     trash: {
-      label: "垃圾事件 · 默认显示框",
-      source: "vehicle_collection",
+      label: "垃圾事件 · 全部来源 · 默认显示框",
+      tokens: ["trash", "garbage", "litter", "垃圾"],
       qwenLabel: "trash",
       className: "trash",
       answer: "YES",
       query: "",
-      hasBox: true
+      hasBox: true,
+      taskKind: "detect"
     },
     stall: {
-      label: "摆摊事件 · 默认显示框",
-      source: "vehicle_collection",
+      label: "摆摊事件 · 全部来源 · 默认显示框",
+      tokens: ["stall", "booth", "vendor", "摆摊"],
       qwenLabel: "stall",
       className: "stall",
       answer: "YES",
       query: "",
-      hasBox: true
+      hasBox: true,
+      taskKind: "detect"
     },
     pet: {
-      label: "宠物事件 · 候选优先，带框样本自动显示框",
-      source: "vehicle_collection",
+      label: "宠物事件 · 全部来源 · 候选/框",
+      tokens: ["pet", "dog", "cat", "animal", "宠物"],
       qwenLabel: "pet",
-      className: "",
+      className: "pet",
       answer: "",
       query: "",
-      hasBox: false
+      hasBox: true,
+      taskKind: "detect"
     },
     fishing: {
-      label: "钓鱼事件 · 默认 Yes/No",
-      source: "",
+      label: "钓鱼事件 · 全部来源 · 默认 Yes/No",
+      tokens: ["fishing", "fishing_rod", "钓鱼"],
       qwenLabel: "",
       className: "",
       answer: "YES",
-      query: "fishing",
-      hasBox: false
+      query: "",
+      hasBox: false,
+      taskKind: "classify"
     }
   };
+
+  const sourceGroups = [
+    { value: "", label: "全部来源" },
+    { value: "vehicle_collection", label: "车辆自采" },
+    { value: "checker_archive", label: "云端校核" },
+    { value: "public_dataset", label: "公开数据集" }
+  ];
 
   function createNode(tag, className, text) {
     const node = document.createElement(tag);
@@ -255,10 +274,73 @@
     return `[${source}] ${profile}${parent} · ${dataset.kind || "dataset"} · ${compactNumber(dataset.total_images)}张`;
   }
 
+  function datasetSearchText(dataset) {
+    return [
+      dataset?.id,
+      dataset?.name,
+      dataset?.parent_name,
+      dataset?.profile,
+      dataset?.source,
+      dataset?.source_label,
+      dataset?.source_type,
+      ...(Array.isArray(dataset?.classes) ? dataset.classes : [])
+    ].map((value) => String(value || "").toLowerCase()).join(" ");
+  }
+
+  function datasetSourceGroup(dataset) {
+    if (dataset?.source_type === "vehicle_collection") return "vehicle_collection";
+    const text = datasetSearchText(dataset);
+    const publicTokens = [
+      "public",
+      "ccpd",
+      "lvis",
+      "objects365",
+      "license_plate",
+      "fishing_rod",
+      "pet_yolo_public",
+      "ground_seg"
+    ];
+    if (publicTokens.some((token) => text.includes(token))) {
+      return "public_dataset";
+    }
+    return "checker_archive";
+  }
+
+  function sourceGroupLabel(value) {
+    return sourceGroups.find((item) => item.value === value)?.label || "数据源";
+  }
+
   function datasetSourceText(dataset) {
-    if (dataset?.source_type === "vehicle_collection") return "车端采集";
-    if (dataset?.source_type === "checker_archive") return "云端校核";
+    const group = datasetSourceGroup(dataset);
+    if (group) return sourceGroupLabel(group);
     return dataset?.source_label || dataset?.source_type || dataset?.source || "数据源";
+  }
+
+  function datasetEventText(dataset) {
+    return datasetSearchText(dataset).replace(/[-\s]+/g, "_");
+  }
+
+  function datasetMatchesEvent(dataset, eventKey = state.activeEvent) {
+    if (!eventKey || eventKey === "all") return true;
+    const preset = eventPresets[eventKey];
+    if (!preset) return true;
+    const sourceGroup = datasetSourceGroup(dataset);
+    const text = datasetEventText(dataset);
+    const tokens = Array.isArray(preset.tokens) ? preset.tokens.map(normalizeClassToken).filter(Boolean) : [];
+    if (tokens.some((token) => text.includes(token))) {
+      return true;
+    }
+    if (sourceGroup !== "vehicle_collection") {
+      return false;
+    }
+    if (preset.qwenLabel || preset.className || preset.query) {
+      return true;
+    }
+    const vehicleTokens = [
+      preset.qwenLabel,
+      preset.className
+    ].map(normalizeClassToken).filter(Boolean);
+    return vehicleTokens.some((token) => text.includes(token));
   }
 
   function datasetTotalBoxes(dataset) {
@@ -327,45 +409,49 @@
     return !nextValue;
   }
 
-  function selectDatasetForSource(sourceType) {
-    if (!sourceType) {
-      if (refs.source) refs.source.value = "";
-      refreshDatasetOptions();
-      return;
-    }
-    if (refs.source) refs.source.value = sourceType;
-    refreshDatasetOptions();
-    const preferred = state.datasets.find((dataset) => dataset.source_type === sourceType);
-    if (preferred) {
-      state.datasetId = preferred.id;
-      if (refs.dataset) refs.dataset.value = preferred.id;
-    }
+  function resetDetail(message = "选择一条训练样本。") {
+    state.detailRequestSeq += 1;
+    state.selectedItemKey = "";
+    if (!refs.detail) return;
+    refs.detail.dataset.state = "idle";
+    refs.detail.innerHTML = "";
+    refs.detail.appendChild(createNode("p", "yolo-review-empty", message));
   }
 
-  function datasetMatchesPresetQuery(dataset, query) {
-    const needle = normalizeClassToken(query);
-    if (!needle) return false;
-    const tokens = [
-      dataset?.id,
-      dataset?.name,
-      dataset?.parent_name,
-      dataset?.profile,
-      ...(Array.isArray(dataset?.classes) ? dataset.classes : [])
-    ].map((value) => normalizeClassToken(value));
-    return tokens.some((value) => value && value.includes(needle));
+  function configureSourceOptions() {
+    if (!refs.source) return;
+    const previous = refs.source.value;
+    refs.source.innerHTML = "";
+    sourceGroups.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      refs.source.appendChild(option);
+    });
+    refs.source.value = sourceGroups.some((item) => item.value === previous) ? previous : "";
   }
 
-  function selectPresetDataset(preset) {
-    if (!preset?.datasetQuery) return;
-    const match = state.datasets.find((dataset) => datasetMatchesPresetQuery(dataset, preset.datasetQuery))
-      || state.allDatasets.find((dataset) => datasetMatchesPresetQuery(dataset, preset.datasetQuery));
-    if (!match) return;
-    if (refs.source && match.source_type) {
-      refs.source.value = match.source_type;
-      refreshDatasetOptions();
+  function applyEventFiltersForDataset(dataset) {
+    const preset = eventPresets[state.activeEvent] || eventPresets.all;
+    const sourceGroup = dataset ? datasetSourceGroup(dataset) : "";
+    const isVehicleCollection = sourceGroup === "vehicle_collection";
+    const isClassify = dataset?.kind === "classify" || preset.taskKind === "classify";
+
+    if (refs.split) refs.split.value = "";
+    if (refs.query) refs.query.value = "";
+    if (refs.qwenLabel) refs.qwenLabel.value = "";
+    if (refs.className) refs.className.value = "";
+    if (refs.answer) refs.answer.value = state.activeEvent === "all" ? "" : (preset.answer || "");
+    if (refs.hasBox) refs.hasBox.checked = state.activeEvent !== "all" && !isClassify && Boolean(preset.hasBox);
+
+    if (state.activeEvent === "all") return;
+    if (isVehicleCollection) {
+      setSelectValueIfPresent(refs.qwenLabel, preset.qwenLabel || "");
+      setSelectValueIfPresent(refs.className, preset.className || "");
+      if (preset.qwenLabel && refs.query && !refs.qwenLabel?.value && !refs.className?.value) {
+        refs.query.value = preset.qwenLabel;
+      }
     }
-    state.datasetId = match.id;
-    if (refs.dataset) refs.dataset.value = match.id;
   }
 
   function updateEventButtons() {
@@ -373,42 +459,22 @@
       button.classList.toggle("is-active", button.dataset.yoloReviewEvent === state.activeEvent);
     });
     if (refs.eventStatus) {
-      refs.eventStatus.textContent = eventPresets[state.activeEvent]?.label || "全部图片";
+      refs.eventStatus.textContent = eventPresets[state.activeEvent]?.label || "全部事件 · 全部来源";
     }
   }
 
   function markCustomEventFilter() {
-    state.activeEvent = "custom";
-    refs.eventButtons.forEach((button) => button.classList.remove("is-active"));
-    if (refs.eventStatus) {
-      refs.eventStatus.textContent = "自定义筛选";
-    }
+    updateEventButtons();
   }
 
   function applyReviewEvent(eventKey) {
-    const preset = eventPresets[eventKey] || eventPresets.all;
     state.activeEvent = eventPresets[eventKey] ? eventKey : "all";
-    state.selectedItemKey = "";
-
-    selectDatasetForSource(preset.source);
-    selectPresetDataset(preset);
+    if (refs.source) refs.source.value = "";
+    resetDetail("已切换事件，选择左侧样本查看详情。");
+    refreshDatasetOptions();
     updateClassOptions();
     updateQwenOptions();
-
-    if (refs.split) refs.split.value = "";
-    if (refs.answer) refs.answer.value = preset.answer || "";
-    if (refs.query) refs.query.value = preset.query || "";
-    if (refs.hasBox) refs.hasBox.checked = Boolean(preset.hasBox);
-
-    const qwenApplied = setSelectValueIfPresent(refs.qwenLabel, preset.qwenLabel);
-    const classApplied = setSelectValueIfPresent(refs.className, preset.className);
-    if (preset.qwenLabel && !qwenApplied && refs.query && !refs.query.value) {
-      refs.query.value = preset.qwenLabel;
-    }
-    if (preset.className && !classApplied && refs.query && !refs.query.value) {
-      refs.query.value = preset.className;
-    }
-
+    applyEventFiltersForDataset(selectedDataset());
     renderSummary(selectedDataset());
     renderDatasetCards();
     updateEventButtons();
@@ -418,15 +484,18 @@
   function renderDatasetCards() {
     if (!refs.datasetCards) return;
     refs.datasetCards.innerHTML = "";
-    const visible = state.allDatasets;
-    const total = state.allDatasets.length;
+    const visible = state.datasets;
+    const total = state.eventDatasets.length;
     if (refs.datasetStatus) {
-      const vehicleCount = visible.filter((dataset) => dataset.source_type === "vehicle_collection").length;
-      const checkerCount = visible.filter((dataset) => dataset.source_type === "checker_archive").length;
-      refs.datasetStatus.textContent = `全部来源 · ${compactNumber(total)} 个数据集 · 车端采集 ${compactNumber(vehicleCount)} · 云端校核 ${compactNumber(checkerCount)}`;
+      const counts = sourceGroups.slice(1).map((group) => {
+        const count = state.eventDatasets.filter((dataset) => datasetSourceGroup(dataset) === group.value).length;
+        return `${group.label} ${compactNumber(count)}`;
+      });
+      const sourceText = sourceGroupLabel(refs.source?.value || "");
+      refs.datasetStatus.textContent = `${eventPresets[state.activeEvent]?.label || "全部事件"} · ${sourceText} · ${compactNumber(total)} 个数据集 · ${counts.join(" · ")}`;
     }
     if (!visible.length) {
-      refs.datasetCards.appendChild(createNode("p", "yolo-review-empty", "还没有扫描到数据集。"));
+      refs.datasetCards.appendChild(createNode("p", "yolo-review-empty", "当前事件和来源下没有扫描到数据集。"));
       return;
     }
     visible.forEach((dataset) => {
@@ -436,18 +505,12 @@
       button.classList.toggle("is-active", dataset.id === state.datasetId);
       button.addEventListener("click", () => {
         if (dataset.id === state.datasetId) return;
-        markCustomEventFilter();
-        if (refs.source) refs.source.value = dataset.source_type || "";
-        refreshDatasetOptions();
         state.datasetId = dataset.id;
-        state.selectedItemKey = "";
+        resetDetail("已切换数据集，选择左侧样本查看详情。");
         if (refs.dataset) refs.dataset.value = dataset.id;
-        if (refs.split) refs.split.value = "";
-        if (refs.className) refs.className.value = "";
-        if (refs.answer) refs.answer.value = "";
-        if (refs.qwenLabel) refs.qwenLabel.value = "";
         updateClassOptions();
         updateQwenOptions();
+        applyEventFiltersForDataset(selectedDataset());
         renderSummary(selectedDataset());
         renderDatasetCards();
         loadItems({ resetPage: true }).catch(() => {});
@@ -503,7 +566,7 @@
     }
 
     const cells = [
-      ["来源", dataset.source_label || dataset.source_type || dataset.source || "-"],
+      ["来源", datasetSourceText(dataset)],
       ["Profile", dataset.profile || dataset.name || "-"],
       ["类型", dataset.kind === "classify" ? "分类" : "检测"],
       ["样本", compactNumber(dataset.total_images)],
@@ -540,10 +603,12 @@
 
   function refreshDatasetOptions() {
     const selectedSource = refs.source?.value || "";
-    state.datasets = state.allDatasets.filter((dataset) => {
+    state.eventDatasets = state.allDatasets.filter((dataset) => datasetMatchesEvent(dataset));
+    state.datasets = state.eventDatasets.filter((dataset) => {
       if (!selectedSource) return true;
-      return dataset.source_type === selectedSource;
+      return datasetSourceGroup(dataset) === selectedSource;
     });
+    if (!refs.dataset) return;
     refs.dataset.innerHTML = "";
     state.datasets.forEach((dataset) => {
       const option = document.createElement("option");
@@ -563,13 +628,15 @@
     try {
       const data = await requestJson(endpoints.datasets);
       state.allDatasets = Array.isArray(data.datasets) ? data.datasets : [];
+      configureSourceOptions();
       refreshDatasetOptions();
       if (!state.datasetId && state.datasets.length) {
         state.datasetId = state.datasets[0].id;
       }
-      refs.dataset.value = state.datasetId;
+      if (refs.dataset) refs.dataset.value = state.datasetId;
       updateClassOptions();
       updateQwenOptions();
+      applyEventFiltersForDataset(selectedDataset());
       renderDatasetCards();
       renderSummary(selectedDataset());
       updateEventButtons();
@@ -633,14 +700,22 @@
     if (!state.datasetId) {
       refs.list.innerHTML = "";
       refs.list.appendChild(createNode("p", "yolo-review-empty", "暂无数据集。"));
-      refs.detail.innerHTML = "";
-      refs.detail.appendChild(createNode("p", "yolo-review-empty", "暂无样本。"));
+      if (refs.page) refs.page.textContent = "第 1 / 1 页 · 0 条";
+      if (refs.prev) refs.prev.disabled = true;
+      if (refs.next) refs.next.disabled = true;
+      resetDetail("暂无样本。");
       return;
     }
 
+    const requestDatasetId = state.datasetId;
+    const requestEvent = state.activeEvent;
+    const requestSource = refs.source?.value || "";
     setStatus("加载样本...", "loading");
     try {
       const data = await requestJson(buildItemsUrl());
+      if (requestDatasetId !== state.datasetId || requestEvent !== state.activeEvent || requestSource !== (refs.source?.value || "")) {
+        return;
+      }
       state.page = data.page || 1;
       state.totalPages = data.total_pages || 1;
       updateSplitOptions(data.available_splits || []);
@@ -650,10 +725,12 @@
       refs.next.disabled = state.page >= state.totalPages;
       setStatus("样本就绪", "ok");
       if (!state.selectedItemKey) {
-        refs.detail.innerHTML = "";
-        refs.detail.appendChild(createNode("p", "yolo-review-empty", "点击左侧样本后加载原图和标注框。"));
+        resetDetail("点击左侧样本后加载原图和标注框。");
       }
     } catch (error) {
+      if (requestDatasetId !== state.datasetId || requestEvent !== state.activeEvent || requestSource !== (refs.source?.value || "")) {
+        return;
+      }
       setStatus(`样本加载失败：${error?.message || "未知错误"}`, "error");
       refs.list.innerHTML = "";
       refs.list.appendChild(createNode("p", "yolo-review-empty", "样本加载失败。"));
@@ -698,7 +775,7 @@
       body.appendChild(createNode("p", "yolo-review-item-meta", metaText));
 
       const chips = createNode("div", "yolo-review-item-chips");
-      chips.appendChild(createNode("span", "ai-history-chip tone-idle", item.source_label || "数据源"));
+      chips.appendChild(createNode("span", "ai-history-chip tone-idle", datasetSourceText(dataset || item)));
       chips.appendChild(createNode("span", "ai-history-chip tone-idle", `${item.label_count || 0} 框`));
       const labelSource = labelSourceText(item.label_source);
       if (labelSource) {
@@ -932,22 +1009,35 @@
 
   async function loadDetail(itemKey) {
     if (!itemKey || !state.datasetId) return;
+    const requestSeq = state.detailRequestSeq + 1;
+    const requestDatasetId = state.datasetId;
     state.selectedItemKey = itemKey;
+    state.detailRequestSeq = requestSeq;
     refs.detail.dataset.state = "loading";
     refs.detail.innerHTML = "";
     refs.detail.appendChild(createNode("p", "yolo-review-empty", "加载样本详情..."));
     refs.list.querySelectorAll(".yolo-review-item").forEach((node) => node.classList.remove("is-active"));
 
     try {
-      const params = new URLSearchParams({ dataset_id: state.datasetId, item_key: itemKey });
+      const params = new URLSearchParams({ dataset_id: requestDatasetId, item_key: itemKey });
       const data = await requestJson(`${endpoints.item}?${params.toString()}`);
+      if (state.detailRequestSeq !== requestSeq || state.datasetId !== requestDatasetId || state.selectedItemKey !== itemKey) {
+        return;
+      }
       renderDetail(data.dataset, data.item);
       refs.detail.dataset.state = "idle";
       renderListActive(itemKey);
     } catch (error) {
+      if (state.detailRequestSeq !== requestSeq || state.datasetId !== requestDatasetId || state.selectedItemKey !== itemKey) {
+        return;
+      }
       refs.detail.dataset.state = "error";
       refs.detail.innerHTML = "";
-      refs.detail.appendChild(createNode("p", "yolo-review-empty", `详情加载失败：${error?.message || "未知错误"}`));
+      const message = String(error?.message || "");
+      const detailText = message === "item_not_found"
+        ? "当前样本不属于这个数据集，请重新点左侧样本。"
+        : `详情加载失败：${message || "未知错误"}`;
+      refs.detail.appendChild(createNode("p", "yolo-review-empty", detailText));
     }
   }
 
@@ -987,7 +1077,7 @@
     imageBlock.appendChild(createNode("p", "yolo-review-path", item.item_key));
 
     const meta = createNode("div", "yolo-review-meta-grid");
-    meta.appendChild(metaItem("来源", item.source_label || dataset.source_label || "-"));
+    meta.appendChild(metaItem("来源", datasetSourceText(selectedDataset() || dataset || item)));
     meta.appendChild(metaItem("AI标类别", item.ai_class || item.event_name));
     meta.appendChild(metaItem("AI答案", answerDisplay(item.ai_answer)));
     meta.appendChild(metaItem("YOLO框数", item.label_count));
@@ -1051,35 +1141,27 @@
   function scheduleReload() {
     window.clearTimeout(queryTimer);
     queryTimer = window.setTimeout(() => {
-      state.selectedItemKey = "";
+      resetDetail("筛选已更新，选择左侧样本查看详情。");
       loadItems({ resetPage: true }).catch(() => {});
     }, 220);
   }
 
   refs.dataset?.addEventListener("change", () => {
-    markCustomEventFilter();
     state.datasetId = refs.dataset.value;
-    state.selectedItemKey = "";
-    refs.split.value = "";
-    refs.className.value = "";
-    refs.answer.value = "";
-    if (refs.qwenLabel) refs.qwenLabel.value = "";
+    resetDetail("已切换数据集，选择左侧样本查看详情。");
     updateClassOptions();
     updateQwenOptions();
+    applyEventFiltersForDataset(selectedDataset());
     renderSummary(selectedDataset());
     renderDatasetCards();
     loadItems({ resetPage: true }).catch(() => {});
   });
   refs.source?.addEventListener("change", () => {
-    markCustomEventFilter();
-    state.selectedItemKey = "";
-    refs.split.value = "";
-    refs.className.value = "";
-    refs.answer.value = "";
-    if (refs.qwenLabel) refs.qwenLabel.value = "";
+    resetDetail("已切换来源，选择左侧样本查看详情。");
     refreshDatasetOptions();
     updateClassOptions();
     updateQwenOptions();
+    applyEventFiltersForDataset(selectedDataset());
     renderSummary(selectedDataset());
     renderDatasetCards();
     loadItems({ resetPage: true }).catch(() => {});

@@ -7644,11 +7644,16 @@
       const filter = detection.ground_filter;
       const reason = filter.reason || (detection.accepted ? "on_ground" : "rejected");
       const hits = Number(filter.ground_hits ?? 0);
+      const source = filter.ground_source || "ground";
+      const maskCount = Number(filter.ground_mask_count || 0);
+      const sourceText = source === "ground_seg_yolo" || source.includes("ground_seg")
+        ? `地面 mask ${maskCount || "-"}`
+        : "固定ROI";
       item.appendChild(
         createNode(
           "p",
           `yolo-detection-stage2 ${detection.accepted ? "is-accepted" : "is-rejected"}`,
-          `地面判定: ${detection.accepted ? "通过" : "未通过"}，接地点 ${hits}，原因 ${reason}`
+          `地面判定: ${detection.accepted ? "通过" : "未通过"}，接地点 ${hits}，${sourceText}，原因 ${reason}`
         )
       );
     }
@@ -7874,20 +7879,26 @@
       const trashCandidates = Number(data.trash_candidates ?? detections.length);
       const filteredCandidates = Number(data.filtered_candidates ?? trashCandidates);
       const groundTrashCount = Number(data.ground_trash_count ?? detections.length);
+      const groundSource = String(data.ground_source || "");
+      const groundMaskCount = Number(data.ground_mask_count || 0);
+      const groundSourceText = groundSource.includes("ground_seg")
+        ? `地面 mask ${groundMaskCount || "-"} 个`
+        : "固定ROI";
+      const fallbackText = data.ground_fallback_to_roi ? "，分割不可用已退回固定ROI" : "";
       if (groundTrashCount > 0) {
         setYoloTestResult(
           "Yes",
-          `${taskLabel}: 原始垃圾候选 ${trashCandidates} 个，进入地面过滤 ${filteredCandidates} 个，通过 ${groundTrashCount} 个，耗时 ${data.duration_ms ?? "-"}ms。`,
+          `${taskLabel}: 原始垃圾候选 ${trashCandidates} 个，进入地面过滤 ${filteredCandidates} 个，通过 ${groundTrashCount} 个，依据 ${groundSourceText}${fallbackText}，耗时 ${data.duration_ms ?? "-"}ms。`,
           "yes"
         );
       } else if (trashCandidates > 0) {
         setYoloTestResult(
           "No",
-          `${taskLabel}: 原始垃圾候选 ${trashCandidates} 个，但未满足地面接触/ROI/尺寸约束，耗时 ${data.duration_ms ?? "-"}ms。`,
+          `${taskLabel}: 原始垃圾候选 ${trashCandidates} 个，但未满足地面接触/mask/尺寸约束，依据 ${groundSourceText}${fallbackText}，耗时 ${data.duration_ms ?? "-"}ms。`,
           "no"
         );
       } else {
-        setYoloTestResult("No", `${taskLabel}: 未检出垃圾候选，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
+        setYoloTestResult("No", `${taskLabel}: 未检出垃圾候选，依据 ${groundSourceText}${fallbackText}，耗时 ${data.duration_ms ?? "-"}ms。`, "no");
       }
       return;
     }

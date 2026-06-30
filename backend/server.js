@@ -236,17 +236,57 @@ const yoloModelTestTasks = Object.freeze({
     kind: 'trash_ground_filter',
     label: '地面垃圾事件',
     trashTaskId: 'trash_yolo',
+    groundSegTaskId: 'ground_seg_yolo',
     minTrashConfidence: 0.18,
     minBoxBottomY: 0.36,
     maxBoxArea: 0.04,
     maxBoxHeight: 0.30,
     maxBoxWidth: 0.45,
     minContactPointsInGround: 1,
-    groundSource: 'default_trapezoid',
+    groundSource: 'ground_seg_yolo',
+    groundSegFallbackToRoi: true,
     groundPolygons: [
       [[0.02, 1.0], [0.98, 1.0], [0.88, 0.43], [0.12, 0.43]]
     ],
     exclusionPolygons: []
+  },
+  ground_seg_yolo: {
+    kind: 'segment',
+    label: '地面分割',
+    model: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/ground_seg_yolo_best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/ground_seg_yolo_best.pt',
+    names: ['ground'],
+    imgsz: 512,
+    conf: 0.5,
+    localOnly: true,
+    downloadFile: 'ground_seg_yolo_best.pt',
+    registryModelFamily: 'yolo11n-seg',
+    registryMetricSource: 'test',
+    registryMetrics: {
+      test_box_precision: 0.7975440807590174,
+      test_box_recall: 0.48823229729337464,
+      test_box_map50: 0.5722231167680649,
+      test_box_map50_95: 0.4039404597449761,
+      test_seg_precision: 0.7435272713673398,
+      test_seg_recall: 0.4407158836689038,
+      test_seg_map50: 0.5034023059535397,
+      test_seg_map50_95: 0.2705674335680278
+    },
+    registryNote: '轻量地面分割：道路/人行道/停车场/地面单类 mask，用于地面垃圾事件过滤。'
+  },
+  segmentation_yolo: {
+    kind: 'segment',
+    label: '实例分割',
+    model: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/yolo11n_seg_best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/yolo11n_seg_best.pt',
+    names: [],
+    imgsz: 640,
+    conf: 0.25,
+    localOnly: true,
+    downloadFile: 'yolo11n_seg_best.pt',
+    registryModelFamily: 'yolo11n-seg',
+    registryMetricSource: 'current_workbench_weight',
+    registryNote: '通用 YOLO11n 实例分割底座，用于工作台 mask 调试。'
   },
   fire_smoke_yolo: {
     kind: 'detect',
@@ -1269,6 +1309,12 @@ function buildYoloTaskResponse(taskId, task, payload, options = {}) {
       : predictions[0] || null;
   } else {
     responsePayload.detections = remapYoloDetectionNames(payload.detections, task);
+    if (payload.mask_count !== undefined) {
+      responsePayload.mask_count = Number(payload.mask_count) || 0;
+    }
+    if (Array.isArray(payload.masks)) {
+      responsePayload.masks = normalizeYoloSegmentMasks(payload.masks);
+    }
     if (!options.omitAnnotatedImage && payload.annotated_image?.data_base64) {
       responsePayload.annotated_image = {
         mime_type: payload.annotated_image.mime_type || 'image/jpeg',
@@ -1308,6 +1354,20 @@ function buildYoloTaskResponse(taskId, task, payload, options = {}) {
   }
 
   return responsePayload;
+}
+
+function normalizeYoloSegmentMasks(masks) {
+  return masks
+    .map((mask) => {
+      const polygon = normalizeRoiPolygon(mask?.polygon);
+      if (!polygon) return null;
+      return {
+        mask_index: Number.isInteger(mask?.mask_index) ? mask.mask_index : null,
+        area: Number(mask?.area) || 0,
+        polygon
+      };
+    })
+    .filter(Boolean);
 }
 
 function yoloBoxMetrics(detection) {
@@ -1538,7 +1598,27 @@ function trashGroundContactPoints(box, task) {
   ];
 }
 
-function evaluateTrashGroundCandidate(detection, task) {
+function buildGroundMaskContext(task, groundResponse, groundFailure) {
+  const maskPolygons = Array.isArray(groundResponse?.masks)
+    ? groundResponse.masks
+        .map((mask) => normalizeRoiPolygon(mask?.polygon))
+        .filter(Boolean)
+    : [];
+  const fallbackGround = [[[0.02, 1.0], [0.98, 1.0], [0.88, 0.43], [0.12, 0.43]]];
+  const roiPolygons = normalizeRoiPolygons(task.groundPolygons, fallbackGround);
+  const hasMasks = maskPolygons.length > 0;
+  const fallbackToRoi = Boolean(task.groundSegFallbackToRoi ?? true);
+  return {
+    has_masks: hasMasks,
+    source: hasMasks ? (task.groundSegTaskId || 'ground_seg_yolo') : (fallbackToRoi ? 'default_trapezoid' : 'none'),
+    polygons: hasMasks ? maskPolygons : (fallbackToRoi ? roiPolygons : []),
+    mask_count: Number(groundResponse?.mask_count ?? maskPolygons.length) || maskPolygons.length,
+    fallback_to_roi: !hasMasks && fallbackToRoi,
+    failure: groundFailure || null
+  };
+}
+
+function evaluateTrashGroundCandidate(detection, task, groundContext = null) {
   const box = yoloBoxMetrics(detection);
   if (!box) {
     return { accepted: false, reason: 'invalid_box' };
@@ -1560,8 +1640,8 @@ function evaluateTrashGroundCandidate(detection, task) {
     return { accepted: false, reason: 'too_large_for_ground_litter', box };
   }
 
-  const fallbackGround = [[[0.02, 1.0], [0.98, 1.0], [0.88, 0.43], [0.12, 0.43]]];
-  const groundPolygons = normalizeRoiPolygons(task.groundPolygons, fallbackGround);
+  const context = groundContext || buildGroundMaskContext(task, null, null);
+  const groundPolygons = Array.isArray(context.polygons) ? context.polygons : [];
   const exclusionPolygons = normalizeRoiPolygons(task.exclusionPolygons, []);
   const contactPoints = trashGroundContactPoints(box, task);
   const groundHits = contactPoints.filter((point) =>
@@ -1575,12 +1655,20 @@ function evaluateTrashGroundCandidate(detection, task) {
 
   return {
     accepted,
-    reason: accepted ? 'on_ground' : exclusionHits > 0 ? 'inside_exclusion_roi' : 'outside_ground_roi',
+    reason: accepted
+      ? (context.has_masks ? 'on_ground_mask' : 'on_ground_roi')
+      : exclusionHits > 0
+        ? 'inside_exclusion_roi'
+        : context.has_masks
+          ? 'outside_ground_mask'
+          : 'outside_ground_roi',
     box,
     contact_points: contactPoints,
     ground_hits: groundHits,
     exclusion_hits: exclusionHits,
-    ground_source: task.groundSource || 'default_trapezoid',
+    ground_source: context.source || task.groundSource || 'default_trapezoid',
+    ground_mask_count: context.mask_count || 0,
+    ground_fallback_to_roi: Boolean(context.fallback_to_roi),
     thresholds: {
       min_trash_confidence: minConfidence,
       min_box_bottom_y: minBottomY,
@@ -1592,12 +1680,13 @@ function evaluateTrashGroundCandidate(detection, task) {
   };
 }
 
-function buildTrashGroundFilterResponse({ taskId, task, trashResponse, durationMs, requestId }) {
+function buildTrashGroundFilterResponse({ taskId, task, trashResponse, groundResponse, groundFailure, durationMs, requestId }) {
   const rawTrash = Array.isArray(trashResponse?.detections) ? trashResponse.detections : [];
+  const groundContext = buildGroundMaskContext(task, groundResponse, groundFailure);
   const candidates = rawTrash
     .filter((detection) => Number(detection.confidence || 0) >= Number(task.minTrashConfidence ?? 0))
     .map((detection) => {
-      const groundFilter = evaluateTrashGroundCandidate(detection, task);
+      const groundFilter = evaluateTrashGroundCandidate(detection, task, groundContext);
       return {
         ...detection,
         accepted: groundFilter.accepted,
@@ -1617,12 +1706,17 @@ function buildTrashGroundFilterResponse({ taskId, task, trashResponse, durationM
     duration_ms: durationMs,
     gpu: trashResponse?.gpu || yoloA100Gpu,
     backend: trashResponse?.backend || 'a100_ssh',
+    ground_gpu: groundResponse?.gpu || null,
+    ground_backend: groundResponse?.backend || null,
     detections: accepted,
     trash_candidates: rawTrash.length,
     filtered_candidates: candidates.length,
     ground_trash_count: accepted.length,
     rejected_candidates: candidates.length - accepted.length,
-    ground_source: task.groundSource || 'default_trapezoid',
+    ground_source: groundContext.source || task.groundSource || 'default_trapezoid',
+    ground_mask_count: groundContext.mask_count || 0,
+    ground_fallback_to_roi: Boolean(groundContext.fallback_to_roi),
+    ground_error: groundContext.failure ? truncateText(String(groundContext.failure), 500) : null,
     ground_filter_candidates: candidates.slice(0, 20).map((candidate) => ({
       class_name: candidate.class_name,
       confidence: candidate.confidence,
@@ -1630,7 +1724,8 @@ function buildTrashGroundFilterResponse({ taskId, task, trashResponse, durationM
       reason: candidate.ground_filter?.reason,
       box: candidate.box,
       ground_hits: candidate.ground_filter?.ground_hits,
-      exclusion_hits: candidate.ground_filter?.exclusion_hits
+      exclusion_hits: candidate.ground_filter?.exclusion_hits,
+      ground_source: candidate.ground_filter?.ground_source
     }))
   };
 }
@@ -1668,7 +1763,7 @@ async function fileInfoForPath(filePath) {
 }
 
 async function buildFallbackYoloModelEntries() {
-  const taskIds = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'license_plate_yolo', 'pet_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
+  const taskIds = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'license_plate_yolo', 'pet_yolo', 'trash_yolo', 'ground_seg_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
   const entries = [];
   for (const taskId of taskIds) {
     const task = yoloModelTestTasks[taskId];
@@ -10579,16 +10674,39 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
           if (!trashTask) {
             throw new Error('trash_ground_filter_task_missing');
           }
-          const trashPayload = await runYoloPredictionWithFallback(subTask.trashTaskId, trashTask, {
-            noAnnotated: true,
-            timeoutMs: yoloModelTestTimeoutMs,
-            maxBuffer: 24 * 1024 * 1024
-          });
+          const groundTask = subTask.groundSegTaskId ? yoloModelTestTasks[subTask.groundSegTaskId] : null;
+          const [trashResult, groundResult] = await Promise.allSettled([
+            runYoloPredictionWithFallback(subTask.trashTaskId, trashTask, {
+              noAnnotated: true,
+              timeoutMs: yoloModelTestTimeoutMs,
+              maxBuffer: 24 * 1024 * 1024
+            }),
+            groundTask
+              ? runYoloPredictionWithFallback(subTask.groundSegTaskId, groundTask, {
+                  noAnnotated: true,
+                  timeoutMs: yoloModelTestTimeoutMs,
+                  maxBuffer: 48 * 1024 * 1024
+                })
+              : Promise.resolve(null)
+          ]);
+          if (trashResult.status !== 'fulfilled') {
+            throw trashResult.reason;
+          }
+          const trashPayload = trashResult.value;
+          const groundPayload = groundResult.status === 'fulfilled' ? groundResult.value : null;
+          const groundFailure = groundResult.status === 'rejected'
+            ? (groundResult.reason?.message || String(groundResult.reason))
+            : null;
           const trashResponse = buildYoloTaskResponse(subTask.trashTaskId, trashTask, trashPayload, { omitAnnotatedImage: true });
+          const groundResponse = groundTask && groundPayload
+            ? buildYoloTaskResponse(subTask.groundSegTaskId, groundTask, groundPayload, { omitAnnotatedImage: true })
+            : null;
           return buildTrashGroundFilterResponse({
             taskId: subTaskId,
             task: subTask,
             trashResponse,
+            groundResponse,
+            groundFailure,
             durationMs: Date.now() - subStartMs,
             requestId
           });
@@ -10669,18 +10787,41 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
         throw new Error('trash_ground_filter_task_missing');
       }
 
-      const trashPayload = await runYoloPredictionWithFallback(task.trashTaskId, trashTask, {
-        noAnnotated: true,
-        timeoutMs: yoloModelTestTimeoutMs,
-        maxBuffer: 24 * 1024 * 1024
-      });
+      const groundTask = task.groundSegTaskId ? yoloModelTestTasks[task.groundSegTaskId] : null;
+      const [trashResult, groundResult] = await Promise.allSettled([
+        runYoloPredictionWithFallback(task.trashTaskId, trashTask, {
+          noAnnotated: true,
+          timeoutMs: yoloModelTestTimeoutMs,
+          maxBuffer: 24 * 1024 * 1024
+        }),
+        groundTask
+          ? runYoloPredictionWithFallback(task.groundSegTaskId, groundTask, {
+              noAnnotated: true,
+              timeoutMs: yoloModelTestTimeoutMs,
+              maxBuffer: 48 * 1024 * 1024
+            })
+          : Promise.resolve(null)
+      ]);
+      if (trashResult.status !== 'fulfilled') {
+        throw trashResult.reason;
+      }
+      const trashPayload = trashResult.value;
+      const groundPayload = groundResult.status === 'fulfilled' ? groundResult.value : null;
+      const groundFailure = groundResult.status === 'rejected'
+        ? (groundResult.reason?.message || String(groundResult.reason))
+        : null;
 
       const durationMs = Date.now() - startMs;
       const trashResponse = buildYoloTaskResponse(task.trashTaskId, trashTask, trashPayload, { omitAnnotatedImage: true });
+      const groundResponse = groundTask && groundPayload
+        ? buildYoloTaskResponse(task.groundSegTaskId, groundTask, groundPayload, { omitAnnotatedImage: true })
+        : null;
       const responsePayload = buildTrashGroundFilterResponse({
         taskId,
         task,
         trashResponse,
+        groundResponse,
+        groundFailure,
         durationMs,
         requestId
       });
@@ -10691,6 +10832,8 @@ app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async
         trash_candidates: responsePayload.trash_candidates,
         filtered_candidates: responsePayload.filtered_candidates,
         ground_trash_count: responsePayload.ground_trash_count,
+        ground_source: responsePayload.ground_source,
+        ground_mask_count: responsePayload.ground_mask_count,
         detections: responsePayload.detections.length,
         duration_ms: durationMs,
         gpu: responsePayload.gpu,

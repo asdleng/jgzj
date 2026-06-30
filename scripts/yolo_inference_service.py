@@ -139,6 +139,42 @@ def result_mask_count(result):
         return 0
 
 
+def serialize_masks(result, max_points=160):
+    masks = getattr(result, "masks", None)
+    if masks is None:
+        return []
+    polygons = getattr(masks, "xyn", None)
+    if polygons is None:
+        return []
+    serialized = []
+    for index, polygon in enumerate(polygons):
+        points = np.asarray(polygon, dtype=np.float32)
+        if points.ndim != 2 or points.shape[0] < 3 or points.shape[1] < 2:
+            continue
+        points = points[:, :2]
+        points = np.clip(points, 0.0, 1.0)
+        try:
+            approx = cv2.approxPolyDP(points.reshape((-1, 1, 2)), 0.0025, True).reshape((-1, 2))
+            if approx.shape[0] >= 3:
+                points = approx
+        except Exception:
+            pass
+        if points.shape[0] > max_points:
+            step_indexes = np.linspace(0, points.shape[0] - 1, max_points).round().astype(int)
+            points = points[step_indexes]
+        area = 0.0
+        try:
+            area = float(abs(cv2.contourArea(points.astype(np.float32))))
+        except Exception:
+            area = 0.0
+        serialized.append({
+            "mask_index": index,
+            "polygon": [[float(x), float(y)] for x, y in points.tolist()],
+            "area": area,
+        })
+    return serialized
+
+
 def decode_image(image_payload):
     if not isinstance(image_payload, dict):
         raise ValueError("image_required")
@@ -340,6 +376,7 @@ def run_segment(task, image, no_annotated):
         "mode": "segment",
         "detections": detections,
         "mask_count": result_mask_count(result),
+        "masks": serialize_masks(result),
         "annotated_image": None if no_annotated else encode_annotated_image(result),
     }
 

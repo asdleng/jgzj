@@ -3813,7 +3813,7 @@
 
 .yolo-review-toolbar {
   display: grid;
-  grid-template-columns: minmax(150px, 0.58fr) minmax(280px, 1.25fr) repeat(4, minmax(126px, 0.52fr)) minmax(116px, 0.42fr) minmax(220px, 0.9fr);
+  grid-template-columns: minmax(160px, 0.44fr) minmax(320px, 1fr);
   gap: 10px;
   align-items: end;
   padding: 14px 18px;
@@ -3828,6 +3828,10 @@
   color: #94a3b8;
   font-size: 0.76rem;
   font-weight: 700;
+}
+
+.yolo-review-field--advanced {
+  display: none;
 }
 
 .yolo-review-field select,
