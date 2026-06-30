@@ -1995,6 +1995,24 @@ function isPathWithinRoot(root, absolutePath) {
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}${path.sep}`);
 }
 
+async function direntIsYoloImageFile(dirent, absolutePath) {
+  if (!isYoloImagePath(dirent?.name || absolutePath)) {
+    return false;
+  }
+  if (dirent?.isFile?.()) {
+    return true;
+  }
+  if (!dirent?.isSymbolicLink?.()) {
+    return false;
+  }
+  try {
+    const stat = await fs.stat(absolutePath);
+    return stat.isFile();
+  } catch (_error) {
+    return false;
+  }
+}
+
 function toForwardSlashPath(value) {
   return String(value || '').split(path.sep).join('/');
 }
@@ -3132,7 +3150,7 @@ async function collectImageRelPaths(rootDir, baseRel, maxDepth = 2, depth = 0) {
   for (const entry of entries) {
     const abs = path.join(rootDir, entry.name);
     const rel = `${baseRel}/${entry.name}`;
-    if (entry.isFile() && isYoloImagePath(entry.name)) {
+    if (await direntIsYoloImageFile(entry, abs)) {
       items.push(rel);
       continue;
     }
