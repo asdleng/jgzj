@@ -1,0 +1,47 @@
+---
+import "../../styles/app.css";
+import EmbeddedLidarRelocalization from "../../components/EmbeddedLidarRelocalization.astro";
+import OptimizedImage from "../../components/OptimizedImage.astro";
+import SiteLayout from "../../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="激光重定位"
+  description="按车辆加载全局点云地图和当前定位状态，抓取当前帧上下文，并调用重定位模型输出给 NDT 使用的粗位姿。"
+  currentPath="/app/lidar-relocalization"
+  noindex={true}
+>
+  <header class="page-hero ops-hero lidar-reloc-hero">
+    <OptimizedImage
+      src="/assets/fallback/hero-cloud-ops-1600.jpg"
+      webp="/assets/optimized/hero-cloud-ops-1600.webp"
+      alt="激光重定位工作台"
+      class="hero-media"
+      data-parallax
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">PAGE 08 · LIDAR RELOCALIZATION</p>
+        <h1 class="page-title">激光重定位</h1>
+        <p class="page-subtitle">
+          面向车辆启动初值问题：按车加载地图和定位状态，抓取当前帧上下文，输出给 NDT 使用的粗位姿。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg">
+    <section class="page-section lidar-reloc-section">
+      <div class="glass-card section-card lidar-reloc-card">
+        <p class="section-kicker">重定位工作台</p>
+        <h2 class="section-title">切车、加载地图、抓当前帧、推粗位姿</h2>
+        <p class="section-copy">
+          当前页面走 cloud-agent 车端工具链路，地图元信息和定位状态实时读取；推理接口按 BEVPlace++ 重定位合约预留。
+        </p>
+        <EmbeddedLidarRelocalization />
+      </div>
+    </section>
+  </main>
+</SiteLayout>

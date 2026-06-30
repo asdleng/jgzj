@@ -1,0 +1,76 @@
+---
+import scriptText from "../scripts/lidar-relocalization.js?raw";
+---
+
+<section
+  id="lidar-relocalization-console"
+  class="lidar-reloc-console embedded-panel"
+  aria-live="polite"
+  data-authenticated="false"
+  data-requires-permission="vehicle:read"
+>
+  <div class="lidar-reloc-head">
+    <div>
+      <p class="section-kicker">LiDAR Relocalization</p>
+      <h3>地图 + 当前帧粗位姿</h3>
+    </div>
+    <p id="lidar-reloc-status" class="cloud-ops-inline-status" data-state="idle">待加载</p>
+  </div>
+
+  <div class="lidar-reloc-toolbar">
+    <label class="cloud-ops-toolbar-field" for="lidar-reloc-vehicle">
+      <span>车辆</span>
+      <select id="lidar-reloc-vehicle">
+        <option value="">加载车辆中...</option>
+      </select>
+    </label>
+    <button id="lidar-reloc-refresh" class="cloud-ops-toolbar-button" type="button">刷新</button>
+    <button id="lidar-reloc-capture" class="cloud-ops-toolbar-button" type="button" disabled>抓取当前帧</button>
+    <button id="lidar-reloc-infer" class="cloud-ops-toolbar-button lidar-reloc-primary" type="button" disabled>推测粗位姿</button>
+  </div>
+
+  <div class="lidar-reloc-grid">
+    <section class="lidar-reloc-panel">
+      <div class="lidar-reloc-panel-head">
+        <p class="lidar-reloc-panel-kicker">MAP</p>
+        <h4>全局点云地图</h4>
+      </div>
+      <div id="lidar-reloc-map" class="lidar-reloc-meta-grid"></div>
+    </section>
+
+    <section class="lidar-reloc-panel">
+      <div class="lidar-reloc-panel-head">
+        <p class="lidar-reloc-panel-kicker">LOCALIZATION</p>
+        <h4>NDT 当前状态</h4>
+      </div>
+      <div id="lidar-reloc-localization" class="lidar-reloc-meta-grid"></div>
+    </section>
+
+    <section class="lidar-reloc-panel">
+      <div class="lidar-reloc-panel-head">
+        <p class="lidar-reloc-panel-kicker">PIPELINE</p>
+        <h4>采集与推理链路</h4>
+      </div>
+      <div id="lidar-reloc-pipeline" class="lidar-reloc-meta-grid"></div>
+    </section>
+  </div>
+
+  <section class="lidar-reloc-result">
+    <div class="lidar-reloc-result-head">
+      <div>
+        <p class="lidar-reloc-panel-kicker">RESULT</p>
+        <h4>粗位姿结果</h4>
+      </div>
+      <p id="lidar-reloc-result-state" class="cloud-ops-inline-status" data-state="idle">等待推理</p>
+    </div>
+    <div id="lidar-reloc-result" class="lidar-reloc-result-body">
+      <p class="lidar-reloc-empty">先选择车辆并刷新状态。</p>
+    </div>
+    <details class="lidar-reloc-raw">
+      <summary>原始 JSON</summary>
+      <pre id="lidar-reloc-json">等待执行...</pre>
+    </details>
+  </section>
+</section>
+
+<script is:inline define:vars={{ scriptText }} set:html={scriptText}></script>

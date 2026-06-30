@@ -155,6 +155,27 @@ const cloudOpsAudioAlsaMaxConcurrent = Number(
 const cloudOpsDeployGitCacheDir = path.resolve(
   process.env.CLOUD_OPS_DEPLOY_GIT_CACHE_DIR || '/tmp/jgzj-deploy-git-cache'
 );
+const lidarRelocalizationRoot = path.resolve(
+  process.env.LIDAR_RELOCALIZATION_ROOT || '/home/admin1/.runtime/lidar_reloc_bevplace_20260629'
+);
+const lidarRelocalizationVehicleMapRoot = path.resolve(
+  process.env.LIDAR_RELOCALIZATION_VEHICLE_MAP_ROOT ||
+    path.join(lidarRelocalizationRoot, 'vehicle_maps')
+);
+const lidarRelocalizationCaptureRoot = path.resolve(
+  process.env.LIDAR_RELOCALIZATION_CAPTURE_ROOT ||
+    path.join(lidarRelocalizationRoot, 'captures')
+);
+const lidarRelocalizationA100Root =
+  process.env.LIDAR_RELOCALIZATION_A100_ROOT || '/home/sari/lidar_reloc_bevplace_20260629';
+const lidarRelocalizationModelLabel =
+  process.env.LIDAR_RELOCALIZATION_MODEL_LABEL || 'BEVPlace++ synthetic + NCLT pretrain';
+const lidarRelocalizationModelCheckpoint =
+  process.env.LIDAR_RELOCALIZATION_MODEL_CHECKPOINT ||
+  `${lidarRelocalizationA100Root}/runs/jgzj_bevplace_yaw3_kdtree_20260630_gpu3/model_best.pth.tar`;
+const lidarRelocalizationFallbackCheckpoint =
+  process.env.LIDAR_RELOCALIZATION_FALLBACK_CHECKPOINT ||
+  `${lidarRelocalizationA100Root}/runs/nclt_2012_02_04_win200ms_5k_20260630_gpu3/model_best.pth.tar`;
 const cloudOpsRouteCatalogCache = new Map();
 const cloudOpsAudioAlsaCache = new Map();
 const projectRoot = path.resolve(__dirname, '..');
@@ -4608,6 +4629,338 @@ async function listCloudAgentVehicles() {
   const result = await fetchCloudAgentJson('/api/vehicles');
   const vehicles = Array.isArray(result?.data?.vehicles) ? result.data.vehicles : [];
   return vehicles;
+}
+
+function unwrapCloudOpsToolResult(execution) {
+  return (
+    execution?.data?.response?.result ||
+    execution?.data?.result ||
+    execution?.payload?.response?.result ||
+    execution?.payload?.result ||
+    null
+  );
+}
+
+function unwrapCloudOpsResponse(execution) {
+  return execution?.data?.response || execution?.payload?.response || execution?.data || null;
+}
+
+function extractCloudAgentToolNamesFromExecution(execution) {
+  return extractCloudOpsToolNames(execution?.data || execution?.payload || {});
+}
+
+function getLidarRelocVehicleId(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^A-Za-z0-9_.:-]/g, '')
+    .slice(0, 80);
+}
+
+function readLidarRelocNumber(...values) {
+  for (const value of values) {
+    const num = Number(value);
+    if (Number.isFinite(num)) {
+      return num;
+    }
+  }
+  return null;
+}
+
+function formatLidarRelocBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return '-';
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let current = bytes;
+  let index = 0;
+  while (current >= 1024 && index < units.length - 1) {
+    current /= 1024;
+    index += 1;
+  }
+  const digits = current >= 100 || index === 0 ? 0 : current >= 10 ? 1 : 2;
+  return `${current.toFixed(digits)} ${units[index]}`;
+}
+
+function toIsoFromUnixSeconds(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+  return new Date(seconds * 1000).toISOString();
+}
+
+function listLidarRelocCaptureTools(toolNames) {
+  return [
+    'lidar.relocalization_capture',
+    'lidar.capture_current_frame',
+    'lidar.capture',
+    'vpr.capture_bundle'
+  ].filter((toolName) => toolNames.has(toolName));
+}
+
+function listLidarRelocInferTools(toolNames) {
+  return [
+    'lidar.relocalization_infer',
+    'lidar.relocalization',
+    'relocalization.infer',
+    'bevplace.infer'
+  ].filter((toolName) => toolNames.has(toolName));
+}
+
+function normalizeLidarRelocPose(source) {
+  if (!source || typeof source !== 'object') {
+    return null;
+  }
+
+  const position = source.position || source.pose?.position || source.summary?.position || source;
+  const orientation = source.orientation || source.pose?.orientation || source.summary?.orientation || null;
+  const x = readLidarRelocNumber(position?.x, source.x, source.w_pos_x);
+  const y = readLidarRelocNumber(position?.y, source.y, source.w_pos_y);
+  const z = readLidarRelocNumber(position?.z, source.z, source.w_pos_z);
+  const yaw = readLidarRelocNumber(
+    source.yaw,
+    source.heading,
+    source.euler_angles_z,
+    source.summary?.heading
+  );
+
+  if (x === null && y === null && z === null && yaw === null) {
+    return null;
+  }
+
+  return {
+    x,
+    y,
+    z,
+    yaw,
+    heading: yaw,
+    orientation: orientation && typeof orientation === 'object' ? orientation : undefined,
+    reliable:
+      typeof source.reliable === 'boolean'
+        ? source.reliable
+        : typeof source.summary?.reliable === 'boolean'
+          ? source.summary.reliable
+          : undefined,
+    timestamp:
+      source.ts_iso ||
+      source.timestamp ||
+      source.generated_at ||
+      toIsoFromUnixSeconds(source.time_stamp) ||
+      toIsoFromUnixSeconds(source.ts_unix) ||
+      null
+  };
+}
+
+function normalizeLidarRelocLocalization(result) {
+  const summary = result?.summary && typeof result.summary === 'object' ? result.summary : {};
+  const locationSample = result?.topics?.location?.sample || {};
+  const ndtSample = result?.topics?.ndt_pose?.sample?.pose || {};
+  const transformSample = result?.topics?.transform_probability?.sample || {};
+  const pose =
+    normalizeLidarRelocPose(summary) ||
+    normalizeLidarRelocPose(locationSample) ||
+    normalizeLidarRelocPose(ndtSample) ||
+    null;
+
+  return {
+    available: Boolean(result),
+    health: result?.health || null,
+    reliable:
+      typeof summary.reliable === 'boolean'
+        ? summary.reliable
+        : typeof locationSample.reliable === 'boolean'
+          ? locationSample.reliable
+          : null,
+    pose,
+    speed_mps: readLidarRelocNumber(summary.speed_mps, locationSample.w_line_vel_x),
+    ndt_score: readLidarRelocNumber(
+      result?.summary?.ndt_score,
+      transformSample?.score,
+      transformSample?.transform_probability
+    ),
+    generated_at: result?.generated_at || null,
+    topics: {
+      location: Boolean(result?.topics?.location?.exists),
+      ndt_pose: Boolean(result?.topics?.ndt_pose?.exists),
+      filtered_points: Boolean(result?.topics?.filtered_points?.exists),
+      rslidar_points32: Boolean(result?.topics?.rslidar_points32?.exists)
+    },
+    raw: result || null
+  };
+}
+
+async function statLidarRelocMap(vehicleId) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  if (!normalizedVehicleId) {
+    return { available: false };
+  }
+  const mapPath = path.join(lidarRelocalizationVehicleMapRoot, normalizedVehicleId, 'GlobalMap.pcd');
+  try {
+    const stat = await fs.stat(mapPath);
+    return {
+      available: true,
+      path: mapPath,
+      size_bytes: stat.size,
+      size_label: formatLidarRelocBytes(stat.size),
+      mtime: stat.mtime.toISOString()
+    };
+  } catch (_error) {
+    return {
+      available: false,
+      path: mapPath
+    };
+  }
+}
+
+async function readLastLidarRelocCapture(vehicleId) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  if (!normalizedVehicleId) {
+    return null;
+  }
+  const capturePath = path.join(lidarRelocalizationCaptureRoot, normalizedVehicleId, 'last_capture.json');
+  try {
+    const text = await fs.readFile(capturePath, 'utf8');
+    return parseJsonField(text, null);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function writeLastLidarRelocCapture(vehicleId, capture) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  if (!normalizedVehicleId) {
+    return null;
+  }
+  const captureDir = path.join(lidarRelocalizationCaptureRoot, normalizedVehicleId);
+  const capturePath = path.join(captureDir, 'last_capture.json');
+  await fs.mkdir(captureDir, { recursive: true });
+  await fs.writeFile(capturePath, JSON.stringify(capture, null, 2));
+  return capturePath;
+}
+
+async function executeLidarRelocTool(vehicleId, toolName, args = {}, timeout_s = 25) {
+  return executeCloudOpsAction(
+    {
+      action: 'tool_call',
+      vehicle_id: vehicleId,
+      tool_name: toolName,
+      args,
+      timeout_s,
+      request_id: `lidar-reloc-${toolName.replace(/\W+/g, '-')}-${Date.now().toString(36)}`
+    },
+    []
+  );
+}
+
+async function collectLidarRelocStatus(vehicleId, options = {}) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  if (!normalizedVehicleId) {
+    throw new Error('vehicle_id_required');
+  }
+
+  const toolExecution = await executeCloudOpsAction(
+    {
+      action: 'tool_list',
+      vehicle_id: normalizedVehicleId,
+      timeout_s: toFiniteInteger(options.tool_timeout_s, 20, { min: 5, max: 60 })
+    },
+    []
+  );
+  const toolNames = extractCloudAgentToolNamesFromExecution(toolExecution);
+  const captureTools = listLidarRelocCaptureTools(toolNames);
+  const inferTools = listLidarRelocInferTools(toolNames);
+
+  const mapLocal = await statLidarRelocMap(normalizedVehicleId);
+  let mapInfo = null;
+  let mapInfoExecution = null;
+  if (toolNames.has('map.info')) {
+    mapInfoExecution = await executeLidarRelocTool(normalizedVehicleId, 'map.info', {}, 20);
+    mapInfo = unwrapCloudOpsToolResult(mapInfoExecution);
+  }
+  let mapPointcloud = null;
+  let mapPointcloudExecution = null;
+  if (toolNames.has('map.pointcloud.meta')) {
+    mapPointcloudExecution = await executeLidarRelocTool(
+      normalizedVehicleId,
+      'map.pointcloud.meta',
+      {},
+      25
+    );
+    mapPointcloud = unwrapCloudOpsToolResult(mapPointcloudExecution);
+  }
+  let localization = null;
+  let localizationExecution = null;
+  if (toolNames.has('status.localization')) {
+    localizationExecution = await executeLidarRelocTool(
+      normalizedVehicleId,
+      'status.localization',
+      {},
+      20
+    );
+    localization = normalizeLidarRelocLocalization(unwrapCloudOpsToolResult(localizationExecution));
+  }
+
+  const lastCapture = await readLastLidarRelocCapture(normalizedVehicleId);
+  return {
+    ok: true,
+    vehicle_id: normalizedVehicleId,
+    generated_at: new Date().toISOString(),
+    tools: {
+      count: toolNames.size,
+      has_tool_list: toolExecution.ok,
+      map_info: toolNames.has('map.info'),
+      map_pointcloud_meta: toolNames.has('map.pointcloud.meta'),
+      map_preview: toolNames.has('map.preview'),
+      status_localization: toolNames.has('status.localization'),
+      capture_tools: captureTools,
+      lidar_capture: captureTools.some((name) => name.startsWith('lidar.')),
+      context_capture: toolNames.has('vpr.capture_bundle'),
+      infer_tools: inferTools,
+      inference: inferTools.length > 0,
+      missing: {
+        lidar_capture: captureTools.some((name) => name.startsWith('lidar.'))
+          ? []
+          : ['lidar.relocalization_capture', 'lidar.capture_current_frame'],
+        inference: inferTools.length ? [] : ['lidar.relocalization_infer', 'bevplace.infer']
+      }
+    },
+    map: {
+      local: mapLocal,
+      info: mapInfo,
+      pointcloud: mapPointcloud,
+      available: Boolean(mapLocal.available || mapPointcloud || mapInfo),
+      map_version: mapPointcloud?.map_version || mapInfo?.map_version || null,
+      point_count: mapPointcloud?.point_count || mapInfo?.point_count || null,
+      extent: mapPointcloud?.extent || mapInfo?.extent || null
+    },
+    localization,
+    model: {
+      label: lidarRelocalizationModelLabel,
+      checkpoint: lidarRelocalizationModelCheckpoint,
+      fallback_checkpoint: lidarRelocalizationFallbackCheckpoint,
+      service_ready: inferTools.length > 0,
+      phase: inferTools.length ? 'tool_ready' : 'not_deployed'
+    },
+    capture: {
+      last: lastCapture
+        ? {
+            captured_at: lastCapture.captured_at,
+            tool_name: lastCapture.tool_name,
+            bundle_id: lastCapture.result?.bundle_id || lastCapture.result?.capture_id || null,
+            map_version: lastCapture.result?.map_version || null,
+            capture_count: lastCapture.result?.capture_count ?? null,
+            lidar_frame: Boolean(lastCapture.result?.lidar || lastCapture.result?.pointcloud || lastCapture.result?.points)
+          }
+        : null
+    },
+    executions: {
+      tool_list: sanitizeCloudOpsPayload(toolExecution),
+      map_info: sanitizeCloudOpsPayload(mapInfoExecution),
+      map_pointcloud_meta: sanitizeCloudOpsPayload(mapPointcloudExecution),
+      localization: sanitizeCloudOpsPayload(localizationExecution)
+    }
+  };
 }
 
 function getCloudOpsVehicleId(vehicle) {
@@ -9453,6 +9806,260 @@ app.get(
   }
 );
 
+app.get('/api/lidar-relocalization/vehicles', authStore.requirePermission('vehicle:read'), async (_req, res) => {
+  try {
+    const vehicles = await listCloudAgentVehicles();
+    const vehicleMap = new Map();
+    vehicles.forEach((vehicle) => {
+      const vehicleId = getCloudOpsVehicleId(vehicle);
+      if (!vehicleId) {
+        return;
+      }
+      const previous = vehicleMap.get(vehicleId);
+      const previousTime = Date.parse(previous?.last_seen || '') || 0;
+      const nextTime = Date.parse(vehicle?.last_seen || '') || 0;
+      const previousTools = Number(previous?.tool_count || 0);
+      const nextTools = Number(vehicle?.tool_count || 0);
+      if (
+        !previous ||
+        nextTools > previousTools ||
+        (nextTools === previousTools && nextTime >= previousTime)
+      ) {
+        vehicleMap.set(vehicleId, vehicle);
+      }
+    });
+    return res.json({
+      ok: true,
+      vehicles: Array.from(vehicleMap.values())
+        .map((vehicle) => ({
+          vehicle_id: getCloudOpsVehicleId(vehicle),
+          plate_number: vehicle?.plate_number || null,
+          last_seen: vehicle?.last_seen || null,
+          tool_count: vehicle?.tool_count ?? null,
+          has_telemetry: Boolean(vehicle?.has_telemetry),
+          telemetry: vehicle?.telemetry || null
+        }))
+        .sort((left, right) => String(left.vehicle_id).localeCompare(String(right.vehicle_id)))
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      detail: error?.message || 'lidar_relocalization_vehicle_list_failed'
+    });
+  }
+});
+
+app.get(
+  '/api/lidar-relocalization/vehicles/:vehicleId/status',
+  authStore.requirePermission('vehicle:read'),
+  async (req, res) => {
+    const vehicleId = getLidarRelocVehicleId(req.params?.vehicleId);
+    if (!vehicleId) {
+      return res.status(400).json({
+        ok: false,
+        detail: 'vehicle_id_required'
+      });
+    }
+
+    try {
+      const status = await collectLidarRelocStatus(vehicleId);
+      return res.json(status);
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        vehicle_id: vehicleId,
+        detail: error?.message || 'lidar_relocalization_status_failed'
+      });
+    }
+  }
+);
+
+app.post(
+  '/api/lidar-relocalization/vehicles/:vehicleId/capture',
+  authStore.requirePermission('vehicle:read'),
+  async (req, res) => {
+    const vehicleId = getLidarRelocVehicleId(req.params?.vehicleId);
+    if (!vehicleId) {
+      return res.status(400).json({
+        ok: false,
+        detail: 'vehicle_id_required'
+      });
+    }
+
+    try {
+      const status = await collectLidarRelocStatus(vehicleId, { tool_timeout_s: 20 });
+      const captureTools = Array.isArray(status?.tools?.capture_tools) ? status.tools.capture_tools : [];
+      const toolName =
+        captureTools.find((name) => String(name).startsWith('lidar.')) ||
+        captureTools.find((name) => name === 'vpr.capture_bundle') ||
+        '';
+
+      if (!toolName) {
+        return res.status(501).json({
+          ok: false,
+          vehicle_id: vehicleId,
+          phase: 'unsupported',
+          detail: '车端未上报 LiDAR 当前帧或 VPR bundle 抓取工具。',
+          required_tools: status?.tools?.missing?.lidar_capture || [
+            'lidar.relocalization_capture',
+            'lidar.capture_current_frame'
+          ],
+          status
+        });
+      }
+
+      const requestArgs = req.body && typeof req.body === 'object' ? req.body.args : null;
+      const defaultArgs = toolName === 'vpr.capture_bundle'
+        ? {
+            cameras: ['camera1'],
+            include_base64: false,
+            save_file: false,
+            localization_mode: 'nearest_or_interpolate',
+            max_pose_gap_ms: 100,
+            include_camera_status: false,
+            include_calibration_ref: true
+          }
+        : {
+            topic: '/filtered_points',
+            include_pointcloud: true,
+            save_file: true,
+            include_pose: true,
+            include_localization: true,
+            max_frames: 1
+          };
+      const args =
+        requestArgs && typeof requestArgs === 'object' && !Array.isArray(requestArgs)
+          ? { ...defaultArgs, ...requestArgs }
+          : defaultArgs;
+      const timeout_s = toFiniteInteger(req.body?.timeout_s, toolName === 'vpr.capture_bundle' ? 35 : 60, {
+        min: 5,
+        max: 120
+      });
+      const execution = await executeLidarRelocTool(vehicleId, toolName, args, timeout_s);
+      const response = unwrapCloudOpsResponse(execution);
+      const result = unwrapCloudOpsToolResult(execution);
+      const capture = {
+        ok: execution.ok,
+        captured_at: new Date().toISOString(),
+        vehicle_id: vehicleId,
+        tool_name: toolName,
+        args: sanitizeCloudOpsPayload(args),
+        result,
+        response: sanitizeCloudOpsPayload(response),
+        execution: sanitizeCloudOpsPayload(execution)
+      };
+
+      if (execution.ok) {
+        capture.local_record = await writeLastLidarRelocCapture(vehicleId, capture);
+      }
+
+      return res.status(execution.ok ? 200 : 502).json({
+        ok: execution.ok,
+        vehicle_id: vehicleId,
+        phase: toolName.startsWith('lidar.') ? 'lidar_frame_captured' : 'context_bundle_captured',
+        capture,
+        status: {
+          tools: status.tools,
+          map: status.map,
+          localization: status.localization
+        },
+        detail: execution.ok
+          ? undefined
+          : execution.detail || execution.error || `${toolName}_failed`
+      });
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        vehicle_id: vehicleId,
+        detail: error?.message || 'lidar_relocalization_capture_failed'
+      });
+    }
+  }
+);
+
+app.post(
+  '/api/lidar-relocalization/vehicles/:vehicleId/infer',
+  authStore.requirePermission('vehicle:read'),
+  async (req, res) => {
+    const vehicleId = getLidarRelocVehicleId(req.params?.vehicleId);
+    if (!vehicleId) {
+      return res.status(400).json({
+        ok: false,
+        detail: 'vehicle_id_required'
+      });
+    }
+
+    try {
+      const status = await collectLidarRelocStatus(vehicleId, { tool_timeout_s: 20 });
+      const inferTools = Array.isArray(status?.tools?.infer_tools) ? status.tools.infer_tools : [];
+      const toolName = inferTools[0] || '';
+      const lastCapture = await readLastLidarRelocCapture(vehicleId);
+
+      if (!toolName) {
+        return res.status(501).json({
+          ok: false,
+          vehicle_id: vehicleId,
+          phase: 'not_ready',
+          detail: 'BEVPlace++ 推理服务还没有接入 cloud-agent；当前页面已准备好接口合约，但不会伪造粗位姿。',
+          required_tools: status?.tools?.missing?.inference || [
+            'lidar.relocalization_infer',
+            'bevplace.infer'
+          ],
+          model: status.model,
+          map: status.map,
+          localization: status.localization,
+          capture: status.capture
+        });
+      }
+
+      if (!lastCapture && !req.body?.capture_id && !req.body?.use_live_capture) {
+        return res.status(409).json({
+          ok: false,
+          vehicle_id: vehicleId,
+          phase: 'no_current_frame',
+          detail: '还没有当前帧/上下文抓取记录，请先抓取当前帧。',
+          model: status.model,
+          map: status.map
+        });
+      }
+
+      const requestArgs = req.body && typeof req.body === 'object' ? req.body.args : null;
+      const args = {
+        use_last_capture: !req.body?.capture_id,
+        capture_id: req.body?.capture_id || lastCapture?.result?.capture_id || lastCapture?.result?.bundle_id || null,
+        map_path: status?.map?.local?.available ? status.map.local.path : null,
+        map_version: status?.map?.map_version || null,
+        checkpoint: lidarRelocalizationModelCheckpoint,
+        return_topk: 5,
+        ...(requestArgs && typeof requestArgs === 'object' && !Array.isArray(requestArgs) ? requestArgs : {})
+      };
+      const timeout_s = toFiniteInteger(req.body?.timeout_s, 90, { min: 10, max: 120 });
+      const execution = await executeLidarRelocTool(vehicleId, toolName, args, timeout_s);
+      const result = unwrapCloudOpsToolResult(execution);
+
+      return res.status(execution.ok ? 200 : 502).json({
+        ok: execution.ok,
+        vehicle_id: vehicleId,
+        phase: execution.ok ? 'coarse_pose_ready' : 'infer_failed',
+        tool_name: toolName,
+        coarse_pose:
+          normalizeLidarRelocPose(result?.pose || result?.coarse_pose || result?.best_pose || result) || null,
+        confidence: readLidarRelocNumber(result?.confidence, result?.score, result?.best_score),
+        candidates: Array.isArray(result?.candidates) ? result.candidates : [],
+        result,
+        execution: sanitizeCloudOpsPayload(execution),
+        detail: execution.ok ? undefined : execution.detail || execution.error || `${toolName}_failed`
+      });
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        vehicle_id: vehicleId,
+        detail: error?.message || 'lidar_relocalization_infer_failed'
+      });
+    }
+  }
+);
+
 app.post('/api/cloud-ops/deploy/catalog', authStore.requirePermission('vehicle:code:read'), async (req, res) => {
   const vehicleId = String(req.body?.vehicle_id || '').trim();
   if (!vehicleId) {
@@ -10981,6 +11588,11 @@ const privateNavigationItems = [
     permissions: ['vehicle:read', 'runtime:read']
   },
   {
+    href: '/app/lidar-relocalization',
+    label: '激光重定位',
+    permissions: ['vehicle:read']
+  },
+  {
     href: '/app/park-crowd',
     label: '园区人流',
     permissions: ['vehicle:read']
@@ -11078,6 +11690,11 @@ const protectedAppPages = [
     paths: ['/app/cloud-operations', '/app/cloud-operations/'],
     file: 'app/cloud-operations/index.html',
     permissions: ['vehicle:read', 'runtime:read']
+  },
+  {
+    paths: ['/app/lidar-relocalization', '/app/lidar-relocalization/'],
+    file: 'app/lidar-relocalization/index.html',
+    permissions: ['vehicle:read']
   },
   {
     paths: ['/app/park-crowd', '/app/park-crowd/'],
