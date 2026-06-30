@@ -14,6 +14,9 @@
   const resultState = document.getElementById("lidar-reloc-result-state");
   const resultNode = document.getElementById("lidar-reloc-result");
   const rawJsonNode = document.getElementById("lidar-reloc-json");
+  const visualState = document.getElementById("lidar-reloc-visual-state");
+  const bevCanvas = document.getElementById("lidar-reloc-bev");
+  const legendNode = document.getElementById("lidar-reloc-legend");
 
   let vehicles = [];
   let currentVehicleId = "";
@@ -30,6 +33,12 @@
     if (!resultState) return;
     resultState.textContent = text;
     resultState.dataset.state = state;
+  }
+
+  function setVisualState(text, state = "idle") {
+    if (!visualState) return;
+    visualState.textContent = text;
+    visualState.dataset.state = state;
   }
 
   function setBusy(nextBusy) {
@@ -123,6 +132,178 @@
     item.appendChild(createNode("p", "lidar-reloc-meta-label", label));
     item.appendChild(createNode("p", "lidar-reloc-meta-value", value ?? "-"));
     container.appendChild(item);
+  }
+
+  function renderLegend(items) {
+    if (!legendNode) return;
+    legendNode.innerHTML = "";
+    items.forEach((item) => {
+      const row = createNode("span", "lidar-reloc-legend-item");
+      const swatch = createNode("i", "");
+      swatch.style.background = item.color;
+      row.appendChild(swatch);
+      row.appendChild(createNode("span", "", item.label));
+      legendNode.appendChild(row);
+    });
+  }
+
+  function clearVisualization(text = "等待推理结果") {
+    if (!bevCanvas) return;
+    const ctx = bevCanvas.getContext("2d");
+    if (!ctx) return;
+    const width = bevCanvas.width;
+    const height = bevCanvas.height;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = "rgba(71, 85, 105, 0.55)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "14px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, width / 2, height / 2);
+    renderLegend([
+      { color: "#64748b", label: "局部地图占用" },
+      { color: "#38bdf8", label: "当前帧投影" },
+      { color: "#34d399", label: "粗位姿" },
+      { color: "#f59e0b", label: "NDT 当前位姿" }
+    ]);
+  }
+
+  function drawPointSet(ctx, points, project, color, radius = 1.6, alpha = 1) {
+    if (!Array.isArray(points) || !points.length) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    points.forEach((point) => {
+      if (!Array.isArray(point) || point.length < 2) return;
+      const p = project(point[0], point[1]);
+      ctx.fillRect(p.x - radius / 2, p.y - radius / 2, radius, radius);
+    });
+    ctx.restore();
+  }
+
+  function drawPose(ctx, pose, project, color, label) {
+    if (!pose || !Number.isFinite(Number(pose.x)) || !Number.isFinite(Number(pose.y))) return;
+    const yaw = Number(pose.yaw ?? pose.heading ?? 0);
+    const p = project(Number(pose.x), Number(pose.y));
+    const size = 12;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(-yaw);
+    ctx.fillStyle = color;
+    ctx.strokeStyle = "rgba(2, 6, 23, 0.9)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(size, 0);
+    ctx.lineTo(-size * 0.6, -size * 0.55);
+    ctx.lineTo(-size * 0.35, 0);
+    ctx.lineTo(-size * 0.6, size * 0.55);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = color;
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(label, p.x + 8, p.y - 8);
+  }
+
+  function renderVisualization(data) {
+    if (!bevCanvas) return;
+    const viz = data?.result?.visualization || data?.visualization || null;
+    const ctx = bevCanvas.getContext("2d");
+    if (!ctx) return;
+    if (!viz?.bounds) {
+      clearVisualization("本次结果没有可视化数据");
+      setVisualState("无可视化数据", "warn");
+      return;
+    }
+
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const cssWidth = bevCanvas.clientWidth || 960;
+    const cssHeight = Math.max(360, Math.round(cssWidth * 0.58));
+    const width = Math.round(cssWidth * dpr);
+    const height = Math.round(cssHeight * dpr);
+    if (bevCanvas.width !== width || bevCanvas.height !== height) {
+      bevCanvas.width = width;
+      bevCanvas.height = height;
+    }
+
+    const margin = 34 * dpr;
+    const bounds = viz.bounds;
+    const minX = Number(bounds.min_x);
+    const maxX = Number(bounds.max_x);
+    const minY = Number(bounds.min_y);
+    const maxY = Number(bounds.max_y);
+    const spanX = Math.max(1, maxX - minX);
+    const spanY = Math.max(1, maxY - minY);
+    const scale = Math.min((width - margin * 2) / spanX, (height - margin * 2) / spanY);
+    const offsetX = (width - spanX * scale) / 2;
+    const offsetY = (height - spanY * scale) / 2;
+    const project = (x, y) => ({
+      x: offsetX + (Number(x) - minX) * scale,
+      y: height - (offsetY + (Number(y) - minY) * scale)
+    });
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = "rgba(71, 85, 105, 0.55)";
+    ctx.lineWidth = dpr;
+    ctx.strokeRect(0.5 * dpr, 0.5 * dpr, width - dpr, height - dpr);
+
+    ctx.strokeStyle = "rgba(30, 41, 59, 0.9)";
+    ctx.lineWidth = dpr;
+    const gridStep = 10;
+    for (let x = Math.ceil(minX / gridStep) * gridStep; x <= maxX; x += gridStep) {
+      const a = project(x, minY);
+      const b = project(x, maxY);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    for (let y = Math.ceil(minY / gridStep) * gridStep; y <= maxY; y += gridStep) {
+      const a = project(minX, y);
+      const b = project(maxX, y);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+
+    drawPointSet(ctx, viz.map_points, project, "#64748b", 1.4 * dpr, 0.72);
+    drawPointSet(ctx, viz.query_points_prior, project, "#f59e0b", 1.7 * dpr, 0.35);
+    drawPointSet(ctx, viz.query_points_coarse, project, "#38bdf8", 2 * dpr, 0.86);
+
+    const poses = viz.poses || {};
+    const candidates = Array.isArray(poses.candidates) ? poses.candidates.slice(1, 6) : [];
+    candidates.forEach((pose) => drawPose(ctx, pose, project, "#a78bfa", ""));
+    drawPose(ctx, poses.prior || data?.capture?.pose, project, "#f59e0b", "NDT");
+    drawPose(ctx, poses.coarse || data?.coarse_pose, project, "#34d399", "COARSE");
+
+    ctx.fillStyle = "#cbd5e1";
+    ctx.font = `${12 * dpr}px system-ui, sans-serif`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText(
+      `map ${formatInteger(viz.map_points?.length)} / query ${formatInteger(viz.query_points_coarse?.length)} / window ${(spanX).toFixed(1)}m x ${(spanY).toFixed(1)}m`,
+      12 * dpr,
+      12 * dpr
+    );
+
+    renderLegend([
+      { color: "#64748b", label: "局部地图占用" },
+      { color: "#38bdf8", label: "当前帧按粗位姿投影" },
+      { color: "#f59e0b", label: "NDT 当前位姿/投影" },
+      { color: "#34d399", label: "粗位姿" },
+      { color: "#a78bfa", label: "候选位姿" }
+    ]);
+    setVisualState("BEV 已更新", "ok");
   }
 
   function renderEmpty(container, text) {
@@ -239,6 +420,7 @@
       renderStatus(data);
       setStatus(`${currentVehicleId} 状态已更新`, "ok");
       setResultState("等待推理", "idle");
+      setVisualState("等待推理", "idle");
       if (!resultNode?.childElementCount || resultNode?.querySelector(".lidar-reloc-empty")) {
         renderEmpty(resultNode, "已加载车辆状态，可以抓取当前帧或直接检查推理链路。");
       }
@@ -317,6 +499,7 @@
         body: JSON.stringify({})
       });
       renderInferResult(data);
+      renderVisualization(data);
       if (rawJsonNode) rawJsonNode.textContent = JSON.stringify(data, null, 2);
       setStatus(data.ok ? "粗位姿已返回" : "推理未完成", data.ok ? "ok" : "warn");
       setResultState(data.ok ? "粗位姿可用" : data.phase || "未就绪", data.ok ? "ok" : "warn");
@@ -363,6 +546,7 @@
   renderEmpty(mapNode, "等待车辆状态。");
   renderEmpty(localizationNode, "等待定位状态。");
   renderEmpty(pipelineNode, "等待工具列表。");
+  clearVisualization();
   refreshAll().catch((error) => {
     setStatus(error.message || "加载失败", "error");
     if (rawJsonNode) rawJsonNode.textContent = JSON.stringify(error.payload || { error: error.message }, null, 2);

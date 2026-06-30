@@ -1735,13 +1735,57 @@
 }
 
 .lidar-reloc-panel,
-.lidar-reloc-result {
+.lidar-reloc-result,
+.lidar-reloc-visual-panel {
   display: grid;
   gap: 12px;
   padding: 15px;
   border-radius: 18px;
   border: 1px solid rgba(71, 85, 105, 0.58);
   background: rgba(15, 23, 42, 0.72);
+}
+
+.lidar-reloc-visual-panel {
+  padding: 16px;
+}
+
+.lidar-reloc-visual-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.lidar-reloc-visual-wrap canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 12 / 7;
+  min-height: 360px;
+  border-radius: 14px;
+  border: 1px solid rgba(71, 85, 105, 0.62);
+  background: #020617;
+}
+
+.lidar-reloc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  color: #cbd5e1;
+  font-size: 0.78rem;
+}
+
+.lidar-reloc-legend-item {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.lidar-reloc-legend-item i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.65);
 }
 
 .lidar-reloc-panel-kicker {
@@ -1859,6 +1903,10 @@
   .lidar-reloc-meta-grid,
   .lidar-reloc-result-body {
     grid-template-columns: 1fr;
+  }
+
+  .lidar-reloc-visual-wrap canvas {
+    min-height: 260px;
   }
 
   .lidar-reloc-head,

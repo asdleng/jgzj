@@ -55,6 +55,20 @@ import scriptText from "../scripts/lidar-relocalization.js?raw";
     </section>
   </div>
 
+  <section class="lidar-reloc-visual-panel">
+    <div class="lidar-reloc-result-head">
+      <div>
+        <p class="lidar-reloc-panel-kicker">VISUALIZATION</p>
+        <h4>BEV 地图与当前帧叠加</h4>
+      </div>
+      <p id="lidar-reloc-visual-state" class="cloud-ops-inline-status" data-state="idle">等待推理</p>
+    </div>
+    <div class="lidar-reloc-visual-wrap">
+      <canvas id="lidar-reloc-bev" width="960" height="560" aria-label="BEV relocalization visualization"></canvas>
+      <div id="lidar-reloc-legend" class="lidar-reloc-legend"></div>
+    </div>
+  </section>
+
   <section class="lidar-reloc-result">
     <div class="lidar-reloc-result-head">
       <div>

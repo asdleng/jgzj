@@ -187,6 +187,101 @@ def score_candidate(occ, local_xy, x, y, yaw):
     return (hits / float(valid_count)) * coverage, hits, coverage
 
 
+def round_point_list(points, digits=3):
+    return [[round(float(x), digits), round(float(y), digits)] for x, y in points]
+
+
+def filter_query_xy(query_points, args):
+    local = query_points[:, :2]
+    ranges = np.linalg.norm(local, axis=1)
+    keep = (
+        np.isfinite(local).all(axis=1)
+        & (ranges >= args.min_query_range_m)
+        & (ranges <= min(args.max_query_range_m, args.visual_query_range_m))
+    )
+    local = local[keep]
+    if local.shape[0] > args.visual_max_query_points:
+        stride = int(math.ceil(local.shape[0] / float(args.visual_max_query_points)))
+        local = local[::stride]
+    return local
+
+
+def transform_local_xy(local_xy, pose):
+    yaw = float(pose.get("yaw", pose.get("heading", 0.0)) or 0.0)
+    c = math.cos(yaw)
+    s = math.sin(yaw)
+    x = float(pose.get("x") or 0.0)
+    y = float(pose.get("y") or 0.0)
+    gx = x + local_xy[:, 0] * c - local_xy[:, 1] * s
+    gy = y + local_xy[:, 0] * s + local_xy[:, 1] * c
+    return np.column_stack([gx, gy])
+
+
+def sample_map_points(occ, bounds, max_points):
+    ix0 = max(0, int(math.floor((bounds["min_x"] - occ["min_x"]) / occ["voxel"])))
+    iy0 = max(0, int(math.floor((bounds["min_y"] - occ["min_y"]) / occ["voxel"])))
+    ix1 = min(occ["nx"] - 1, int(math.ceil((bounds["max_x"] - occ["min_x"]) / occ["voxel"])))
+    iy1 = min(occ["ny"] - 1, int(math.ceil((bounds["max_y"] - occ["min_y"]) / occ["voxel"])))
+    if ix1 < ix0 or iy1 < iy0:
+        return np.empty((0, 2), dtype=np.float32), 0
+
+    grid = occ["occupancy"].reshape((occ["nx"], occ["ny"]))
+    local_ix, local_iy = np.nonzero(grid[ix0 : ix1 + 1, iy0 : iy1 + 1])
+    total = int(local_ix.shape[0])
+    if total <= 0:
+        return np.empty((0, 2), dtype=np.float32), 0
+
+    if total > max_points:
+        stride = int(math.ceil(total / float(max_points)))
+        local_ix = local_ix[::stride]
+        local_iy = local_iy[::stride]
+
+    ix = local_ix + ix0
+    iy = local_iy + iy0
+    x = occ["min_x"] + (ix.astype(np.float32) + 0.5) * occ["voxel"]
+    y = occ["min_y"] + (iy.astype(np.float32) + 0.5) * occ["voxel"]
+    return np.column_stack([x, y]), total
+
+
+def build_visualization(occ, query_points, prior_pose, coarse_pose, candidates, args):
+    local_xy = filter_query_xy(query_points, args)
+    query_coarse = transform_local_xy(local_xy, coarse_pose) if local_xy.shape[0] else np.empty((0, 2), dtype=np.float32)
+    query_prior = transform_local_xy(local_xy, prior_pose) if local_xy.shape[0] else np.empty((0, 2), dtype=np.float32)
+
+    prior_x = float(prior_pose.get("x") or coarse_pose["x"])
+    prior_y = float(prior_pose.get("y") or coarse_pose["y"])
+    coarse_x = float(coarse_pose["x"])
+    coarse_y = float(coarse_pose["y"])
+    center_x = (prior_x + coarse_x) * 0.5
+    center_y = (prior_y + coarse_y) * 0.5
+    pose_gap = math.hypot(coarse_x - prior_x, coarse_y - prior_y)
+    radius = max(float(args.visual_radius_m), pose_gap * 0.5 + float(args.visual_query_range_m) * 0.75)
+    bounds = {
+        "min_x": center_x - radius,
+        "max_x": center_x + radius,
+        "min_y": center_y - radius,
+        "max_y": center_y + radius,
+    }
+
+    map_points, map_points_total = sample_map_points(occ, bounds, args.visual_max_map_points)
+    return {
+        "schema": "jgzj_lidar_relocalization_bev_v1",
+        "frame": "map",
+        "bounds": {key: round(float(value), 3) for key, value in bounds.items()},
+        "voxel_m": float(occ["voxel"]),
+        "map_points": round_point_list(map_points),
+        "map_points_total": map_points_total,
+        "query_points_coarse": round_point_list(query_coarse),
+        "query_points_prior": round_point_list(query_prior),
+        "query_points_total": int(local_xy.shape[0]),
+        "poses": {
+            "prior": prior_pose,
+            "coarse": coarse_pose,
+            "candidates": candidates[: min(len(candidates), 10)],
+        },
+    }
+
+
 def search_pose(occ, query_points, prior_pose, args):
     local = query_points[:, :2]
     ranges = np.linalg.norm(local, axis=1)
@@ -256,6 +351,10 @@ def main():
     parser.add_argument("--fine-yaw-range-deg", type=float, default=4.0)
     parser.add_argument("--fine-yaw-step-deg", type=float, default=1.0)
     parser.add_argument("--return-topk", type=int, default=5)
+    parser.add_argument("--visual-radius-m", type=float, default=55.0)
+    parser.add_argument("--visual-query-range-m", type=float, default=55.0)
+    parser.add_argument("--visual-max-map-points", type=int, default=12000)
+    parser.add_argument("--visual-max-query-points", type=int, default=6000)
     args = parser.parse_args()
 
     started = time.time()
@@ -270,19 +369,20 @@ def main():
 
     occ = build_or_load_occupancy(args.map_pcd, args.voxel_m)
     best, candidates, used_query_points = search_pose(occ, query_points, pose, args)
+    coarse_pose = {
+        "x": best["x"],
+        "y": best["y"],
+        "z": best["z"],
+        "yaw": best["yaw"],
+        "heading": best["heading"],
+    }
     elapsed_ms = round((time.time() - started) * 1000.0, 1)
     output = {
         "ok": True,
         "phase": "coarse_pose_ready",
         "method": "server_bev_prior_refine",
         "vehicle_id": args.vehicle_id,
-        "coarse_pose": {
-            "x": best["x"],
-            "y": best["y"],
-            "z": best["z"],
-            "yaw": best["yaw"],
-            "heading": best["heading"],
-        },
+        "coarse_pose": coarse_pose,
         "confidence": best["score"],
         "score": best["score"],
         "candidates": candidates,
@@ -302,6 +402,7 @@ def main():
             "checkpoint": args.checkpoint,
             "note": "BEVPlace++ checkpoint is tracked by the service contract; this fallback uses BEV occupancy correlation until descriptor inference is deployed.",
         },
+        "visualization": build_visualization(occ, query_points, pose, coarse_pose, candidates, args),
         "elapsed_ms": elapsed_ms,
     }
     print(json.dumps(output, ensure_ascii=False))

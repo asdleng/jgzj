@@ -616,12 +616,29 @@
   }
 
   function refreshDatasetOptions() {
-    const selectedSource = refs.source?.value || "";
+    let selectedSource = refs.source?.value || "";
     state.eventDatasets = state.allDatasets.filter((dataset) => datasetMatchesEvent(dataset));
-    state.datasets = state.eventDatasets.filter((dataset) => {
-      if (!selectedSource) return true;
-      return datasetSourceGroup(dataset) === selectedSource;
+    const filterBySource = (source) => state.eventDatasets.filter((dataset) => {
+      if (!source) return true;
+      return datasetSourceGroup(dataset) === source;
     });
+    state.datasets = filterBySource(selectedSource);
+    if (selectedSource && !state.datasets.length && state.eventDatasets.length) {
+      const currentDataset = state.eventDatasets.find((dataset) => dataset.id === state.datasetId);
+      const currentSource = datasetSourceGroup(currentDataset);
+      let fallbackSource = "";
+      if (currentSource && state.eventDatasets.some((dataset) => datasetSourceGroup(dataset) === currentSource)) {
+        fallbackSource = currentSource;
+      }
+      if (!fallbackSource) {
+        fallbackSource = sourceGroups.slice(1).find((group) => (
+          state.eventDatasets.some((dataset) => datasetSourceGroup(dataset) === group.value)
+        ))?.value || "";
+      }
+      selectedSource = fallbackSource;
+      if (refs.source) refs.source.value = selectedSource;
+      state.datasets = filterBySource(selectedSource);
+    }
     if (!refs.dataset) return;
     refs.dataset.innerHTML = "";
     state.datasets.forEach((dataset) => {
