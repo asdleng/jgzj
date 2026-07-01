@@ -216,7 +216,36 @@ const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
     label: '全部YOLO检测',
-    subTasks: ['person_yolo', 'vehicle_yolo', 'vehicle_plate_ocr', 'pet_yolo', 'trash_ground_event', 'fire_smoke_yolo', 'phone_yolo', 'stall_yolo', 'fishing_event', 'fishing_rod_yolo', 'smoking_two_stage']
+    subTasks: ['common_yolo', 'vehicle_plate_ocr', 'trash_ground_event', 'fire_smoke_yolo', 'stall_yolo', 'fishing_event', 'fishing_rod_yolo', 'smoking_two_stage']
+  },
+  common_yolo: {
+    kind: 'detect',
+    label: '通用目标',
+    model: '/home/sari/common_yolo_20260630/runs/common_yolo_yolo26s_pvp_v1_a100_gpu5_20260630_094347/weights/best.pt',
+    localModel: '/home/admin1/jgzj/.runtime/yolo_model_service/weights/common_yolo_best.pt',
+    names: ['person', 'vehicle', 'pet'],
+    imgsz: 640,
+    conf: 0.25,
+    downloadFile: 'common_yolo_best.pt',
+    registryModelFamily: 'yolo26s',
+    registryMetricSource: 'test',
+    registryStatus: 'deployed',
+    registryMetrics: {
+      test_precision: 0.8392147847669436,
+      test_recall: 0.8195504702687278,
+      test_map50: 0.8692812871581502,
+      test_map50_95: 0.7299532180385438,
+      test_person_precision: 0.835639886889511,
+      test_person_recall: 0.6318367346938776,
+      test_person_map50: 0.7426398895730579,
+      test_vehicle_precision: 0.7354249851604614,
+      test_vehicle_recall: 0.8811599359544565,
+      test_vehicle_map50: 0.8940412025375252,
+      test_pet_precision: 0.9465794822508583,
+      test_pet_recall: 0.9456547401578494,
+      test_pet_map50: 0.9711627693638677
+    },
+    registryNote: '融合模型：person / vehicle / pet；当前采用已完成 common_yolo yolo26s。'
   },
   person_yolo: {
     kind: 'detect',
@@ -1803,7 +1832,7 @@ async function fileInfoForPath(filePath) {
 }
 
 async function buildFallbackYoloModelEntries() {
-  const taskIds = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'license_plate_yolo', 'pet_yolo', 'trash_yolo', 'ground_seg_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
+  const taskIds = ['common_yolo', 'person_behavior_cls', 'license_plate_yolo', 'trash_yolo', 'ground_seg_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo', 'person_yolo', 'vehicle_yolo', 'pet_yolo'];
   const entries = [];
   for (const taskId of taskIds) {
     const task = yoloModelTestTasks[taskId];
@@ -1876,7 +1905,7 @@ async function buildYoloModelRegistryPayload() {
     }
   }
 
-  const preferredOrder = ['person_yolo', 'person_behavior_cls', 'vehicle_yolo', 'license_plate_yolo', 'pet_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
+  const preferredOrder = ['common_yolo', 'person_behavior_cls', 'license_plate_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo', 'trash_yolo', 'ground_seg_yolo', 'person_yolo', 'vehicle_yolo', 'pet_yolo'];
   const entries = [];
   for (const taskId of preferredOrder) {
     if (!mergedByTask.has(taskId)) continue;

@@ -485,7 +485,7 @@
     state.activeEvent = eventPresets[eventKey] ? eventKey : "all";
     if (refs.source) refs.source.value = "";
     resetDetail("已切换事件，选择左侧样本查看详情。");
-    refreshDatasetOptions();
+    refreshDatasetOptions({ allowFallback: true });
     updateClassOptions();
     updateQwenOptions();
     applyEventFiltersForDataset(selectedDataset());
@@ -615,15 +615,16 @@
     });
   }
 
-  function refreshDatasetOptions() {
+  function refreshDatasetOptions(options = {}) {
     let selectedSource = refs.source?.value || "";
+    const allowFallback = Boolean(options.allowFallback);
     state.eventDatasets = state.allDatasets.filter((dataset) => datasetMatchesEvent(dataset));
     const filterBySource = (source) => state.eventDatasets.filter((dataset) => {
       if (!source) return true;
       return datasetSourceGroup(dataset) === source;
     });
     state.datasets = filterBySource(selectedSource);
-    if (selectedSource && !state.datasets.length && state.eventDatasets.length) {
+    if (allowFallback && selectedSource && !state.datasets.length && state.eventDatasets.length) {
       const currentDataset = state.eventDatasets.find((dataset) => dataset.id === state.datasetId);
       const currentSource = datasetSourceGroup(currentDataset);
       let fallbackSource = "";
@@ -660,7 +661,7 @@
       const data = await requestJson(endpoints.datasets);
       state.allDatasets = Array.isArray(data.datasets) ? data.datasets : [];
       configureSourceOptions();
-      refreshDatasetOptions();
+      refreshDatasetOptions({ allowFallback: true });
       if (!state.datasetId && state.datasets.length) {
         state.datasetId = state.datasets[0].id;
       }
