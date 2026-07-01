@@ -24,18 +24,6 @@ RUN_ONCE = os.environ.get("YOLO_MONITOR_ONCE", "").lower() in {"1", "true", "yes
 
 
 TARGETS = {
-    "common_yolo": {
-        "title": "通用目标",
-        "local_weight": str(RUNTIME_ROOT / "weights" / "common_yolo_best.pt"),
-        "download_file": "common_yolo_best.pt",
-        "summary_roots": [
-            "/home/sari/common_yolo_20260630",
-        ],
-        "roots": [
-            "/home/sari/common_yolo_20260630/runs",
-        ],
-        "keywords": ["common_yolo"],
-    },
     "person_yolo": {
         "title": "人员识别",
         "local_weight": str(RUNTIME_ROOT / "weights" / "person_yolo_best.pt"),
@@ -188,6 +176,18 @@ TARGETS = {
         "roots": [],
         "summary_roots": [],
         "keywords": [],
+    },
+    "common_yolo": {
+        "title": "融合实验",
+        "local_weight": str(RUNTIME_ROOT / "weights" / "common_yolo_best.pt"),
+        "download_file": "common_yolo_best.pt",
+        "summary_roots": [
+            "/home/sari/common_yolo_20260630",
+        ],
+        "roots": [
+            "/home/sari/common_yolo_20260630/runs",
+        ],
+        "keywords": ["common_yolo"],
     },
 }
 
