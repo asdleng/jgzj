@@ -4044,13 +4044,7 @@
 }
 
 .yolo-review-toolbar {
-  display: grid;
-  grid-template-columns: minmax(160px, 0.44fr) minmax(320px, 1fr);
-  gap: 10px;
-  align-items: end;
-  padding: 14px 18px;
-  border-bottom: 1px solid rgba(71, 85, 105, 0.35);
-  background: rgba(8, 15, 31, 0.64);
+  display: none;
 }
 
 .yolo-review-field {
@@ -4063,6 +4057,10 @@
 }
 
 .yolo-review-field--advanced {
+  display: none;
+}
+
+.yolo-review-field--state {
   display: none;
 }
 
@@ -4120,7 +4118,7 @@
 
 .yolo-review-dataset-strip {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   padding: 12px 18px 14px;
   border-bottom: 1px solid rgba(71, 85, 105, 0.35);
   background: rgba(15, 23, 42, 0.56);
@@ -4155,6 +4153,96 @@
   font-size: 0.76rem;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.yolo-review-source-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.yolo-review-source-card {
+  min-width: 0;
+  min-height: 72px;
+  display: grid;
+  gap: 8px;
+  align-content: center;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.82);
+  background: rgba(2, 6, 23, 0.56);
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.yolo-review-source-card:hover {
+  border-color: rgba(45, 212, 191, 0.66);
+  background: rgba(8, 15, 31, 0.86);
+  transform: translateY(-1px);
+}
+
+.yolo-review-source-card.is-active {
+  border-color: rgba(251, 191, 36, 0.82);
+  background: rgba(67, 56, 10, 0.36);
+  box-shadow: inset 3px 0 0 rgba(251, 191, 36, 0.88);
+}
+
+.yolo-review-source-card.is-empty:not(.is-active) {
+  opacity: 0.66;
+}
+
+.yolo-review-source-card-title {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.yolo-review-source-card-title strong,
+.yolo-review-source-card-title span {
+  margin: 0;
+  line-height: 1.2;
+}
+
+.yolo-review-source-card-title strong {
+  color: #f8fafc;
+  font-size: 0.88rem;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.yolo-review-source-card-title span {
+  flex: 0 1 auto;
+  color: #99f6e4;
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-align: right;
+}
+
+.yolo-review-source-card.is-empty .yolo-review-source-card-title span {
+  color: #94a3b8;
+}
+
+.yolo-review-source-card-metrics {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.yolo-review-source-card-metrics span {
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(71, 85, 105, 0.68);
+  background: rgba(15, 23, 42, 0.72);
+  color: #cbd5e1;
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1.1;
 }
 
 .yolo-review-dataset-cards {
@@ -4347,6 +4435,35 @@
   gap: 8px;
   align-content: start;
   padding: 12px;
+}
+
+.yolo-review-list.is-loading {
+  align-content: center;
+}
+
+.yolo-review-loading {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  color: #99f6e4;
+  font-size: 0.86rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.yolo-review-loading p {
+  margin: 0;
+}
+
+.yolo-review-spinner {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 3px solid rgba(148, 163, 184, 0.28);
+  border-top-color: #5eead4;
+  animation: yolo-review-spin 0.82s linear infinite;
 }
 
 .yolo-review-item {
@@ -4920,10 +5037,7 @@ body.yolo-review-is-panning {
 }
 
 @media (max-width: 1280px) {
-  .yolo-review-toolbar {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
+  .yolo-review-source-cards,
   .yolo-review-dataset-cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -4951,8 +5065,7 @@ body.yolo-review-is-panning {
     border-radius: 14px;
   }
 
-  .yolo-review-head,
-  .yolo-review-toolbar {
+  .yolo-review-head {
     grid-template-columns: 1fr;
   }
 
@@ -5034,6 +5147,7 @@ body.yolo-review-is-panning {
   }
 
   .yolo-review-event-grid,
+  .yolo-review-source-cards,
   .yolo-task-grid,
   .yolo-model-registry-list {
     grid-template-columns: 1fr;
@@ -5058,5 +5172,11 @@ body.yolo-review-is-panning {
   50%,
   100% {
     opacity: 0.55;
+  }
+}
+
+@keyframes yolo-review-spin {
+  to {
+    transform: rotate(360deg);
   }
 }

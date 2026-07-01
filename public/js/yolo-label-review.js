@@ -24,6 +24,7 @@
     eventStatus: document.getElementById("yolo-review-event-status"),
     eventButtons: Array.from(document.querySelectorAll("[data-yolo-review-event]")),
     datasetStatus: document.getElementById("yolo-review-dataset-status"),
+    sourceCards: document.getElementById("yolo-review-source-cards"),
     datasetCards: document.getElementById("yolo-review-dataset-cards"),
     summary: document.getElementById("yolo-review-summary"),
     list: document.getElementById("yolo-review-list"),
@@ -310,6 +311,11 @@
       "lvis",
       "objects365",
       "license_plate",
+      "fire_smoke_yolo",
+      "home_fire",
+      "external_yolo",
+      "smoking_cls",
+      "person_behavior_yolo_cls",
       "fishing_rod",
       "pet_yolo_public",
       "ground_seg"
@@ -361,6 +367,10 @@
     return dataset?.boxes ? sumObjectValues(dataset.boxes) : 0;
   }
 
+  function datasetTotalImages(dataset) {
+    return Number(dataset?.total_images || 0);
+  }
+
   function datasetKindText(dataset) {
     return dataset?.kind === "classify" ? "分类" : "检测";
   }
@@ -384,6 +394,20 @@
 
   function selectedDataset() {
     return state.datasets.find((item) => item.id === state.datasetId) || null;
+  }
+
+  function sourceDatasets(source) {
+    return state.eventDatasets.filter((dataset) => !source || datasetSourceGroup(dataset) === source);
+  }
+
+  function sourceStats(source) {
+    const datasets = sourceDatasets(source);
+    return {
+      datasets,
+      datasetCount: datasets.length,
+      imageCount: datasets.reduce((total, dataset) => total + datasetTotalImages(dataset), 0),
+      boxCount: datasets.reduce((total, dataset) => total + datasetTotalBoxes(dataset), 0)
+    };
   }
 
   function sumObjectValues(value) {
@@ -485,7 +509,7 @@
     state.activeEvent = eventPresets[eventKey] ? eventKey : "all";
     if (refs.source) refs.source.value = "";
     resetDetail("已切换事件，选择左侧样本查看详情。");
-    refreshDatasetOptions({ allowFallback: true });
+    refreshDatasetOptions();
     updateClassOptions();
     updateQwenOptions();
     applyEventFiltersForDataset(selectedDataset());
@@ -495,21 +519,75 @@
     loadItems({ resetPage: true }).catch(() => {});
   }
 
+  function applySourceSelection(source, options = {}) {
+    if (refs.source) refs.source.value = source || "";
+    if (options.resetDetail !== false) {
+      resetDetail("已切换来源，选择左侧样本查看详情。");
+    }
+    refreshDatasetOptions();
+    updateClassOptions();
+    updateQwenOptions();
+    applyEventFiltersForDataset(selectedDataset());
+    renderSummary(selectedDataset());
+    renderDatasetCards();
+    if (options.load !== false) {
+      loadItems({ resetPage: true }).catch(() => {});
+    }
+  }
+
+  function renderSourceCards() {
+    if (!refs.sourceCards) return;
+    refs.sourceCards.innerHTML = "";
+    const selectedSource = refs.source?.value || "";
+    sourceGroups.forEach((group) => {
+      const stats = sourceStats(group.value);
+      const button = createNode("button", "yolo-review-source-card");
+      button.type = "button";
+      button.dataset.sourceGroup = group.value;
+      button.classList.toggle("is-active", group.value === selectedSource);
+      button.classList.toggle("is-empty", stats.datasetCount === 0);
+      button.addEventListener("click", () => {
+        if ((refs.source?.value || "") === group.value) return;
+        applySourceSelection(group.value);
+      });
+
+      const title = createNode("div", "yolo-review-source-card-title");
+      title.appendChild(createNode("strong", "", group.label));
+      title.appendChild(createNode("span", "", stats.datasetCount ? "可查看" : "当前事件下暂无数据集"));
+      button.appendChild(title);
+
+      const metrics = createNode("div", "yolo-review-source-card-metrics");
+      [
+        ["数据集", compactNumber(stats.datasetCount)],
+        ["样本", compactNumber(stats.imageCount)],
+        ["框", compactNumber(stats.boxCount)]
+      ].forEach(([label, value]) => {
+        const metric = createNode("span", "", `${label} ${value}`);
+        metrics.appendChild(metric);
+      });
+      button.appendChild(metrics);
+      refs.sourceCards.appendChild(button);
+    });
+  }
+
   function renderDatasetCards() {
+    renderSourceCards();
     if (!refs.datasetCards) return;
     refs.datasetCards.innerHTML = "";
     const visible = state.datasets;
     const total = state.eventDatasets.length;
     if (refs.datasetStatus) {
-      const counts = sourceGroups.slice(1).map((group) => {
-        const count = state.eventDatasets.filter((dataset) => datasetSourceGroup(dataset) === group.value).length;
-        return `${group.label} ${compactNumber(count)}`;
-      });
       const sourceText = sourceGroupLabel(refs.source?.value || "");
-      refs.datasetStatus.textContent = `${eventPresets[state.activeEvent]?.label || "全部事件"} · ${sourceText} · ${compactNumber(total)} 个数据集 · ${counts.join(" · ")}`;
+      const selectedStats = sourceStats(refs.source?.value || "");
+      const sourceCounts = sourceGroups.slice(1).map((group) => {
+        const stats = sourceStats(group.value);
+        return `${group.label} ${compactNumber(stats.datasetCount)}`;
+      });
+      refs.datasetStatus.textContent = `${eventPresets[state.activeEvent]?.label || "全部事件"} · 当前 ${sourceText}：${compactNumber(selectedStats.datasetCount)} / ${compactNumber(total)} 个数据集 · ${sourceCounts.join(" · ")}`;
     }
     if (!visible.length) {
-      refs.datasetCards.appendChild(createNode("p", "yolo-review-empty", "当前事件和来源下没有扫描到数据集。"));
+      const sourceText = sourceGroupLabel(refs.source?.value || "");
+      refs.datasetCards.appendChild(createNode("p", "yolo-review-empty", `当前事件的「${sourceText}」下没有数据集。`));
       return;
     }
     visible.forEach((dataset) => {
@@ -615,31 +693,14 @@
     });
   }
 
-  function refreshDatasetOptions(options = {}) {
+  function refreshDatasetOptions() {
     let selectedSource = refs.source?.value || "";
-    const allowFallback = Boolean(options.allowFallback);
     state.eventDatasets = state.allDatasets.filter((dataset) => datasetMatchesEvent(dataset));
     const filterBySource = (source) => state.eventDatasets.filter((dataset) => {
       if (!source) return true;
       return datasetSourceGroup(dataset) === source;
     });
     state.datasets = filterBySource(selectedSource);
-    if (allowFallback && selectedSource && !state.datasets.length && state.eventDatasets.length) {
-      const currentDataset = state.eventDatasets.find((dataset) => dataset.id === state.datasetId);
-      const currentSource = datasetSourceGroup(currentDataset);
-      let fallbackSource = "";
-      if (currentSource && state.eventDatasets.some((dataset) => datasetSourceGroup(dataset) === currentSource)) {
-        fallbackSource = currentSource;
-      }
-      if (!fallbackSource) {
-        fallbackSource = sourceGroups.slice(1).find((group) => (
-          state.eventDatasets.some((dataset) => datasetSourceGroup(dataset) === group.value)
-        ))?.value || "";
-      }
-      selectedSource = fallbackSource;
-      if (refs.source) refs.source.value = selectedSource;
-      state.datasets = filterBySource(selectedSource);
-    }
     if (!refs.dataset) return;
     refs.dataset.innerHTML = "";
     state.datasets.forEach((dataset) => {
@@ -661,7 +722,7 @@
       const data = await requestJson(endpoints.datasets);
       state.allDatasets = Array.isArray(data.datasets) ? data.datasets : [];
       configureSourceOptions();
-      refreshDatasetOptions({ allowFallback: true });
+      refreshDatasetOptions();
       if (!state.datasetId && state.datasets.length) {
         state.datasetId = state.datasets[0].id;
       }
@@ -730,6 +791,7 @@
   async function loadItems(options = {}) {
     if (options.resetPage) state.page = 1;
     if (!state.datasetId) {
+      refs.list.classList.remove("is-loading");
       refs.list.innerHTML = "";
       refs.list.appendChild(createNode("p", "yolo-review-empty", "暂无数据集。"));
       if (refs.page) refs.page.textContent = "第 1 / 1 页 · 0 条";
@@ -743,11 +805,18 @@
     const requestEvent = state.activeEvent;
     const requestSource = refs.source?.value || "";
     setStatus("加载样本...", "loading");
+    refs.list.classList.add("is-loading");
+    refs.list.innerHTML = "";
+    const loading = createNode("div", "yolo-review-loading");
+    loading.appendChild(createNode("span", "yolo-review-spinner"));
+    loading.appendChild(createNode("p", "", "样本加载中..."));
+    refs.list.appendChild(loading);
     try {
       const data = await requestJson(buildItemsUrl());
       if (requestDatasetId !== state.datasetId || requestEvent !== state.activeEvent || requestSource !== (refs.source?.value || "")) {
         return;
       }
+      refs.list.classList.remove("is-loading");
       state.page = data.page || 1;
       state.totalPages = data.total_pages || 1;
       updateSplitOptions(data.available_splits || []);
@@ -763,6 +832,7 @@
       if (requestDatasetId !== state.datasetId || requestEvent !== state.activeEvent || requestSource !== (refs.source?.value || "")) {
         return;
       }
+      refs.list.classList.remove("is-loading");
       setStatus(`样本加载失败：${error?.message || "未知错误"}`, "error");
       refs.list.innerHTML = "";
       refs.list.appendChild(createNode("p", "yolo-review-empty", "样本加载失败。"));
@@ -1620,14 +1690,7 @@
     loadItems({ resetPage: true }).catch(() => {});
   });
   refs.source?.addEventListener("change", () => {
-    resetDetail("已切换来源，选择左侧样本查看详情。");
-    refreshDatasetOptions();
-    updateClassOptions();
-    updateQwenOptions();
-    applyEventFiltersForDataset(selectedDataset());
-    renderSummary(selectedDataset());
-    renderDatasetCards();
-    loadItems({ resetPage: true }).catch(() => {});
+    applySourceSelection(refs.source?.value || "");
   });
   refs.split?.addEventListener("change", () => {
     markCustomEventFilter();
