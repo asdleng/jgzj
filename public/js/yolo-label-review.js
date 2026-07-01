@@ -96,15 +96,15 @@
       preferredSource: "public_dataset"
     },
     phone: {
-      label: "手机事件 · 全部来源 · 默认显示框",
+      label: "手机事件 · 全部来源 · 默认 Yes/No",
       tokens: ["phone", "mobile", "手机"],
       qwenLabel: "phone",
       className: "phone",
       classNames: ["phone_use", "phone", "mobile"],
       answer: "YES",
       query: "",
-      hasBox: true,
-      taskKind: "detect",
+      hasBox: false,
+      taskKind: "classify",
       preferredSource: "public_dataset"
     },
     smoking: {
@@ -158,7 +158,7 @@
       preferredSource: "checker_archive"
     },
     pet: {
-      label: "宠物事件 · 全部来源 · 候选/框",
+      label: "宠物事件 · 全部来源 · 默认显示框",
       tokens: ["pet", "dog", "cat", "animal", "宠物"],
       qwenLabel: "pet",
       className: "pet",
@@ -462,6 +462,45 @@
     return keys.length > 0 && keys.every((key) => ["train", "val", "test"].includes(key));
   }
 
+  function splitCount(value) {
+    return countObjectLooksSplitBased(value) ? sumObjectValues(value) : 0;
+  }
+
+  function datasetEventLabel(eventKey = state.activeEvent, source = refs.source?.value || "") {
+    const raw = eventPresets[eventKey]?.label || "全部事件";
+    const sourceText = sourceGroupLabel(source);
+    const label = raw.replace(" · 全部来源", "");
+    if (!eventKey || eventKey === "all") {
+      return `${label} · 当前 ${sourceText}`;
+    }
+    return label
+      .replace(" · 默认", ` · 当前 ${sourceText} · 默认`)
+      .replace(" · 候选/框", ` · 当前 ${sourceText} · 候选/框`);
+  }
+
+  function eventPositiveImageCount(dataset, classTokens, preset) {
+    if (!dataset || !classTokens.length) return 0;
+    const qwenImages = sumMatchingCounts(dataset.qwen_label?.images_by_class || dataset.summary?.qwen_label?.images_by_class, classTokens);
+    const qwenBoxes = sumMatchingCounts(dataset.qwen_bbox?.boxes_by_class || dataset.summary?.qwen_bbox?.boxes_by_class, classTokens);
+    const requiresBox = dataset.kind !== "classify" && Boolean(preset?.hasBox);
+    if (requiresBox && datasetSourceGroup(dataset) === "vehicle_collection") {
+      if (qwenImages > 0 && qwenBoxes > 0) return Math.min(qwenImages, qwenBoxes);
+      return qwenBoxes > 0 ? Math.min(qwenBoxes, datasetTotalImages(dataset)) : 0;
+    }
+    if (qwenImages > 0 && qwenBoxes > 0) return Math.min(qwenImages, qwenBoxes);
+    if (qwenImages > 0) return qwenImages;
+
+    const byClass = sumMatchingCounts(dataset.by_class_yes, classTokens);
+    const yesCount = Number(dataset.answers?.YES || 0);
+    if (byClass > 0 && yesCount > 0) return Math.min(byClass, yesCount);
+    if (byClass > 0) return byClass;
+
+    const positiveImages = splitCount(dataset.positive_images);
+    if (positiveImages > 0 && datasetHasEventClass(dataset, preset)) return positiveImages;
+    if (yesCount > 0 && datasetHasEventClass(dataset, preset)) return yesCount;
+    return 0;
+  }
+
   function estimatedEventItemCount(dataset, preset) {
     if (!dataset || !preset || preset === eventPresets.all) {
       return datasetTotalImages(dataset);
@@ -475,12 +514,34 @@
       if (classCount > 0) return classCount;
       return datasetHasEventClass(dataset, preset) ? datasetTotalImages(dataset) : 0;
     }
+    const positiveCount = eventPositiveImageCount(dataset, classTokens, preset);
+    if (positiveCount > 0) return positiveCount;
+    if (datasetSourceGroup(dataset) === "vehicle_collection") return 0;
+    return datasetHasEventClass(dataset, preset) ? datasetTotalImages(dataset) : 0;
+  }
+
+  function estimatedEventBoxCount(dataset, preset = eventPresets[state.activeEvent] || eventPresets.all) {
+    if (!dataset || !preset || preset === eventPresets.all) return datasetTotalBoxes(dataset);
+    if (dataset.kind === "classify" || preset.taskKind === "classify") return 0;
+    const classTokens = datasetEventClassTokens(preset);
+    if (!classTokens.length) return datasetTotalBoxes(dataset);
     const classBoxCount = sumMatchingCounts(dataset.boxes, classTokens);
     if (classBoxCount > 0) return classBoxCount;
-    if (datasetHasEventClass(dataset, preset) && countObjectLooksSplitBased(dataset.boxes)) {
-      return datasetTotalBoxes(dataset);
-    }
-    return datasetHasEventClass(dataset, preset) ? datasetTotalImages(dataset) : 0;
+    const qwenBoxCount = sumMatchingCounts(dataset.qwen_bbox?.boxes_by_class || dataset.summary?.qwen_bbox?.boxes_by_class, classTokens);
+    if (qwenBoxCount > 0) return qwenBoxCount;
+    const byClassCount = sumMatchingCounts(dataset.by_class_yes, classTokens);
+    if (byClassCount > 0) return byClassCount;
+    if (datasetSourceGroup(dataset) === "vehicle_collection") return 0;
+    if (datasetHasEventClass(dataset, preset) && countObjectLooksSplitBased(dataset.boxes)) return datasetTotalBoxes(dataset);
+    return datasetHasEventClass(dataset, preset) ? datasetTotalBoxes(dataset) : 0;
+  }
+
+  function datasetEventMetrics(dataset, eventKey = state.activeEvent) {
+    const preset = eventPresets[eventKey] || eventPresets.all;
+    return {
+      imageCount: estimatedEventItemCount(dataset, preset),
+      boxCount: estimatedEventBoxCount(dataset, preset)
+    };
   }
 
   function datasetEventScore(dataset, eventKey = state.activeEvent) {
@@ -553,8 +614,8 @@
     return {
       datasets,
       datasetCount: datasets.length,
-      imageCount: datasets.reduce((total, dataset) => total + datasetTotalImages(dataset), 0),
-      boxCount: datasets.reduce((total, dataset) => total + datasetTotalBoxes(dataset), 0)
+      imageCount: datasets.reduce((total, dataset) => total + datasetEventMetrics(dataset).imageCount, 0),
+      boxCount: datasets.reduce((total, dataset) => total + datasetEventMetrics(dataset).boxCount, 0)
     };
   }
 
@@ -652,7 +713,7 @@
       button.classList.toggle("is-active", button.dataset.yoloReviewEvent === state.activeEvent);
     });
     if (refs.eventStatus) {
-      refs.eventStatus.textContent = eventPresets[state.activeEvent]?.label || "全部事件 · 全部来源";
+      refs.eventStatus.textContent = datasetEventLabel();
     }
   }
 
@@ -685,6 +746,7 @@
     applyEventFiltersForDataset(selectedDataset());
     renderSummary(selectedDataset());
     renderDatasetCards();
+    updateEventButtons();
     if (options.load !== false) {
       loadItems({ resetPage: true }).catch(() => {});
     }
@@ -708,14 +770,16 @@
 
       const title = createNode("div", "yolo-review-source-card-title");
       title.appendChild(createNode("strong", "", group.label));
-      title.appendChild(createNode("span", "", stats.datasetCount ? "可查看" : "当前事件下暂无数据集"));
+      title.appendChild(createNode("span", "", stats.datasetCount ? (stats.imageCount ? "可查看" : "可切换") : "当前事件下暂无数据集"));
       button.appendChild(title);
 
       const metrics = createNode("div", "yolo-review-source-card-metrics");
+      const sampleLabel = state.activeEvent === "all" ? "样本" : "事件样本";
+      const boxLabel = state.activeEvent === "all" ? "框" : "事件框";
       [
         ["数据集", compactNumber(stats.datasetCount)],
-        ["样本", compactNumber(stats.imageCount)],
-        ["框", compactNumber(stats.boxCount)]
+        [sampleLabel, compactNumber(stats.imageCount)],
+        [boxLabel, compactNumber(stats.boxCount)]
       ].forEach(([label, value]) => {
         const metric = createNode("span", "", `${label} ${value}`);
         metrics.appendChild(metric);
@@ -732,13 +796,12 @@
     const visible = state.datasets;
     const total = state.eventDatasets.length;
     if (refs.datasetStatus) {
-      const sourceText = sourceGroupLabel(refs.source?.value || "");
       const selectedStats = sourceStats(refs.source?.value || "");
       const sourceCounts = sourceGroups.slice(1).map((group) => {
         const stats = sourceStats(group.value);
-        return `${group.label} ${compactNumber(stats.datasetCount)}`;
+        return `${group.label} ${compactNumber(stats.datasetCount)}集/${compactNumber(stats.imageCount)}样本`;
       });
-      refs.datasetStatus.textContent = `${eventPresets[state.activeEvent]?.label || "全部事件"} · 当前 ${sourceText}：${compactNumber(selectedStats.datasetCount)} / ${compactNumber(total)} 个数据集 · ${sourceCounts.join(" · ")}`;
+      refs.datasetStatus.textContent = `${datasetEventLabel()} · ${compactNumber(selectedStats.datasetCount)} / ${compactNumber(total)} 个数据集 · ${sourceCounts.join(" · ")}`;
     }
     if (!visible.length) {
       const sourceText = sourceGroupLabel(refs.source?.value || "");
@@ -778,9 +841,12 @@
       button.appendChild(classes);
 
       const metrics = createNode("div", "yolo-review-dataset-metrics");
+      const eventMetrics = datasetEventMetrics(dataset);
+      const sampleLabel = state.activeEvent === "all" ? "样本" : "事件样本";
+      const boxLabel = state.activeEvent === "all" ? "框" : "事件框";
       [
-        ["样本", compactNumber(dataset.total_images)],
-        ["框", compactNumber(datasetTotalBoxes(dataset))],
+        [sampleLabel, compactNumber(eventMetrics.imageCount)],
+        [boxLabel, compactNumber(eventMetrics.boxCount)],
         ["YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
         ["NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"],
         ["语义已标", datasetMetricValue(dataset, "qwen_label.cached_images")],
@@ -794,6 +860,10 @@
       button.appendChild(metrics);
 
       const foot = createNode("div", "yolo-review-dataset-card-foot");
+      if (state.activeEvent !== "all") {
+        foot.appendChild(createNode("span", "", `总样本 ${compactNumber(dataset.total_images)}`));
+        foot.appendChild(createNode("span", "", `总框 ${compactNumber(datasetTotalBoxes(dataset))}`));
+      }
       foot.appendChild(createNode("span", "", `语义待标 ${datasetMetricValue(dataset, "qwen_label.pending_images", "0")}`));
       foot.appendChild(createNode("span", "", `框待标 ${datasetMetricValue(dataset, "qwen_bbox.pending_images", "0")}`));
       if (dataset.created_at) {
@@ -812,15 +882,20 @@
       return;
     }
 
+    const eventMetrics = datasetEventMetrics(dataset);
     const cells = [
       ["来源", datasetSourceText(dataset)],
       ["Profile", dataset.profile || dataset.name || "-"],
       ["类型", dataset.kind === "classify" ? "分类" : "检测"],
-      ["样本", compactNumber(dataset.total_images)],
-      ["框", dataset.boxes ? compactNumber(Object.values(dataset.boxes).reduce((a, b) => a + Number(b || 0), 0)) : "-"],
+      [state.activeEvent === "all" ? "样本" : "事件样本", compactNumber(eventMetrics.imageCount)],
+      [state.activeEvent === "all" ? "框" : "事件框", dataset.boxes || eventMetrics.boxCount ? compactNumber(eventMetrics.boxCount) : "-"],
       ["AI YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
       ["AI NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"]
     ];
+    if (state.activeEvent !== "all") {
+      cells.push(["总样本", compactNumber(dataset.total_images)]);
+      cells.push(["总框", compactNumber(datasetTotalBoxes(dataset))]);
+    }
     if (dataset.qwen_bbox || dataset.summary?.qwen_bbox) {
       const qwenBbox = dataset.qwen_bbox || dataset.summary.qwen_bbox;
       cells.push(["Qwen框已标", compactNumber(qwenBbox.cached_images)]);
