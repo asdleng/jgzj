@@ -436,10 +436,25 @@
     return (Array.isArray(dataset?.classes) ? dataset.classes : []).map(normalizeClassToken).filter(Boolean);
   }
 
+  function reviewTaskKind(dataset = selectedDataset(), eventKey = state.activeEvent) {
+    const preset = eventPresets[eventKey] || eventPresets.all;
+    if (eventKey && eventKey !== "all" && preset.taskKind && preset.taskKind !== "mixed") {
+      return preset.taskKind;
+    }
+    if (dataset?.kind === "classify") return "classify";
+    if (dataset?.kind === "detect") return "detect";
+    return preset.taskKind || "mixed";
+  }
+
   function datasetHasEventClass(dataset, preset) {
     const classes = datasetClassTokens(dataset);
     const eventClasses = datasetEventClassTokens(preset);
     return eventClasses.some((token) => classes.includes(token));
+  }
+
+  function matchingDatasetEventClassTokens(dataset, preset) {
+    const classes = datasetClassTokens(dataset);
+    return datasetEventClassTokens(preset).filter((token) => classes.includes(token));
   }
 
   function sumMatchingCounts(value, tokens) {
@@ -481,9 +496,14 @@
   function eventPositiveImageCount(dataset, classTokens, preset) {
     if (!dataset || !classTokens.length) return 0;
     const qwenImages = sumMatchingCounts(dataset.qwen_label?.images_by_class || dataset.summary?.qwen_label?.images_by_class, classTokens);
+    const qwenBboxImages = sumMatchingCounts(dataset.qwen_bbox?.images_by_class || dataset.summary?.qwen_bbox?.images_by_class, classTokens);
     const qwenBoxes = sumMatchingCounts(dataset.qwen_bbox?.boxes_by_class || dataset.summary?.qwen_bbox?.boxes_by_class, classTokens);
+    if (preset?.taskKind === "classify") {
+      if (qwenImages > 0) return qwenImages;
+    }
     const requiresBox = dataset.kind !== "classify" && Boolean(preset?.hasBox);
     if (requiresBox && datasetSourceGroup(dataset) === "vehicle_collection") {
+      if (qwenBboxImages > 0) return qwenBboxImages;
       if (qwenImages > 0 && qwenBoxes > 0) return Math.min(qwenImages, qwenBoxes);
       return qwenBoxes > 0 ? Math.min(qwenBoxes, datasetTotalImages(dataset)) : 0;
     }
@@ -682,7 +702,7 @@
     const preset = eventPresets[state.activeEvent] || eventPresets.all;
     const sourceGroup = dataset ? datasetSourceGroup(dataset) : "";
     const isVehicleCollection = sourceGroup === "vehicle_collection";
-    const isClassify = dataset?.kind === "classify" || preset.taskKind === "classify";
+    const isClassify = reviewTaskKind(dataset) === "classify";
     const eventClassTokens = datasetEventClassTokens(preset);
 
     if (refs.split) refs.split.value = "";
@@ -694,9 +714,15 @@
 
     if (state.activeEvent === "all") return;
     if (isVehicleCollection) {
-      setSelectValueIfPresent(refs.qwenLabel, preset.qwenLabel || "");
-      setSelectValueIfPresent(refs.className, preset.className || "");
-      if (preset.qwenLabel && refs.query && !refs.qwenLabel?.value && !refs.className?.value) {
+      if (isClassify) {
+        setSelectValueIfPresent(refs.qwenLabel, preset.qwenLabel || "");
+        setSelectValueIfPresent(refs.className, "");
+      } else {
+        setSelectValueIfPresent(refs.qwenLabel, "");
+        const matchedClasses = matchingDatasetEventClassTokens(dataset, preset);
+        setSelectValueIfPresent(refs.className, matchedClasses[0] || preset.className || "");
+      }
+      if (isClassify && preset.qwenLabel && refs.query && !refs.qwenLabel?.value && !refs.className?.value) {
         refs.query.value = preset.qwenLabel;
       }
     } else if (preset.autoClassFilter !== false && refs.className && eventClassTokens.length) {
@@ -1016,11 +1042,17 @@
 
   function buildItemsUrl() {
     const params = new URLSearchParams();
+    const dataset = selectedDataset();
+    const preset = eventPresets[state.activeEvent] || eventPresets.all;
     params.set("dataset_id", state.datasetId);
     params.set("page", String(state.page));
     params.set("page_size", String(state.pageSize));
     if (refs.split.value) params.set("split", refs.split.value);
-    if (refs.className.value) params.set("class_name", refs.className.value);
+    const eventClassFilter = datasetSourceGroup(dataset) === "vehicle_collection" && reviewTaskKind(dataset) === "detect"
+      ? matchingDatasetEventClassTokens(dataset, preset).join(",")
+      : "";
+    const classFilter = eventClassFilter || refs.className.value;
+    if (classFilter) params.set("class_name", classFilter);
     if (refs.answer.value) params.set("ai_answer", refs.answer.value);
     if (refs.qwenLabel?.value) params.set("qwen_label", refs.qwenLabel.value);
     if (refs.hasBox?.checked) params.set("has_box", "1");
@@ -1105,7 +1137,7 @@
       const body = createNode("div", "yolo-review-item-body");
       const top = createNode("div", "yolo-review-item-top");
       const dataset = selectedDataset();
-      const isClassify = dataset?.kind === "classify";
+      const isClassify = reviewTaskKind(dataset) === "classify";
       const titleText = isClassify
         ? `${answerDisplay(item.ai_answer)} · ${item.ai_class || item.event_name || "分类样本"}`
         : qwenCountSummary(item) || item.ai_class || item.event_name || item.source_label || "-";
@@ -1267,7 +1299,7 @@
     return { x: clampUnit(x), y: clampUnit(y) };
   }
 
-  function makeEditorState(dataset, item) {
+  function makeEditorState(dataset, item, kind = reviewTaskKind(dataset)) {
     const labels = (Array.isArray(item.labels) ? item.labels : [])
       .map((label, index) => normalizeEditorLabel(label, index, dataset));
     return {
@@ -1277,7 +1309,7 @@
       selectedIndex: labels.length ? 0 : -1,
       drawMode: false,
       dirty: false,
-      answer: answerDisplay(item.ai_answer) === "Yes" ? "YES" : answerDisplay(item.ai_answer) === "No" ? "NO" : (dataset.kind === "detect" ? (labels.length ? "YES" : "NO") : "YES"),
+      answer: answerDisplay(item.ai_answer) === "Yes" ? "YES" : answerDisplay(item.ai_answer) === "No" ? "NO" : (kind === "detect" ? (labels.length ? "YES" : "NO") : "YES"),
       className: item.manual_annotation?.class_name || item.ai_class || dataset.classes?.[0] || ""
     };
   }
@@ -1560,7 +1592,8 @@
   }
 
   function renderManualEditor(dataset, item, overlay) {
-    const editor = makeEditorState(dataset, item);
+    const kind = reviewTaskKind(dataset);
+    const editor = makeEditorState(dataset, item, kind);
     const wrap = createNode("div", "yolo-review-editor");
     const head = createNode("div", "yolo-review-section-head");
     head.appendChild(createNode("h3", "", "人工编辑"));
@@ -1581,7 +1614,7 @@
     actions.appendChild(deleteButton);
     wrap.appendChild(actions);
 
-    if (dataset.kind === "classify") {
+    if (kind === "classify") {
       renderClassifyEditor({ dataset, editor, panel: body, saveButton });
     } else {
       renderDetectEditor({ dataset, item, editor, overlay, panel: body, saveButton });
@@ -1595,9 +1628,9 @@
         const payload = {
           dataset_id: dataset.id,
           item_key: item.item_key,
-          kind: dataset.kind,
-          answer: dataset.kind === "detect" ? (editor.labels.length ? "YES" : "NO") : editor.answer,
-          class_name: dataset.kind === "classify" ? editor.className : "",
+          kind,
+          answer: kind === "detect" ? (editor.labels.length ? "YES" : "NO") : editor.answer,
+          class_name: kind === "classify" ? editor.className : "",
           labels: editor.labels.map((label) => ({
             class_name: label.class_name,
             class_id: label.class_id,
@@ -1769,6 +1802,9 @@
     img.src = url;
     img.alt = title;
     img.loading = "lazy";
+    img.addEventListener("error", () => {
+      card.remove();
+    }, { once: true });
     card.appendChild(img);
     const text = createNode("div", "yolo-review-source-caption");
     text.appendChild(createNode("p", "yolo-review-source-title", title));
@@ -1824,7 +1860,8 @@
     const imageBlock = createNode("div", "yolo-review-image-block");
     const stage = createNode("div", "yolo-review-image-stage");
     const isVehicleCollection = item.source_type === "vehicle_collection" || dataset.source_type === "vehicle_collection";
-    const allowPan = isVehicleCollection && dataset.kind === "classify";
+    const kind = reviewTaskKind(dataset);
+    const allowPan = isVehicleCollection && kind === "classify";
     if (allowPan) {
       stage.classList.add("yolo-review-image-stage--draggable");
     }
@@ -1842,7 +1879,7 @@
     if (allowPan) {
       stage.appendChild(createNode("p", "yolo-review-drag-hint", "拖动查看 · 滚轮缩放 · 双击复位"));
       enableDragView(stage, panContent);
-    } else if (dataset.kind === "detect") {
+    } else if (kind === "detect") {
       stage.appendChild(createNode("p", "yolo-review-drag-hint", "拖动框移动 · 拖角缩放 · 新增框后拖拽画框"));
     }
     renderBoxes(overlay, item.labels || []);
@@ -1882,7 +1919,7 @@
     const labelBadge = labelSourceText(item.label_source) || (item.auto_label_status === "pending" ? "待预标注" : dataset.kind === "classify" ? "分类样本" : item.label_rel_path || "无 label");
     labelTitle.appendChild(createNode("span", `ai-history-chip ${labelSourceTone(item.label_source)}`, labelBadge));
     labels.appendChild(labelTitle);
-    if (dataset.kind === "classify") {
+    if (kind === "classify" && dataset.kind === "classify") {
       labels.appendChild(createNode("p", "yolo-review-label-line", `默认结果: ${answerDisplay(item.ai_answer)}`));
       labels.appendChild(createNode("p", "yolo-review-label-line", `class: ${item.ai_class || "-"}`));
     } else if (item.labels?.length) {

@@ -2177,6 +2177,26 @@ function normalizeApiRelPath(value) {
     .trim();
 }
 
+function toArchiveFileUrlIfExists(filePath) {
+  const value = String(filePath || '').trim();
+  if (!value) {
+    return null;
+  }
+  const absolutePath = path.isAbsolute(value) ? path.resolve(value) : path.resolve(aiCheckArchiveRoot, value);
+  if (!isPathWithinRoot(aiCheckArchiveRoot, absolutePath)) {
+    return null;
+  }
+  try {
+    const stat = fsSync.statSync(absolutePath);
+    if (!stat.isFile()) {
+      return null;
+    }
+  } catch (_error) {
+    return null;
+  }
+  return toArchiveFileUrl(toForwardSlashPath(path.relative(aiCheckArchiveRoot, absolutePath)));
+}
+
 function isPathWithinRoot(root, absolutePath) {
   const normalizedRoot = path.resolve(root);
   const normalizedPath = path.resolve(absolutePath);
@@ -2213,6 +2233,14 @@ function toArchiveFileUrlFromAny(filePath) {
 
   const absolutePath = path.isAbsolute(value) ? path.resolve(value) : path.resolve(aiCheckArchiveRoot, value);
   if (!isPathWithinRoot(aiCheckArchiveRoot, absolutePath)) {
+    return null;
+  }
+  try {
+    const stat = fsSync.statSync(absolutePath);
+    if (!stat.isFile()) {
+      return null;
+    }
+  } catch (_error) {
     return null;
   }
 
@@ -2916,6 +2944,7 @@ async function buildYoloPatrolDataset() {
   let qwenBboxVerifiedPositive = 0;
   let qwenBboxVerifiedBoxes = 0;
   const boxesByClass = {};
+  const labelImagesByClass = {};
   const qwenBboxBoxesByClass = {};
   const qwenBboxVerifiedBoxesByClass = {};
   const qwenBboxQuality = {};
@@ -2973,6 +3002,9 @@ async function buildYoloPatrolDataset() {
       : null;
     row.auto_label_classes = labelClasses;
     row.ai_answer = labels.length ? 'YES' : (hasEffectiveQwenBboxCache || cache ? 'NO' : 'NULL');
+    for (const name of labelClasses) {
+      labelImagesByClass[name] = (labelImagesByClass[name] || 0) + 1;
+    }
     row.qwen_bbox_status = hasEffectiveQwenBboxCache ? 'done' : (String(row.meta?.source || '') === 'auto_ad_patrol_flow_upload' ? 'pending' : 'not_applicable');
     row.qwen_bbox_rel_path = (qwenBboxVerifiedCachePath || qwenBboxCachePath)
       ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, qwenBboxVerifiedCachePath || qwenBboxCachePath))
@@ -3080,6 +3112,7 @@ async function buildYoloPatrolDataset() {
         positive_images: qwenBboxPositive,
         boxes: qwenBboxBoxes,
         boxes_by_class: qwenBboxBoxesByClass,
+        images_by_class: labelImagesByClass,
         quality: qwenBboxQuality,
         root: toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, vehicleUploadQwenBboxLabelRoot)),
         verified_sensitive: {
@@ -3158,6 +3191,25 @@ function hydrateYoloPatrolDatasetFromIndex(payload) {
   const summary = payload.summary && typeof payload.summary === 'object' ? payload.summary : null;
   if (!summary) {
     return null;
+  }
+  if (!summary.qwen_bbox?.images_by_class) {
+    const imagesByClass = {};
+    for (const row of rows) {
+      const classes = Array.isArray(row?.auto_label_classes) && row.auto_label_classes.length
+        ? row.auto_label_classes
+        : [...new Set((Array.isArray(row?.auto_labels) ? row.auto_labels : [])
+            .map((label) => label?.class_name || String(label?.class_id ?? ''))
+            .filter(Boolean))];
+      for (const className of classes) {
+        imagesByClass[className] = (imagesByClass[className] || 0) + 1;
+      }
+    }
+    if (Object.keys(imagesByClass).length) {
+      summary.qwen_bbox = {
+        ...(summary.qwen_bbox || {}),
+        images_by_class: imagesByClass
+      };
+    }
   }
   const rowByKey = new Map();
   for (const row of rows) {
@@ -3399,6 +3451,48 @@ function sumYoloImageCounts(value) {
   return 0;
 }
 
+function yoloSummarySplitCounts(summary = {}, key) {
+  const splits = summary.splits && typeof summary.splits === 'object' ? summary.splits : null;
+  if (!splits) {
+    return null;
+  }
+  const counts = {};
+  for (const split of ['train', 'val', 'test']) {
+    const value = Number(splits[split]?.[key] || 0);
+    if (value > 0) {
+      counts[split] = value;
+    }
+  }
+  return Object.keys(counts).length ? counts : null;
+}
+
+function normalizeYoloDatasetSummaryStats(summary = {}, classes = []) {
+  const images = sumYoloImageCounts(summary.images) > 0
+    ? summary.images
+    : (yoloSummarySplitCounts(summary, 'images') || {});
+  const positiveImages = sumYoloImageCounts(summary.positive_images) > 0
+    ? summary.positive_images
+    : yoloSummarySplitCounts(summary, 'positive_images');
+  const boxes = sumYoloImageCounts(summary.boxes) > 0
+    ? summary.boxes
+    : yoloSummarySplitCounts(summary, 'boxes');
+  const yes = sumYoloImageCounts(positiveImages);
+  const total = sumYoloImageCounts(images);
+  const answers = summary.answers || (total > 0
+    ? { YES: yes, NO: Math.max(0, total - yes), NULL: 0 }
+    : null);
+  const primaryClass = classes[0] || summary.class_name || summary.event_name || '';
+  const byClassYes = summary.by_class_yes || (primaryClass && yes > 0 ? { [primaryClass]: yes } : null);
+  return {
+    images,
+    positive_images: positiveImages,
+    boxes,
+    answers,
+    by_class_yes: byClassYes,
+    total_images: total
+  };
+}
+
 async function buildYoloDatasetList() {
   const datasets = [];
 
@@ -3418,7 +3512,7 @@ async function buildYoloDatasetList() {
       const kind = inferYoloDatasetKind(datasetDir, summary);
       const dataDir = resolveYoloDataDir(datasetDir, summary);
       const classes = await readYoloClasses(datasetDir, summary);
-      const totalImages = sumYoloImageCounts(summary.images);
+      const stats = normalizeYoloDatasetSummaryStats(summary, classes);
       datasets.push({
         id,
         source: spec.alias,
@@ -3431,13 +3525,13 @@ async function buildYoloDatasetList() {
         data_dir: toForwardSlashPath(path.relative(datasetDir, dataDir)),
         created_at: summary.created_at || null,
         classes,
-        images: summary.images || {},
-        positive_images: summary.positive_images || null,
-        boxes: summary.boxes || null,
-        answers: summary.answers || null,
-        by_class_yes: summary.by_class_yes || null,
+        images: stats.images || {},
+        positive_images: stats.positive_images || null,
+        boxes: stats.boxes || null,
+        answers: stats.answers || null,
+        by_class_yes: stats.by_class_yes || null,
         max_task_id: summary.max_task_id ?? null,
-        total_images: totalImages
+        total_images: stats.total_images
       });
     }
   }
@@ -3532,6 +3626,15 @@ async function resolveYoloDataset(datasetId) {
   const classes = await readYoloClasses(datasetDir, summary);
   const kind = inferYoloDatasetKind(datasetDir, summary);
   const dataDir = resolveYoloDataDir(datasetDir, summary);
+  const stats = normalizeYoloDatasetSummaryStats(summary, classes);
+  const normalizedSummary = {
+    ...summary,
+    images: stats.images || {},
+    positive_images: stats.positive_images || null,
+    boxes: stats.boxes || null,
+    answers: stats.answers || null,
+    by_class_yes: stats.by_class_yes || null
+  };
   return {
     id: `${spec.alias}:${toForwardSlashPath(path.relative(spec.root, datasetDir))}`,
     source: spec.alias,
@@ -3543,7 +3646,7 @@ async function resolveYoloDataset(datasetId) {
     name: path.basename(datasetDir),
     profile: summary.profile || path.basename(datasetDir),
     kind,
-    summary,
+    summary: normalizedSummary,
     classes
   };
 }
@@ -3950,12 +4053,15 @@ async function listYoloReviewItems(datasetId, query = {}) {
   const page = toFiniteInteger(query.page, 1, { min: 1, max: 9999 });
   const pageSize = toFiniteInteger(query.page_size, 24, { min: 1, max: 60 });
   const split = String(query.split || '').trim();
-  const className = normalizeClassToken(query.class_name || '');
+  const classNames = String(query.class_name || '')
+    .split(',')
+    .map((item) => normalizeClassToken(item))
+    .filter(Boolean);
   const qwenLabel = normalizeClassToken(query.qwen_label || '');
   const aiAnswer = String(query.ai_answer || '').trim().toUpperCase();
   const q = String(query.q || '').trim();
   const hasBoxOnly = ['1', 'true', 'yes', 'on'].includes(String(query.has_box || query.hasBox || '').trim().toLowerCase());
-  const needsLabelBeforePagination = ['YES', 'NO'].includes(aiAnswer) || Boolean(className) || hasBoxOnly;
+  const needsLabelBeforePagination = ['YES', 'NO'].includes(aiAnswer) || classNames.length > 0 || hasBoxOnly;
 
   const allItems = await yoloBaseItems(dataset);
   let items = allItems;
@@ -3973,13 +4079,13 @@ async function listYoloReviewItems(datasetId, query = {}) {
     if (split && item.split !== split) {
       return false;
     }
-    if (className && !needsLabelBeforePagination) {
+    if (classNames.length && !needsLabelBeforePagination) {
       if (dataset.source === 'patrol') {
         const classes = Array.isArray(item.label_classes) ? item.label_classes : [];
-        if (!classes.some((value) => normalizeClassToken(value) === className)) {
+        if (!classes.some((value) => classNames.includes(normalizeClassToken(value)))) {
           return false;
         }
-      } else if (normalizeClassToken(item.ai_class) !== className) {
+      } else if (!classNames.includes(normalizeClassToken(item.ai_class))) {
         return false;
       }
     }
@@ -4009,9 +4115,9 @@ async function listYoloReviewItems(datasetId, query = {}) {
 
   if (needsLabelBeforePagination) {
     items = await filterYoloItemsWithLabels(dataset, items, (enriched) => {
-      const classMatched = !className ||
-        normalizeClassToken(enriched.ai_class) === className ||
-        (enriched.labels || []).some((label) => normalizeClassToken(label.class_name) === className);
+      const classMatched = !classNames.length ||
+        classNames.includes(normalizeClassToken(enriched.ai_class)) ||
+        (enriched.labels || []).some((label) => classNames.includes(normalizeClassToken(label.class_name)));
       const answerMatched = !['YES', 'NO'].includes(aiAnswer) || enriched.ai_answer === aiAnswer;
       const boxMatched = !hasBoxOnly || (Array.isArray(enriched.labels) && enriched.labels.length > 0);
       return classMatched && answerMatched && boxMatched;
@@ -4111,7 +4217,7 @@ async function getAiCheckTaskDetail(taskRowId) {
       frame_width: row.frame_width ?? null,
       frame_height: row.frame_height ?? null,
       image_path: row.image_path || null,
-      image_url: toArchiveFileUrl(row.image_path || ''),
+      image_url: toArchiveFileUrlIfExists(row.image_path || ''),
       request_json_path: row.request_json_path || null,
       request_json_url: toArchiveFileUrl(row.request_json_path || ''),
       response_json_path: row.response_json_path || null,
@@ -4251,19 +4357,24 @@ async function saveYoloManualAnnotationFromRequest(body, authUser) {
   const { rel, absolutePath } = await assertYoloReviewItemExists(dataset, body?.item_key);
   const existing = await readYoloManualAnnotation(dataset.id, rel);
   const baseLabels = await readYoloBaseLabelsForItem(dataset, rel).catch(() => null);
-  const labels = normalizeYoloManualLabels(dataset, body?.labels || []);
+  const requestedKind = ['detect', 'classify'].includes(String(body?.kind || '').trim())
+    ? String(body.kind).trim()
+    : dataset.kind;
+  const labels = requestedKind === 'detect'
+    ? normalizeYoloManualLabels(dataset, body?.labels || [])
+    : [];
   const className = String(body?.class_name || body?.ai_class || '').trim();
   const classId = yoloManualClassIdForName(dataset, className, body?.class_id);
-  const fallbackAnswer = dataset.kind === 'detect'
+  const fallbackAnswer = requestedKind === 'detect'
     ? (labels.length ? 'YES' : 'NO')
-    : answerFromYoloItem(dataset.kind, className || existing?.class_name || '', labels);
+    : answerFromYoloItem('classify', className || existing?.class_name || '', labels);
   const now = new Date().toISOString();
   const annotation = {
     schema: yoloReviewManualAnnotationSchema,
     dataset_id: dataset.id,
     item_key: rel,
     image_sha256: existing?.image_sha256 || null,
-    kind: dataset.kind,
+    kind: requestedKind,
     answer: normalizeYoloManualAnswer(body?.answer, fallbackAnswer),
     class_name: className || existing?.class_name || '',
     class_id: classId,
@@ -4303,7 +4414,7 @@ function normalizeAiCheckTask(task) {
     boxes,
     crop_box: cropBox,
     roi_path: task?.roi_path || null,
-    roi_url: toArchiveFileUrl(task?.roi_path || ''),
+    roi_url: toArchiveFileUrlIfExists(task?.roi_path || ''),
     answer: task?.answer || null,
     pass: task?.pass ?? null,
     raw_text: task?.raw_text || '',
