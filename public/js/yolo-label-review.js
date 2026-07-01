@@ -61,102 +61,125 @@
     person: {
       label: "人员事件 · 全部来源 · 默认显示框",
       tokens: ["person", "pedestrian", "人员"],
+      excludeTokens: ["person_behavior_yolo_cls", "smoking_cls"],
       qwenLabel: "person",
       className: "person",
+      classNames: ["person", "pedestrian"],
       answer: "YES",
       query: "",
       hasBox: true,
-      taskKind: "detect"
+      taskKind: "detect",
+      preferredSource: "vehicle_collection"
     },
     vehicle: {
       label: "车辆事件 · 全部来源 · 默认显示框",
       tokens: ["vehicle", "car", "truck", "bus", "nonmotor", "车辆"],
       qwenLabel: "vehicle",
       className: "vehicle",
+      classNames: ["vehicle", "car", "truck", "bus", "non_motor_vehicle", "nonmotor"],
       answer: "YES",
       query: "",
       hasBox: true,
-      taskKind: "detect"
+      taskKind: "detect",
+      preferredSource: "vehicle_collection"
     },
     license_plate: {
       label: "车牌事件 · 全部来源 · 默认显示框",
       tokens: ["license_plate", "plate", "ccpd", "车牌"],
       qwenLabel: "",
       className: "",
+      classNames: ["license_plate", "plate"],
       answer: "YES",
       query: "",
       hasBox: true,
-      taskKind: "detect"
+      taskKind: "detect",
+      preferredSource: "public_dataset"
     },
     phone: {
       label: "手机事件 · 全部来源 · 默认显示框",
       tokens: ["phone", "mobile", "手机"],
       qwenLabel: "phone",
       className: "phone",
+      classNames: ["phone_use", "phone", "mobile"],
       answer: "YES",
       query: "",
       hasBox: true,
-      taskKind: "detect"
+      taskKind: "detect",
+      preferredSource: "public_dataset"
     },
     smoking: {
       label: "吸烟事件 · 全部来源 · 默认 Yes/No",
       tokens: ["smoking", "smoke_cls", "person_behavior", "吸烟"],
       qwenLabel: "smoking",
       className: "smoking",
+      classNames: ["smoking"],
       answer: "YES",
       query: "",
       hasBox: false,
-      taskKind: "classify"
+      taskKind: "classify",
+      preferredSource: "public_dataset"
     },
     fire_smoke: {
       label: "烟火事件 · 全部来源 · 默认显示框",
       tokens: ["fire_smoke", "fire", "smoke", "flame", "烟", "火"],
       qwenLabel: "fire_smoke_candidate",
       className: "",
+      classNames: ["fire", "smoke"],
       answer: "",
       query: "",
       hasBox: true,
-      taskKind: "detect"
+      taskKind: "detect",
+      autoClassFilter: false,
+      preferredSource: "public_dataset"
     },
     trash: {
       label: "垃圾事件 · 全部来源 · 默认显示框",
       tokens: ["trash", "garbage", "litter", "垃圾"],
       qwenLabel: "trash",
       className: "trash",
+      classNames: ["trash", "bottle", "box", "paper", "bag"],
       answer: "YES",
       query: "",
       hasBox: true,
-      taskKind: "detect"
+      taskKind: "detect",
+      autoClassFilter: false,
+      preferredSource: "checker_archive"
     },
     stall: {
       label: "摆摊事件 · 全部来源 · 默认显示框",
       tokens: ["stall", "booth", "vendor", "摆摊"],
       qwenLabel: "stall",
       className: "stall",
+      classNames: ["stall"],
       answer: "YES",
       query: "",
       hasBox: true,
-      taskKind: "detect"
+      taskKind: "detect",
+      preferredSource: "checker_archive"
     },
     pet: {
       label: "宠物事件 · 全部来源 · 候选/框",
       tokens: ["pet", "dog", "cat", "animal", "宠物"],
       qwenLabel: "pet",
       className: "pet",
+      classNames: ["pet", "dog", "cat"],
       answer: "",
       query: "",
       hasBox: true,
-      taskKind: "detect"
+      taskKind: "detect",
+      preferredSource: "public_dataset"
     },
     fishing: {
       label: "钓鱼事件 · 全部来源 · 默认显示框",
       tokens: ["fishing", "fishing_rod", "钓鱼"],
       qwenLabel: "",
       className: "",
+      classNames: ["fishing_rod"],
       answer: "YES",
       query: "",
       hasBox: true,
-      taskKind: "detect"
+      taskKind: "detect",
+      preferredSource: "public_dataset"
     }
   };
 
@@ -363,6 +386,12 @@
     if (!preset) return true;
     const sourceGroup = datasetSourceGroup(dataset);
     const text = datasetEventText(dataset);
+    const excludedTokens = Array.isArray(preset.excludeTokens)
+      ? preset.excludeTokens.map(normalizeClassToken).filter(Boolean)
+      : [];
+    if (excludedTokens.some((token) => text.includes(token))) {
+      return false;
+    }
     const tokens = Array.isArray(preset.tokens) ? preset.tokens.map(normalizeClassToken).filter(Boolean) : [];
     if (tokens.some((token) => text.includes(token))) {
       return true;
@@ -386,6 +415,108 @@
 
   function datasetTotalImages(dataset) {
     return Number(dataset?.total_images || 0);
+  }
+
+  function datasetIsReviewVisible(dataset) {
+    const text = datasetSearchText(dataset);
+    return ![
+      "partial_before_rebuild",
+      ".partial_",
+      "_backup",
+      "/backup"
+    ].some((token) => text.includes(token));
+  }
+
+  function datasetEventClassTokens(preset) {
+    const tokens = Array.isArray(preset?.classNames) ? preset.classNames : [preset?.className];
+    return tokens.map(normalizeClassToken).filter(Boolean);
+  }
+
+  function datasetClassTokens(dataset) {
+    return (Array.isArray(dataset?.classes) ? dataset.classes : []).map(normalizeClassToken).filter(Boolean);
+  }
+
+  function datasetHasEventClass(dataset, preset) {
+    const classes = datasetClassTokens(dataset);
+    const eventClasses = datasetEventClassTokens(preset);
+    return eventClasses.some((token) => classes.includes(token));
+  }
+
+  function sumMatchingCounts(value, tokens) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
+    let total = 0;
+    Object.entries(value).forEach(([key, item]) => {
+      const normalizedKey = normalizeClassToken(key);
+      if (tokens.includes(normalizedKey) && Number.isFinite(Number(item))) {
+        total += Number(item || 0);
+      } else if (item && typeof item === "object" && !Array.isArray(item)) {
+        total += sumMatchingCounts(item, tokens);
+      }
+    });
+    return total;
+  }
+
+  function countObjectLooksSplitBased(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const keys = Object.keys(value).map(normalizeClassToken);
+    return keys.length > 0 && keys.every((key) => ["train", "val", "test"].includes(key));
+  }
+
+  function estimatedEventItemCount(dataset, preset) {
+    if (!dataset || !preset || preset === eventPresets.all) {
+      return datasetTotalImages(dataset);
+    }
+    const classTokens = datasetEventClassTokens(preset);
+    if (!classTokens.length) {
+      return datasetTotalImages(dataset);
+    }
+    if (dataset.kind === "classify") {
+      const classCount = sumMatchingCounts(dataset.images, classTokens);
+      if (classCount > 0) return classCount;
+      return datasetHasEventClass(dataset, preset) ? datasetTotalImages(dataset) : 0;
+    }
+    const classBoxCount = sumMatchingCounts(dataset.boxes, classTokens);
+    if (classBoxCount > 0) return classBoxCount;
+    if (datasetHasEventClass(dataset, preset) && countObjectLooksSplitBased(dataset.boxes)) {
+      return datasetTotalBoxes(dataset);
+    }
+    return datasetHasEventClass(dataset, preset) ? datasetTotalImages(dataset) : 0;
+  }
+
+  function datasetEventScore(dataset, eventKey = state.activeEvent) {
+    if (!dataset) return -1;
+    if (!eventKey || eventKey === "all") return datasetTotalImages(dataset);
+    const preset = eventPresets[eventKey] || eventPresets.all;
+    const sourceGroup = datasetSourceGroup(dataset);
+    const text = datasetEventText(dataset);
+    const tokens = Array.isArray(preset.tokens) ? preset.tokens.map(normalizeClassToken).filter(Boolean) : [];
+    const count = estimatedEventItemCount(dataset, preset);
+    let score = count;
+    if (preset.preferredSource && sourceGroup === preset.preferredSource) {
+      score += 1_000_000;
+    }
+    if (tokens.some((token) => text.includes(`${token}_yolo`) || text.includes(`${token}_cls`))) {
+      score += 100_000;
+    } else if (tokens.some((token) => text.includes(token))) {
+      score += 10_000;
+    }
+    if (datasetHasEventClass(dataset, preset)) {
+      score += 5_000;
+    }
+    if (sourceGroup === "vehicle_collection" && count <= 0) {
+      score -= 50_000;
+    }
+    return score;
+  }
+
+  function pickDefaultDataset(datasets) {
+    if (!datasets.length) return null;
+    if (state.activeEvent === "all") return datasets[0];
+    return [...datasets].sort((left, right) => {
+      const scoreDiff = datasetEventScore(right) - datasetEventScore(left);
+      if (scoreDiff !== 0) return scoreDiff;
+      return datasetTotalImages(right) - datasetTotalImages(left);
+    })[0] || null;
   }
 
   function datasetKindText(dataset) {
@@ -491,6 +622,7 @@
     const sourceGroup = dataset ? datasetSourceGroup(dataset) : "";
     const isVehicleCollection = sourceGroup === "vehicle_collection";
     const isClassify = dataset?.kind === "classify" || preset.taskKind === "classify";
+    const eventClassTokens = datasetEventClassTokens(preset);
 
     if (refs.split) refs.split.value = "";
     if (refs.query) refs.query.value = "";
@@ -505,6 +637,12 @@
       setSelectValueIfPresent(refs.className, preset.className || "");
       if (preset.qwenLabel && refs.query && !refs.qwenLabel?.value && !refs.className?.value) {
         refs.query.value = preset.qwenLabel;
+      }
+    } else if (preset.autoClassFilter !== false && refs.className && eventClassTokens.length) {
+      const classOptions = [...refs.className.options].map((option) => option.value);
+      const matchedClass = eventClassTokens.find((token) => classOptions.includes(token));
+      if (matchedClass) {
+        refs.className.value = matchedClass;
       }
     }
   }
@@ -526,7 +664,7 @@
     state.activeEvent = eventPresets[eventKey] ? eventKey : "all";
     if (refs.source) refs.source.value = "";
     resetDetail("已切换事件，选择左侧样本查看详情。");
-    refreshDatasetOptions();
+    refreshDatasetOptions({ forceDefault: true });
     updateClassOptions();
     updateQwenOptions();
     applyEventFiltersForDataset(selectedDataset());
@@ -541,7 +679,7 @@
     if (options.resetDetail !== false) {
       resetDetail("已切换来源，选择左侧样本查看详情。");
     }
-    refreshDatasetOptions();
+    refreshDatasetOptions({ forceDefault: true });
     updateClassOptions();
     updateQwenOptions();
     applyEventFiltersForDataset(selectedDataset());
@@ -710,9 +848,9 @@
     });
   }
 
-  function refreshDatasetOptions() {
+  function refreshDatasetOptions(options = {}) {
     let selectedSource = refs.source?.value || "";
-    state.eventDatasets = state.allDatasets.filter((dataset) => datasetMatchesEvent(dataset));
+    state.eventDatasets = state.allDatasets.filter(datasetIsReviewVisible).filter((dataset) => datasetMatchesEvent(dataset));
     const filterBySource = (source) => state.eventDatasets.filter((dataset) => {
       if (!source) return true;
       return datasetSourceGroup(dataset) === source;
@@ -726,8 +864,8 @@
       option.textContent = datasetLabel(dataset);
       refs.dataset.appendChild(option);
     });
-    if (!state.datasets.some((dataset) => dataset.id === state.datasetId)) {
-      state.datasetId = state.datasets[0]?.id || "";
+    if (options.forceDefault || !state.datasets.some((dataset) => dataset.id === state.datasetId)) {
+      state.datasetId = pickDefaultDataset(state.datasets)?.id || "";
     }
     refs.dataset.value = state.datasetId;
     renderDatasetCards();
@@ -740,7 +878,7 @@
       const data = await requestJson(endpoints.datasets);
       state.allDatasets = Array.isArray(data.datasets) ? data.datasets : [];
       configureSourceOptions();
-      refreshDatasetOptions();
+      refreshDatasetOptions({ forceDefault: true });
       if (!state.datasetId && state.datasets.length) {
         state.datasetId = state.datasets[0].id;
       }
@@ -824,6 +962,7 @@
       if (refs.page) refs.page.textContent = "第 1 / 1 页 · 0 条";
       if (refs.prev) refs.prev.disabled = true;
       if (refs.next) refs.next.disabled = true;
+      setStatus("当前来源暂无数据集", "ok");
       resetDetail("暂无样本。");
       return;
     }

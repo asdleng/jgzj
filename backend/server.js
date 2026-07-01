@@ -3889,6 +3889,28 @@ function yoloItemMatchesQuery(item, q) {
     .some((value) => value.includes(needle));
 }
 
+async function filterYoloItemsWithLabels(dataset, items, matcher, concurrency = 24) {
+  if (!items.length) {
+    return [];
+  }
+  const kept = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const item = items[index];
+      const enriched = item.labels ? item : await enrichYoloItem(dataset, item, { includeLabels: true });
+      if (matcher(enriched)) {
+        kept[index] = item;
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return kept.filter(Boolean);
+}
+
 async function enrichYoloItem(dataset, item, options = {}) {
   const labelsPayload = options.includeLabels ? await readYoloLabelsForItem(dataset, item.image_rel_path) : null;
   const labels = labelsPayload?.labels || [];
@@ -3986,19 +4008,14 @@ async function listYoloReviewItems(datasetId, query = {}) {
   });
 
   if (needsLabelBeforePagination) {
-    const enrichedForAnswer = [];
-    for (const item of items) {
-      const enriched = await enrichYoloItem(dataset, item, { includeLabels: true });
+    items = await filterYoloItemsWithLabels(dataset, items, (enriched) => {
       const classMatched = !className ||
         normalizeClassToken(enriched.ai_class) === className ||
         (enriched.labels || []).some((label) => normalizeClassToken(label.class_name) === className);
       const answerMatched = !['YES', 'NO'].includes(aiAnswer) || enriched.ai_answer === aiAnswer;
       const boxMatched = !hasBoxOnly || (Array.isArray(enriched.labels) && enriched.labels.length > 0);
-      if (classMatched && answerMatched && boxMatched) {
-        enrichedForAnswer.push(enriched);
-      }
-    }
-    items = enrichedForAnswer;
+      return classMatched && answerMatched && boxMatched;
+    });
   }
 
   const total = items.length;
