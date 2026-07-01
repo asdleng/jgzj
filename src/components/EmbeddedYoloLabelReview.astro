@@ -63,7 +63,7 @@
       </button>
       <button class="yolo-review-event-button" type="button" data-yolo-review-event="fishing">
         <span>钓鱼</span>
-        <strong>Yes/No</strong>
+        <strong>框</strong>
       </button>
     </div>
   </section>
@@ -76,10 +76,16 @@
       </div>
     </div>
     <div id="yolo-review-source-cards" class="yolo-review-source-cards" aria-label="来源筛选">
-      <p class="yolo-review-empty">正在加载来源。</p>
+      <div class="yolo-review-loading yolo-review-loading--compact">
+        <span class="yolo-review-spinner"></span>
+        <p>来源统计加载中...</p>
+      </div>
     </div>
     <div id="yolo-review-dataset-cards" class="yolo-review-dataset-cards">
-      <p class="yolo-review-empty">正在加载数据集。</p>
+      <div class="yolo-review-loading">
+        <span class="yolo-review-spinner"></span>
+        <p>数据集加载中...</p>
+      </div>
     </div>
   </section>
 
@@ -156,4 +162,4 @@
   </div>
 </section>
 
-<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260701-3" defer></script>
+<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260701-4" defer></script>

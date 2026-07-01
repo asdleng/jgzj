@@ -149,14 +149,14 @@
       taskKind: "detect"
     },
     fishing: {
-      label: "钓鱼事件 · 全部来源 · 默认 Yes/No",
+      label: "钓鱼事件 · 全部来源 · 默认显示框",
       tokens: ["fishing", "fishing_rod", "钓鱼"],
       qwenLabel: "",
       className: "",
       answer: "YES",
       query: "",
-      hasBox: false,
-      taskKind: "classify"
+      hasBox: true,
+      taskKind: "detect"
     }
   };
 
@@ -178,6 +178,23 @@
     if (!refs.status) return;
     refs.status.textContent = text;
     refs.status.dataset.state = status;
+  }
+
+  function renderLoadingNode(container, message, options = {}) {
+    if (!container) return;
+    container.innerHTML = "";
+    const loading = createNode("div", `yolo-review-loading${options.compact ? " yolo-review-loading--compact" : ""}`);
+    loading.appendChild(createNode("span", "yolo-review-spinner"));
+    loading.appendChild(createNode("p", "", message));
+    container.appendChild(loading);
+  }
+
+  function renderDatasetLoading() {
+    if (refs.datasetStatus) {
+      refs.datasetStatus.textContent = "正在加载数据集...";
+    }
+    renderLoadingNode(refs.sourceCards, "来源统计加载中...", { compact: true });
+    renderLoadingNode(refs.datasetCards, "数据集加载中...");
   }
 
   async function requestJson(url, options = {}) {
@@ -718,6 +735,7 @@
 
   async function loadDatasets() {
     setStatus("加载数据集...", "loading");
+    renderDatasetLoading();
     try {
       const data = await requestJson(endpoints.datasets);
       state.allDatasets = Array.isArray(data.datasets) ? data.datasets : [];
@@ -737,6 +755,15 @@
       setStatus("已加载", "ok");
     } catch (error) {
       setStatus(`加载失败：${error?.message || "未知错误"}`, "error");
+      if (refs.datasetStatus) refs.datasetStatus.textContent = "数据集加载失败。";
+      if (refs.sourceCards) {
+        refs.sourceCards.innerHTML = "";
+        refs.sourceCards.appendChild(createNode("p", "yolo-review-empty", "来源加载失败。"));
+      }
+      if (refs.datasetCards) {
+        refs.datasetCards.innerHTML = "";
+        refs.datasetCards.appendChild(createNode("p", "yolo-review-empty", "数据集加载失败。"));
+      }
       refs.list.innerHTML = "";
       refs.list.appendChild(createNode("p", "yolo-review-empty", "数据集加载失败。"));
       renderSummary(null);

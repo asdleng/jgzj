@@ -4453,6 +4453,10 @@
   text-align: center;
 }
 
+.yolo-review-loading--compact {
+  min-height: 96px;
+}
+
 .yolo-review-loading p {
   margin: 0;
 }

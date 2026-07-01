@@ -3117,7 +3117,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   }
 
   async function readCrowdSampleLog(limit, filters) {
-    const normalizedLimit = toFiniteInteger(limit, 20, { min: 1, max: 1000 });
+    const normalizedLimit = toFiniteInteger(limit, 20, { min: 1, max: 20000 });
     const vehicleId = String(filters?.vehicle_id || '').trim();
     const source = String(filters?.source || '').trim();
     try {
