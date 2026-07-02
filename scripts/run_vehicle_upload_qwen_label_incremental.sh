@@ -11,6 +11,7 @@ LOCK="$RUNTIME/vehicle_upload_qwen_bbox_labels_v1.lock"
 LOG="$RUNTIME/vehicle_upload_qwen_bbox_labels_v1.incremental.log"
 SERVICE_URL="${QWEN_LABEL_SERVICE_URL:-http://127.0.0.1:18016}"
 SITE_INTERNAL_URL="${JZGJ_SITE_INTERNAL_URL:-http://127.0.0.1:8888}"
+INTERNAL_TOKEN_FILE="$RUNTIME/internal_rebuild_token"
 MAX_NEW="${VEHICLE_QWEN_LABEL_MAX_NEW:-120}"
 WORKERS="${VEHICLE_QWEN_LABEL_WORKERS:-2}"
 TIMEOUT_S="${VEHICLE_QWEN_LABEL_TIMEOUT_S:-120}"
@@ -51,7 +52,12 @@ timestamp() {
   fi
   echo "[$(timestamp)] done vehicle_upload_qwen_bbox_incremental"
 
+  INTERNAL_TOKEN="${YOLO_LABEL_REVIEW_INTERNAL_TOKEN:-}"
+  if [ -z "$INTERNAL_TOKEN" ] && [ -r "$INTERNAL_TOKEN_FILE" ]; then
+    INTERNAL_TOKEN="$(tr -d '\r\n' < "$INTERNAL_TOKEN_FILE")"
+  fi
   if curl -fsS --max-time 120 -X POST \
+    ${INTERNAL_TOKEN:+-H "X-Internal-Token: $INTERNAL_TOKEN"} \
     "$SITE_INTERNAL_URL/api/internal/yolo-label-review/rebuild-patrol-index" >/dev/null; then
     echo "[$(timestamp)] done patrol_dataset_index_refresh site=$SITE_INTERNAL_URL"
   else

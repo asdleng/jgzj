@@ -237,6 +237,7 @@ const yoloModelDownloadRoot = path.resolve(
     path.join(projectRoot, '.runtime/yolo_model_service/downloads')
 );
 const retiredYoloModelTaskIds = new Set(['common_yolo']);
+const retiredYoloModelDownloadFiles = new Set(['common_yolo_best.pt']);
 const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
@@ -871,6 +872,7 @@ const vehicleUploadQwenSensitiveBboxLabelRoot = path.join(
 );
 const yoloReviewThumbRoot = path.join(yoloReviewRuntimeRoot, 'thumbs');
 const yoloReviewPatrolIndexPath = path.join(yoloReviewRuntimeRoot, 'patrol_dataset_index.json');
+const yoloReviewInternalTokenPath = path.join(yoloReviewRuntimeRoot, 'internal_rebuild_token');
 const yoloReviewManualAnnotationRoot = path.join(yoloReviewRuntimeRoot, 'manual_annotations_v1');
 const yoloReviewManualDeletedLogPath = path.join(yoloReviewManualAnnotationRoot, 'deleted_items.jsonl');
 const patrolAutoLabelSchema = 'jgzj_patrol_yolo_auto_label.v1';
@@ -10303,9 +10305,25 @@ function isLoopbackRequest(req) {
   ));
 }
 
+async function readYoloReviewInternalToken() {
+  const envToken = String(process.env.YOLO_LABEL_REVIEW_INTERNAL_TOKEN || '').trim();
+  if (envToken) {
+    return envToken;
+  }
+  try {
+    return (await fs.readFile(yoloReviewInternalTokenPath, 'utf8')).trim();
+  } catch (_error) {
+    return '';
+  }
+}
+
 app.post('/api/internal/yolo-label-review/rebuild-patrol-index', async (req, res) => {
   if (!isLoopbackRequest(req)) {
     return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const expectedToken = await readYoloReviewInternalToken();
+  if (expectedToken && String(req.get('x-internal-token') || '').trim() !== expectedToken) {
+    return res.status(403).json({ ok: false, error: 'invalid_internal_token' });
   }
   try {
     const dataset = await resolveYoloPatrolDataset({ force: true });
@@ -12172,6 +12190,13 @@ app.get('/api/yolo-model-test/models/download/:fileName', authStore.requirePermi
   const fileName = path.basename(String(req.params.fileName || ''));
   if (!fileName || fileName !== String(req.params.fileName || '')) {
     return res.status(400).json({ ok: false, error: 'invalid_file_name' });
+  }
+  if (retiredYoloModelDownloadFiles.has(fileName)) {
+    return res.status(410).json({
+      ok: false,
+      error: 'retired_model_file',
+      detail: '该YOLO模型文件已下线，请使用拆分模型方案。'
+    });
   }
 
   const filePath = path.resolve(yoloModelDownloadRoot, fileName);
