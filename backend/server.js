@@ -236,6 +236,7 @@ const yoloModelDownloadRoot = path.resolve(
   process.env.YOLO_MODEL_DOWNLOAD_ROOT ||
     path.join(projectRoot, '.runtime/yolo_model_service/downloads')
 );
+const retiredYoloModelTaskIds = new Set(['common_yolo']);
 const yoloModelTestTasks = Object.freeze({
   all_yolo: {
     kind: 'all_yolo',
@@ -1856,9 +1857,10 @@ async function fileInfoForPath(filePath) {
 }
 
 async function buildFallbackYoloModelEntries() {
-  const taskIds = ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'person_behavior_cls', 'license_plate_yolo', 'trash_yolo', 'ground_seg_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo', 'common_yolo'];
+  const taskIds = ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'person_behavior_cls', 'license_plate_yolo', 'trash_yolo', 'ground_seg_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
   const entries = [];
   for (const taskId of taskIds) {
+    if (retiredYoloModelTaskIds.has(taskId)) continue;
     const task = yoloModelTestTasks[taskId];
     if (!task) continue;
     const localWeight = task.localModel || task.model || '';
@@ -1922,6 +1924,7 @@ async function buildYoloModelRegistryPayload() {
     for (const entry of registry.entries) {
       const taskId = String(entry?.task_id || '').trim();
       if (!taskId) continue;
+      if (retiredYoloModelTaskIds.has(taskId)) continue;
       mergedByTask.set(taskId, {
         ...mergedByTask.get(taskId),
         ...entry
@@ -1929,14 +1932,16 @@ async function buildYoloModelRegistryPayload() {
     }
   }
 
-  const preferredOrder = ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'person_behavior_cls', 'license_plate_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo', 'trash_yolo', 'ground_seg_yolo', 'common_yolo'];
+  const preferredOrder = ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'person_behavior_cls', 'license_plate_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo', 'trash_yolo', 'ground_seg_yolo'];
   const entries = [];
   for (const taskId of preferredOrder) {
+    if (retiredYoloModelTaskIds.has(taskId)) continue;
     if (!mergedByTask.has(taskId)) continue;
     entries.push(await normalizeYoloModelRegistryEntry(mergedByTask.get(taskId)));
     mergedByTask.delete(taskId);
   }
   for (const entry of mergedByTask.values()) {
+    if (retiredYoloModelTaskIds.has(String(entry?.task_id || '').trim())) continue;
     entries.push(await normalizeYoloModelRegistryEntry(entry));
   }
 
@@ -10284,6 +10289,41 @@ app.get('/healthz', (_req, res) => {
   res.type('text/plain').send('ok');
 });
 
+function isLoopbackRequest(req) {
+  const values = [
+    req.ip,
+    req.socket?.remoteAddress,
+    req.connection?.remoteAddress
+  ].filter(Boolean).map((value) => String(value));
+  return values.some((value) => (
+    value === '127.0.0.1' ||
+    value === '::1' ||
+    value === '::ffff:127.0.0.1' ||
+    value.startsWith('127.')
+  ));
+}
+
+app.post('/api/internal/yolo-label-review/rebuild-patrol-index', async (req, res) => {
+  if (!isLoopbackRequest(req)) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const dataset = await resolveYoloPatrolDataset({ force: true });
+    return res.json({
+      ok: true,
+      rows: Array.isArray(dataset?.rows) ? dataset.rows.length : 0,
+      index_built_at: dataset?.index_built_at || null,
+      qwen_bbox: dataset?.summary?.qwen_bbox || null
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: 'patrol_index_rebuild_failed',
+      detail: error.message || String(error)
+    });
+  }
+});
+
 app.get('/api/auth/me', async (req, res) => {
   const auth = await authStore.getAuthFromRequest(req);
   if (!auth) {
@@ -12150,6 +12190,13 @@ app.get('/api/yolo-model-test/models/download/:fileName', authStore.requirePermi
 app.post('/api/yolo-model-test', authStore.requirePermission('ai:detect'), async (req, res) => {
   const startMs = Date.now();
   const taskId = String(req.body?.task_id || '').trim();
+  if (retiredYoloModelTaskIds.has(taskId)) {
+    return res.status(410).json({
+      ok: false,
+      error: 'retired_task',
+      detail: '该YOLO任务已下线，请使用拆分模型方案。'
+    });
+  }
   const task = yoloModelTestTasks[taskId];
   if (!task) {
     return res.status(400).json({

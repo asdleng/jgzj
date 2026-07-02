@@ -498,7 +498,7 @@ def cache_has_qwen_bbox(path):
     payload = load_json(path)
     if not isinstance(payload, dict):
         return False
-    return payload.get("schema") == SCHEMA and isinstance(payload.get("labels"), list) and payload.get("ok") is not False
+    return payload.get("schema") == SCHEMA and isinstance(payload.get("labels"), list)
 
 
 def call_qwen(service_url, image_b64, timeout_s, max_tokens):
@@ -543,7 +543,10 @@ def annotate_one(row, args):
     raw_text = message.get("content") or message.get("reasoning") or ""
     parsed = extract_json(raw_text)
     quality, labels = normalize_annotation(parsed)
-    ok = quality is not None
+    parse_ok = quality is not None
+    if not parse_ok:
+        quality = "bad"
+        labels = []
     payload = {
         "schema": SCHEMA,
         "image_sha256": meta.get("image_sha256"),
@@ -558,16 +561,18 @@ def annotate_one(row, args):
         "model_bundle": MODEL_BUNDLE,
         "service_url": args.service_url,
         "image_request": image_request,
-        "ok": ok,
-        "quality": quality or "bad",
+        "ok": True,
+        "quality": quality,
         "labels": labels,
+        "parse_ok": parse_ok,
+        "terminal_empty": not parse_ok,
         "raw_json": parsed if args.store_raw else None,
-        "raw_text": raw_text if (args.store_raw or not ok or choice.get("finish_reason") == "length") else "",
+        "raw_text": raw_text if (args.store_raw or not parse_ok or choice.get("finish_reason") == "length") else "",
         "finish_reason": choice.get("finish_reason"),
         "duration_ms": int((time.time() - started) * 1000),
     }
     save_json_atomic(out_path, payload)
-    return f"ok:{len(labels)}" if ok else "error:parse"
+    return f"ok:{len(labels)}" if parse_ok else "ok:terminal_empty_parse"
 
 
 def main():

@@ -177,18 +177,6 @@ TARGETS = {
         "summary_roots": [],
         "keywords": [],
     },
-    "common_yolo": {
-        "title": "融合实验",
-        "local_weight": str(RUNTIME_ROOT / "weights" / "common_yolo_best.pt"),
-        "download_file": "common_yolo_best.pt",
-        "summary_roots": [
-            "/home/sari/common_yolo_20260630",
-        ],
-        "roots": [
-            "/home/sari/common_yolo_20260630/runs",
-        ],
-        "keywords": ["common_yolo"],
-    },
 }
 
 

@@ -10,6 +10,7 @@ mkdir -p "$RUNTIME"
 LOCK="$RUNTIME/vehicle_upload_qwen_bbox_labels_v1.lock"
 LOG="$RUNTIME/vehicle_upload_qwen_bbox_labels_v1.incremental.log"
 SERVICE_URL="${QWEN_LABEL_SERVICE_URL:-http://127.0.0.1:18016}"
+SITE_INTERNAL_URL="${JZGJ_SITE_INTERNAL_URL:-http://127.0.0.1:8888}"
 MAX_NEW="${VEHICLE_QWEN_LABEL_MAX_NEW:-120}"
 WORKERS="${VEHICLE_QWEN_LABEL_WORKERS:-2}"
 TIMEOUT_S="${VEHICLE_QWEN_LABEL_TIMEOUT_S:-120}"
@@ -49,4 +50,11 @@ timestamp() {
       --max-tokens "$MAX_TOKENS"
   fi
   echo "[$(timestamp)] done vehicle_upload_qwen_bbox_incremental"
+
+  if curl -fsS --max-time 120 -X POST \
+    "$SITE_INTERNAL_URL/api/internal/yolo-label-review/rebuild-patrol-index" >/dev/null; then
+    echo "[$(timestamp)] done patrol_dataset_index_refresh site=$SITE_INTERNAL_URL"
+  else
+    echo "[$(timestamp)] warn:patrol_dataset_index_refresh_failed site=$SITE_INTERNAL_URL"
+  fi
 } 9>"$LOCK" >>"$LOG" 2>&1
