@@ -7799,6 +7799,7 @@ const MAP_EDITOR_ROUTE_SMOOTH_RADIUS_MULTIPLIER = 2.5;
 const MAP_EDITOR_ROUTE_SMOOTH_MIN_RADIUS_M = 2.0;
 const MAP_EDITOR_ROUTE_SMOOTH_MAX_RADIUS_M = 8.0;
 const MAP_EDITOR_ROUTE_EDIT_BODY_TARGET_BYTES = 900 * 1024;
+const MAP_EDITOR_ROUTE_EDIT_CLOUD_AGENT_BODY_TARGET_BYTES = 900 * 1024;
 const MAP_EDITOR_ROUTE_SMOOTH_JS_INJECTION = String.raw`
 /* jgzj-route-smooth-server-v1 */
 if (els.routeControlSpacing && Number(els.routeControlSpacing.value || 0) === 10) {
@@ -7816,7 +7817,9 @@ function routeSmoothSetButtons() {
   if (els.applySmoothedRouteBtn) {
     els.applySmoothedRouteBtn.disabled = !state.route.editing || state.route.smoothMode !== "reconnect" || state.route.controls.length < 2;
   }
-  if (state.route.smoothMode === "reconnect" && els.saveRouteBtn) els.saveRouteBtn.disabled = true;
+  if (state.route.smoothMode === "reconnect" && els.saveRouteBtn) {
+    els.saveRouteBtn.disabled = !state.route.editing || state.route.controls.length < 2;
+  }
 }
 
 function routeSmoothMeta(data, prefix = "平滑预览已生成") {
@@ -7900,12 +7903,20 @@ async function requestServerRouteSmooth(apply = false) {
     els.showHandles.checked = true;
     syncSelectionInputs();
     setRouteDirty(false);
-    els.routeEditMeta.textContent = routeSmoothMeta(data) + " | 点击“覆盖控制器”写回；拖点后请用“保存路径”";
+    els.routeEditMeta.textContent = routeSmoothMeta(data) + " | 拖点后点击“保存路径”或“覆盖控制器”写回";
     log("云端平滑预览完成：" + data.control_count + " controls，max offset " + fmt(data.stats?.max_offset_m, 2) + "m");
     draw();
   } finally {
     routeSmoothSetButtons();
   }
+}
+
+async function saveRouteEditRouteSmoothAware() {
+  if (state.route.smoothMode === "reconnect") {
+    await requestServerRouteSmooth(true);
+    return;
+  }
+  await saveRouteEdit();
 }
 
 const routeSmoothOriginalRebuildRoutePreview = rebuildRoutePreview;
@@ -8430,16 +8441,42 @@ function buildMapEditorRouteEditControlsFromPreview(originalPoints, previewPoint
 function compactMapEditorRouteEditControlsForBody(fileName, controls, maxPoints) {
   const routeFileName = String(fileName || '');
   const sourceControls = Array.isArray(controls) ? controls : [];
-  const estimateBytes = (items) => Buffer.byteLength(JSON.stringify({
+  const buildRouteEditBodyText = (items) => JSON.stringify({
     file_name: routeFileName,
     controls: items,
     max_points: maxPoints
-  }), 'utf8');
+  });
+  const estimateBodyBytes = (items) => Buffer.byteLength(buildRouteEditBodyText(items), 'utf8');
+  const estimateCloudAgentBodyBytes = (items) => {
+    const bodyText = buildRouteEditBodyText(items);
+    const toolArgs = {
+      method: 'POST',
+      path: '/api/route-edit',
+      query: new URLSearchParams({ file: routeFileName }).toString(),
+      max_response_bytes: getMapEditorMaxResponseBytes('/api/route-edit'),
+      chunk_response: true,
+      chunk_threshold_bytes: MAP_EDITOR_CHUNK_THRESHOLD_BYTES,
+      chunk_size_bytes: MAP_EDITOR_CHUNK_SIZE_BYTES,
+      headers: { 'content-type': 'application/json' },
+      body_base64: Buffer.from(bodyText, 'utf8').toString('base64')
+    };
+    return Buffer.byteLength(JSON.stringify({
+      args: normalizeCloudOpsArgs(toolArgs),
+      timeout_s: 75
+    }), 'utf8');
+  };
 
   let step = 1;
   let compacted = sourceControls;
-  let bodyBytes = estimateBytes(compacted);
-  while (bodyBytes > MAP_EDITOR_ROUTE_EDIT_BODY_TARGET_BYTES && step < sourceControls.length) {
+  let bodyBytes = estimateBodyBytes(compacted);
+  let cloudAgentBodyBytes = estimateCloudAgentBodyBytes(compacted);
+  while (
+    (
+      bodyBytes > MAP_EDITOR_ROUTE_EDIT_BODY_TARGET_BYTES ||
+      cloudAgentBodyBytes > MAP_EDITOR_ROUTE_EDIT_CLOUD_AGENT_BODY_TARGET_BYTES
+    ) &&
+    step < sourceControls.length
+  ) {
     step += 1;
     compacted = sourceControls.filter((control, index) => (
       index === 0 ||
@@ -8447,16 +8484,19 @@ function compactMapEditorRouteEditControlsForBody(fileName, controls, maxPoints)
       index % step === 0 ||
       control.locked
     ));
-    bodyBytes = estimateBytes(compacted);
+    bodyBytes = estimateBodyBytes(compacted);
+    cloudAgentBodyBytes = estimateCloudAgentBodyBytes(compacted);
   }
 
   return {
     controls: compacted,
     body_bytes: bodyBytes,
+    cloud_agent_body_bytes: cloudAgentBodyBytes,
     step,
     original_control_count: sourceControls.length,
     control_count: compacted.length,
-    target_body_bytes: MAP_EDITOR_ROUTE_EDIT_BODY_TARGET_BYTES
+    target_body_bytes: MAP_EDITOR_ROUTE_EDIT_BODY_TARGET_BYTES,
+    target_cloud_agent_body_bytes: MAP_EDITOR_ROUTE_EDIT_CLOUD_AGENT_BODY_TARGET_BYTES
   };
 }
 
@@ -8642,6 +8682,10 @@ function injectMapEditorRouteSmoothJs(script) {
   injected = injected.replace(
     'els.discardRouteEditBtn.addEventListener("click", discardRouteEdit);',
     'els.discardRouteEditBtn.addEventListener("click", discardRouteEdit);\n  els.serverSmoothRouteBtn?.addEventListener("click", () => requestServerRouteSmooth(false).catch((err) => log(`路径平滑失败：${err.message}`)));\n  els.applySmoothedRouteBtn?.addEventListener("click", () => requestServerRouteSmooth(true).catch((err) => {\n    log(`控制器路径覆盖失败：${err.message}`);\n    routeSmoothSetButtons();\n  }));'
+  );
+  injected = injected.replace(
+    'els.saveRouteBtn.addEventListener("click", () => saveRouteEdit().catch((err) => {',
+    'els.saveRouteBtn.addEventListener("click", () => saveRouteEditRouteSmoothAware().catch((err) => {'
   );
   injected = injected.replace(
     'els.deleteRouteBtn.disabled = !els.routeSelect.value;\n  });',
@@ -11279,7 +11323,9 @@ app.post('/vehicles/:vehicleId/map-editor/api/route-smooth', authStore.requirePe
         write_original_control_count: compactedRouteEdit.original_control_count,
         write_step: compactedRouteEdit.step,
         write_body_bytes: compactedRouteEdit.body_bytes,
-        write_body_target_bytes: compactedRouteEdit.target_body_bytes
+        write_body_target_bytes: compactedRouteEdit.target_body_bytes,
+        write_cloud_agent_body_bytes: compactedRouteEdit.cloud_agent_body_bytes,
+        write_cloud_agent_body_target_bytes: compactedRouteEdit.target_cloud_agent_body_bytes
       }
     });
   } catch (error) {
