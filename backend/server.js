@@ -3275,6 +3275,201 @@ function yoloPatrolDatasetAgeMs(dataset) {
   return builtAtMs > 0 ? Date.now() - builtAtMs : Number.POSITIVE_INFINITY;
 }
 
+function yoloReviewShanghaiDay(value) {
+  const parsed = value instanceof Date ? value : new Date(value || Date.now());
+  const ms = parsed.getTime();
+  if (!Number.isFinite(ms)) {
+    return '';
+  }
+  return new Date(ms + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function yoloReviewShiftDay(day, deltaDays) {
+  const parts = String(day || '').split('-').map((item) => Number(item));
+  if (parts.length !== 3 || parts.some((item) => !Number.isFinite(item))) {
+    return '';
+  }
+  const base = Date.UTC(parts[0], parts[1] - 1, parts[2]);
+  return new Date(base + deltaDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function incrementYoloReviewCount(target, key, delta = 1) {
+  const safeKey = String(key || '').trim() || 'unknown';
+  target[safeKey] = (target[safeKey] || 0) + Number(delta || 0);
+}
+
+function topYoloReviewCounts(counts = {}, limit = 5) {
+  return Object.entries(counts)
+    .filter(([, value]) => Number(value) > 0)
+    .sort((left, right) => Number(right[1]) - Number(left[1]) || left[0].localeCompare(right[0]))
+    .slice(0, limit)
+    .map(([name, count]) => ({ name, count }));
+}
+
+function createYoloReviewDailyStat(day) {
+  return {
+    date: day,
+    total_images: 0,
+    vehicle_collection_images: 0,
+    cloud_camera_images: 0,
+    other_source_images: 0,
+    qwen_bbox_done: 0,
+    qwen_bbox_pending: 0,
+    qwen_bbox_not_applicable: 0,
+    qwen_label_done: 0,
+    qwen_label_pending: 0,
+    qwen_label_not_applicable: 0,
+    positive_images: 0,
+    boxes: 0,
+    manual_saved: 0,
+    manual_positive: 0,
+    manual_boxes: 0,
+    manual_deleted: 0,
+    source_counts: {},
+    vehicle_counts: {},
+    camera_counts: {},
+    quality_counts: {},
+    class_counts: {}
+  };
+}
+
+function finalizeYoloReviewDailyStat(stat) {
+  return {
+    ...stat,
+    top_sources: topYoloReviewCounts(stat.source_counts, 6),
+    top_vehicles: topYoloReviewCounts(stat.vehicle_counts, 5),
+    top_cameras: topYoloReviewCounts(stat.camera_counts, 4),
+    top_quality: topYoloReviewCounts(stat.quality_counts, 5),
+    top_classes: topYoloReviewCounts(stat.class_counts, 6)
+  };
+}
+
+async function buildYoloReviewDailyStats(options = {}) {
+  const days = toFiniteInteger(options.days, 14, { min: 1, max: 90 });
+  const dataset = await resolveYoloPatrolDataset();
+  const manualIndex = await loadYoloManualAnnotationIndex();
+  const today = yoloReviewShanghaiDay(new Date());
+  const startDay = yoloReviewShiftDay(today, -(days - 1));
+  const byDay = new Map();
+  for (let offset = 0; offset < days; offset += 1) {
+    const day = yoloReviewShiftDay(startDay, offset);
+    byDay.set(day, createYoloReviewDailyStat(day));
+  }
+
+  let firstDataDay = '';
+  let lastDataDay = '';
+  for (const row of dataset.rows || []) {
+    const day = yoloReviewShanghaiDay(row?.meta?.collected_at);
+    if (!day) continue;
+    if (!firstDataDay || day < firstDataDay) firstDataDay = day;
+    if (!lastDataDay || day > lastDataDay) lastDataDay = day;
+    if (day < startDay || day > today) continue;
+    const stat = byDay.get(day) || createYoloReviewDailyStat(day);
+    byDay.set(day, stat);
+
+    const source = String(row?.meta?.source || 'cloud_camera_capture').trim() || 'unknown';
+    const vehicleId = String(row?.meta?.vehicle_id || '').trim();
+    const cameraId = String(row?.meta?.camera_id || '').trim();
+    const labels = Array.isArray(row?.auto_labels) ? row.auto_labels : [];
+    const classes = Array.isArray(row?.auto_label_classes) && row.auto_label_classes.length
+      ? row.auto_label_classes
+      : [...new Set(labels.map((label) => label?.class_name || String(label?.class_id ?? '')).filter(Boolean))];
+
+    stat.total_images += 1;
+    if (source === 'auto_ad_patrol_flow_upload') {
+      stat.vehicle_collection_images += 1;
+    } else if (source === 'cloud_camera_capture') {
+      stat.cloud_camera_images += 1;
+    } else {
+      stat.other_source_images += 1;
+    }
+    incrementYoloReviewCount(stat.source_counts, source);
+    if (vehicleId) incrementYoloReviewCount(stat.vehicle_counts, vehicleId);
+    if (cameraId) incrementYoloReviewCount(stat.camera_counts, cameraId);
+
+    const bboxStatus = String(row?.qwen_bbox_status || 'not_applicable');
+    if (bboxStatus === 'done') stat.qwen_bbox_done += 1;
+    else if (bboxStatus === 'pending') stat.qwen_bbox_pending += 1;
+    else stat.qwen_bbox_not_applicable += 1;
+
+    const labelStatus = String(row?.qwen_label_status || 'not_applicable');
+    if (labelStatus === 'done') stat.qwen_label_done += 1;
+    else if (labelStatus === 'pending') stat.qwen_label_pending += 1;
+    else stat.qwen_label_not_applicable += 1;
+
+    if (row?.qwen_bbox_quality) {
+      incrementYoloReviewCount(stat.quality_counts, row.qwen_bbox_quality);
+    }
+    if (labels.length || row?.ai_answer === 'YES') {
+      stat.positive_images += 1;
+    }
+    stat.boxes += labels.length;
+    for (const label of labels) {
+      incrementYoloReviewCount(stat.class_counts, label?.class_name || String(label?.class_id ?? 'unknown'));
+    }
+    for (const className of classes) {
+      if (!labels.length) {
+        incrementYoloReviewCount(stat.class_counts, className, 0);
+      }
+    }
+
+    const manual = manualIndex?.get(yoloReviewManualAnnotationIndexKey(dataset.id, row.image_rel_path));
+    if (manual?.deleted) {
+      stat.manual_deleted += 1;
+    } else if (manual) {
+      const manualLabels = Array.isArray(manual.labels) ? manual.labels : [];
+      stat.manual_saved += 1;
+      stat.manual_boxes += manualLabels.length;
+      if (manual.answer === 'YES' || manualLabels.length) {
+        stat.manual_positive += 1;
+      }
+    }
+  }
+
+  const rows = [...byDay.values()]
+    .map(finalizeYoloReviewDailyStat)
+    .sort((left, right) => right.date.localeCompare(left.date));
+  const totals = finalizeYoloReviewDailyStat(rows.reduce((acc, row) => {
+    acc.total_images += row.total_images;
+    acc.vehicle_collection_images += row.vehicle_collection_images;
+    acc.cloud_camera_images += row.cloud_camera_images;
+    acc.other_source_images += row.other_source_images;
+    acc.qwen_bbox_done += row.qwen_bbox_done;
+    acc.qwen_bbox_pending += row.qwen_bbox_pending;
+    acc.qwen_bbox_not_applicable += row.qwen_bbox_not_applicable;
+    acc.qwen_label_done += row.qwen_label_done;
+    acc.qwen_label_pending += row.qwen_label_pending;
+    acc.qwen_label_not_applicable += row.qwen_label_not_applicable;
+    acc.positive_images += row.positive_images;
+    acc.boxes += row.boxes;
+    acc.manual_saved += row.manual_saved;
+    acc.manual_positive += row.manual_positive;
+    acc.manual_boxes += row.manual_boxes;
+    acc.manual_deleted += row.manual_deleted;
+    for (const [key, value] of Object.entries(row.source_counts || {})) incrementYoloReviewCount(acc.source_counts, key, value);
+    for (const [key, value] of Object.entries(row.vehicle_counts || {})) incrementYoloReviewCount(acc.vehicle_counts, key, value);
+    for (const [key, value] of Object.entries(row.camera_counts || {})) incrementYoloReviewCount(acc.camera_counts, key, value);
+    for (const [key, value] of Object.entries(row.quality_counts || {})) incrementYoloReviewCount(acc.quality_counts, key, value);
+    for (const [key, value] of Object.entries(row.class_counts || {})) incrementYoloReviewCount(acc.class_counts, key, value);
+    return acc;
+  }, createYoloReviewDailyStat(`${startDay}~${today}`)));
+
+  return {
+    days,
+    time_zone: 'Asia/Shanghai',
+    generated_at: new Date().toISOString(),
+    dataset_id: dataset.id,
+    dataset_profile: dataset.profile,
+    index_built_at: dataset.index_built_at || null,
+    available_range: {
+      first_day: firstDataDay || null,
+      last_day: lastDataDay || null
+    },
+    totals,
+    rows
+  };
+}
+
 async function rebuildYoloPatrolDatasetIndex(reason = 'manual') {
   const startedAt = Date.now();
   const dataset = await buildYoloPatrolDataset();
@@ -11572,6 +11767,24 @@ app.get('/api/yolo-label-review/datasets', async (_req, res) => {
     return res.status(502).json({
       ok: false,
       error: 'yolo_datasets_unavailable',
+      detail: error.message
+    });
+  }
+});
+
+app.get('/api/yolo-label-review/daily-stats', async (req, res) => {
+  try {
+    const payload = await buildYoloReviewDailyStats({
+      days: req.query?.days
+    });
+    return res.json({
+      ok: true,
+      ...payload
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: 'yolo_daily_stats_unavailable',
       detail: error.message
     });
   }

@@ -4245,6 +4245,162 @@
   line-height: 1.1;
 }
 
+.yolo-review-daily-stats {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(51, 65, 85, 0.86);
+  background: rgba(2, 6, 23, 0.44);
+}
+
+.yolo-review-daily-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.yolo-review-daily-title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.yolo-review-daily-title strong,
+.yolo-review-daily-title span,
+.yolo-review-daily-meta,
+.yolo-review-daily-total span,
+.yolo-review-daily-total strong,
+.yolo-review-daily-progress strong,
+.yolo-review-daily-progress span {
+  margin: 0;
+}
+
+.yolo-review-daily-title strong {
+  color: #f8fafc;
+  font-size: 0.88rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.yolo-review-daily-title span,
+.yolo-review-daily-meta {
+  color: #94a3b8;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.yolo-review-daily-meta {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.yolo-review-daily-totals {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.yolo-review-daily-total {
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.68);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.yolo-review-daily-total span,
+.yolo-review-daily-total strong {
+  display: block;
+}
+
+.yolo-review-daily-total span {
+  color: #94a3b8;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.18;
+}
+
+.yolo-review-daily-total strong {
+  margin-top: 3px;
+  color: #f8fafc;
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.yolo-review-daily-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.yolo-review-daily-table {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: collapse;
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  line-height: 1.32;
+}
+
+.yolo-review-daily-table th,
+.yolo-review-daily-table td {
+  border-top: 1px solid rgba(51, 65, 85, 0.78);
+  padding: 7px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.yolo-review-daily-table th {
+  color: #94a3b8;
+  font-size: 0.62rem;
+  font-weight: 900;
+  background: rgba(15, 23, 42, 0.56);
+}
+
+.yolo-review-daily-table td {
+  font-weight: 800;
+}
+
+.yolo-review-daily-table td span,
+.yolo-review-daily-progress span,
+.yolo-review-daily-progress strong {
+  display: block;
+}
+
+.yolo-review-daily-date {
+  color: #f8fafc;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.yolo-review-daily-progress {
+  display: grid;
+  gap: 2px;
+}
+
+.yolo-review-daily-progress strong {
+  color: #f8fafc;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.yolo-review-daily-progress span,
+.yolo-review-daily-top span {
+  color: #94a3b8;
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.yolo-review-daily-top {
+  min-width: 180px;
+}
+
 .yolo-review-dataset-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -5050,6 +5206,10 @@ body.yolo-review-is-panning {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
+  .yolo-review-daily-totals {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .yolo-review-body {
     grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
   }
@@ -5086,6 +5246,18 @@ body.yolo-review-is-panning {
 
   .yolo-review-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .yolo-review-daily-head {
+    display: grid;
+  }
+
+  .yolo-review-daily-meta {
+    text-align: left;
+  }
+
+  .yolo-review-daily-totals {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .yolo-review-body {
@@ -5155,6 +5327,10 @@ body.yolo-review-is-panning {
   .yolo-task-grid,
   .yolo-model-registry-list {
     grid-template-columns: 1fr;
+  }
+
+  .yolo-review-daily-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .yolo-task-button,

@@ -4,6 +4,7 @@
 
   const endpoints = {
     datasets: "/api/yolo-label-review/datasets",
+    dailyStats: "/api/yolo-label-review/daily-stats?days=14",
     items: "/api/yolo-label-review/items",
     item: "/api/yolo-label-review/item",
     annotation: "/api/yolo-label-review/annotation",
@@ -25,6 +26,7 @@
     eventButtons: Array.from(document.querySelectorAll("[data-yolo-review-event]")),
     datasetStatus: document.getElementById("yolo-review-dataset-status"),
     sourceCards: document.getElementById("yolo-review-source-cards"),
+    dailyStats: document.getElementById("yolo-review-daily-stats"),
     datasetCards: document.getElementById("yolo-review-dataset-cards"),
     summary: document.getElementById("yolo-review-summary"),
     list: document.getElementById("yolo-review-list"),
@@ -44,6 +46,7 @@
     totalPages: 1,
     selectedItemKey: "",
     activeEvent: "all",
+    dailyStats: null,
     detailRequestSeq: 0
   };
 
@@ -217,6 +220,7 @@
       refs.datasetStatus.textContent = "正在加载数据集...";
     }
     renderLoadingNode(refs.sourceCards, "来源统计加载中...", { compact: true });
+    renderLoadingNode(refs.dailyStats, "每日统计加载中...", { compact: true });
     renderLoadingNode(refs.datasetCards, "数据集加载中...");
   }
 
@@ -256,6 +260,27 @@
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return String(value);
     return parsed.toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function formatDay(value) {
+    const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return value || "-";
+    return `${match[2]}-${match[3]}`;
+  }
+
+  function percentText(done, total) {
+    const safeDone = Number(done || 0);
+    const safeTotal = Number(total || 0);
+    if (!safeTotal) return "-";
+    return `${Math.round((safeDone / safeTotal) * 1000) / 10}%`;
+  }
+
+  function topCountText(items, limit = 3) {
+    const parts = (Array.isArray(items) ? items : [])
+      .filter((item) => Number(item?.count) > 0)
+      .slice(0, limit)
+      .map((item) => `${qwenLabelText(item.name)} ${compactNumber(item.count)}`);
+    return parts.length ? parts.join(" / ") : "-";
   }
 
   function normalizeClassToken(value) {
@@ -900,6 +925,115 @@
     });
   }
 
+  function dailyProgressCell(stat, prefix) {
+    const done = Number(stat?.[`${prefix}_done`] || 0);
+    const pending = Number(stat?.[`${prefix}_pending`] || 0);
+    const applicable = done + pending;
+    const wrap = createNode("div", "yolo-review-daily-progress");
+    wrap.appendChild(createNode("strong", "", `${compactNumber(done)} / ${compactNumber(applicable)}`));
+    wrap.appendChild(createNode("span", "", `${percentText(done, applicable)} · 待 ${compactNumber(pending)}`));
+    return wrap;
+  }
+
+  function renderDailyTotals(totals) {
+    const metrics = createNode("div", "yolo-review-daily-totals");
+    [
+      ["近14天上传", compactNumber(totals?.total_images)],
+      ["车辆自采", compactNumber(totals?.vehicle_collection_images)],
+      ["云端抓拍", compactNumber(totals?.cloud_camera_images)],
+      ["框已标", compactNumber(totals?.qwen_bbox_done)],
+      ["框待标", compactNumber(totals?.qwen_bbox_pending)],
+      ["阳性图片", compactNumber(totals?.positive_images)],
+      ["人工保存", compactNumber(totals?.manual_saved)]
+    ].forEach(([label, value]) => {
+      const item = createNode("div", "yolo-review-daily-total");
+      item.appendChild(createNode("span", "", label));
+      item.appendChild(createNode("strong", "", value));
+      metrics.appendChild(item);
+    });
+    return metrics;
+  }
+
+  function renderDailyStatsError(error) {
+    if (!refs.dailyStats) return;
+    refs.dailyStats.innerHTML = "";
+    refs.dailyStats.appendChild(createNode("p", "yolo-review-empty", `每日统计加载失败：${error?.message || "未知错误"}`));
+  }
+
+  function renderDailyStats() {
+    if (!refs.dailyStats) return;
+    refs.dailyStats.innerHTML = "";
+    const payload = state.dailyStats;
+    const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+    if (!payload || !rows.length) {
+      refs.dailyStats.appendChild(createNode("p", "yolo-review-empty", "暂无每日统计。"));
+      return;
+    }
+
+    const head = createNode("div", "yolo-review-daily-head");
+    const title = createNode("div", "yolo-review-daily-title");
+    title.appendChild(createNode("strong", "", "每日上传与标注"));
+    title.appendChild(createNode("span", "", `近 ${payload.days || rows.length} 天 · ${payload.time_zone || "Asia/Shanghai"}`));
+    head.appendChild(title);
+    const indexText = payload.index_built_at ? `索引 ${formatDate(payload.index_built_at)}` : "索引时间未知";
+    head.appendChild(createNode("p", "yolo-review-daily-meta", indexText));
+    refs.dailyStats.appendChild(head);
+    refs.dailyStats.appendChild(renderDailyTotals(payload.totals || {}));
+
+    const tableWrap = createNode("div", "yolo-review-daily-table-wrap");
+    const table = createNode("table", "yolo-review-daily-table");
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    ["日期", "上传", "来源", "Qwen框", "Qwen语义", "阳性/框", "人工", "主要内容"].forEach((label) => {
+      headRow.appendChild(createNode("th", "", label));
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    rows.forEach((stat) => {
+      const tr = document.createElement("tr");
+      tr.appendChild(createNode("td", "yolo-review-daily-date", formatDay(stat.date)));
+      tr.appendChild(createNode("td", "", compactNumber(stat.total_images)));
+      const sourceCell = createNode("td", "", "");
+      sourceCell.appendChild(createNode("span", "", `车 ${compactNumber(stat.vehicle_collection_images)}`));
+      sourceCell.appendChild(createNode("span", "", `云 ${compactNumber(stat.cloud_camera_images)}`));
+      if (Number(stat.other_source_images || 0) > 0) {
+        sourceCell.appendChild(createNode("span", "", `其他 ${compactNumber(stat.other_source_images)}`));
+      }
+      tr.appendChild(sourceCell);
+      const bboxCell = document.createElement("td");
+      bboxCell.appendChild(dailyProgressCell(stat, "qwen_bbox"));
+      tr.appendChild(bboxCell);
+      const labelCell = document.createElement("td");
+      labelCell.appendChild(dailyProgressCell(stat, "qwen_label"));
+      tr.appendChild(labelCell);
+      const positiveCell = createNode("td", "", "");
+      positiveCell.appendChild(createNode("span", "", `阳 ${compactNumber(stat.positive_images)}`));
+      positiveCell.appendChild(createNode("span", "", `框 ${compactNumber(stat.boxes)}`));
+      tr.appendChild(positiveCell);
+      const manualCell = createNode("td", "", "");
+      manualCell.appendChild(createNode("span", "", `存 ${compactNumber(stat.manual_saved)}`));
+      manualCell.appendChild(createNode("span", "", `框 ${compactNumber(stat.manual_boxes)}`));
+      tr.appendChild(manualCell);
+      const topCell = createNode("td", "yolo-review-daily-top", "");
+      topCell.appendChild(createNode("span", "", topCountText(stat.top_classes)));
+      topCell.appendChild(createNode("span", "", topCountText(stat.top_vehicles, 2)));
+      tr.appendChild(topCell);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    refs.dailyStats.appendChild(tableWrap);
+  }
+
+  async function loadDailyStats() {
+    renderLoadingNode(refs.dailyStats, "每日统计加载中...", { compact: true });
+    const data = await requestJson(endpoints.dailyStats);
+    state.dailyStats = data;
+    renderDailyStats();
+  }
+
   function renderSummary(dataset) {
     if (!refs.summary) return;
     refs.summary.innerHTML = "";
@@ -975,6 +1109,7 @@
   async function loadDatasets() {
     setStatus("加载数据集...", "loading");
     renderDatasetLoading();
+    loadDailyStats().catch(renderDailyStatsError);
     try {
       const data = await requestJson(endpoints.datasets);
       state.allDatasets = Array.isArray(data.datasets) ? data.datasets : [];
