@@ -1583,6 +1583,7 @@
   function makeEditorState(dataset, item, kind = reviewTaskKind(dataset)) {
     const labels = (Array.isArray(item.labels) ? item.labels : [])
       .map((label, index) => normalizeEditorLabel(label, index, dataset));
+    const defaultClassName = labels[0]?.class_name || item.manual_annotation?.class_name || item.ai_class || dataset.classes?.[0] || "";
     return {
       dataset,
       item,
@@ -1591,7 +1592,8 @@
       drawMode: false,
       dirty: false,
       answer: answerDisplay(item.ai_answer) === "Yes" ? "YES" : answerDisplay(item.ai_answer) === "No" ? "NO" : (kind === "detect" ? (labels.length ? "YES" : "NO") : "YES"),
-      className: item.manual_annotation?.class_name || item.ai_class || dataset.classes?.[0] || ""
+      className: item.manual_annotation?.class_name || item.ai_class || dataset.classes?.[0] || "",
+      newClassName: defaultClassName
     };
   }
 
@@ -1614,10 +1616,32 @@
     const addButton = createNode("button", "yolo-review-tool-button", editor.drawMode ? "正在画框" : "新增框");
     addButton.type = "button";
     addButton.classList.toggle("is-active", editor.drawMode);
+    const newClassField = createNode("label", "yolo-review-tool-field");
+    newClassField.appendChild(createNode("span", "", "新框标签"));
+    const newClassSelect = document.createElement("select");
+    const newClassOptions = dataset.classes?.length ? dataset.classes : [editor.newClassName || editor.className || "object"];
+    newClassOptions.forEach((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      newClassSelect.appendChild(option);
+    });
+    if (editor.newClassName && ![...newClassSelect.options].some((option) => normalizeClassToken(option.value) === normalizeClassToken(editor.newClassName))) {
+      const option = document.createElement("option");
+      option.value = editor.newClassName;
+      option.textContent = editor.newClassName;
+      newClassSelect.appendChild(option);
+    }
+    newClassSelect.value = editor.newClassName || newClassOptions[0] || "";
+    newClassSelect.addEventListener("change", () => {
+      editor.newClassName = newClassSelect.value;
+    });
+    newClassField.appendChild(newClassSelect);
     const deleteButton = createNode("button", "yolo-review-tool-button yolo-review-tool-button--danger", "删除框");
     deleteButton.type = "button";
     deleteButton.disabled = editor.selectedIndex < 0;
     toolbar.appendChild(addButton);
+    toolbar.appendChild(newClassField);
     toolbar.appendChild(deleteButton);
     toolbar.appendChild(createNode("span", "yolo-review-edit-status", `${editor.labels.length} 个框`));
     panel.appendChild(toolbar);
@@ -1741,7 +1765,7 @@
         const top = Math.min(drawing.y, point.y);
         const bottom = Math.max(drawing.y, point.y);
         if (right - left > 0.004 && bottom - top > 0.004) {
-          const className = dataset.classes?.[0] || editor.className || "object";
+          const className = editor.newClassName || dataset.classes?.[0] || editor.className || "object";
           editor.labels.push(normalizeEditorLabel({
             class_name: className,
             x: (left + right) / 2,
@@ -1763,7 +1787,7 @@
     };
 
     if (!editor.labels.length) {
-      list.appendChild(createNode("p", "yolo-review-label-line", "当前没有框，可以点击新增框后在图片上拖拽画框。"));
+      list.appendChild(createNode("p", "yolo-review-label-line", "先选择新框标签，再点击新增框，在图片上拖拽画框。"));
       return;
     }
 
@@ -1793,6 +1817,7 @@
       select.value = label.class_name;
       select.addEventListener("change", () => {
         editor.labels[index] = normalizeEditorLabel({ ...editor.labels[index], class_name: select.value }, index, dataset);
+        editor.newClassName = select.value;
         editor.selectedIndex = index;
         markEditorDirty(editor, saveButton);
         rerender();

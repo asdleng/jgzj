@@ -5136,6 +5136,29 @@ body.yolo-review-is-panning {
   padding: 0 12px;
 }
 
+.yolo-review-tool-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  color: #94a3b8;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.yolo-review-tool-field select {
+  min-width: 112px;
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.82);
+  background: rgba(2, 6, 23, 0.64);
+  color: #e2e8f0;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 780;
+}
+
 .yolo-review-tool-button.is-active {
   border-color: rgba(56, 189, 248, 0.72);
   background: rgba(14, 165, 233, 0.18);
