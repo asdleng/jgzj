@@ -4810,6 +4810,12 @@
   overscroll-behavior: contain;
 }
 
+.yolo-review-image-stage--zoomable {
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
 .yolo-review-image-stage--draggable.is-dragging {
   cursor: grabbing;
 }
@@ -4823,6 +4829,14 @@
 }
 
 .yolo-review-image-stage--draggable.is-dragging .yolo-review-pan-content {
+  transition: none;
+}
+
+.yolo-review-image-stage--zoomable .yolo-review-pan-content {
+  will-change: transform;
+}
+
+.yolo-review-image-stage--zoomable.is-dragging .yolo-review-pan-content {
   transition: none;
 }
 
@@ -4869,7 +4883,53 @@ body.yolo-review-is-panning {
 
 .yolo-review-overlay.is-editable {
   pointer-events: auto;
+  cursor: grab;
+}
+
+.yolo-review-overlay.is-editable.is-drawing {
   cursor: crosshair;
+}
+
+.yolo-review-image-stage.is-dragging .yolo-review-overlay.is-editable:not(.is-drawing) {
+  cursor: grabbing;
+}
+
+.yolo-review-zoom-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid rgba(94, 234, 212, 0.38);
+  background: rgba(2, 6, 23, 0.78);
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.3);
+}
+
+.yolo-review-zoom-controls button {
+  min-width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  background: rgba(15, 23, 42, 0.9);
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.yolo-review-zoom-controls button:hover {
+  border-color: rgba(94, 234, 212, 0.7);
+  color: #ccfbf1;
+}
+
+.yolo-review-zoom-controls .yolo-review-zoom-reset {
+  min-width: 48px;
+  font-size: 0.72rem;
 }
 
 .yolo-review-box {

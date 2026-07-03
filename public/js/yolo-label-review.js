@@ -1606,6 +1606,8 @@
     panel.innerHTML = "";
     overlay.innerHTML = "";
     overlay.classList.add("is-editable");
+    overlay.classList.toggle("is-drawing", editor.drawMode);
+    overlay.dataset.drawMode = editor.drawMode ? "true" : "false";
 
     const toolbar = createNode("div", "yolo-review-edit-toolbar");
     const addButton = createNode("button", "yolo-review-tool-button", editor.drawMode ? "正在画框" : "新增框");
@@ -1960,9 +1962,10 @@
     return wrap;
   }
 
-  function enableDragView(stage, content) {
+  function enableDragView(stage, content, options = {}) {
     if (!stage || !content) return;
     const img = content.querySelector("img");
+    const shouldStartPan = typeof options.shouldStartPan === "function" ? options.shouldStartPan : () => true;
     const maxScale = 8;
     const baseScale = 1;
     const panSlackAtFit = 180;
@@ -2001,6 +2004,7 @@
       clampOffsets();
       content.style.transform = `translate3d(${offsetX}px, ${offsetY}px, 0) scale(${scale})`;
       stage.dataset.zoom = scale.toFixed(2);
+      if (zoomReset) zoomReset.textContent = `${Math.round(scale * 100)}%`;
     }
 
     function zoomAt(clientX, clientY, nextScale) {
@@ -2023,8 +2027,42 @@
       apply();
     }
 
+    function zoomAtCenter(nextScale) {
+      const rect = stage.getBoundingClientRect();
+      zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, nextScale);
+    }
+
+    function resetZoom() {
+      scale = baseScale;
+      offsetX = 0;
+      offsetY = 0;
+      apply();
+    }
+
+    const controls = createNode("div", "yolo-review-zoom-controls");
+    const zoomOut = createNode("button", "", "-");
+    zoomOut.type = "button";
+    zoomOut.title = "缩小";
+    const zoomReset = createNode("button", "yolo-review-zoom-reset", "100%");
+    zoomReset.type = "button";
+    zoomReset.title = "恢复 100%";
+    const zoomIn = createNode("button", "", "+");
+    zoomIn.type = "button";
+    zoomIn.title = "放大";
+    [zoomOut, zoomReset, zoomIn].forEach((button) => {
+      button.addEventListener("pointerdown", (event) => event.stopPropagation());
+      button.addEventListener("click", (event) => event.stopPropagation());
+      controls.appendChild(button);
+    });
+    zoomOut.addEventListener("click", () => zoomAtCenter(scale / 1.25));
+    zoomReset.addEventListener("click", resetZoom);
+    zoomIn.addEventListener("click", () => zoomAtCenter(scale * 1.25));
+    stage.appendChild(controls);
+
     stage.addEventListener("pointerdown", (event) => {
       if (event.button != null && event.button !== 0) return;
+      if (event.target?.closest?.(".yolo-review-zoom-controls")) return;
+      if (!shouldStartPan(event)) return;
       event.preventDefault();
       dragging = true;
       pointerId = event.pointerId;
@@ -2066,10 +2104,7 @@
       zoomAt(event.clientX, event.clientY, scale * direction);
     }, { passive: false });
     stage.addEventListener("dblclick", () => {
-      scale = baseScale;
-      offsetX = 0;
-      offsetY = 0;
-      apply();
+      resetZoom();
     });
     img?.addEventListener("load", apply);
     apply();
@@ -2146,8 +2181,11 @@
     const isVehicleCollection = item.source_type === "vehicle_collection" || dataset.source_type === "vehicle_collection";
     const kind = reviewTaskKind(dataset);
     const allowPan = isVehicleCollection && kind === "classify";
+    const allowZoom = kind === "detect" || allowPan;
     if (allowPan) {
       stage.classList.add("yolo-review-image-stage--draggable");
+    } else if (allowZoom) {
+      stage.classList.add("yolo-review-image-stage--zoomable");
     }
     const panContent = createNode("div", "yolo-review-pan-content");
     const img = document.createElement("img");
@@ -2161,10 +2199,14 @@
     panContent.appendChild(overlay);
     stage.appendChild(panContent);
     if (allowPan) {
-      stage.appendChild(createNode("p", "yolo-review-drag-hint", "拖动查看 · 滚轮缩放 · 双击复位"));
-      enableDragView(stage, panContent);
+      stage.appendChild(createNode("p", "yolo-review-drag-hint", "拖动查看 · 滚轮/按钮缩放 · 双击复位"));
     } else if (kind === "detect") {
-      stage.appendChild(createNode("p", "yolo-review-drag-hint", "拖动框移动 · 拖角缩放 · 新增框后拖拽画框"));
+      stage.appendChild(createNode("p", "yolo-review-drag-hint", "滚轮/按钮缩放 · 空白处拖动 · 新增框后拖拽画框"));
+    }
+    if (allowZoom) {
+      enableDragView(stage, panContent, {
+        shouldStartPan: (event) => kind !== "detect" || (event.target === overlay && overlay.dataset.drawMode !== "true")
+      });
     }
     renderBoxes(overlay, item.labels || []);
     imageBlock.appendChild(stage);
