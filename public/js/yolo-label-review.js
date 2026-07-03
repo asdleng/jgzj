@@ -1592,6 +1592,16 @@
     };
   }
 
+  function restoreEditorState(editor, source) {
+    editor.labels = source.labels.map((label, index) => ({ ...label, index }));
+    editor.selectedIndex = editor.labels.length ? Math.min(Math.max(Number(source.selectedIndex) || 0, 0), editor.labels.length - 1) : -1;
+    editor.drawMode = false;
+    editor.dirty = false;
+    editor.answer = source.answer;
+    editor.className = source.className;
+    editor.newClassName = source.newClassName;
+  }
+
   function renumberLabels(editor) {
     editor.labels = editor.labels.map((label, index) => ({ ...label, index }));
     if (editor.selectedIndex >= editor.labels.length) editor.selectedIndex = editor.labels.length - 1;
@@ -1880,6 +1890,7 @@
   function renderManualEditor(dataset, item, overlay) {
     const kind = reviewTaskKind(dataset);
     const editor = makeEditorState(dataset, item, kind);
+    const initialEditor = makeEditorState(dataset, item, kind);
     const wrap = createNode("div", "yolo-review-editor");
     const head = createNode("div", "yolo-review-section-head");
     head.appendChild(createNode("h3", "", "人工编辑"));
@@ -1894,9 +1905,12 @@
     const saveButton = createNode("button", "yolo-review-save", "保存标注");
     saveButton.type = "button";
     saveButton.disabled = true;
+    const resetButton = createNode("button", "yolo-review-reset", "重置");
+    resetButton.type = "button";
     const deleteButton = createNode("button", "yolo-review-delete", "删除样本");
     deleteButton.type = "button";
     actions.appendChild(saveButton);
+    actions.appendChild(resetButton);
     actions.appendChild(deleteButton);
     wrap.appendChild(actions);
 
@@ -1905,6 +1919,18 @@
     } else {
       renderDetectEditor({ dataset, item, editor, overlay, panel: body, saveButton });
     }
+
+    resetButton.addEventListener("click", () => {
+      restoreEditorState(editor, initialEditor);
+      saveButton.disabled = true;
+      saveButton.textContent = "保存标注";
+      if (kind === "classify") {
+        renderClassifyEditor({ dataset, editor, panel: body, saveButton });
+      } else {
+        renderDetectEditor({ dataset, item, editor, overlay, panel: body, saveButton });
+      }
+      setStatus("已恢复到本次人工编辑前的状态。", "idle");
+    });
 
     saveButton.addEventListener("click", async () => {
       saveButton.disabled = true;

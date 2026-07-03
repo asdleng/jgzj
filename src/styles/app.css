@@ -5127,7 +5127,8 @@ body.yolo-review-is-panning {
 }
 
 .yolo-review-verdicts button,
-.yolo-review-save {
+.yolo-review-save,
+.yolo-review-reset {
   min-height: 38px;
   border-radius: 10px;
   border: 1px solid rgba(71, 85, 105, 0.78);
@@ -5139,7 +5140,8 @@ body.yolo-review-is-panning {
 }
 
 .yolo-review-verdicts button:hover,
-.yolo-review-save:hover {
+.yolo-review-save:hover,
+.yolo-review-reset:hover {
   border-color: rgba(94, 234, 212, 0.52);
 }
 
@@ -5167,6 +5169,12 @@ body.yolo-review-is-panning {
   background: linear-gradient(135deg, rgba(20, 184, 166, 0.92), rgba(14, 116, 144, 0.92));
   color: #ecfeff;
   border-color: rgba(94, 234, 212, 0.48);
+}
+
+.yolo-review-reset {
+  padding: 0 14px;
+  background: rgba(15, 23, 42, 0.78);
+  color: #cbd5e1;
 }
 
 .yolo-review-editor-body {
@@ -5244,6 +5252,7 @@ body.yolo-review-is-panning {
 
 .yolo-review-save:disabled,
 .yolo-review-delete:disabled,
+.yolo-review-reset:disabled,
 .yolo-review-tool-button:disabled,
 .yolo-review-row-delete:disabled {
   cursor: not-allowed;
