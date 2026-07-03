@@ -31,10 +31,12 @@ TARGETS = {
         "score_metric": "val_map50_95",
         "metric_source_override": "val",
         "roots": [
+            "/home/sari/jgzj_yolo_runs_reliable_vehicle_20260704",
             "/home/sari/jgzj_yolo_runs_person_v2",
             "/home/sari/jgzj_yolo_runs",
         ],
         "summary_roots": [
+            "/home/sari/reliable_vehicle_yolo_20260704/results/person_yolo_today_finetune_gpu5",
             "/home/sari/person_yolo_experiments_20260627",
         ],
         "keywords": ["person_yolo"],
@@ -44,10 +46,12 @@ TARGETS = {
         "local_weight": str(RUNTIME_ROOT / "weights" / "general_yolo_best.pt"),
         "download_file": "vehicle_yolo_best.pt",
         "roots": [
+            "/home/sari/jgzj_yolo_runs_reliable_vehicle_20260704",
             "/home/sari/jgzj_yolo_runs_vehicle",
             "/home/sari/jgzj_yolo_runs",
         ],
         "summary_roots": [
+            "/home/sari/reliable_vehicle_yolo_20260704/results/vehicle_yolo_today_finetune_gpu3",
             "/home/sari/vehicle_yolo_experiments_20260627",
         ],
         "keywords": ["vehicle_yolo"],
@@ -210,7 +214,17 @@ def summary_candidates(task_id, cfg):
         base = Path(root)
         if not base.exists():
             continue
-        for path in base.glob("results*/summary.csv"):
+        summary_paths = []
+        direct = base / "summary.csv"
+        if direct.exists():
+            summary_paths.append(direct)
+        summary_paths.extend(base.glob("results*/summary.csv"))
+        summary_paths.extend(base.glob("*/summary.csv"))
+        seen = set()
+        for path in summary_paths:
+            if path in seen:
+                continue
+            seen.add(path)
             try:
                 rows = list(csv.DictReader(path.open()))
             except Exception:
