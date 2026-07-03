@@ -1555,11 +1555,6 @@
     };
   }
 
-  function formatCoord(value) {
-    const num = Number(value);
-    return Number.isFinite(num) ? num.toFixed(4) : "0.0000";
-  }
-
   function labelToBoxStyle(label) {
     const w = clampUnit(label.w, 0.1);
     const h = clampUnit(label.h, 0.1);
@@ -1824,23 +1819,6 @@
       });
       row.appendChild(select);
       select.addEventListener("click", (event) => event.stopPropagation());
-      ["x", "y", "w", "h"].forEach((key) => {
-        const input = document.createElement("input");
-        input.type = "number";
-        input.step = "0.0001";
-        input.min = "0";
-        input.max = "1";
-        input.value = formatCoord(label[key]);
-        input.title = key;
-        input.addEventListener("change", () => {
-          editor.labels[index] = normalizeEditorLabel({ ...editor.labels[index], [key]: Number(input.value) }, index, dataset);
-          editor.selectedIndex = index;
-          markEditorDirty(editor, saveButton);
-          rerender();
-        });
-        input.addEventListener("click", (event) => event.stopPropagation());
-        row.appendChild(input);
-      });
       const remove = createNode("button", "yolo-review-row-delete", "删");
       remove.type = "button";
       remove.addEventListener("click", (event) => {
@@ -2190,9 +2168,9 @@
     }
     renderBoxes(overlay, item.labels || []);
     imageBlock.appendChild(stage);
-    imageBlock.appendChild(createNode("p", "yolo-review-path", item.item_key));
 
     const meta = createNode("div", "yolo-review-meta-grid");
+    meta.appendChild(metaItem("样本", item.item_key));
     meta.appendChild(metaItem("来源", datasetSourceText(selectedDataset() || dataset || item)));
     meta.appendChild(metaItem("AI标类别", item.ai_class || item.event_name));
     meta.appendChild(metaItem("AI答案", answerDisplay(item.ai_answer)));
@@ -2215,10 +2193,11 @@
     meta.appendChild(metaItem("模型", item.archive?.request?.model));
     meta.appendChild(metaItem("时间", formatDate(item.archive?.request?.created_at || item.day)));
 
+    const manualEditor = renderManualEditor(dataset, item, overlay);
     detailGrid.appendChild(imageBlock);
-    detailGrid.appendChild(meta);
+    detailGrid.appendChild(manualEditor);
     refs.detail.appendChild(detailGrid);
-    refs.detail.appendChild(renderManualEditor(dataset, item, overlay));
+    refs.detail.appendChild(meta);
 
     const labels = createNode("div", "yolo-review-labels");
     const labelTitle = createNode("div", "yolo-review-section-head");
@@ -2230,11 +2209,11 @@
       labels.appendChild(createNode("p", "yolo-review-label-line", `默认结果: ${answerDisplay(item.ai_answer)}`));
       labels.appendChild(createNode("p", "yolo-review-label-line", `class: ${item.ai_class || "-"}`));
     } else if (item.labels?.length) {
-      item.labels.forEach((label) => {
+      item.labels.forEach((label, index) => {
         const confidence = Number(label.confidence);
         const confidenceText = Number.isFinite(confidence) ? ` · ${(confidence * 100).toFixed(0)}%` : "";
         const modelText = label.model_task ? ` · ${label.model_task}` : "";
-        labels.appendChild(createNode("p", "yolo-review-label-line", `${label.class_name}${confidenceText}${modelText} · ${label.raw}`));
+        labels.appendChild(createNode("p", "yolo-review-label-line", `框 ${index + 1}: ${label.class_name}${confidenceText}${modelText}`));
       });
     } else {
       labels.appendChild(createNode("p", "yolo-review-label-line", "empty label"));

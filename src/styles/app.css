@@ -4765,7 +4765,7 @@
 
 .yolo-review-detail-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 0.7fr);
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.62fr);
   gap: 12px;
   align-items: start;
 }
@@ -4782,6 +4782,10 @@
 
 .yolo-review-image-block {
   overflow: hidden;
+}
+
+.yolo-review-detail-grid > .yolo-review-editor {
+  align-self: stretch;
 }
 
 .yolo-review-image-stage {
@@ -5195,12 +5199,15 @@ body.yolo-review-is-panning {
 .yolo-review-label-editor-list {
   display: grid;
   gap: 8px;
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .yolo-review-label-editor-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: 28px minmax(120px, 1.2fr) repeat(4, minmax(72px, 0.7fr)) 42px;
+  grid-template-columns: 28px minmax(0, 1fr) 42px;
   gap: 7px;
   align-items: center;
   padding: 8px;
