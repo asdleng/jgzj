@@ -4028,6 +4028,21 @@
   box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.16);
 }
 
+.yolo-review-event-button--audit {
+  border-color: rgba(251, 113, 133, 0.52);
+  background: rgba(76, 5, 25, 0.34);
+}
+
+.yolo-review-event-button--audit strong {
+  color: #fecdd3;
+}
+
+.yolo-review-event-button--audit.is-active {
+  border-color: rgba(251, 113, 133, 0.86);
+  background: rgba(76, 5, 25, 0.62);
+  box-shadow: 0 0 0 1px rgba(251, 113, 133, 0.2);
+}
+
 .yolo-review-event-button span {
   color: #f8fafc;
   font-size: 0.82rem;
@@ -4986,6 +5001,16 @@ body.yolo-review-is-panning {
   font-size: 0.8rem;
   line-height: 1.45;
   word-break: break-word;
+}
+
+.yolo-review-audit {
+  border-color: rgba(251, 146, 60, 0.28);
+  background: rgba(67, 20, 7, 0.18);
+}
+
+.yolo-review-audit-list {
+  display: grid;
+  gap: 4px;
 }
 
 .yolo-review-source-grid {

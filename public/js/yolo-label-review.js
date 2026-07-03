@@ -20,6 +20,7 @@
     className: document.getElementById("yolo-review-class"),
     answer: document.getElementById("yolo-review-answer"),
     qwenLabel: document.getElementById("yolo-review-qwen-label"),
+    qwenAudit: document.getElementById("yolo-review-qwen-audit"),
     hasBox: document.getElementById("yolo-review-has-box"),
     query: document.getElementById("yolo-review-query"),
     eventStatus: document.getElementById("yolo-review-event-status"),
@@ -60,6 +61,20 @@
       query: "",
       hasBox: false,
       taskKind: "mixed"
+    },
+    qwen_suspect: {
+      label: "可疑标注 · 全部来源 · 待人工校核",
+      tokens: ["vehicle_self_collected", "patrol", "qwen_bbox"],
+      qwenLabel: "",
+      className: "",
+      classNames: [],
+      answer: "",
+      query: "",
+      hasBox: false,
+      taskKind: "detect",
+      preferredSource: "vehicle_collection",
+      qwenAudit: "suspect",
+      autoClassFilter: false
     },
     person: {
       label: "人员事件 · 全部来源 · 默认显示框",
@@ -304,6 +319,34 @@
     return source === "qwen_bbox_verified" || source === "qwen_bbox" ? "tone-yes" : "tone-idle";
   }
 
+  function qwenAuditTone(verdict, severity) {
+    if (verdict === "pass") return "tone-yes";
+    if (verdict === "needs_human" || verdict === "error" || severity === "high") return "tone-error";
+    if (verdict === "suspect" || severity === "medium") return "tone-no";
+    return "tone-idle";
+  }
+
+  function qwenAuditText(verdict, status) {
+    if (verdict === "pass") return "质检通过";
+    if (verdict === "needs_human") return "待人工校核";
+    if (verdict === "suspect") return "质检可疑";
+    if (verdict === "error") return "质检异常";
+    if (status === "pending") return "待质检";
+    if (status === "not_applicable") return "质检不适用";
+    return status ? "已质检" : "";
+  }
+
+  function qwenAuditSummary(item) {
+    const verdict = item?.qwen_bbox_audit_verdict || item?.qwen_bbox_audit?.verdict || "";
+    const status = item?.qwen_bbox_audit_status || (item?.qwen_bbox_status === "done" ? "pending" : "");
+    const text = qwenAuditText(verdict, status);
+    if (!text) return "";
+    const bad = Number(item?.qwen_bbox_audit_suspicious_count ?? item?.qwen_bbox_audit?.suspicious_count ?? 0);
+    const miss = Number(item?.qwen_bbox_audit_missing_count ?? item?.qwen_bbox_audit?.missing_count ?? 0);
+    const suffix = [bad ? `${bad}疑框` : "", miss ? `${miss}漏标` : ""].filter(Boolean).join("/");
+    return suffix ? `${text} ${suffix}` : text;
+  }
+
   const qwenLabelNames = {
     person: "人",
     fire: "火",
@@ -323,7 +366,11 @@
     "quality:good": "质量好",
     "quality:dark": "夜间/偏暗",
     "quality:blur": "模糊",
-    "quality:blocked": "遮挡"
+    "quality:blocked": "遮挡",
+    pass: "通过",
+    suspect: "可疑",
+    needs_human: "待人工校核",
+    error: "异常"
   };
 
   function qwenLabelText(value) {
@@ -409,6 +456,9 @@
     if (!eventKey || eventKey === "all") return true;
     const preset = eventPresets[eventKey];
     if (!preset) return true;
+    if (preset.qwenAudit) {
+      return datasetSourceGroup(dataset) === "vehicle_collection";
+    }
     const sourceGroup = datasetSourceGroup(dataset);
     const text = datasetEventText(dataset);
     const excludedTokens = Array.isArray(preset.excludeTokens)
@@ -550,6 +600,16 @@
     if (!dataset || !preset || preset === eventPresets.all) {
       return datasetTotalImages(dataset);
     }
+    if (preset.qwenAudit) {
+      const audit = datasetQwenAudit(dataset);
+      if (preset.qwenAudit === "suspect") {
+        return Number(audit?.review_queue_images || 0);
+      }
+      if (preset.qwenAudit === "pending") {
+        return Number(audit?.pending_images || 0);
+      }
+      return Number(audit?.verdict_counts?.[preset.qwenAudit] || 0);
+    }
     const classTokens = datasetEventClassTokens(preset);
     if (!classTokens.length) {
       return datasetTotalImages(dataset);
@@ -567,6 +627,7 @@
 
   function estimatedEventBoxCount(dataset, preset = eventPresets[state.activeEvent] || eventPresets.all) {
     if (!dataset || !preset || preset === eventPresets.all) return datasetTotalBoxes(dataset);
+    if (preset.qwenAudit) return 0;
     if (dataset.kind === "classify" || preset.taskKind === "classify") return 0;
     const classTokens = datasetEventClassTokens(preset);
     if (!classTokens.length) return datasetTotalBoxes(dataset);
@@ -637,6 +698,10 @@
       if (value == null) return fallback;
     }
     return compactNumber(value);
+  }
+
+  function datasetQwenAudit(dataset) {
+    return dataset?.qwen_bbox_audit || dataset?.summary?.qwen_bbox_audit || null;
   }
 
   function datasetClassSummary(dataset) {
@@ -733,6 +798,7 @@
     if (refs.split) refs.split.value = "";
     if (refs.query) refs.query.value = "";
     if (refs.qwenLabel) refs.qwenLabel.value = "";
+    if (refs.qwenAudit) refs.qwenAudit.value = preset.qwenAudit || "";
     if (refs.className) refs.className.value = "";
     if (refs.answer) refs.answer.value = state.activeEvent === "all" ? "" : (preset.answer || "");
     if (refs.hasBox) refs.hasBox.checked = state.activeEvent !== "all" && !isClassify && Boolean(preset.hasBox);
@@ -893,6 +959,7 @@
 
       const metrics = createNode("div", "yolo-review-dataset-metrics");
       const eventMetrics = datasetEventMetrics(dataset);
+      const audit = datasetQwenAudit(dataset);
       const sampleLabel = state.activeEvent === "all" ? "样本" : "事件样本";
       const boxLabel = state.activeEvent === "all" ? "框" : "事件框";
       [
@@ -900,8 +967,8 @@
         [boxLabel, compactNumber(eventMetrics.boxCount)],
         ["YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
         ["NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"],
-        ["语义已标", datasetMetricValue(dataset, "qwen_label.cached_images")],
-        ["框已标", datasetMetricValue(dataset, "qwen_bbox.cached_images")]
+        ["框已标", datasetMetricValue(dataset, "qwen_bbox.cached_images")],
+        ["可疑", audit ? compactNumber(audit.review_queue_images) : "-"]
       ].forEach(([label, value]) => {
         const metric = createNode("div", "yolo-review-dataset-metric");
         metric.appendChild(createNode("span", "", label));
@@ -917,6 +984,10 @@
       }
       foot.appendChild(createNode("span", "", `语义待标 ${datasetMetricValue(dataset, "qwen_label.pending_images", "0")}`));
       foot.appendChild(createNode("span", "", `框待标 ${datasetMetricValue(dataset, "qwen_bbox.pending_images", "0")}`));
+      if (audit) {
+        foot.appendChild(createNode("span", "", `待质检 ${compactNumber(audit.pending_images)}`));
+        foot.appendChild(createNode("span", "", `质检通过 ${compactNumber(audit.pass_images)}`));
+      }
       if (dataset.created_at) {
         foot.appendChild(createNode("span", "", formatDate(dataset.created_at)));
       }
@@ -1052,6 +1123,12 @@
       ["AI YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
       ["AI NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"]
     ];
+    const audit = datasetQwenAudit(dataset);
+    if (audit) {
+      cells.push(["可疑待校核", compactNumber(audit.review_queue_images)]);
+      cells.push(["质检通过", compactNumber(audit.pass_images)]);
+      cells.push(["待质检", compactNumber(audit.pending_images)]);
+    }
     if (state.activeEvent !== "all") {
       cells.push(["总样本", compactNumber(dataset.total_images)]);
       cells.push(["总框", compactNumber(datasetTotalBoxes(dataset))]);
@@ -1190,6 +1267,7 @@
     if (classFilter) params.set("class_name", classFilter);
     if (refs.answer.value) params.set("ai_answer", refs.answer.value);
     if (refs.qwenLabel?.value) params.set("qwen_label", refs.qwenLabel.value);
+    if (refs.qwenAudit?.value) params.set("qwen_audit", refs.qwenAudit.value);
     if (refs.hasBox?.checked) params.set("has_box", "1");
     if (refs.query.value.trim()) params.set("q", refs.query.value.trim());
     return `${endpoints.items}?${params.toString()}`;
@@ -1302,6 +1380,11 @@
       if (item.qwen_quality) {
         chips.appendChild(createNode("span", "ai-history-chip tone-idle", qwenLabelText(`quality:${item.qwen_quality}`)));
       }
+      if (item.qwen_bbox_status === "done") {
+        const auditText = qwenAuditSummary(item);
+        const auditTone = qwenAuditTone(item.qwen_bbox_audit_verdict, item.qwen_bbox_audit_severity);
+        chips.appendChild(createNode("span", `ai-history-chip ${auditTone}`, auditText || "待质检"));
+      }
       (item.qwen_flags || []).slice(0, 2).forEach((flag) => {
         chips.appendChild(createNode("span", "ai-history-chip tone-idle", qwenLabelText(flag)));
       });
@@ -1350,6 +1433,69 @@
       qwen.duration_ms != null ? `${qwen.duration_ms}ms` : "",
       qwen.annotated_at ? formatDate(qwen.annotated_at) : "",
       item.qwen_label_rel_path || ""
+    ].filter(Boolean).join(" · ");
+    if (trace) {
+      wrap.appendChild(createNode("p", "yolo-review-label-line", trace));
+    }
+    return wrap;
+  }
+
+  function renderQwenAuditSection(item) {
+    const wrap = createNode("div", "yolo-review-labels yolo-review-audit");
+    const head = createNode("div", "yolo-review-section-head");
+    head.appendChild(createNode("h3", "", "Qwen 框质检"));
+    const verdict = item.qwen_bbox_audit_verdict || item.qwen_bbox_audit?.verdict || "";
+    const status = item.qwen_bbox_audit_status || (item.qwen_bbox_status === "done" ? "pending" : "not_applicable");
+    const severity = item.qwen_bbox_audit_severity || item.qwen_bbox_audit?.severity || "";
+    head.appendChild(createNode("span", `ai-history-chip ${qwenAuditTone(verdict, severity)}`, qwenAuditText(verdict, status) || "待质检"));
+    wrap.appendChild(head);
+
+    const audit = item.qwen_bbox_audit;
+    if (!audit) {
+      const text = status === "pending"
+        ? "已有 Qwen 框，等待质检脚本处理。"
+        : "该样本没有可质检的 Qwen 框。";
+      wrap.appendChild(createNode("p", "yolo-review-label-line", text));
+      return wrap;
+    }
+
+    const reasons = Array.isArray(audit.reasons) ? audit.reasons : [];
+    wrap.appendChild(createNode(
+      "p",
+      "yolo-review-label-line",
+      `结论: ${qwenAuditText(audit.verdict, audit.status)} · 等级: ${audit.severity || "-"} · 置信度: ${audit.confidence != null ? Math.round(Number(audit.confidence) * 100) + "%" : "-"}`
+    ));
+    if (reasons.length) {
+      wrap.appendChild(createNode("p", "yolo-review-label-line", `原因: ${reasons.slice(0, 8).join(" / ")}`));
+    }
+    const suspicious = Array.isArray(audit.suspicious_labels) ? audit.suspicious_labels : [];
+    if (suspicious.length) {
+      const list = createNode("div", "yolo-review-audit-list");
+      suspicious.slice(0, 20).forEach((entry) => {
+        const line = createNode("p", "yolo-review-label-line");
+        line.textContent = `框#${Number(entry.index) + 1} ${entry.class_name || ""} · ${entry.issue || "suspect"} · 应为 ${entry.should || "review"} · ${entry.reason || "-"}`;
+        list.appendChild(line);
+      });
+      wrap.appendChild(list);
+    }
+    const missing = Array.isArray(audit.missing_candidates) ? audit.missing_candidates : [];
+    if (missing.length) {
+      const list = createNode("div", "yolo-review-audit-list");
+      missing.slice(0, 12).forEach((entry) => {
+        const line = createNode("p", "yolo-review-label-line");
+        const confidence = Number(entry.confidence);
+        const confidenceText = Number.isFinite(confidence) ? ` · ${(confidence * 100).toFixed(0)}%` : "";
+        line.textContent = `疑似漏标 ${entry.class_name || ""}${confidenceText} · ${entry.reason || "-"}`;
+        list.appendChild(line);
+      });
+      wrap.appendChild(list);
+    }
+    const trace = [
+      audit.model_bundle || audit.model || "",
+      audit.prompt_version || "",
+      audit.duration_ms != null ? `${audit.duration_ms}ms` : "",
+      audit.audited_at ? formatDate(audit.audited_at) : "",
+      item.qwen_bbox_audit_rel_path || audit.rel_path || ""
     ].filter(Boolean).join(" · ");
     if (trace) {
       wrap.appendChild(createNode("p", "yolo-review-label-line", trace));
@@ -2029,6 +2175,7 @@
     meta.appendChild(metaItem("框来源", labelSourceText(item.label_source)));
     meta.appendChild(metaItem("Qwen标注", qwenCountSummary(item)));
     meta.appendChild(metaItem("Qwen质量", item.qwen_quality ? qwenLabelText(`quality:${item.qwen_quality}`) : ""));
+    meta.appendChild(metaItem("Qwen质检", qwenAuditSummary(item)));
     meta.appendChild(metaItem("Split", item.split));
     if (isVehicleCollection) {
       meta.appendChild(metaItem("车辆", item.vehicle_id || item.device_id));
@@ -2068,6 +2215,9 @@
       labels.appendChild(createNode("p", "yolo-review-label-line", "empty label"));
     }
     refs.detail.appendChild(labels);
+    if (isVehicleCollection || item.qwen_bbox_audit_status) {
+      refs.detail.appendChild(renderQwenAuditSection(item));
+    }
     if (isVehicleCollection || item.qwen_label_status) {
       refs.detail.appendChild(renderQwenLabelSection(item));
     }
@@ -2118,6 +2268,10 @@
     scheduleReload();
   });
   refs.qwenLabel?.addEventListener("change", () => {
+    markCustomEventFilter();
+    scheduleReload();
+  });
+  refs.qwenAudit?.addEventListener("change", () => {
     markCustomEventFilter();
     scheduleReload();
   });

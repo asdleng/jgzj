@@ -25,6 +25,10 @@
         <span>全部</span>
         <strong>框 / Yes/No</strong>
       </button>
+      <button class="yolo-review-event-button yolo-review-event-button--audit" type="button" data-yolo-review-event="qwen_suspect">
+        <span>可疑标注</span>
+        <strong>待人工校核</strong>
+      </button>
       <button class="yolo-review-event-button" type="button" data-yolo-review-event="person">
         <span>人员</span>
         <strong>框</strong>
@@ -135,6 +139,16 @@
         <option value="">全部</option>
       </select>
     </label>
+    <label class="yolo-review-field yolo-review-field--advanced" for="yolo-review-qwen-audit">
+      <span>质检状态</span>
+      <select id="yolo-review-qwen-audit">
+        <option value="">全部</option>
+        <option value="suspect">可疑待校核</option>
+        <option value="needs_human">需人工</option>
+        <option value="pass">通过</option>
+        <option value="pending">未质检</option>
+      </select>
+    </label>
     <label class="yolo-review-field yolo-review-field--toggle yolo-review-field--advanced" for="yolo-review-has-box">
       <span>框过滤</span>
       <span class="yolo-review-toggle-control">
@@ -168,4 +182,4 @@
   </div>
 </section>
 
-<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260702-1" defer></script>
+<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260703-1" defer></script>

@@ -866,6 +866,7 @@ const parkCrowdFramesRoot = path.join(parkCrowdRuntimeRoot, 'crowd-frames');
 const patrolAutoLabelRoot = path.join(yoloReviewRuntimeRoot, 'patrol_auto_labels');
 const vehicleUploadQwenLabelRoot = path.join(yoloReviewRuntimeRoot, 'vehicle_upload_qwen_labels_v2');
 const vehicleUploadQwenBboxLabelRoot = path.join(yoloReviewRuntimeRoot, 'vehicle_upload_qwen_bbox_labels_v1');
+const vehicleUploadQwenBboxAuditRoot = path.join(yoloReviewRuntimeRoot, 'vehicle_upload_qwen_bbox_audits_v1');
 const vehicleUploadQwenSensitiveBboxLabelRoot = path.join(
   yoloReviewRuntimeRoot,
   'vehicle_upload_qwen_sensitive_bbox_v6_reviewed_20260626'
@@ -878,10 +879,11 @@ const yoloReviewManualDeletedLogPath = path.join(yoloReviewManualAnnotationRoot,
 const patrolAutoLabelSchema = 'jgzj_patrol_yolo_auto_label.v1';
 const vehicleUploadQwenLabelSchema = 'jgzj_vehicle_upload_qwen_label.v2';
 const vehicleUploadQwenBboxLabelSchema = 'jgzj_vehicle_upload_qwen_bbox_label.v1';
+const vehicleUploadQwenBboxAuditSchema = 'jgzj_vehicle_upload_qwen_bbox_audit.v1';
 const vehicleUploadQwenSensitiveBboxLabelSchema = 'jgzj_vehicle_upload_qwen_sensitive_bbox.v6_reviewed';
 const yoloReviewManualAnnotationSchema = 'jgzj_yolo_manual_annotation.v1';
 const vehicleUploadQwenSensitiveBboxClasses = new Set(['smoke', 'trash', 'stall', 'phone', 'smoking']);
-const yoloReviewPatrolIndexSchema = 'jgzj_yolo_patrol_dataset_index.v3';
+const yoloReviewPatrolIndexSchema = 'jgzj_yolo_patrol_dataset_index.v4';
 const yoloReviewPatrolCacheTtlMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_CACHE_TTL_MS || 10 * 60 * 1000);
 const yoloReviewPatrolIndexFreshMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_INDEX_FRESH_MS || 5 * 60 * 1000);
 const yoloReviewDatasetListCacheTtlMs = Number(process.env.YOLO_LABEL_REVIEW_DATASET_LIST_CACHE_TTL_MS || 5 * 60 * 1000);
@@ -2655,6 +2657,14 @@ function vehicleUploadQwenBboxLabelCachePathForSha(imageSha256) {
   return path.join(vehicleUploadQwenBboxLabelRoot, sha.slice(0, 2), `${sha}.json`);
 }
 
+function vehicleUploadQwenBboxAuditCachePathForSha(imageSha256) {
+  const sha = String(imageSha256 || '').trim().toLowerCase().replace(/[^a-f0-9]/g, '');
+  if (!sha) {
+    return null;
+  }
+  return path.join(vehicleUploadQwenBboxAuditRoot, sha.slice(0, 2), `${sha}.json`);
+}
+
 function vehicleUploadQwenSensitiveBboxLabelCachePathForSha(imageSha256) {
   const sha = String(imageSha256 || '').trim().toLowerCase().replace(/[^a-f0-9]/g, '');
   if (!sha) {
@@ -2709,6 +2719,24 @@ async function readVehicleUploadQwenBboxLabelCache(meta) {
     return null;
   }
   if (payload.schema && payload.schema !== vehicleUploadQwenBboxLabelSchema) {
+    return null;
+  }
+  return payload;
+}
+
+async function readVehicleUploadQwenBboxAuditCache(meta) {
+  if (String(meta?.source || '') !== 'auto_ad_patrol_flow_upload') {
+    return null;
+  }
+  const cachePath = vehicleUploadQwenBboxAuditCachePathForSha(meta?.image_sha256);
+  if (!cachePath) {
+    return null;
+  }
+  const payload = await readJsonFile(cachePath, null);
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (payload.schema && payload.schema !== vehicleUploadQwenBboxAuditSchema) {
     return null;
   }
   return payload;
@@ -2805,6 +2833,95 @@ function normalizeQwenSensitiveBboxLabel(raw, index = 0) {
     ...normalizePatrolLabel(raw, index),
     model_task: String(raw?.model_task || 'qwen_sensitive_bbox').trim() || 'qwen_sensitive_bbox',
     source: 'qwen_bbox_verified'
+  };
+}
+
+function normalizeQwenAuditSeverity(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['low', 'medium', 'high'].includes(normalized) ? normalized : 'low';
+}
+
+function normalizeQwenAuditVerdict(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['pass', 'suspect', 'needs_human', 'error'].includes(normalized) ? normalized : 'suspect';
+}
+
+function normalizeQwenBboxAuditIssue(raw, index = 0) {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+  const labelIndex = Number(raw.index ?? raw.i ?? raw.label_index);
+  return {
+    index: Number.isFinite(labelIndex) ? labelIndex : index,
+    class_name: String(raw.class_name || raw.class || '').trim(),
+    issue: String(raw.issue || raw.type || 'suspect').trim(),
+    should: String(raw.should || raw.target || 'review').trim(),
+    reason: String(raw.reason || raw.note || '').trim(),
+    severity: normalizeQwenAuditSeverity(raw.severity),
+    source: String(raw.source || 'qwen_audit').trim()
+  };
+}
+
+function normalizeQwenBboxAuditMissing(raw, index = 0) {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+  const confidence = Number(raw.confidence ?? raw.score);
+  const bbox = Array.isArray(raw.bbox_1000 || raw.bbox || raw.box)
+    ? (raw.bbox_1000 || raw.bbox || raw.box)
+      .slice(0, 4)
+      .map((item) => Number(item))
+      .filter((item) => Number.isFinite(item))
+    : [];
+  return {
+    index,
+    class_name: String(raw.class_name || raw.class || '').trim(),
+    bbox_1000: bbox.length === 4 ? bbox : null,
+    confidence: Number.isFinite(confidence) ? confidence : null,
+    reason: String(raw.reason || raw.note || '').trim(),
+    source: String(raw.source || 'qwen_audit').trim()
+  };
+}
+
+function normalizeQwenBboxAudit(payload, relPath = '') {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const verdict = normalizeQwenAuditVerdict(payload.verdict);
+  const severity = normalizeQwenAuditSeverity(payload.severity);
+  const suspiciousLabels = (Array.isArray(payload.suspicious_labels) ? payload.suspicious_labels : [])
+    .map((item, index) => normalizeQwenBboxAuditIssue(item, index))
+    .filter(Boolean);
+  const missingCandidates = (Array.isArray(payload.missing_candidates) ? payload.missing_candidates : [])
+    .map((item, index) => normalizeQwenBboxAuditMissing(item, index))
+    .filter(Boolean);
+  const reasons = (Array.isArray(payload.reasons) ? payload.reasons : [])
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, 20);
+  const confidence = Number(payload.confidence);
+  return {
+    schema: payload.schema || vehicleUploadQwenBboxAuditSchema,
+    status: payload.ok === false || verdict === 'error' ? 'error' : 'done',
+    rel_path: relPath || null,
+    audited_at: payload.audited_at || null,
+    model: payload.model || null,
+    model_bundle: payload.model_bundle || null,
+    prompt_version: payload.prompt_version || null,
+    duration_ms: Number.isFinite(Number(payload.duration_ms)) ? Number(payload.duration_ms) : null,
+    verdict,
+    severity,
+    reasons,
+    suspicious_labels: suspiciousLabels,
+    missing_candidates: missingCandidates,
+    suspicious_count: suspiciousLabels.length,
+    missing_count: missingCandidates.length,
+    label_count: Number.isFinite(Number(payload.label_count)) ? Number(payload.label_count) : null,
+    label_classes: Array.isArray(payload.label_classes)
+      ? payload.label_classes.map((item) => String(item || '').trim()).filter(Boolean)
+      : [],
+    quality: String(payload.quality || '').trim(),
+    confidence: Number.isFinite(confidence) ? confidence : null
   };
 }
 
@@ -2907,6 +3024,14 @@ function buildPatrolBaseItem(dataset, row) {
     qwen_bbox_quality: row.qwen_bbox_quality || '',
     qwen_bbox_verified_status: row.qwen_bbox_verified_status || 'not_applicable',
     qwen_bbox_verified_rel_path: row.qwen_bbox_verified_rel_path || null,
+    qwen_bbox_audit_status: row.qwen_bbox_audit_status || (row.qwen_bbox_status === 'done' ? 'pending' : 'not_applicable'),
+    qwen_bbox_audit_rel_path: row.qwen_bbox_audit_rel_path || null,
+    qwen_bbox_audit_verdict: row.qwen_bbox_audit_verdict || '',
+    qwen_bbox_audit_severity: row.qwen_bbox_audit_severity || '',
+    qwen_bbox_audit_reasons: Array.isArray(row.qwen_bbox_audit_reasons) ? row.qwen_bbox_audit_reasons : [],
+    qwen_bbox_audit_suspicious_count: Number.isFinite(Number(row.qwen_bbox_audit_suspicious_count)) ? Number(row.qwen_bbox_audit_suspicious_count) : 0,
+    qwen_bbox_audit_missing_count: Number.isFinite(Number(row.qwen_bbox_audit_missing_count)) ? Number(row.qwen_bbox_audit_missing_count) : 0,
+    qwen_bbox_audit: row.qwen_bbox_audit || null,
     ai_answer: row.ai_answer && row.ai_answer !== 'NULL' ? row.ai_answer : '',
     qwen_label_status: row.qwen_label_status || (source === 'auto_ad_patrol_flow_upload' ? 'pending' : 'not_applicable'),
     qwen_label: qwenLabel,
@@ -2950,11 +3075,20 @@ async function buildYoloPatrolDataset() {
   let qwenBboxVerifiedCached = 0;
   let qwenBboxVerifiedPositive = 0;
   let qwenBboxVerifiedBoxes = 0;
+  let qwenBboxAuditApplicable = 0;
+  let qwenBboxAuditCached = 0;
+  let qwenBboxAuditPass = 0;
+  let qwenBboxAuditSuspect = 0;
+  let qwenBboxAuditNeedsHuman = 0;
+  let qwenBboxAuditError = 0;
   const boxesByClass = {};
   const labelImagesByClass = {};
   const qwenBboxBoxesByClass = {};
   const qwenBboxVerifiedBoxesByClass = {};
   const qwenBboxQuality = {};
+  const qwenBboxAuditSeverity = {};
+  const qwenBboxAuditReasons = {};
+  const qwenBboxAuditVerdicts = {};
   const qwenCountsByClass = {};
   const qwenImagesByClass = {};
   const qwenFlags = {};
@@ -2988,6 +3122,14 @@ async function buildYoloPatrolDataset() {
     const labels = hasEffectiveQwenBboxCache ? qwenBboxLabels : yoloLabels;
     const qwenCache = await readVehicleUploadQwenLabelCache(row.meta);
     const qwenCachePath = qwenCache ? vehicleUploadQwenLabelCachePathForSha(row.meta?.image_sha256) : null;
+    const qwenBboxAuditCache = await readVehicleUploadQwenBboxAuditCache(row.meta);
+    const qwenBboxAuditCachePath = qwenBboxAuditCache
+      ? vehicleUploadQwenBboxAuditCachePathForSha(row.meta?.image_sha256)
+      : null;
+    const qwenBboxAudit = normalizeQwenBboxAudit(
+      qwenBboxAuditCache,
+      qwenBboxAuditCachePath ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, qwenBboxAuditCachePath)) : ''
+    );
     const qwenLabel = normalizeVehicleQwenAnnotation(
       qwenCache,
       qwenCachePath ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, qwenCachePath)) : ''
@@ -3021,6 +3163,15 @@ async function buildYoloPatrolDataset() {
     row.qwen_bbox_verified_rel_path = qwenBboxVerifiedCachePath
       ? toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, qwenBboxVerifiedCachePath))
       : null;
+    row.qwen_bbox_audit_cache = qwenBboxAuditCache || null;
+    row.qwen_bbox_audit = qwenBboxAudit;
+    row.qwen_bbox_audit_status = qwenBboxAudit ? qwenBboxAudit.status : (hasEffectiveQwenBboxCache ? 'pending' : row.qwen_bbox_status);
+    row.qwen_bbox_audit_rel_path = qwenBboxAudit?.rel_path || null;
+    row.qwen_bbox_audit_verdict = qwenBboxAudit?.verdict || '';
+    row.qwen_bbox_audit_severity = qwenBboxAudit?.severity || '';
+    row.qwen_bbox_audit_reasons = Array.isArray(qwenBboxAudit?.reasons) ? qwenBboxAudit.reasons : [];
+    row.qwen_bbox_audit_suspicious_count = Number(qwenBboxAudit?.suspicious_count || 0);
+    row.qwen_bbox_audit_missing_count = Number(qwenBboxAudit?.missing_count || 0);
     row.qwen_label_cache = qwenCache || null;
     row.qwen_label = qwenLabel;
     row.qwen_label_status = qwenLabel ? qwenLabel.status : (String(row.meta?.source || '') === 'auto_ad_patrol_flow_upload' ? 'pending' : 'not_applicable');
@@ -3037,6 +3188,19 @@ async function buildYoloPatrolDataset() {
       for (const label of qwenBboxLabels) {
         const name = label.class_name || String(label.class_id ?? 'unknown');
         qwenBboxBoxesByClass[name] = (qwenBboxBoxesByClass[name] || 0) + 1;
+      }
+      qwenBboxAuditApplicable += 1;
+      if (qwenBboxAudit) {
+        qwenBboxAuditCached += 1;
+        qwenBboxAuditVerdicts[qwenBboxAudit.verdict] = (qwenBboxAuditVerdicts[qwenBboxAudit.verdict] || 0) + 1;
+        qwenBboxAuditSeverity[qwenBboxAudit.severity] = (qwenBboxAuditSeverity[qwenBboxAudit.severity] || 0) + 1;
+        if (qwenBboxAudit.verdict === 'pass') qwenBboxAuditPass += 1;
+        else if (qwenBboxAudit.verdict === 'suspect') qwenBboxAuditSuspect += 1;
+        else if (qwenBboxAudit.verdict === 'needs_human') qwenBboxAuditNeedsHuman += 1;
+        else if (qwenBboxAudit.verdict === 'error') qwenBboxAuditError += 1;
+        for (const reason of qwenBboxAudit.reasons || []) {
+          qwenBboxAuditReasons[reason] = (qwenBboxAuditReasons[reason] || 0) + 1;
+        }
       }
     }
     if (qwenBboxVerifiedCache) {
@@ -3132,6 +3296,21 @@ async function buildYoloPatrolDataset() {
           root: toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, vehicleUploadQwenSensitiveBboxLabelRoot))
         }
       },
+      qwen_bbox_audit: {
+        schema: vehicleUploadQwenBboxAuditSchema,
+        cached_images: qwenBboxAuditCached,
+        pending_images: Math.max(0, qwenBboxAuditApplicable - qwenBboxAuditCached),
+        applicable_images: qwenBboxAuditApplicable,
+        pass_images: qwenBboxAuditPass,
+        suspect_images: qwenBboxAuditSuspect,
+        needs_human_images: qwenBboxAuditNeedsHuman,
+        error_images: qwenBboxAuditError,
+        review_queue_images: qwenBboxAuditSuspect + qwenBboxAuditNeedsHuman + qwenBboxAuditError,
+        verdict_counts: qwenBboxAuditVerdicts,
+        severity_counts: qwenBboxAuditSeverity,
+        reason_counts: qwenBboxAuditReasons,
+        root: toForwardSlashPath(path.relative(yoloReviewRuntimeRoot, vehicleUploadQwenBboxAuditRoot))
+      },
       qwen_label: {
         schema: vehicleUploadQwenLabelSchema,
         cached_images: qwenCached,
@@ -3184,6 +3363,14 @@ function compactYoloPatrolIndexRow(row = {}) {
     qwen_bbox_quality: row.qwen_bbox_quality || '',
     qwen_bbox_verified_status: row.qwen_bbox_verified_status || 'not_applicable',
     qwen_bbox_verified_rel_path: row.qwen_bbox_verified_rel_path || null,
+    qwen_bbox_audit: row.qwen_bbox_audit || null,
+    qwen_bbox_audit_status: row.qwen_bbox_audit_status || 'not_applicable',
+    qwen_bbox_audit_rel_path: row.qwen_bbox_audit_rel_path || null,
+    qwen_bbox_audit_verdict: row.qwen_bbox_audit_verdict || '',
+    qwen_bbox_audit_severity: row.qwen_bbox_audit_severity || '',
+    qwen_bbox_audit_reasons: Array.isArray(row.qwen_bbox_audit_reasons) ? row.qwen_bbox_audit_reasons : [],
+    qwen_bbox_audit_suspicious_count: Number.isFinite(Number(row.qwen_bbox_audit_suspicious_count)) ? Number(row.qwen_bbox_audit_suspicious_count) : 0,
+    qwen_bbox_audit_missing_count: Number.isFinite(Number(row.qwen_bbox_audit_missing_count)) ? Number(row.qwen_bbox_audit_missing_count) : 0,
     qwen_label: row.qwen_label || null,
     qwen_label_status: row.qwen_label_status || 'not_applicable',
     qwen_label_rel_path: row.qwen_label_rel_path || null
@@ -3760,6 +3947,7 @@ async function buildYoloDatasetList() {
       total_images: patrolDataset.rows.length,
       auto_label: patrolDataset.summary.auto_label,
       qwen_bbox: patrolDataset.summary.qwen_bbox,
+      qwen_bbox_audit: patrolDataset.summary.qwen_bbox_audit,
       qwen_label: patrolDataset.summary.qwen_label
     });
   } catch (error) {
@@ -4260,6 +4448,7 @@ async function listYoloReviewItems(datasetId, query = {}) {
     .map((item) => normalizeClassToken(item))
     .filter(Boolean);
   const qwenLabel = normalizeClassToken(query.qwen_label || '');
+  const qwenAudit = normalizeClassToken(query.qwen_audit || query.audit || '');
   const aiAnswer = String(query.ai_answer || '').trim().toUpperCase();
   const q = String(query.q || '').trim();
   const hasBoxOnly = ['1', 'true', 'yes', 'on'].includes(String(query.has_box || query.hasBox || '').trim().toLowerCase());
@@ -4312,6 +4501,37 @@ async function listYoloReviewItems(datasetId, query = {}) {
         return false;
       }
     }
+    if (qwenAudit && dataset.source === 'patrol') {
+      const auditVerdict = normalizeClassToken(item.qwen_bbox_audit_verdict || '');
+      const auditStatus = normalizeClassToken(item.qwen_bbox_audit_status || '');
+      const auditSeverity = normalizeClassToken(item.qwen_bbox_audit_severity || '');
+      const auditTokens = [
+        auditStatus,
+        auditVerdict,
+        auditSeverity ? `severity:${auditSeverity}` : '',
+        ...(Array.isArray(item.qwen_bbox_audit_reasons) ? item.qwen_bbox_audit_reasons : [])
+      ].map((value) => normalizeClassToken(value)).filter(Boolean);
+      const pendingAudit = item.qwen_bbox_status === 'done' && !item.qwen_bbox_audit;
+      if (qwenAudit === 'suspect') {
+        if (!['suspect', 'needs_human', 'error'].includes(auditVerdict)) {
+          return false;
+        }
+      } else if (qwenAudit === 'needs_human') {
+        if (!['needs_human', 'error'].includes(auditVerdict)) {
+          return false;
+        }
+      } else if (qwenAudit === 'pending' || qwenAudit === 'unreviewed') {
+        if (!pendingAudit) {
+          return false;
+        }
+      } else if (qwenAudit === 'done') {
+        if (!item.qwen_bbox_audit) {
+          return false;
+        }
+      } else if (!auditTokens.includes(qwenAudit)) {
+        return false;
+      }
+    }
     return yoloItemMatchesQuery(item, q);
   });
 
@@ -4346,6 +4566,7 @@ async function listYoloReviewItems(datasetId, query = {}) {
       source_type: dataset.source_type,
       source_label: dataset.source_label,
       qwen_bbox: dataset.summary?.qwen_bbox || null,
+      qwen_bbox_audit: dataset.summary?.qwen_bbox_audit || null,
       qwen_label: dataset.summary?.qwen_label || null,
       summary: dataset.summary
     },
@@ -4499,6 +4720,7 @@ async function getYoloReviewItemDetail(datasetId, itemKey) {
         source_type: dataset.source_type,
         source_label: dataset.source_label,
         qwen_bbox: dataset.summary?.qwen_bbox || null,
+        qwen_bbox_audit: dataset.summary?.qwen_bbox_audit || null,
         qwen_label: dataset.summary?.qwen_label || null,
         summary: dataset.summary
       },
