@@ -67,6 +67,7 @@ TARGETS = {
         ],
         "summary_roots": [
             "/home/sari/reliable_vehicle_yolo_20260704/results/vehicle_yolo_today_finetune_gpu3",
+            "/home/sari/reliable_vehicle_yolo_20260704/results/vehicle_yolo_today_alt_gpu3",
             "/home/sari/vehicle_yolo_experiments_20260627",
         ],
         "keywords": ["vehicle_yolo"],
@@ -201,6 +202,7 @@ TARGETS = {
 
 COLLECTOR = r"""
 import csv, json, os, re, time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 targets = json.loads(os.environ["YOLO_TARGETS_JSON"])
@@ -281,6 +283,8 @@ def summary_candidates(task_id, cfg):
                     "score": score if score is not None else -1,
                     "metric_source": metric_source,
                     "train_seconds": fnum(row.get("train_seconds")),
+                    "started_at": row.get("started_at", ""),
+                    "finished_at": row.get("finished_at", ""),
                 })
     return out
 
@@ -350,7 +354,77 @@ def run_candidates(task_id, cfg):
                 out.append(item)
     return out
 
-payload = {"candidates": {}, "running": {}, "tmux": [], "gpus": [], "collected_at": time.time()}
+def china_day(value, fallback_text=""):
+    text = str(value or "").strip()
+    if text:
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    source = f"{text} {fallback_text}"
+    match = re.search(r"(20\d{2})[-_]?(\d{2})[-_]?(\d{2})", source)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+    return ""
+
+def trend_score(metrics):
+    for key in ("test_map50_95", "val_map50_95", "map50_95", "test_map50", "val_map50", "map50"):
+        value = metrics.get(key)
+        if value is not None:
+            return value
+    return -1
+
+def trend_row(task_id, item):
+    metrics = item.get("metrics") or {}
+    score = trend_score(metrics)
+    day = china_day(item.get("finished_at") or item.get("started_at"), f"{item.get('source_run', '')} {item.get('summary_path', '')}")
+    if not day or score is None or score < 0:
+        return None
+    return {
+        "day": day,
+        "task_id": task_id,
+        "model_family": item.get("model_family") or "",
+        "status": item.get("status") or "",
+        "metric_source": item.get("metric_source") or "",
+        "score": score,
+        "test_precision": metrics.get("test_precision"),
+        "test_recall": metrics.get("test_recall"),
+        "test_map50": metrics.get("test_map50"),
+        "test_map50_95": metrics.get("test_map50_95"),
+        "val_precision": metrics.get("val_precision"),
+        "val_recall": metrics.get("val_recall"),
+        "val_map50": metrics.get("val_map50"),
+        "val_map50_95": metrics.get("val_map50_95"),
+        "started_at": item.get("started_at") or "",
+        "finished_at": item.get("finished_at") or "",
+        "source_run": item.get("source_run") or "",
+        "best_weight": item.get("best_weight") or "",
+    }
+
+def training_trend_for_task(task_id, items, max_days=14):
+    by_day = {}
+    counts = {}
+    for item in items:
+        if item.get("status") != "completed":
+            continue
+        row = trend_row(task_id, item)
+        if not row:
+            continue
+        day = row["day"]
+        counts[day] = counts.get(day, 0) + 1
+        old = by_day.get(day)
+        if old is None or row["score"] > old["score"]:
+            by_day[day] = row
+    rows = []
+    for day, row in sorted(by_day.items()):
+        row["run_count"] = counts.get(day, 1)
+        rows.append(row)
+    return rows[-max_days:]
+
+payload = {"candidates": {}, "running": {}, "training_trends": {}, "tmux": [], "gpus": [], "collected_at": time.time()}
 try:
     import subprocess
     tmux = subprocess.run(["tmux", "ls"], text=True, capture_output=True, timeout=5)
@@ -370,6 +444,7 @@ except Exception:
 
 for task_id, cfg in targets.items():
     items = summary_candidates(task_id, cfg) + run_candidates(task_id, cfg)
+    payload["training_trends"][task_id] = training_trend_for_task(task_id, items)
     completed = [item for item in items if item.get("status") == "completed" and item.get("score", -1) is not None and item.get("score", -1) >= 0]
     completed.sort(key=lambda item: (item.get("score") or -1, item.get("metrics", {}).get("test_map50") or item.get("metrics", {}).get("val_map50") or -1), reverse=True)
     running = [item for item in items if item.get("status") != "completed"]
@@ -566,6 +641,7 @@ def monitor_once():
             "tmux": collected.get("tmux", []),
             "gpus": collected.get("gpus", []),
         },
+        "training_trends": collected.get("training_trends") or {},
         "entries": entries,
     }
     write_registry(registry)

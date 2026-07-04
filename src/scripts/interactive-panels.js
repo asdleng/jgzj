@@ -7492,6 +7492,50 @@
     return "";
   }
 
+  function yoloTrendMetricValue(row) {
+    return row?.test_map50_95 ?? row?.val_map50_95 ?? row?.map50_95 ?? row?.score;
+  }
+
+  function yoloTrendRecallValue(row) {
+    return row?.test_recall ?? row?.val_recall ?? row?.recall;
+  }
+
+  function renderYoloModelTrend(entry) {
+    const rows = Array.isArray(entry?.training_trends)
+      ? entry.training_trends.filter((row) => row && row.day).slice(-7)
+      : [];
+    if (!rows.length) return null;
+
+    const wrap = createNode("div", "yolo-model-trend");
+    const head = createNode("div", "yolo-model-trend-head");
+    head.appendChild(createNode("span", "", "每日训练精度"));
+    head.appendChild(createNode("span", "", "mAP50-95 / Recall"));
+    wrap.appendChild(head);
+
+    rows.forEach((row) => {
+      const metric = Number(yoloTrendMetricValue(row));
+      const recall = Number(yoloTrendRecallValue(row));
+      const line = createNode("div", "yolo-model-trend-row");
+      line.appendChild(createNode("span", "yolo-model-trend-day", String(row.day).slice(5)));
+      const body = createNode("div", "yolo-model-trend-body");
+      const bar = createNode("i", "yolo-model-trend-bar");
+      const percent = Number.isFinite(metric) ? Math.max(3, Math.min(100, metric * 100)) : 3;
+      bar.style.width = `${percent}%`;
+      body.appendChild(bar);
+      const label = [
+        row.model_family || "",
+        Number.isFinite(metric) ? `m95 ${formatYoloMetric(metric)}` : "m95 -",
+        Number.isFinite(recall) ? `R ${formatYoloMetric(recall)}` : "R -",
+        row.run_count > 1 ? `${row.run_count}次` : ""
+      ].filter(Boolean).join(" · ");
+      body.appendChild(createNode("span", "yolo-model-trend-value", label));
+      line.appendChild(body);
+      wrap.appendChild(line);
+    });
+
+    return wrap;
+  }
+
   function renderYoloModelRegistry(entries, updatedAt) {
     if (!yoloModelRegistryList || !yoloModelRegistryStatus || !yoloModelRegistryPanel) return;
     yoloModelRegistryList.innerHTML = "";
@@ -7531,6 +7575,8 @@
       item.appendChild(top);
 
       item.appendChild(createNode("p", "yolo-model-metrics", yoloModelMetricText(entry)));
+      const trend = renderYoloModelTrend(entry);
+      if (trend) item.appendChild(trend);
       const footText = [
         entry.metric_source || "",
         entry.deployed_at ? `部署 ${formatYoloModelTime(entry.deployed_at)}` : "",

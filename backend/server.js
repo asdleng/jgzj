@@ -1895,6 +1895,7 @@ async function normalizeYoloModelRegistryEntry(entry) {
     status: String(entry?.status || 'unknown').trim(),
     metric_source: String(entry?.metric_source || '').trim(),
     metrics: entry?.metrics && typeof entry.metrics === 'object' ? entry.metrics : {},
+    training_trends: Array.isArray(entry?.training_trends) ? entry.training_trends : [],
     train_progress: entry?.train_progress && typeof entry.train_progress === 'object' ? entry.train_progress : null,
     source_run: String(entry?.source_run || '').trim(),
     best_weight: String(entry?.best_weight || '').trim(),
@@ -1923,6 +1924,9 @@ async function buildYoloModelRegistryPayload() {
   const registry = await readYoloModelRegistryFile();
   const fallbackEntries = await buildFallbackYoloModelEntries();
   const mergedByTask = new Map(fallbackEntries.map((entry) => [entry.task_id, entry]));
+  const trainingTrendsByTask = registry?.training_trends && typeof registry.training_trends === 'object'
+    ? registry.training_trends
+    : {};
 
   if (Array.isArray(registry?.entries)) {
     for (const entry of registry.entries) {
@@ -1931,7 +1935,10 @@ async function buildYoloModelRegistryPayload() {
       if (retiredYoloModelTaskIds.has(taskId)) continue;
       mergedByTask.set(taskId, {
         ...mergedByTask.get(taskId),
-        ...entry
+        ...entry,
+        training_trends: Array.isArray(trainingTrendsByTask[taskId])
+          ? trainingTrendsByTask[taskId]
+          : entry.training_trends
       });
     }
   }
@@ -1941,11 +1948,19 @@ async function buildYoloModelRegistryPayload() {
   for (const taskId of preferredOrder) {
     if (retiredYoloModelTaskIds.has(taskId)) continue;
     if (!mergedByTask.has(taskId)) continue;
+    const mergedEntry = mergedByTask.get(taskId);
+    if (!Array.isArray(mergedEntry.training_trends) && Array.isArray(trainingTrendsByTask[taskId])) {
+      mergedEntry.training_trends = trainingTrendsByTask[taskId];
+    }
     entries.push(await normalizeYoloModelRegistryEntry(mergedByTask.get(taskId)));
     mergedByTask.delete(taskId);
   }
   for (const entry of mergedByTask.values()) {
     if (retiredYoloModelTaskIds.has(String(entry?.task_id || '').trim())) continue;
+    const taskId = String(entry?.task_id || '').trim();
+    if (!Array.isArray(entry.training_trends) && Array.isArray(trainingTrendsByTask[taskId])) {
+      entry.training_trends = trainingTrendsByTask[taskId];
+    }
     entries.push(await normalizeYoloModelRegistryEntry(entry));
   }
 
