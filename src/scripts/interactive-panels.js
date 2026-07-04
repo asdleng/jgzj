@@ -19,6 +19,7 @@
   const QWEN36_MM_CHECK_URL = "/api/qwen36-mm-check";
   const YOLO_MODEL_TEST_URL = "/api/yolo-model-test";
   const YOLO_MODEL_REGISTRY_URL = "/api/yolo-model-test/models";
+  const YOLO_MODEL_TRENDS_URL = "/yolo-model-training-trends.json";
   const AI_CHECK_HISTORY_PAGE_SIZE = 5;
   const DEFAULT_VEHICLE_ID = "car-web";
   const QWEN_CHECK_PATH = "/ws/qwen/check";
@@ -7588,6 +7589,38 @@
     });
   }
 
+  async function loadYoloModelTrainingTrends() {
+    try {
+      const response = await fetch(YOLO_MODEL_TRENDS_URL, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!response.ok) return {};
+      const data = await response.json();
+      return data?.training_trends && typeof data.training_trends === "object"
+        ? data.training_trends
+        : {};
+    } catch (error) {
+      return {};
+    }
+  }
+
+  function mergeYoloModelTrainingTrends(entries, trendsByTask) {
+    if (!Array.isArray(entries)) return [];
+    return entries.map((entry) => {
+      const taskId = entry?.task_id;
+      const staticRows = taskId && Array.isArray(trendsByTask?.[taskId]) ? trendsByTask[taskId] : [];
+      if (staticRows.length) {
+        return { ...entry, training_trends: staticRows };
+      }
+      if (Array.isArray(entry?.training_trends)) {
+        return entry;
+      }
+      return { ...entry, training_trends: [] };
+    });
+  }
+
   async function loadYoloModelRegistry() {
     if (!yoloModelRegistryPanel || !yoloModelRegistryStatus || !yoloModelRegistryList) return;
     yoloModelRegistryPanel.dataset.state = "loading";
@@ -7601,7 +7634,8 @@
       if (!response.ok || !data?.ok) {
         throw new Error(data?.detail || data?.error || `HTTP ${response.status}`);
       }
-      renderYoloModelRegistry(data.entries, data.updated_at);
+      const trendsByTask = await loadYoloModelTrainingTrends();
+      renderYoloModelRegistry(mergeYoloModelTrainingTrends(data.entries, trendsByTask), data.updated_at);
     } catch (error) {
       yoloModelRegistryPanel.dataset.state = "error";
       yoloModelRegistryStatus.textContent = `模型列表读取失败：${error?.message || "未知错误"}`;
