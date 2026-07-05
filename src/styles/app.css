@@ -4474,6 +4474,186 @@
   min-width: 180px;
 }
 
+.yolo-review-model-metrics {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.yolo-review-model-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.yolo-review-model-title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.yolo-review-model-title strong,
+.yolo-review-model-title span,
+.yolo-review-model-card-title strong,
+.yolo-review-model-card-title span,
+.yolo-review-model-value span,
+.yolo-review-model-value strong,
+.yolo-review-model-meta {
+  margin: 0;
+}
+
+.yolo-review-model-title strong {
+  color: #f8fafc;
+  font-size: 0.88rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.yolo-review-model-title span {
+  color: #94a3b8;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.yolo-review-model-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+  gap: 8px;
+}
+
+.yolo-review-model-card {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  background: rgba(2, 6, 23, 0.54);
+}
+
+.yolo-review-model-card.is-training {
+  border-color: rgba(45, 212, 191, 0.68);
+  box-shadow: inset 3px 0 0 rgba(45, 212, 191, 0.78);
+}
+
+.yolo-review-model-card-top {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.yolo-review-model-card-title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.yolo-review-model-card-title strong {
+  color: #f8fafc;
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.yolo-review-model-card-title span,
+.yolo-review-model-meta {
+  color: #94a3b8;
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.yolo-review-model-values {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.yolo-review-model-value {
+  min-width: 0;
+  padding: 6px;
+  border-radius: 7px;
+  border: 1px solid rgba(71, 85, 105, 0.7);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.yolo-review-model-value span,
+.yolo-review-model-value strong {
+  display: block;
+  line-height: 1.15;
+}
+
+.yolo-review-model-value span {
+  color: #94a3b8;
+  font-size: 0.6rem;
+  font-weight: 900;
+}
+
+.yolo-review-model-value strong {
+  margin-top: 3px;
+  color: #e2e8f0;
+  font-size: 0.74rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.yolo-review-model-sparkline {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.yolo-review-model-sparkline svg {
+  display: block;
+  width: 100%;
+  height: 54px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.68);
+}
+
+.yolo-review-model-sparkline-grid {
+  stroke: rgba(148, 163, 184, 0.28);
+  stroke-width: 1;
+}
+
+.yolo-review-model-sparkline-line {
+  fill: none;
+  stroke: #2dd4bf;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.yolo-review-model-sparkline-dot {
+  fill: #f8fafc;
+  stroke: #2dd4bf;
+  stroke-width: 1.6;
+}
+
+.yolo-review-model-sparkline-labels {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.yolo-review-model-sparkline-labels strong {
+  color: #ccfbf1;
+  font-size: 0.68rem;
+}
+
 .yolo-review-dataset-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));

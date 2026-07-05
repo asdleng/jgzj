@@ -1,0 +1,535 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import collections
+import json
+import os
+import shlex
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+
+CN_TZ = timezone(timedelta(hours=8))
+PROJECT_ROOT = Path(os.environ.get("JGZJ_PROJECT_ROOT", "/home/admin1/jgzj"))
+RUNTIME_ROOT = PROJECT_ROOT / ".runtime" / "yolo_daily_closed_loop"
+INDEX_PATH = PROJECT_ROOT / ".runtime" / "yolo_label_review" / "patrol_dataset_index.json"
+FRAMES_ROOT = PROJECT_ROOT / ".runtime" / "park-pcm" / "crowd-frames"
+LABEL_ROOT = PROJECT_ROOT / ".runtime" / "yolo_label_review"
+LEGACY_SCRIPT_ROOT = PROJECT_ROOT / ".runtime" / "reliable_vehicle_yolo_20260704"
+BUILD_SCRIPT = LEGACY_SCRIPT_ROOT / "build_reliable_vehicle_upload_yolo.py"
+TRAIN_SCRIPT = LEGACY_SCRIPT_ROOT / "train_reliable_yolo_finetune.py"
+STATE_PATH = RUNTIME_ROOT / "state.json"
+
+A100_HOST = os.environ.get("YOLO_A100_HOST", "192.168.80.49")
+A100_USER = os.environ.get("YOLO_A100_USER", "sari")
+A100_KEY = os.environ.get("YOLO_A100_KEY", "/home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519")
+A100_ROOT = os.environ.get("YOLO_DAILY_A100_ROOT", "/home/sari/jgzj_yolo_daily_closed_loop")
+A100_PY = os.environ.get("YOLO_DAILY_A100_PY", "/home/sari/autodistill/bin/python")
+A100_GPU = int(os.environ.get("YOLO_DAILY_A100_GPU", "3"))
+
+BAD_AUDIT_VERDICTS = {"needs_human", "suspect", "error"}
+GOOD_QUALITIES = {"good", "blur"}
+
+TASKS = [
+    {
+        "task_id": "person_yolo",
+        "build_task": "person",
+        "classes": {"person"},
+        "min_boxes": 300,
+        "min_images": 300,
+        "epochs": 24,
+        "patience": 8,
+        "batch": 64,
+        "imgsz": 640,
+        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/person_yolo_best.pt",
+    },
+    {
+        "task_id": "vehicle_yolo",
+        "build_task": "vehicle",
+        "classes": {"vehicle", "nonmotor"},
+        "min_boxes": 350,
+        "min_images": 300,
+        "epochs": 24,
+        "patience": 8,
+        "batch": 64,
+        "imgsz": 640,
+        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/vehicle_yolo_best.pt",
+    },
+    {
+        "task_id": "pet_yolo",
+        "build_task": "pet",
+        "classes": {"pet"},
+        "min_boxes": 80,
+        "min_images": 80,
+        "epochs": 32,
+        "patience": 10,
+        "batch": 64,
+        "imgsz": 640,
+        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/pet_yolo_best.pt",
+    },
+    {
+        "task_id": "phone_yolo",
+        "build_task": "phone",
+        "classes": {"phone"},
+        "min_boxes": 80,
+        "min_images": 80,
+        "epochs": 36,
+        "patience": 10,
+        "batch": 64,
+        "imgsz": 640,
+        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/phone_yolo_best.pt",
+    },
+    {
+        "task_id": "trash_yolo",
+        "build_task": "trash",
+        "classes": {"trash"},
+        "min_boxes": 100,
+        "min_images": 100,
+        "epochs": 36,
+        "patience": 10,
+        "batch": 64,
+        "imgsz": 640,
+        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/trash_yolo_best.pt",
+    },
+    {
+        "task_id": "stall_yolo",
+        "build_task": "stall",
+        "classes": {"stall"},
+        "min_boxes": 80,
+        "min_images": 80,
+        "epochs": 36,
+        "patience": 10,
+        "batch": 64,
+        "imgsz": 640,
+        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/stall_yolo_best.pt",
+    },
+    {
+        "task_id": "fire_smoke_yolo",
+        "build_task": "fire_smoke",
+        "classes": {"fire", "smoke"},
+        "min_boxes": 100,
+        "min_images": 100,
+        "epochs": 36,
+        "patience": 10,
+        "batch": 64,
+        "imgsz": 640,
+        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/fire_smoke_yolo_best.pt",
+    },
+]
+
+
+def run(cmd: list[str], *, timeout: int = 600, check: bool = False) -> subprocess.CompletedProcess:
+    result = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    if check and result.returncode != 0:
+        raise RuntimeError(f"command_failed rc={result.returncode} cmd={shlex.join(cmd)} stderr={result.stderr.strip()} stdout={result.stdout.strip()}")
+    return result
+
+
+def a100(command: str, *, timeout: int = 120, check: bool = False) -> subprocess.CompletedProcess:
+    return run([
+        "ssh",
+        "-i", A100_KEY,
+        "-o", "ClearAllForwardings=yes",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=12",
+        "-o", "StrictHostKeyChecking=no",
+        f"{A100_USER}@{A100_HOST}",
+        command,
+    ], timeout=timeout, check=check)
+
+
+def rsync_to_a100(local_path: Path, remote_path: str, *, timeout: int = 1800) -> None:
+    local = str(local_path)
+    if local_path.is_dir():
+        local = local.rstrip("/") + "/"
+        remote_path = remote_path.rstrip("/") + "/"
+    cmd = [
+        "rsync",
+        "-a",
+        "-e",
+        f"ssh -i {shlex.quote(A100_KEY)} -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no",
+        local,
+        f"{A100_USER}@{A100_HOST}:{remote_path}",
+    ]
+    run(cmd, timeout=timeout, check=True)
+
+
+def cn_now() -> datetime:
+    return datetime.now(CN_TZ)
+
+
+def compact_day(day: datetime) -> str:
+    return day.strftime("%Y%m%d")
+
+
+def load_json(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def write_json(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def row_day(row: dict) -> str:
+    rel = str(row.get("image_rel_path") or "")
+    if "/" in rel:
+        day = rel.split("/", 1)[0]
+        if len(day) == 8 and day.isdigit():
+            return day
+    text = str((row.get("meta") or {}).get("collected_at") or "")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.astimezone(CN_TZ).strftime("%Y%m%d")
+    except Exception:
+        return ""
+
+
+def row_source(row: dict) -> str:
+    meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+    return str(row.get("source") or meta.get("source") or "")
+
+
+def eligible_row(row: dict) -> bool:
+    if row_source(row) != "auto_ad_patrol_flow_upload":
+        return False
+    if row.get("qwen_bbox_status") != "done":
+        return False
+    if str(row.get("qwen_bbox_quality") or "") not in GOOD_QUALITIES:
+        return False
+    if str(row.get("qwen_bbox_audit_verdict") or "") in BAD_AUDIT_VERDICTS:
+        return False
+    return bool(row.get("qwen_bbox_rel_path"))
+
+
+def class_name(label: dict) -> str:
+    return str(label.get("class_name") or label.get("class") or label.get("label") or "").strip().lower()
+
+
+def summarize_index(allowed_days: set[str]) -> dict:
+    data = load_json(INDEX_PATH, {})
+    rows = data.get("rows") or []
+    by_day = collections.defaultdict(lambda: {
+        "eligible_images": 0,
+        "boxes_by_class": collections.Counter(),
+        "boxes_by_task": collections.Counter(),
+    })
+    for row in rows:
+        day = row_day(row)
+        if day not in allowed_days or not eligible_row(row):
+            continue
+        stat = by_day[day]
+        stat["eligible_images"] += 1
+        labels = row.get("auto_labels") if isinstance(row.get("auto_labels"), list) else []
+        for label in labels:
+            name = class_name(label)
+            if not name:
+                continue
+            stat["boxes_by_class"][name] += 1
+            for task in TASKS:
+                if name in task["classes"]:
+                    stat["boxes_by_task"][task["task_id"]] += 1
+    out = {}
+    for day, stat in by_day.items():
+        out[day] = {
+            "eligible_images": stat["eligible_images"],
+            "boxes_by_class": dict(stat["boxes_by_class"]),
+            "boxes_by_task": dict(stat["boxes_by_task"]),
+        }
+    return out
+
+
+def day_range(start_day: str, lookback_days: int, train_today_after_hour: int) -> list[str]:
+    now = cn_now()
+    today = compact_day(now)
+    earliest = compact_day(now - timedelta(days=max(0, lookback_days - 1)))
+    start = max(start_day, earliest)
+    days = []
+    for offset in range(lookback_days):
+        day = compact_day(now - timedelta(days=lookback_days - 1 - offset))
+        if day < start:
+            continue
+        if day == today and now.hour < train_today_after_hour:
+            continue
+        days.append(day)
+    return days
+
+
+def task_date_state(state: dict, task_id: str, day: str) -> str:
+    return str(((state.get("task_dates") or {}).get(task_id) or {}).get(day, {}).get("status") or "")
+
+
+def choose_tasks(day_stats: dict, state: dict, max_tasks: int, max_dates_per_task: int) -> tuple[list[dict], list[dict]]:
+    selected = []
+    skipped = []
+    all_days = sorted(day_stats)
+    for task in TASKS:
+        task_id = task["task_id"]
+        pending = [day for day in all_days if task_date_state(state, task_id, day) not in {"scheduled", "completed"}]
+        if not pending:
+            skipped.append({"task_id": task_id, "reason": "no_pending_day"})
+            continue
+        enough_single = []
+        for day in pending:
+            stat = day_stats.get(day) or {}
+            boxes = int((stat.get("boxes_by_task") or {}).get(task_id) or 0)
+            images = int(stat.get("eligible_images") or 0)
+            if boxes >= task["min_boxes"] and images >= task["min_images"]:
+                enough_single.append(day)
+        if enough_single:
+            dates = [enough_single[0]]
+        else:
+            dates = pending[-max_dates_per_task:]
+        images = sum(int((day_stats.get(day) or {}).get("eligible_images") or 0) for day in dates)
+        boxes = sum(int(((day_stats.get(day) or {}).get("boxes_by_task") or {}).get(task_id) or 0) for day in dates)
+        if boxes < task["min_boxes"] or images < task["min_images"]:
+            skipped.append({
+                "task_id": task_id,
+                "reason": "not_enough_data",
+                "dates": dates,
+                "images": images,
+                "boxes": boxes,
+                "min_images": task["min_images"],
+                "min_boxes": task["min_boxes"],
+            })
+            continue
+        selected.append({**task, "dates": dates, "images": images, "boxes": boxes})
+        if len(selected) >= max_tasks:
+            break
+    return selected, skipped
+
+
+def a100_gpu_status(max_mem_mib: int, max_util: int) -> dict:
+    smi_cmd = (
+        f"nvidia-smi --id={A100_GPU} "
+        "--query-gpu=memory.used,memory.total,utilization.gpu "
+        "--format=csv,noheader,nounits"
+    )
+    smi = a100(smi_cmd, timeout=30, check=True).stdout.strip()
+    parts = [int(x.strip()) for x in smi.split(",")[:3]]
+    tmux = a100("tmux ls 2>/dev/null || true", timeout=30).stdout.splitlines()
+    active = []
+    for line in tmux:
+        name = line.split(":", 1)[0].strip()
+        lname = name.lower()
+        if "yolo" in lname or "bevplace" in lname:
+            active.append(name)
+    return {
+        "gpu": A100_GPU,
+        "memory_used_mib": parts[0],
+        "memory_total_mib": parts[1],
+        "util_percent": parts[2],
+        "active_sessions": active,
+        "idle": parts[0] <= max_mem_mib and parts[2] <= max_util and not active,
+    }
+
+
+def build_dataset(task: dict, run_dir: Path) -> dict:
+    date_tag = "_".join(task["dates"])
+    output = run_dir / "datasets" / f"{task['task_id']}_closed_loop_{date_tag}"
+    log_path = run_dir / "logs" / f"{task['task_id']}_build.log"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable,
+        str(BUILD_SCRIPT),
+        "--task", task["build_task"],
+        "--index", str(INDEX_PATH),
+        "--frames-root", str(FRAMES_ROOT),
+        "--label-root", str(LABEL_ROOT),
+        "--output", str(output),
+        "--dates", *task["dates"],
+        "--qualities", ",".join(sorted(GOOD_QUALITIES)),
+        "--include-empty",
+        "--link-mode", "copy",
+        "--data-yaml-mode", "dirs",
+    ]
+    result = run(cmd, timeout=3600)
+    log_path.write_text(result.stdout + ("\nSTDERR\n" + result.stderr if result.stderr else ""), encoding="utf-8")
+    if result.returncode != 0:
+        raise RuntimeError(f"build_failed task={task['task_id']} log={log_path}")
+    summary = load_json(output / "dataset_summary.json", {})
+    boxes = sum(int(v or 0) for v in (summary.get("boxes_by_class") or {}).values())
+    images = sum(int((summary.get("splits") or {}).get(split, {}).get("images") or 0) for split in ("train", "val", "test"))
+    if boxes < task["min_boxes"] or images < task["min_images"]:
+        raise RuntimeError(f"build_under_threshold task={task['task_id']} images={images} boxes={boxes}")
+    return {
+        "task_id": task["task_id"],
+        "dates": task["dates"],
+        "local_dataset": str(output),
+        "summary": summary,
+        "images": images,
+        "boxes": boxes,
+    }
+
+
+def remote_quote(value: str) -> str:
+    return shlex.quote(str(value))
+
+
+def make_remote_job(run_tag: str, built: list[dict], selected: list[dict], run_dir: Path) -> Path:
+    by_task = {item["task_id"]: item for item in selected}
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        f"ROOT={remote_quote(A100_ROOT)}",
+        "cd \"$ROOT\"",
+        "mkdir -p logs results runs scripts",
+        f"echo \"$(date -Is) daily_yolo_job_start run_tag={run_tag}\"",
+    ]
+    for item in built:
+        task = by_task[item["task_id"]]
+        remote_dataset = f"{A100_ROOT}/datasets/{run_tag}/{Path(item['local_dataset']).name}"
+        remote_data_yaml = f"{remote_dataset}/data.yaml"
+        remote_log = f"{A100_ROOT}/logs/{task['task_id']}_{run_tag}.log"
+        lines.extend([
+            f"python3 - <<'PY_{task['task_id']}'",
+            "from pathlib import Path",
+            f"p = Path({remote_data_yaml!r})",
+            "lines = p.read_text(encoding='utf-8').splitlines()",
+            f"lines = [({remote_dataset!r} if line.startswith('path: ') else line) for line in lines]",
+            "lines = [('path: ' + line) if line == " + repr(remote_dataset) + " else line for line in lines]",
+            "p.write_text('\\n'.join(lines) + '\\n', encoding='utf-8')",
+            f"PY_{task['task_id']}",
+            f"echo \"$(date -Is) train_start task={task['task_id']} dates={','.join(task['dates'])}\" | tee -a {remote_quote(remote_log)}",
+            f"CUDA_VISIBLE_DEVICES={A100_GPU} \\",
+            f"RELIABLE_YOLO_TASK={remote_quote(task['task_id'])} \\",
+            f"RELIABLE_YOLO_RUN_TAG={remote_quote(run_tag)} \\",
+            f"RELIABLE_YOLO_DATA={remote_quote(remote_data_yaml)} \\",
+            f"RELIABLE_YOLO_OUT={remote_quote(A100_ROOT + '/results/' + task['task_id'])} \\",
+            f"RELIABLE_YOLO_PROJECT={remote_quote(A100_ROOT + '/runs/' + task['task_id'])} \\",
+            f"RELIABLE_YOLO_BASE_WEIGHTS={remote_quote(run_tag + '=' + task['base_weight'])} \\",
+            f"RELIABLE_YOLO_EPOCHS={task['epochs']} \\",
+            f"RELIABLE_YOLO_PATIENCE={task['patience']} \\",
+            f"RELIABLE_YOLO_BATCH={task['batch']} \\",
+            f"RELIABLE_YOLO_IMGSZ={task['imgsz']} \\",
+            "RELIABLE_YOLO_WORKERS=8 \\",
+            f"{remote_quote(A100_PY)} scripts/train_reliable_yolo_finetune.py 2>&1 | tee -a {remote_quote(remote_log)}",
+        ])
+    lines.append(f"echo \"$(date -Is) daily_yolo_job_done run_tag={run_tag}\"")
+    job = run_dir / f"{run_tag}.a100.sh"
+    job.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    job.chmod(0o755)
+    return job
+
+
+def schedule_remote(run_tag: str, built: list[dict], selected: list[dict], run_dir: Path) -> str:
+    a100(f"mkdir -p {remote_quote(A100_ROOT)}/scripts {remote_quote(A100_ROOT)}/datasets/{remote_quote(run_tag)} {remote_quote(A100_ROOT)}/logs", check=True)
+    rsync_to_a100(TRAIN_SCRIPT, f"{A100_ROOT}/scripts/train_reliable_yolo_finetune.py")
+    rsync_to_a100(BUILD_SCRIPT, f"{A100_ROOT}/scripts/build_reliable_vehicle_upload_yolo.py")
+    for item in built:
+        local_dataset = Path(item["local_dataset"])
+        remote_dataset = f"{A100_ROOT}/datasets/{run_tag}/{local_dataset.name}"
+        a100(f"mkdir -p {remote_quote(remote_dataset)}", check=True)
+        rsync_to_a100(local_dataset, remote_dataset, timeout=3600)
+    job = make_remote_job(run_tag, built, selected, run_dir)
+    remote_job = f"{A100_ROOT}/logs/{job.name}"
+    rsync_to_a100(job, remote_job)
+    session = f"yolo-daily-closed-loop-gpu{A100_GPU}-{run_tag}"
+    a100(f"tmux new-session -d -s {remote_quote(session)} 'bash {remote_quote(remote_job)}'", check=True)
+    return session
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--lookback-days", type=int, default=int(os.environ.get("YOLO_DAILY_LOOKBACK_DAYS", "5")))
+    parser.add_argument("--max-tasks", type=int, default=int(os.environ.get("YOLO_DAILY_MAX_TASKS", "2")))
+    parser.add_argument("--max-dates-per-task", type=int, default=int(os.environ.get("YOLO_DAILY_MAX_DATES_PER_TASK", "3")))
+    parser.add_argument("--train-today-after-hour", type=int, default=int(os.environ.get("YOLO_DAILY_TRAIN_TODAY_AFTER_HOUR", "22")))
+    parser.add_argument("--gpu-max-mem-mib", type=int, default=int(os.environ.get("YOLO_DAILY_GPU_MAX_MEM_MIB", "2000")))
+    parser.add_argument("--gpu-max-util", type=int, default=int(os.environ.get("YOLO_DAILY_GPU_MAX_UTIL", "15")))
+    parser.add_argument("--start-day", default=os.environ.get("YOLO_DAILY_START_DAY", ""))
+    args = parser.parse_args()
+
+    now = cn_now()
+    default_start = compact_day(now - timedelta(days=1))
+    start_day = args.start_day or default_start
+    state = load_json(STATE_PATH, {"schema": "jgzj_yolo_daily_closed_loop_state.v1", "task_dates": {}, "runs": []})
+    days = day_range(start_day, args.lookback_days, args.train_today_after_hour)
+    day_stats = summarize_index(set(days))
+    selected, skipped = choose_tasks(day_stats, state, args.max_tasks, args.max_dates_per_task)
+    gpu_status = a100_gpu_status(args.gpu_max_mem_mib, args.gpu_max_util)
+
+    payload = {
+        "ok": True,
+        "dry_run": args.dry_run,
+        "checked_at": now.isoformat(),
+        "start_day": start_day,
+        "candidate_days": days,
+        "day_stats": day_stats,
+        "selected": [
+            {k: v for k, v in item.items() if k not in {"classes"}}
+            for item in selected
+        ],
+        "skipped": skipped,
+        "a100": gpu_status,
+    }
+    if args.dry_run:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not selected:
+        payload["action"] = "skip_no_selected_task"
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not args.force and not gpu_status["idle"]:
+        payload["action"] = "skip_a100_busy"
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    run_tag = now.strftime("%Y%m%d_%H%M%S")
+    run_dir = RUNTIME_ROOT / "runs" / run_tag
+    run_dir.mkdir(parents=True, exist_ok=True)
+    built = []
+    for task in selected:
+        built.append(build_dataset(task, run_dir))
+    session = schedule_remote(run_tag, built, selected, run_dir)
+
+    task_dates = state.setdefault("task_dates", {})
+    for task in selected:
+        per_task = task_dates.setdefault(task["task_id"], {})
+        for day in task["dates"]:
+            per_task[day] = {
+                "status": "scheduled",
+                "run_tag": run_tag,
+                "session": session,
+                "scheduled_at": now.isoformat(),
+                "images": task["images"],
+                "boxes": task["boxes"],
+            }
+    state.setdefault("runs", []).append({
+        "run_tag": run_tag,
+        "session": session,
+        "scheduled_at": now.isoformat(),
+        "tasks": [
+            {
+                "task_id": task["task_id"],
+                "dates": task["dates"],
+                "images": task["images"],
+                "boxes": task["boxes"],
+            }
+            for task in selected
+        ],
+    })
+    write_json(STATE_PATH, state)
+    payload.update({
+        "action": "scheduled",
+        "run_tag": run_tag,
+        "session": session,
+        "built": built,
+    })
+    (run_dir / "schedule_summary.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -1861,7 +1861,7 @@ async function fileInfoForPath(filePath) {
 }
 
 async function buildFallbackYoloModelEntries() {
-  const taskIds = ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'person_behavior_cls', 'license_plate_yolo', 'trash_yolo', 'ground_seg_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
+  const taskIds = ['person_yolo', 'vehicle_yolo', 'phone_yolo', 'trash_yolo', 'stall_yolo', 'pet_yolo', 'person_behavior_cls', 'license_plate_yolo', 'ground_seg_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo'];
   const entries = [];
   for (const taskId of taskIds) {
     if (retiredYoloModelTaskIds.has(taskId)) continue;
@@ -1943,7 +1943,7 @@ async function buildYoloModelRegistryPayload() {
     }
   }
 
-  const preferredOrder = ['person_yolo', 'vehicle_yolo', 'pet_yolo', 'person_behavior_cls', 'license_plate_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo', 'trash_yolo', 'ground_seg_yolo'];
+  const preferredOrder = ['person_yolo', 'vehicle_yolo', 'phone_yolo', 'trash_yolo', 'stall_yolo', 'pet_yolo', 'person_behavior_cls', 'license_plate_yolo', 'fire_smoke_yolo', 'fishing_rod_yolo', 'ground_seg_yolo'];
   const entries = [];
   for (const taskId of preferredOrder) {
     if (retiredYoloModelTaskIds.has(taskId)) continue;

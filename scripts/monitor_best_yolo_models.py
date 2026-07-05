@@ -41,6 +41,13 @@ TARGETS = {
             "/home/sari/reliable_vehicle_yolo_20260704/results/person_yolo_today_alt_gpu5",
             "/home/sari/person_yolo_experiments_20260627",
         ],
+        "trend_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo",
+        ],
+        "trend_summary_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/results/person_yolo",
+        ],
+        "trend_keywords": ["person_yolo", "daily"],
         "keywords": ["person_yolo"],
     },
     "vehicle_yolo": {
@@ -71,6 +78,13 @@ TARGETS = {
             "/home/sari/reliable_vehicle_yolo_20260704/results/vehicle_yolo_today_alt_gpu3",
             "/home/sari/vehicle_yolo_experiments_20260627",
         ],
+        "trend_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/runs/vehicle_yolo",
+        ],
+        "trend_summary_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/results/vehicle_yolo",
+        ],
+        "trend_keywords": ["vehicle_yolo", "daily"],
         "keywords": ["vehicle_yolo"],
     },
     "pet_yolo": {
@@ -84,7 +98,36 @@ TARGETS = {
         "summary_roots": [
             "/home/sari/pet_yolo_experiments_20260627",
         ],
+        "trend_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/runs/pet_yolo",
+            "/home/sari/jgzj_public_yolo_training_20260705/runs",
+        ],
+        "trend_summary_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/results/pet_yolo",
+            "/home/sari/jgzj_public_yolo_training_20260705/reports",
+        ],
+        "trend_keywords": ["pet_public", "pet_yolo", "pet"],
         "keywords": ["pet_public", "pet_yolo"],
+    },
+    "phone_yolo": {
+        "title": "手机识别",
+        "local_weight": str(RUNTIME_ROOT / "weights" / "phone_yolo_best.pt"),
+        "download_file": "phone_yolo_best.pt",
+        "static_only": True,
+        "static_model_family": "yolov8n",
+        "static_metric_source": "current_workbench_weight",
+        "static_metrics": {},
+        "static_note": "手机识别当前作为拆分模型使用；public-data 微调结果只进入每日指标，不自动覆盖线上权重。",
+        "trend_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/runs/phone_yolo",
+            "/home/sari/jgzj_public_yolo_training_20260705/runs",
+            "/home/sari/jgzj_yolo_runs",
+        ],
+        "trend_summary_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/results/phone_yolo",
+            "/home/sari/jgzj_public_yolo_training_20260705/reports",
+        ],
+        "trend_keywords": ["phone_public", "phone_yolo", "phone"],
     },
     "trash_yolo": {
         "title": "小垃圾细类",
@@ -106,7 +149,36 @@ TARGETS = {
         "static_note": "小垃圾细类：bottle / box / paper / bag；2026-06-27 server-proxy GPU2 重训，按独立 test 稳定性选用 yolov8n。",
         "roots": [],
         "summary_roots": [],
+        "trend_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/runs/trash_yolo",
+            "/home/sari/jgzj_public_yolo_training_20260705/runs",
+        ],
+        "trend_summary_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/results/trash_yolo",
+            "/home/sari/jgzj_public_yolo_training_20260705/reports",
+        ],
+        "trend_keywords": ["trash_public", "trash_yolo", "trash"],
         "keywords": [],
+    },
+    "stall_yolo": {
+        "title": "摆摊识别",
+        "local_weight": str(RUNTIME_ROOT / "weights" / "stall_yolo_best.pt"),
+        "download_file": "stall_yolo_best.pt",
+        "static_only": True,
+        "static_model_family": "yolov8n",
+        "static_metric_source": "current_workbench_weight",
+        "static_metrics": {},
+        "static_note": "摆摊识别当前作为拆分模型使用；public-data 微调结果只进入每日指标，不自动覆盖线上权重。",
+        "trend_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/runs/stall_yolo",
+            "/home/sari/jgzj_public_yolo_training_20260705/runs",
+            "/home/sari/jgzj_yolo_runs",
+        ],
+        "trend_summary_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/results/stall_yolo",
+            "/home/sari/jgzj_public_yolo_training_20260705/reports",
+        ],
+        "trend_keywords": ["stall_public", "stall_yolo", "stall"],
     },
     "fire_smoke_yolo": {
         "title": "火源烟雾",
@@ -131,6 +203,13 @@ TARGETS = {
         "summary_roots": [
             "/home/sari/yolo_new_arch_experiments_20260626",
         ],
+        "trend_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/runs/fire_smoke_yolo",
+        ],
+        "trend_summary_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/results/fire_smoke_yolo",
+        ],
+        "trend_keywords": ["fire_smoke_yolo", "daily"],
         "keywords": ["fire", "smoke", "yolo12s"],
     },
     "person_behavior_cls": {
@@ -226,9 +305,52 @@ def model_family_from_text(text):
             return name
     return ""
 
-def summary_candidates(task_id, cfg):
+def candidate_from_summary_json(task_id, cfg, path):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    best_weight = str(data.get("best") or data.get("best_weight") or "")
+    if not best_weight or not Path(best_weight).exists():
+        return None
+    best_row = norm(data.get("best_epoch_metrics") or data.get("last_epoch_metrics") or {})
+    last_row = norm(data.get("last_epoch_metrics") or best_row)
+    metrics = {
+        "val_precision": fnum(best_row.get("metrics/precision(B)") or best_row.get("precision")),
+        "val_recall": fnum(best_row.get("metrics/recall(B)") or best_row.get("recall")),
+        "val_map50": fnum(best_row.get("metrics/mAP50(B)") or best_row.get("map50")),
+        "val_map50_95": fnum(best_row.get("metrics/mAP50-95(B)") or best_row.get("map50_95")),
+    }
+    score_metric = cfg.get("score_metric")
+    score = metrics.get(score_metric) if score_metric else metrics.get("val_map50_95")
+    epoch_value = fnum(last_row.get("epoch"))
+    total_epochs = fnum(data.get("epochs"))
+    mtime = path.stat().st_mtime
+    return {
+        "task_id": task_id,
+        "title": cfg.get("title", task_id),
+        "status": "completed" if data.get("status") == "ok" else (data.get("status") or "unknown"),
+        "model_family": model_family_from_text(data.get("run_dir") or best_weight) or Path(best_weight).stem,
+        "source": "summary_json",
+        "summary_path": str(path),
+        "source_run": str(data.get("run_dir") or ""),
+        "best_weight": best_weight,
+        "metrics": metrics,
+        "score": score if score is not None else -1,
+        "metric_source": cfg.get("metric_source_override") or "val",
+        "train_seconds": fnum(data.get("train_seconds")),
+        "started_at": data.get("started_at", ""),
+        "finished_at": data.get("finished_at", "") or datetime.fromtimestamp(mtime, timezone.utc).isoformat(),
+        "train_progress": {
+            "epoch": int(epoch_value) + 1 if epoch_value is not None else None,
+            "total_epochs": int(total_epochs) if total_epochs is not None else None,
+        },
+        "mtime": mtime,
+    }
+
+def summary_candidates(task_id, cfg, root_key="summary_roots"):
     out = []
-    for root in cfg.get("summary_roots", []):
+    for root in cfg.get(root_key, []):
         base = Path(root)
         if not base.exists():
             continue
@@ -238,6 +360,10 @@ def summary_candidates(task_id, cfg):
             summary_paths.append(direct)
         summary_paths.extend(base.glob("results*/summary.csv"))
         summary_paths.extend(base.glob("*/summary.csv"))
+        json_summary_paths = []
+        json_summary_paths.extend(base.glob("*.summary.json"))
+        json_summary_paths.extend(base.glob("results*/*.summary.json"))
+        json_summary_paths.extend(base.glob("*/*.summary.json"))
         seen = set()
         for path in summary_paths:
             if path in seen:
@@ -287,6 +413,13 @@ def summary_candidates(task_id, cfg):
                     "started_at": row.get("started_at", ""),
                     "finished_at": row.get("finished_at", ""),
                 })
+        for path in json_summary_paths:
+            if path in seen:
+                continue
+            seen.add(path)
+            item = candidate_from_summary_json(task_id, cfg, path)
+            if item:
+                out.append(item)
     return out
 
 def results_candidate(task_id, cfg, run):
@@ -314,8 +447,15 @@ def results_candidate(task_id, cfg, run):
     }
     model = model_family_from_text(run.name)
     epochs_done = len(rows)
+    mtime = rpath.stat().st_mtime
     # Treat old completed baselines as deployable when they reached the usual 80 epochs.
-    status = "completed" if epochs_done >= 80 else "training"
+    # Partial runs are only "training" while results.csv is fresh; stale partial runs are kept for audit but not shown as active.
+    if epochs_done >= 80:
+        status = "completed"
+    elif time.time() - mtime <= 6 * 60 * 60:
+        status = "training"
+    else:
+        status = "stopped"
     score_metric = cfg.get("score_metric")
     score = metrics.get(score_metric) if score_metric else metrics.get("val_map50_95")
     return {
@@ -334,13 +474,13 @@ def results_candidate(task_id, cfg, run):
             "total_epochs": 80,
             "rows": epochs_done,
         },
-        "mtime": rpath.stat().st_mtime,
+        "mtime": mtime,
     }
 
-def run_candidates(task_id, cfg):
+def run_candidates(task_id, cfg, roots_key="roots", keywords_key="keywords"):
     out = []
-    keywords = [str(x).lower() for x in cfg.get("keywords", [])]
-    for root in cfg.get("roots", []):
+    keywords = [str(x).lower() for x in cfg.get(keywords_key, [])]
+    for root in cfg.get(roots_key, []):
         base = Path(root)
         if not base.exists():
             continue
@@ -445,10 +585,20 @@ except Exception:
 
 for task_id, cfg in targets.items():
     items = summary_candidates(task_id, cfg) + run_candidates(task_id, cfg)
-    payload["training_trends"][task_id] = training_trend_for_task(task_id, items)
+    trend_items = items + summary_candidates(task_id, cfg, "trend_summary_roots") + run_candidates(task_id, cfg, "trend_roots", "trend_keywords")
+    payload["training_trends"][task_id] = training_trend_for_task(task_id, trend_items)
     completed = [item for item in items if item.get("status") == "completed" and item.get("score", -1) is not None and item.get("score", -1) >= 0]
     completed.sort(key=lambda item: (item.get("score") or -1, item.get("metrics", {}).get("test_map50") or item.get("metrics", {}).get("val_map50") or -1), reverse=True)
-    running = [item for item in items if item.get("status") != "completed"]
+    completed_keys = {
+        (item.get("source_run") or "", item.get("best_weight") or "")
+        for item in trend_items
+        if item.get("status") == "completed"
+    }
+    running = [
+        item for item in trend_items
+        if item.get("status") != "completed"
+        and (item.get("source_run") or "", item.get("best_weight") or "") not in completed_keys
+    ]
     running.sort(key=lambda item: item.get("mtime") or 0, reverse=True)
     payload["candidates"][task_id] = completed[:5]
     payload["running"][task_id] = running[:3]
@@ -587,18 +737,20 @@ def fallback_entry(task_id, cfg, running=None, note="等待已完成训练结果
     }
 
 
-def static_entry(task_id, cfg):
+def static_entry(task_id, cfg, running=None):
     sha, size = ensure_download_from_local(cfg["local_weight"], cfg["download_file"])
+    running_metrics = running.get("metrics") if running else None
+    running_progress = running.get("train_progress") if running else None
     return {
         "task_id": task_id,
         "title": cfg["title"],
-        "status": "deployed" if sha else "pending",
-        "model_family": cfg.get("static_model_family") or Path(cfg["local_weight"]).stem,
-        "metric_source": cfg.get("static_metric_source") or "current_workbench_weight",
-        "metrics": cfg.get("static_metrics") or {},
-        "train_progress": None,
-        "source_run": "",
-        "best_weight": "",
+        "status": running.get("status") if running else ("deployed" if sha else "pending"),
+        "model_family": (running.get("model_family") if running else "") or cfg.get("static_model_family") or Path(cfg["local_weight"]).stem,
+        "metric_source": (running.get("metric_source") if running else "") or cfg.get("static_metric_source") or "current_workbench_weight",
+        "metrics": running_metrics or cfg.get("static_metrics") or {},
+        "train_progress": running_progress,
+        "source_run": running.get("source_run") if running else "",
+        "best_weight": running.get("best_weight") if running else "",
         "local_weight": cfg["local_weight"],
         "download_file": cfg["download_file"] if sha else "",
         "weight_sha256": sha,
@@ -620,6 +772,8 @@ def write_training_trend_static(payload):
         "schema": "jgzj_yolo_training_trends.v1",
         "updated_at": payload.get("updated_at") or utc_now(),
         "training_trends": payload.get("training_trends") or {},
+        "monitor_status": payload.get("monitor_status") or {},
+        "entries": payload.get("entries") or [],
     }
     TREND_STATIC_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = TREND_STATIC_PATH.with_suffix(".json.tmp")
@@ -631,19 +785,20 @@ def monitor_once():
     collected = ssh_python_collect()
     entries = []
     for task_id, cfg in TARGETS.items():
+        running = (collected.get("running", {}).get(task_id) or [None])[0]
+        active_running = running if running and running.get("status") == "training" else None
         if cfg.get("static_only"):
-            entries.append(static_entry(task_id, cfg))
+            entries.append(static_entry(task_id, cfg, active_running))
             continue
         candidates = collected.get("candidates", {}).get(task_id) or []
-        running = (collected.get("running", {}).get(task_id) or [None])[0]
         if candidates:
             try:
-                entries.append(deployable_entry(task_id, cfg, candidates[0], running))
+                entries.append(deployable_entry(task_id, cfg, candidates[0], active_running))
                 continue
             except Exception as exc:
-                entries.append(fallback_entry(task_id, cfg, running, note=f"权重同步失败：{exc}"))
+                entries.append(fallback_entry(task_id, cfg, active_running, note=f"权重同步失败：{exc}"))
                 continue
-        entries.append(fallback_entry(task_id, cfg, running))
+        entries.append(fallback_entry(task_id, cfg, active_running))
 
     training_trends = collected.get("training_trends") or {}
     for entry in entries:
