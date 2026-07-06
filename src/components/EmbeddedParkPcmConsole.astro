@@ -64,6 +64,9 @@
     <div class="park-pcm-vehicle-detail" data-park-pcm-vehicle-detail>
       <p class="park-pcm-empty">选择车辆后显示人流统计。</p>
     </div>
+    <p class="park-pcm-privacy-note">
+      人流画像为视觉模型基于巡逻画面的自动预测结果，仅供园区运营参考，不代表真实客流或个体事实；页面展示图片已做人脸脱敏处理，不做人脸身份识别。
+    </p>
     <div class="park-pcm-track-panel">
       <div class="park-pcm-track-list" data-park-pcm-track-samples>
         <p class="park-pcm-empty">等待人流记录。</p>
@@ -1057,6 +1060,16 @@
     margin: 0;
     color: #9fb0c7;
     line-height: 1.55;
+  }
+
+  .park-pcm-privacy-note {
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(96, 165, 250, 0.22);
+    background: rgba(15, 23, 42, 0.44);
+    color: #b8c7da;
+    line-height: 1.6;
+    font-size: 0.84rem;
   }
 
   .park-pcm-crowd-demo {

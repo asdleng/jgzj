@@ -1142,6 +1142,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   const snapshotPath = path.join(runtimeRoot, 'last-snapshot.json');
   const reportStatePath = path.join(runtimeRoot, 'report-state.json');
   const crowdFramesRoot = path.join(runtimeRoot, 'crowd-frames');
+  const crowdRedactedFramesRoot = path.join(runtimeRoot, 'crowd-frames-redacted');
   const crowdUploadsRoot = path.join(runtimeRoot, 'patrol-flow-uploads');
   const crowdIndexLogPath = path.join(runtimeRoot, 'crowd-samples.jsonl');
   const crowdStatePath = path.join(runtimeRoot, 'crowd-capture-state.json');
@@ -1360,6 +1361,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     await Promise.all([
       ensureRuntimeDir(),
       fsp.mkdir(crowdFramesRoot, { recursive: true }),
+      fsp.mkdir(crowdRedactedFramesRoot, { recursive: true }),
       fsp.mkdir(crowdUploadsRoot, { recursive: true })
     ]);
   }
@@ -1475,8 +1477,8 @@ module.exports = function registerParkPcmRoutes(app, options) {
     };
   }
 
-  function crowdFrameUrl(relativePath) {
-    return `/api/park-pcm/crowd/files/${relativePath
+  function crowdRedactedFrameUrl(relativePath) {
+    return `/api/park-pcm/crowd/redacted-files/${relativePath
       .split('/')
       .map((segment) => encodeURIComponent(segment))
       .join('/')}`;
@@ -1830,7 +1832,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     await ensureCrowdRuntimeDirs();
     const startedAt = Date.now();
     const cutoffMs = Date.now() - crowdStorageRetentionDays * 24 * 60 * 60 * 1000;
-    const roots = [crowdFramesRoot, crowdUploadsRoot];
+    const roots = [crowdFramesRoot, crowdRedactedFramesRoot, crowdUploadsRoot];
     let files = [];
     for (const rootPath of roots) {
       files = files.concat(await walkFiles(rootPath, runtimeRoot));
@@ -2587,7 +2589,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
       image_size_bytes: stat.size,
       image_sha256: crypto.createHash('sha256').update(await fsp.readFile(destImagePath)).digest('hex'),
       image_path: imageRelPath,
-      image_url: crowdFrameUrl(imageRelPath),
+      image_url: crowdRedactedFrameUrl(imageRelPath),
       source_image_path: item.image_path || null,
       position,
       route,
@@ -3038,7 +3040,20 @@ module.exports = function registerParkPcmRoutes(app, options) {
   function mergeCrowdAnalysisIntoSample(sample, analysisState) {
     if (!sample || sample.skipped) return sample;
     const sampleAnalysis = analysisState?.samples?.[sample.sample_id];
-    if (!sampleAnalysis) return sample;
+    const mapFrameForClient = (frame) => {
+      if (!frame || typeof frame !== 'object') return frame;
+      const imagePath = String(frame.image_path || '').trim();
+      return {
+        ...frame,
+        image_url: imagePath ? crowdRedactedFrameUrl(imagePath) : frame.image_url
+      };
+    };
+    if (!sampleAnalysis) {
+      return {
+        ...sample,
+        frames: Array.isArray(sample.frames) ? sample.frames.map(mapFrameForClient) : sample.frames
+      };
+    }
     const framesByCaptureId = sampleAnalysis.frames && typeof sampleAnalysis.frames === 'object'
       ? sampleAnalysis.frames
       : {};
@@ -3049,7 +3064,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
         ...sampleAnalysis.aggregate
       }),
       frames: Array.isArray(sample.frames)
-        ? sample.frames.map((frame) => ({
+        ? sample.frames.map((frame) => mapFrameForClient({
             ...frame,
             analysis: preferServerReviewedCrowdAnalysis({
               ...(frame.analysis || {}),
@@ -3721,7 +3736,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
       image_width: image.width,
       image_height: image.height,
       image_path: imageRelPath,
-      image_url: crowdFrameUrl(imageRelPath),
+      image_url: crowdRedactedFrameUrl(imageRelPath),
       position: context.position,
       patrol_state: context.patrol_state || null,
       capture_policy: context.policy,
@@ -4106,9 +4121,12 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return Number.isFinite(num) && num >= 0 ? Math.round(num) : null;
   }
 
-  const CROWD_ANALYSIS_FEATURE_SCHEMA = 'park_crowd_anonymous_people_features.v2';
+  const CROWD_ANALYSIS_FEATURE_SCHEMA = 'park_crowd_anonymous_people_features.v3';
   const CROWD_FEATURE_MAP_KEYS = {
     age_groups: ['child', 'teenager', 'adult', 'elderly', 'unknown'],
+    age_stage_groups: ['junior', 'youth', 'middle', 'senior', 'unknown'],
+    gender_groups: ['male', 'female', 'unknown'],
+    person_attributes: ['visitor', 'business', 'couple', 'family', 'staff', 'security', 'cleaner', 'delivery', 'maintenance', 'vendor', 'student', 'unknown'],
     mobility_types: ['wheelchair', 'cane_or_walker', 'stroller', 'assisted_walking', 'slow_moving', 'large_baggage', 'unknown'],
     role_types: ['visitor', 'staff', 'security', 'cleaner', 'delivery', 'maintenance', 'vendor', 'student', 'volunteer', 'unknown'],
     activity_types: ['walking', 'standing', 'sitting_or_resting', 'queueing', 'gathering', 'running', 'cycling', 'scooter_or_ebike', 'taking_photo', 'shopping_or_pickup', 'crossing_road', 'near_water', 'unknown'],
@@ -4236,6 +4254,97 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return 'image/jpeg';
   }
 
+  function resolveCrowdFramePath(relativePath, rootPath) {
+    const cleanRelativePath = String(relativePath || '').replace(/^\/+/, '');
+    const targetPath = path.resolve(rootPath, cleanRelativePath);
+    const resolvedRootPath = path.resolve(rootPath);
+    if (!targetPath.startsWith(`${resolvedRootPath}${path.sep}`)) {
+      const error = new Error('invalid_crowd_frame_path');
+      error.status = 400;
+      throw error;
+    }
+    return {
+      clean_relative_path: cleanRelativePath,
+      target_path: targetPath,
+      root_path: resolvedRootPath
+    };
+  }
+
+  async function ensureRedactedCrowdFrame(relativePath) {
+    await ensureCrowdRuntimeDirs();
+    const source = resolveCrowdFramePath(relativePath, crowdFramesRoot);
+    const output = resolveCrowdFramePath(source.clean_relative_path, crowdRedactedFramesRoot);
+    const [sourceStat, outputStat] = await Promise.all([
+      fsp.stat(source.target_path),
+      fsp.stat(output.target_path).catch(() => null)
+    ]);
+    if (outputStat && outputStat.mtimeMs >= sourceStat.mtimeMs && outputStat.size > 0) {
+      return output.target_path;
+    }
+    await fsp.mkdir(path.dirname(output.target_path), { recursive: true });
+    const outputExt = path.extname(output.target_path) || '.jpg';
+    const tmpPath = `${output.target_path}.${process.pid}.${Date.now()}.tmp${outputExt}`;
+    const script = String.raw`
+import cv2, os, sys
+src, dst = sys.argv[1], sys.argv[2]
+img = cv2.imread(src)
+if img is None:
+    raise RuntimeError("image_read_failed")
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+cascade_dir = getattr(cv2.data, "haarcascades", "")
+cascade_paths = [
+    os.path.join(cascade_dir, "haarcascade_frontalface_default.xml"),
+    os.path.join(cascade_dir, "haarcascade_frontalface_alt2.xml"),
+    os.path.join(cascade_dir, "haarcascade_profileface.xml"),
+]
+faces = []
+for cascade_path in cascade_paths:
+    if not cascade_path or not os.path.exists(cascade_path):
+        continue
+    detector = cv2.CascadeClassifier(cascade_path)
+    if detector.empty():
+        continue
+    found = detector.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=4, minSize=(18, 18))
+    for (x, y, w, h) in found:
+        faces.append((int(x), int(y), int(w), int(h)))
+if faces:
+    merged = []
+    for (x, y, w, h) in faces:
+        pad_x = max(4, int(w * 0.22))
+        pad_y = max(4, int(h * 0.26))
+        x1 = max(0, x - pad_x)
+        y1 = max(0, y - pad_y)
+        x2 = min(img.shape[1], x + w + pad_x)
+        y2 = min(img.shape[0], y + h + pad_y)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        roi = img[y1:y2, x1:x2]
+        block_w = max(1, min(18, roi.shape[1] // 6 or 1))
+        block_h = max(1, min(18, roi.shape[0] // 6 or 1))
+        small = cv2.resize(roi, (block_w, block_h), interpolation=cv2.INTER_LINEAR)
+        mosaic = cv2.resize(small, (roi.shape[1], roi.shape[0]), interpolation=cv2.INTER_NEAREST)
+        img[y1:y2, x1:x2] = mosaic
+        merged.append((x1, y1, x2, y2))
+ok = cv2.imwrite(dst, img, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
+if not ok:
+    raise RuntimeError("image_write_failed")
+print(len(faces))
+`;
+    try {
+      await execFileAsync('python3', ['-c', script, source.target_path, tmpPath], {
+        timeout: 15000,
+        maxBuffer: 64 * 1024
+      });
+      await fsp.rename(tmpPath, output.target_path);
+      return output.target_path;
+    } catch (error) {
+      await fsp.rm(tmpPath, { force: true }).catch(() => {});
+      const wrapped = new Error(error.message || 'crowd_frame_redaction_failed');
+      wrapped.status = 500;
+      throw wrapped;
+    }
+  }
+
   async function analyzeCrowdFrame(frame) {
     const imageRelPath = String(frame?.image_path || '').trim();
     const imageAbsPath = path.resolve(crowdFramesRoot, imageRelPath);
@@ -4247,13 +4356,17 @@ module.exports = function registerParkPcmRoutes(app, options) {
     const imageBase64 = imageBuffer.toString('base64');
     const prompt =
       '你在做园区巡逻车的人流画像分析。只分析这张单路相机图片中可见的真实人体和随身/伴随物，不数雕塑、海报、倒影。' +
-      '必须匿名聚合，不做人脸识别，不识别具体身份，不推断民族、宗教、疾病，不输出性别。' +
-      '只输出紧凑 JSON，不要 Markdown，不要解释。所有分类键必须使用下面给定英文键；看不清就归 unknown 或低置信度。' +
-      '年龄阶段只作为运营关照线索：只有儿童或老人特征在图中清晰可见时才填 child/elderly；不得仅凭儿童乐园、亲子场景、身高远近、服装、撑伞或模糊小人猜年龄。' +
-      'adult/teenager 也只能在近距离且体态清晰时填写；否则 age_groups 统一计入 unknown。各分类合计不得超过 people_count。' +
+      '必须匿名聚合，不做人脸识别，不识别具体身份，不推断民族、宗教、疾病、收入、政治观点等敏感身份。' +
+      '性别只做画面中可见外观的粗略聚合估计，不代表真实性别身份；看不清必须计入 unknown。' +
+      '客群阶段只做运营分组估计，不输出具体年龄，不判断单个人的精确年龄；远处、遮挡、模糊或不确定时计入 unknown。' +
+      '只输出紧凑 JSON，不要 Markdown，不要解释。所有分类键必须使用下面给定英文键；看不清就归 unknown 或低置信度。各分类合计不得超过 people_count。' +
+      'age_stage_groups 四档含义仅供你内部判断：junior=7-17，youth=18-44，middle=45-59，senior=60+；输出只给英文键。' +
+      'person_attributes 按画面上下文和同行关系判断：普通游客、商务人士、情侣、家庭、园区工作人员、安保、保洁、配送、维修施工、商户摊位、学生；不确定计入 unknown。' +
       '格式：{"people_count":0,"confidence":"low|medium|high","age_groups":{"child":0,"teenager":0,"adult":0,"elderly":0,"unknown":0},' +
+      '"age_stage_groups":{"junior":0,"youth":0,"middle":0,"senior":0,"unknown":0},' +
+      '"gender_groups":{"male":0,"female":0,"unknown":0},' +
+      '"person_attributes":{"visitor":0,"business":0,"couple":0,"family":0,"staff":0,"security":0,"cleaner":0,"delivery":0,"maintenance":0,"vendor":0,"student":0,"unknown":0},' +
       '"mobility_types":{"wheelchair":0,"cane_or_walker":0,"stroller":0,"assisted_walking":0,"slow_moving":0,"large_baggage":0,"unknown":0},' +
-      '"role_types":{"visitor":0,"staff":0,"security":0,"cleaner":0,"delivery":0,"maintenance":0,"vendor":0,"student":0,"volunteer":0,"unknown":0},' +
       '"activity_types":{"walking":0,"standing":0,"sitting_or_resting":0,"queueing":0,"gathering":0,"running":0,"cycling":0,"scooter_or_ebike":0,"taking_photo":0,"shopping_or_pickup":0,"crossing_road":0,"near_water":0,"unknown":0},' +
       '"group_types":{"single":0,"pair":0,"family_parent_child":0,"elderly_group":0,"student_group":0,"tour_group":0,"work_crew":0,"queue":0,"gathering":0},' +
       '"risk_hints":[{"type":"child_near_road|child_near_water|elderly_needs_care|mobility_barrier|crowd_gathering|queue_congestion|mixed_traffic|night_stay|construction_near_people","confidence":"low|medium|high","note":"中文短句"}],"scene_tags":["中文短标签"],"note":"中文简短说明"}。';
@@ -5303,23 +5416,43 @@ module.exports = function registerParkPcmRoutes(app, options) {
   });
 
   app.get('/api/park-pcm/crowd/files/*', requirePermission('vehicle:read'), async (req, res) => {
-    const relativePath = String(req.params?.[0] || '');
-    const targetPath = path.resolve(crowdFramesRoot, relativePath);
-    const rootPath = path.resolve(crowdFramesRoot);
-    if (!targetPath.startsWith(`${rootPath}${path.sep}`)) {
-      return res.status(400).json({
+    try {
+      const targetPath = await ensureRedactedCrowdFrame(req.params?.[0]);
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      return res.sendFile(targetPath, (error) => {
+        if (error && !res.headersSent) {
+          res.status(error.status || 404).json({
+            ok: false,
+            error: 'crowd_redacted_frame_not_found'
+          });
+        }
+      });
+    } catch (error) {
+      return res.status(error.status || 500).json({
         ok: false,
-        error: 'invalid_crowd_frame_path'
+        error: error.message || 'crowd_frame_redaction_failed'
       });
     }
-    return res.sendFile(targetPath, (error) => {
-      if (error && !res.headersSent) {
-        res.status(error.status || 404).json({
-          ok: false,
-          error: 'crowd_frame_not_found'
-        });
-      }
-    });
+  });
+
+  app.get('/api/park-pcm/crowd/redacted-files/*', requirePermission('vehicle:read'), async (req, res) => {
+    try {
+      const targetPath = await ensureRedactedCrowdFrame(req.params?.[0]);
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      return res.sendFile(targetPath, (error) => {
+        if (error && !res.headersSent) {
+          res.status(error.status || 404).json({
+            ok: false,
+            error: 'crowd_redacted_frame_not_found'
+          });
+        }
+      });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'crowd_frame_redaction_failed'
+      });
+    }
   });
 
   app.post('/api/park-pcm/report/send', requirePermission('vehicle:read'), async (req, res) => {

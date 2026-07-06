@@ -249,6 +249,32 @@
       elderly: "疑似老人",
       unknown: "年龄不明"
     },
+    age_stage_groups: {
+      junior: "青少年",
+      youth: "青年",
+      middle: "中年",
+      senior: "长者",
+      unknown: "未判断"
+    },
+    gender_groups: {
+      male: "男",
+      female: "女",
+      unknown: "未判断"
+    },
+    person_attributes: {
+      visitor: "普通游客",
+      business: "商务人士",
+      couple: "情侣",
+      family: "家庭",
+      staff: "园区工作人员",
+      security: "安保人员",
+      cleaner: "保洁人员",
+      delivery: "配送人员",
+      maintenance: "维修施工",
+      vendor: "商户摊位",
+      student: "学生群体",
+      unknown: "未判断"
+    },
     mobility_types: {
       wheelchair: "轮椅",
       cane_or_walker: "拐杖/助行器",
@@ -310,8 +336,8 @@
   };
   const PEOPLE_CHART_COLORS = ["#22c55e", "#38bdf8", "#f59e0b", "#f43f5e", "#a78bfa", "#14b8a6", "#eab308", "#fb7185"];
   const ATTENTION_SIGNAL_LABELS = {
-    child: "疑似儿童",
-    elderly: "疑似老人",
+    child: "低龄关照",
+    elderly: "长者关照",
     wheelchair: "轮椅",
     cane_or_walker: "拐杖/助行器",
     stroller: "婴儿车",
@@ -322,6 +348,64 @@
   function featureCountMap(sample, key) {
     const analysis = sample && sample.analysis && typeof sample.analysis === "object" ? sample.analysis : {};
     return analysis[key] && typeof analysis[key] === "object" ? analysis[key] : {};
+  }
+
+  function addCount(target, key, value) {
+    const normalizedKey = String(key || "").trim();
+    const count = Number(value);
+    if (!normalizedKey || !Number.isFinite(count) || count <= 0) return;
+    target[normalizedKey] = (target[normalizedKey] || 0) + count;
+  }
+
+  function derivedAgeStageMap(sample) {
+    const direct = featureCountMap(sample, "age_stage_groups");
+    if (Object.keys(direct).length) return direct;
+    const legacy = featureCountMap(sample, "age_groups");
+    const result = {};
+    addCount(result, "junior", (legacy.child || 0) + (legacy.teenager || 0));
+    addCount(result, "youth", legacy.adult);
+    addCount(result, "senior", legacy.elderly);
+    addCount(result, "unknown", legacy.unknown);
+    return result;
+  }
+
+  function derivedGenderMap(sample) {
+    const direct = featureCountMap(sample, "gender_groups");
+    if (Object.keys(direct).length) return direct;
+    const mix = featureCountMap(sample, "gender_mix");
+    const result = {};
+    addCount(result, "male", mix.male || mix.man || mix.men);
+    addCount(result, "female", mix.female || mix.woman || mix.women);
+    addCount(result, "unknown", mix.unknown);
+    return result;
+  }
+
+  function derivedPersonAttributeMap(sample) {
+    const direct = featureCountMap(sample, "person_attributes");
+    if (Object.keys(direct).length) return direct;
+    const roles = featureCountMap(sample, "role_types");
+    const groups = featureCountMap(sample, "group_types");
+    const result = {};
+    addCount(result, "visitor", roles.visitor);
+    addCount(result, "staff", roles.staff);
+    addCount(result, "security", roles.security);
+    addCount(result, "cleaner", roles.cleaner);
+    addCount(result, "delivery", roles.delivery);
+    addCount(result, "maintenance", roles.maintenance);
+    addCount(result, "vendor", roles.vendor);
+    addCount(result, "student", (roles.student || 0) + (groups.student_group || 0));
+    addCount(result, "couple", groups.pair);
+    addCount(result, "family", groups.family_parent_child);
+    addCount(result, "unknown", roles.unknown);
+    return result;
+  }
+
+  function aggregateDerivedFeatureMap(samples, getter) {
+    const totals = {};
+    (Array.isArray(samples) ? samples : []).forEach((sample) => {
+      Object.entries(getter(sample)).forEach(([key, value]) => addCount(totals, key, value));
+    });
+    return totals;
   }
 
   function formatFeatureMap(map, labels, options) {
@@ -367,9 +451,7 @@
     const totals = {};
     (Array.isArray(samples) ? samples : []).forEach((sample) => {
       Object.entries(featureCountMap(sample, key)).forEach(([featureKey, value]) => {
-        const count = Number(value);
-        if (!Number.isFinite(count) || count <= 0) return;
-        totals[featureKey] = (totals[featureKey] || 0) + count;
+        addCount(totals, featureKey, value);
       });
     });
     return totals;
@@ -399,9 +481,10 @@
   function attentionSignalMap(sample) {
     const result = {};
     const ageMap = featureCountMap(sample, "age_groups");
+    const stageMap = derivedAgeStageMap(sample);
     const mobilityMap = featureCountMap(sample, "mobility_types");
-    addPositiveCount(result, "child", ageMap.child);
-    addPositiveCount(result, "elderly", ageMap.elderly);
+    addPositiveCount(result, "child", (ageMap.child || 0) + (stageMap.junior || 0));
+    addPositiveCount(result, "elderly", (ageMap.elderly || 0) + (stageMap.senior || 0));
     ["wheelchair", "cane_or_walker", "stroller", "assisted_walking", "slow_moving"].forEach((key) => {
       addPositiveCount(result, key, mobilityMap[key]);
     });
@@ -781,19 +864,33 @@
     chartGrid.className = "park-pcm-chart-grid";
     chartGrid.appendChild(createPeopleTrendChart(rows));
     chartGrid.appendChild(
+      createPeopleDonutChart("客群阶段", "阶段", aggregateDerivedFeatureMap(rows, derivedAgeStageMap), PEOPLE_FEATURE_LABELS.age_stage_groups, {
+        limit: 5,
+        includeUnknown: true,
+        emptyText: "暂未形成客群阶段画像。"
+      })
+    );
+    chartGrid.appendChild(
+      createPeopleDonutChart("性别结构", "性别", aggregateDerivedFeatureMap(rows, derivedGenderMap), PEOPLE_FEATURE_LABELS.gender_groups, {
+        limit: 3,
+        includeUnknown: true,
+        emptyText: "暂未形成性别结构画像。"
+      })
+    );
+    chartGrid.appendChild(
+      createPeopleDonutChart("人员属性", "属性", aggregateDerivedFeatureMap(rows, derivedPersonAttributeMap), PEOPLE_FEATURE_LABELS.person_attributes, {
+        limit: 6,
+        includeUnknown: false,
+        emptyText: "暂未识别出游客、商务、家庭或工作人员等属性。"
+      })
+    );
+    chartGrid.appendChild(
       createPeopleDonutChart("关照线索", "线索", aggregateAttentionSignals(rows), ATTENTION_SIGNAL_LABELS, {
         limit: 5,
         includeUnknown: false,
         unitLabel: "项线索",
         emptyStateLabel: "暂无线索",
         emptyText: "暂无儿童、老人或通行辅助等明显线索。"
-      })
-    );
-    chartGrid.appendChild(
-      createPeopleDonutChart("角色类型", "角色", aggregateFeatureMap(rows, "role_types"), PEOPLE_FEATURE_LABELS.role_types, {
-        limit: 5,
-        includeUnknown: false,
-        emptyText: "暂未识别出工作人员、访客等角色。"
       })
     );
     chartGrid.appendChild(
@@ -816,9 +913,11 @@
 
   function sampleFeatureSummary(sample) {
     const parts = [
+      formatFeatureMap(derivedPersonAttributeMap(sample), PEOPLE_FEATURE_LABELS.person_attributes, { limit: 2 }),
+      formatFeatureMap(derivedAgeStageMap(sample), PEOPLE_FEATURE_LABELS.age_stage_groups, { limit: 2, includeUnknown: false }),
+      formatFeatureMap(derivedGenderMap(sample), PEOPLE_FEATURE_LABELS.gender_groups, { limit: 2, includeUnknown: false }),
       formatFeatureMap(attentionSignalMap(sample), ATTENTION_SIGNAL_LABELS, { limit: 3 }),
       formatFeatureMap(featureCountMap(sample, "mobility_types"), PEOPLE_FEATURE_LABELS.mobility_types, { limit: 2 }),
-      formatFeatureMap(featureCountMap(sample, "role_types"), PEOPLE_FEATURE_LABELS.role_types, { limit: 2 }),
       formatFeatureMap(featureCountMap(sample, "activity_types"), PEOPLE_FEATURE_LABELS.activity_types, { limit: 3 }),
       formatRiskHints(sample && sample.analysis && sample.analysis.risk_hints)
     ].filter(Boolean);
@@ -948,7 +1047,7 @@
     if (!imageUrl) return;
     ensureImagePreview();
     const peopleText = frame.analysis && frame.analysis.people_count != null ? `${frame.analysis.people_count} 人` : "人数待识别";
-    imagePreview.image.src = imageUrl;
+    imagePreview.image.src = redactedCrowdImageUrl(imageUrl);
     imagePreview.image.alt = `${sample && sample.vehicle_id || ""} ${frame.camera_id || "camera"}`;
     imagePreview.title.textContent = `${sample && sample.vehicle_id || "-"} · ${frame.camera_id || "camera"}`;
     imagePreview.meta.textContent = `${formatTime(sample && sample.collected_at)} · ${formatBytes(frame.image_size_bytes)} · ${peopleText}`;
@@ -1013,6 +1112,14 @@
     cell.appendChild(textNode("span", "", label));
     cell.appendChild(textNode("strong", "", value == null || value === "" ? "-" : value));
     return cell;
+  }
+
+  function redactedCrowdImageUrl(imageUrl) {
+    const raw = String(imageUrl || "").trim();
+    const marker = "/api/park-pcm/crowd/files/";
+    const index = raw.indexOf(marker);
+    if (index < 0) return raw;
+    return `${raw.slice(0, index)}/api/park-pcm/crowd/redacted-files/${raw.slice(index + marker.length)}`;
   }
 
   function selectedVehicleCrowdSamples() {
@@ -1214,7 +1321,7 @@
       img.loading = "lazy";
       img.decoding = "async";
       img.alt = `${sample.vehicle_id || ""} ${frame.camera_id || "camera"}`;
-      img.src = frame.image_url || "";
+      img.src = redactedCrowdImageUrl(frame.image_url || "");
       const previewBtn = document.createElement("button");
       previewBtn.type = "button";
       previewBtn.className = "park-pcm-frame-preview-button";
@@ -1329,7 +1436,9 @@
     const position = latest.position || {};
     const attentionSummary = formatFeatureMap(aggregateAttentionSignals(rows), ATTENTION_SIGNAL_LABELS, { limit: 4 });
     const mobilitySummary = formatFeatureMap(aggregateFeatureMap(rows, "mobility_types"), PEOPLE_FEATURE_LABELS.mobility_types, { limit: 3 });
-    const roleSummary = formatFeatureMap(aggregateFeatureMap(rows, "role_types"), PEOPLE_FEATURE_LABELS.role_types, { limit: 3 });
+    const ageStageSummary = formatFeatureMap(aggregateDerivedFeatureMap(rows, derivedAgeStageMap), PEOPLE_FEATURE_LABELS.age_stage_groups, { limit: 3 });
+    const genderSummary = formatFeatureMap(aggregateDerivedFeatureMap(rows, derivedGenderMap), PEOPLE_FEATURE_LABELS.gender_groups, { limit: 2 });
+    const attributeSummary = formatFeatureMap(aggregateDerivedFeatureMap(rows, derivedPersonAttributeMap), PEOPLE_FEATURE_LABELS.person_attributes, { limit: 4 });
     const activitySummary = formatFeatureMap(aggregateFeatureMap(rows, "activity_types"), PEOPLE_FEATURE_LABELS.activity_types, { limit: 4 });
     const riskSummary = formatRiskHints(aggregateRiskHints(rows));
     const grid = document.createElement("div");
@@ -1338,8 +1447,11 @@
     grid.appendChild(detailCell("四路图片", `${frames} 张 · ${formatBytes(bytes)}`));
     grid.appendChild(detailCell("已识别人数", counts.length ? `${totalPeople} 人 · ${counts.length}/${rows.length} 条` : "等待识别"));
     grid.appendChild(detailCell("热力记录", positiveCounts.length ? `${positiveCounts.length} 条 · 峰值 ${maxPeople} 人` : "暂无人群热区"));
+    grid.appendChild(detailCell("客群阶段", ageStageSummary || "等待画像"));
+    grid.appendChild(detailCell("性别结构", genderSummary || "等待画像"));
+    grid.appendChild(detailCell("人员属性", attributeSummary || "等待画像"));
     grid.appendChild(detailCell("关照线索", attentionSummary || "暂无明显线索"));
-    grid.appendChild(detailCell("角色/通行", [roleSummary, mobilitySummary].filter(Boolean).join(" · ") || "等待画像"));
+    grid.appendChild(detailCell("通行辅助", mobilitySummary || "等待画像"));
     grid.appendChild(detailCell("行为/风险", [activitySummary, riskSummary].filter(Boolean).join(" · ") || "等待画像"));
     grid.appendChild(detailCell("最近采集", `${latest.vehicle_id || "-"} · ${formatTime(latest.collected_at)}`));
     grid.appendChild(detailCell("上传时间段", `${formatTime(oldest.collected_at)} - ${formatTime(latest.collected_at)}`));
@@ -1350,7 +1462,7 @@
       textNode(
         "p",
         "park-pcm-detail-note",
-        "热力图按车辆定位、人群识别结果和采样位置聚合；关照线索只用于运营提醒，不做精确年龄、人脸身份或个人属性识别。"
+        "本页数据由车端巡逻图片和视觉模型自动生成，仅用于园区运营态势参考，不代表真实客流或个体事实。页面展示图片已进行人脸脱敏处理；系统不做人脸身份识别，不保存或展示可用于识别个人身份的信息。"
       )
     );
   }
