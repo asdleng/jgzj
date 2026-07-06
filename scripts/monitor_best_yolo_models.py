@@ -305,10 +305,21 @@ def model_family_from_text(text):
             return name
     return ""
 
+def summary_task_matches(task_id, declared_task):
+    declared = str(declared_task or "").strip().lower()
+    if not declared:
+        return True
+    accepted = {task_id.lower()}
+    if task_id.endswith("_yolo"):
+        accepted.add(task_id[:-5].lower())
+    return declared in accepted
+
 def candidate_from_summary_json(task_id, cfg, path):
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
+        return None
+    if not summary_task_matches(task_id, data.get("task_id") or data.get("task")):
         return None
     best_weight = str(data.get("best") or data.get("best_weight") or "")
     if not best_weight or not Path(best_weight).exists():
@@ -375,6 +386,8 @@ def summary_candidates(task_id, cfg, root_key="summary_roots"):
                 continue
             for row in rows:
                 row = norm(row)
+                if not summary_task_matches(task_id, row.get("task_id") or row.get("task")):
+                    continue
                 status = row.get("status", "")
                 best_weight = row.get("best_weight", "")
                 if not best_weight or not Path(best_weight).exists():
