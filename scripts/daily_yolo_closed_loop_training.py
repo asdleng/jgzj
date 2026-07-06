@@ -5,6 +5,7 @@ import argparse
 import collections
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -291,6 +292,16 @@ def attach_replay_dates(selected: list[dict], day_stats: dict, replay_max_days: 
         task["train_dates"] = sorted(set(task["target_dates"]) | set(replay_dates))
 
 
+def training_session_blocks_gpu(session_name: str) -> bool:
+    lname = session_name.lower()
+    if "yolo" not in lname and "bevplace" not in lname:
+        return False
+    gpu_tags = re.findall(r"gpu(\d+)", lname)
+    if gpu_tags:
+        return str(A100_GPU) in gpu_tags
+    return True
+
+
 def a100_gpu_status(max_mem_mib: int, max_util: int) -> dict:
     smi_cmd = (
         f"nvidia-smi --id={A100_GPU} "
@@ -301,17 +312,20 @@ def a100_gpu_status(max_mem_mib: int, max_util: int) -> dict:
     parts = [int(x.strip()) for x in smi.split(",")[:3]]
     tmux = a100("tmux ls 2>/dev/null || true", timeout=30).stdout.splitlines()
     active = []
+    ignored = []
     for line in tmux:
         name = line.split(":", 1)[0].strip()
-        lname = name.lower()
-        if "yolo" in lname or "bevplace" in lname:
+        if training_session_blocks_gpu(name):
             active.append(name)
+        elif "yolo" in name.lower() or "bevplace" in name.lower():
+            ignored.append(name)
     return {
         "gpu": A100_GPU,
         "memory_used_mib": parts[0],
         "memory_total_mib": parts[1],
         "util_percent": parts[2],
         "active_sessions": active,
+        "ignored_other_gpu_sessions": ignored,
         "idle": parts[0] <= max_mem_mib and parts[2] <= max_util and not active,
     }
 

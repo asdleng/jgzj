@@ -1373,6 +1373,39 @@ module.exports = function registerParkPcmRoutes(app, options) {
     await fsp.rename(tmpPath, targetPath);
   }
 
+  async function withJsonFileLock(targetPath, worker) {
+    const lockPath = `${targetPath}.lock`;
+    const deadlineMs = Date.now() + 120000;
+    while (true) {
+      try {
+        await fsp.mkdir(lockPath);
+        break;
+      } catch (error) {
+        if (error.code !== 'EEXIST') {
+          throw error;
+        }
+        try {
+          const stat = await fsp.stat(lockPath);
+          if (Date.now() - stat.mtimeMs > 30 * 60 * 1000) {
+            await fsp.rmdir(lockPath).catch(() => {});
+            continue;
+          }
+        } catch (_statError) {
+          continue;
+        }
+        if (Date.now() > deadlineMs) {
+          throw new Error(`timeout_waiting_json_lock:${path.basename(targetPath)}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+    try {
+      return await worker();
+    } finally {
+      await fsp.rmdir(lockPath).catch(() => {});
+    }
+  }
+
   async function readJsonFile(targetPath) {
     try {
       return JSON.parse(await fsp.readFile(targetPath, 'utf8'));
@@ -1548,12 +1581,88 @@ module.exports = function registerParkPcmRoutes(app, options) {
     };
   }
 
+  function crowdAnalysisEntryAggregate(entry) {
+    return entry && typeof entry === 'object' && entry.aggregate && typeof entry.aggregate === 'object'
+      ? entry.aggregate
+      : {};
+  }
+
+  function crowdAnalysisHasV3Portrait(entry) {
+    const aggregate = crowdAnalysisEntryAggregate(entry);
+    return (
+      aggregate.feature_schema === CROWD_ANALYSIS_FEATURE_SCHEMA &&
+      aggregate.age_stage_groups &&
+      typeof aggregate.age_stage_groups === 'object' &&
+      aggregate.gender_groups &&
+      typeof aggregate.gender_groups === 'object' &&
+      aggregate.person_attributes &&
+      typeof aggregate.person_attributes === 'object'
+    );
+  }
+
+  function crowdAnalysisModelName(entry) {
+    const aggregate = crowdAnalysisEntryAggregate(entry);
+    const serverVlm = aggregate.server_vlm && typeof aggregate.server_vlm === 'object' ? aggregate.server_vlm : null;
+    return String(aggregate.model || serverVlm?.model || '');
+  }
+
+  function crowdAnalysisPeopleCount(entry) {
+    const value = crowdAnalysisEntryAggregate(entry).people_count;
+    const count = Number(value);
+    return Number.isFinite(count) ? count : null;
+  }
+
+  function crowdAnalysisAnalyzedAtMs(entry) {
+    const aggregate = crowdAnalysisEntryAggregate(entry);
+    const serverVlm = aggregate.server_vlm && typeof aggregate.server_vlm === 'object' ? aggregate.server_vlm : null;
+    const value = aggregate.analyzed_at || serverVlm?.analyzed_at || entry?.updated_at || entry?.collected_at || '';
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : 0;
+  }
+
+  function preferCrowdAnalysisEntry(existing, incoming) {
+    if (!existing) return incoming;
+    if (!incoming) return existing;
+    const existingV3 = crowdAnalysisHasV3Portrait(existing);
+    const incomingV3 = crowdAnalysisHasV3Portrait(incoming);
+    if (existingV3 && !incomingV3) return existing;
+    if (incomingV3 && !existingV3) return incoming;
+    if (existingV3 && incomingV3) {
+      const existingModel = crowdAnalysisModelName(existing);
+      const incomingModel = crowdAnalysisModelName(incoming);
+      const existingIsLabeler = existingModel === 'Qwen3.6-27B-Labeler';
+      const incomingIsLabeler = incomingModel === 'Qwen3.6-27B-Labeler';
+      if (existingIsLabeler && !incomingIsLabeler) return existing;
+      if (incomingIsLabeler && !existingIsLabeler) return incoming;
+      const existingPeople = crowdAnalysisPeopleCount(existing);
+      const incomingPeople = crowdAnalysisPeopleCount(incoming);
+      if (existingPeople === 0 && incomingPeople != null && incomingPeople > 0) return incoming;
+      if (incomingPeople === 0 && existingPeople != null && existingPeople > 0) return existing;
+      return crowdAnalysisAnalyzedAtMs(incoming) >= crowdAnalysisAnalyzedAtMs(existing) ? incoming : existing;
+    }
+    return crowdAnalysisAnalyzedAtMs(incoming) >= crowdAnalysisAnalyzedAtMs(existing) ? incoming : existing;
+  }
+
+  function mergeCrowdAnalysisSamples(latestSamples, incomingSamples) {
+    const merged = { ...(latestSamples || {}) };
+    Object.entries(incomingSamples || {}).forEach(([sampleId, entry]) => {
+      merged[sampleId] = preferCrowdAnalysisEntry(merged[sampleId], entry);
+    });
+    return merged;
+  }
+
   async function writeCrowdAnalysisState(state) {
-    await atomicWriteJson(crowdAnalysisStatePath, {
-      version: 1,
-      samples: {},
-      ...(state || {}),
-      updated_at: nowIso()
+    await withJsonFileLock(crowdAnalysisStatePath, async () => {
+      const latest = await readCrowdAnalysisState();
+      const incomingSamples = state && state.samples && typeof state.samples === 'object' ? state.samples : {};
+      const nextSamples = mergeCrowdAnalysisSamples(latest.samples || {}, incomingSamples);
+      await atomicWriteJson(crowdAnalysisStatePath, {
+        version: 1,
+        ...latest,
+        ...(state || {}),
+        samples: nextSamples,
+        updated_at: nowIso()
+      });
     });
   }
 
@@ -4589,7 +4698,12 @@ print(len(faces))
         const effectiveExistingAggregate = preferServerReviewedCrowdAnalysis(existingAggregate);
         const existingHasCurrentFeatureSchema =
           effectiveExistingAggregate.feature_schema === CROWD_ANALYSIS_FEATURE_SCHEMA &&
-          effectiveExistingAggregate.model === crowdAnalysisModel;
+          effectiveExistingAggregate.age_stage_groups &&
+          typeof effectiveExistingAggregate.age_stage_groups === 'object' &&
+          effectiveExistingAggregate.gender_groups &&
+          typeof effectiveExistingAggregate.gender_groups === 'object' &&
+          effectiveExistingAggregate.person_attributes &&
+          typeof effectiveExistingAggregate.person_attributes === 'object';
         if (['done', 'vehicle_estimate_server_reviewed'].includes(effectiveExistingAggregate.status) && existingHasCurrentFeatureSchema) {
           continue;
         }
