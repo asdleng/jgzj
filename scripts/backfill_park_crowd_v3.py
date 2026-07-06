@@ -519,6 +519,48 @@ def zero_fill_result(sample, frames):
     return frame_results, aggregate
 
 
+def missing_image_fallback_result(sample, frames, existing_aggregate):
+    people_count = normalize_people_count(existing_aggregate.get("people_count")) or 0
+    frame_results = {}
+    for frame in frames:
+        existing = frame.get("existing_analysis") or {}
+        frame_people = normalize_people_count(existing.get("people_count"))
+        result = normalize_frame_analysis({
+            **existing,
+            "people_count": frame_people if frame_people is not None else 0,
+            "confidence": existing.get("confidence") or "low",
+            "note": existing.get("note") or "历史样本图片已不在本地缓存，按既有人数统计补齐 v3 画像字段。",
+        }, fallback_people=frame_people if frame_people is not None else 0, model="historical_v3_missing_image_fallback")
+        result["model"] = "historical_v3_missing_image_fallback"
+        frame_results[frame["capture_id"]] = result
+
+    aggregate = {
+        "status": existing_aggregate.get("status") if existing_aggregate.get("status") in {"done", "vehicle_estimate_server_reviewed", "partial"} else "done",
+        "feature_schema": SCHEMA,
+        "people_count": people_count,
+        "max_single_camera_people": normalize_people_count(existing_aggregate.get("max_single_camera_people")),
+        "frame_count_analyzed": normalize_people_count(existing_aggregate.get("frame_count_analyzed")) or len(frames),
+        "confidence": normalize_confidence(existing_aggregate.get("confidence")),
+    }
+    for key, allowed in FEATURE_KEYS.items():
+        source_map = normalize_count_map(existing_aggregate.get(key), allowed)
+        if key == "person_attributes" and not source_map:
+            role_map = normalize_count_map(existing_aggregate.get("role_types"), FEATURE_KEYS["role_types"])
+            source_map = {role: count for role, count in role_map.items() if role in allowed}
+        aggregate[key] = cap_count_map(
+            source_map,
+            people_count,
+            allowed,
+            fill_unknown=key in {"age_groups", "age_stage_groups", "gender_groups", "person_attributes", "role_types"},
+        )
+    aggregate["risk_hints"] = normalize_risk_hints(existing_aggregate.get("risk_hints"))
+    aggregate["scene_tags"] = normalize_string_list(existing_aggregate.get("scene_tags"), 12)
+    aggregate["model"] = "historical_v3_missing_image_fallback"
+    aggregate["analyzed_at"] = now_iso()
+    aggregate["note"] = "历史样本图片已不在本地缓存，按既有人数统计补齐 v3 匿名画像字段；不可见维度计入 unknown。"
+    return frame_results, aggregate
+
+
 def qwen_result(parsed, frames):
     rows = parsed.get("frames") if isinstance(parsed, dict) else None
     if not isinstance(rows, list):
@@ -632,6 +674,8 @@ def main():
     parser.add_argument("--no-zero-fill", action="store_true")
     parser.add_argument("--zero-fill-only", action="store_true", help="Only backfill samples whose effective people_count is 0.")
     parser.add_argument("--nonzero-only", action="store_true", help="Only backfill samples whose effective people_count is positive or unknown.")
+    parser.add_argument("--fallback-missing-images", action="store_true", help="For nonzero samples with missing local images, fill v3 fields from existing counts and unknown buckets.")
+    parser.add_argument("--fallback-missing-images-only", action="store_true")
     parser.add_argument("--progress-path", default="")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--dry-run", action="store_true")
@@ -670,6 +714,7 @@ def main():
     processed_this_run = 0
     qwen_count = 0
     zero_fill_count = 0
+    missing_image_fallback_count = 0
     skipped_count = 0
     error_count = 0
 
@@ -689,8 +734,13 @@ def main():
             skipped_count += 1
             continue
         needs_images = people_count != 0 or args.no_zero_fill
+        metadata_frames = prepare_frames(sample, frames_root, require_existing_files=False)
         frames = prepare_frames(sample, frames_root, require_existing_files=needs_images)
-        if not frames:
+        missing_images = bool(metadata_frames) and needs_images and not frames
+        if args.fallback_missing_images_only and not (people_count and people_count > 0 and missing_images):
+            skipped_count += 1
+            continue
+        if not frames and not (args.fallback_missing_images and people_count and people_count > 0 and missing_images):
             skipped_count += 1
             continue
         if not args.force and people_count != 0 and not args.dry_run:
@@ -701,9 +751,13 @@ def main():
                 continue
         try:
             if people_count == 0 and not args.no_zero_fill:
-                frame_results, aggregate_result = zero_fill_result(sample, frames)
+                frame_results, aggregate_result = zero_fill_result(sample, metadata_frames or frames)
                 action = "zero_fill"
                 zero_fill_count += 1
+            elif missing_images and args.fallback_missing_images:
+                frame_results, aggregate_result = missing_image_fallback_result(sample, metadata_frames, aggregate)
+                action = "missing_image_fallback"
+                missing_image_fallback_count += 1
             else:
                 if args.qwen_limit and qwen_count >= args.qwen_limit:
                     break
@@ -723,10 +777,11 @@ def main():
                 progress["updated_at"] = now_iso()
                 progress["qwen_count"] = progress.get("qwen_count", 0) + (1 if action == "qwen" else 0)
                 progress["zero_fill_count"] = progress.get("zero_fill_count", 0) + (1 if action == "zero_fill" else 0)
+                progress["missing_image_fallback_count"] = progress.get("missing_image_fallback_count", 0) + (1 if action == "missing_image_fallback" else 0)
                 progress["skipped_count"] = skipped_count
                 progress["error_count"] = progress.get("error_count", 0)
             processed_this_run += 1
-            log(f"{action} sample={sample_id} vehicle={sample.get('vehicle_id')} people={aggregate_result.get('people_count')} processed={processed_this_run} qwen={qwen_count} zero={zero_fill_count}")
+            log(f"{action} sample={sample_id} vehicle={sample.get('vehicle_id')} people={aggregate_result.get('people_count')} processed={processed_this_run} qwen={qwen_count} zero={zero_fill_count} missing_fallback={missing_image_fallback_count}")
             if not args.dry_run and len(updates) >= max(1, args.flush_every):
                 written_count, skipped_current_count = flush_updates(state_path, progress_path, lock_path, updates, progress, force=args.force)
                 log(f"flushed updates={len(updates)} written={written_count} skipped_current={skipped_current_count}")
@@ -752,7 +807,7 @@ def main():
     if not args.dry_run and updates:
         written_count, skipped_current_count = flush_updates(state_path, progress_path, lock_path, updates, progress, force=args.force)
         log(f"flushed final updates={len(updates)} written={written_count} skipped_current={skipped_current_count}")
-    log(f"done processed={processed_this_run} qwen={qwen_count} zero_fill={zero_fill_count} skipped={skipped_count} errors={error_count}")
+    log(f"done processed={processed_this_run} qwen={qwen_count} zero_fill={zero_fill_count} missing_fallback={missing_image_fallback_count} skipped={skipped_count} errors={error_count}")
 
 
 if __name__ == "__main__":
