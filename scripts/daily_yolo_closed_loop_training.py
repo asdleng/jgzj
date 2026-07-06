@@ -39,9 +39,10 @@ TASKS = [
         "build_task": "person",
         "classes": {"person"},
         "min_boxes": 300,
-        "min_images": 300,
-        "epochs": 24,
-        "patience": 8,
+        "min_positive_images": 300,
+        "empty_to_positive_ratio": 2.0,
+        "epochs": 8,
+        "patience": 4,
         "batch": 64,
         "imgsz": 640,
         "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/person_yolo_best.pt",
@@ -51,72 +52,13 @@ TASKS = [
         "build_task": "vehicle",
         "classes": {"vehicle", "nonmotor"},
         "min_boxes": 350,
-        "min_images": 300,
-        "epochs": 24,
-        "patience": 8,
+        "min_positive_images": 300,
+        "empty_to_positive_ratio": 1.5,
+        "epochs": 8,
+        "patience": 4,
         "batch": 64,
         "imgsz": 640,
         "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/vehicle_yolo_best.pt",
-    },
-    {
-        "task_id": "pet_yolo",
-        "build_task": "pet",
-        "classes": {"pet"},
-        "min_boxes": 80,
-        "min_images": 80,
-        "epochs": 32,
-        "patience": 10,
-        "batch": 64,
-        "imgsz": 640,
-        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/pet_yolo_best.pt",
-    },
-    {
-        "task_id": "phone_yolo",
-        "build_task": "phone",
-        "classes": {"phone"},
-        "min_boxes": 80,
-        "min_images": 80,
-        "epochs": 36,
-        "patience": 10,
-        "batch": 64,
-        "imgsz": 640,
-        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/phone_yolo_best.pt",
-    },
-    {
-        "task_id": "trash_yolo",
-        "build_task": "trash",
-        "classes": {"trash"},
-        "min_boxes": 100,
-        "min_images": 100,
-        "epochs": 36,
-        "patience": 10,
-        "batch": 64,
-        "imgsz": 640,
-        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/trash_yolo_best.pt",
-    },
-    {
-        "task_id": "stall_yolo",
-        "build_task": "stall",
-        "classes": {"stall"},
-        "min_boxes": 80,
-        "min_images": 80,
-        "epochs": 36,
-        "patience": 10,
-        "batch": 64,
-        "imgsz": 640,
-        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/stall_yolo_best.pt",
-    },
-    {
-        "task_id": "fire_smoke_yolo",
-        "build_task": "fire_smoke",
-        "classes": {"fire", "smoke"},
-        "min_boxes": 100,
-        "min_images": 100,
-        "epochs": 36,
-        "patience": 10,
-        "batch": 64,
-        "imgsz": 640,
-        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/fire_smoke_yolo_best.pt",
     },
 ]
 
@@ -221,6 +163,8 @@ def summarize_index(allowed_days: set[str]) -> dict:
         "eligible_images": 0,
         "boxes_by_class": collections.Counter(),
         "boxes_by_task": collections.Counter(),
+        "positive_images_by_task": collections.Counter(),
+        "negative_images_by_task": collections.Counter(),
     })
     for row in rows:
         day = row_day(row)
@@ -229,6 +173,7 @@ def summarize_index(allowed_days: set[str]) -> dict:
         stat = by_day[day]
         stat["eligible_images"] += 1
         labels = row.get("auto_labels") if isinstance(row.get("auto_labels"), list) else []
+        names = {class_name(label) for label in labels}
         for label in labels:
             name = class_name(label)
             if not name:
@@ -237,12 +182,20 @@ def summarize_index(allowed_days: set[str]) -> dict:
             for task in TASKS:
                 if name in task["classes"]:
                     stat["boxes_by_task"][task["task_id"]] += 1
+        for task in TASKS:
+            task_id = task["task_id"]
+            if names & task["classes"]:
+                stat["positive_images_by_task"][task_id] += 1
+            else:
+                stat["negative_images_by_task"][task_id] += 1
     out = {}
     for day, stat in by_day.items():
         out[day] = {
             "eligible_images": stat["eligible_images"],
             "boxes_by_class": dict(stat["boxes_by_class"]),
             "boxes_by_task": dict(stat["boxes_by_task"]),
+            "positive_images_by_task": dict(stat["positive_images_by_task"]),
+            "negative_images_by_task": dict(stat["negative_images_by_task"]),
         }
     return out
 
@@ -263,14 +216,18 @@ def day_range(start_day: str, lookback_days: int, train_today_after_hour: int) -
     return days
 
 
+def recent_day_range(lookback_days: int, train_today_after_hour: int) -> list[str]:
+    return day_range("00000000", lookback_days, train_today_after_hour)
+
+
 def task_date_state(state: dict, task_id: str, day: str) -> str:
     return str(((state.get("task_dates") or {}).get(task_id) or {}).get(day, {}).get("status") or "")
 
 
-def choose_tasks(day_stats: dict, state: dict, max_tasks: int, max_dates_per_task: int) -> tuple[list[dict], list[dict]]:
+def choose_tasks(day_stats: dict, candidate_days: list[str], state: dict, max_tasks: int, max_dates_per_task: int) -> tuple[list[dict], list[dict]]:
     selected = []
     skipped = []
-    all_days = sorted(day_stats)
+    all_days = sorted(candidate_days)
     for task in TASKS:
         task_id = task["task_id"]
         pending = [day for day in all_days if task_date_state(state, task_id, day) not in {"scheduled", "completed"}]
@@ -281,30 +238,57 @@ def choose_tasks(day_stats: dict, state: dict, max_tasks: int, max_dates_per_tas
         for day in pending:
             stat = day_stats.get(day) or {}
             boxes = int((stat.get("boxes_by_task") or {}).get(task_id) or 0)
-            images = int(stat.get("eligible_images") or 0)
-            if boxes >= task["min_boxes"] and images >= task["min_images"]:
+            positive_images = int((stat.get("positive_images_by_task") or {}).get(task_id) or 0)
+            if boxes >= task["min_boxes"] and positive_images >= task["min_positive_images"]:
                 enough_single.append(day)
         if enough_single:
             dates = [enough_single[0]]
         else:
             dates = pending[-max_dates_per_task:]
-        images = sum(int((day_stats.get(day) or {}).get("eligible_images") or 0) for day in dates)
+        eligible_images = sum(int((day_stats.get(day) or {}).get("eligible_images") or 0) for day in dates)
+        positive_images = sum(int(((day_stats.get(day) or {}).get("positive_images_by_task") or {}).get(task_id) or 0) for day in dates)
+        negative_images = sum(int(((day_stats.get(day) or {}).get("negative_images_by_task") or {}).get(task_id) or 0) for day in dates)
         boxes = sum(int(((day_stats.get(day) or {}).get("boxes_by_task") or {}).get(task_id) or 0) for day in dates)
-        if boxes < task["min_boxes"] or images < task["min_images"]:
+        if boxes < task["min_boxes"] or positive_images < task["min_positive_images"]:
             skipped.append({
                 "task_id": task_id,
                 "reason": "not_enough_data",
                 "dates": dates,
-                "images": images,
+                "eligible_images": eligible_images,
+                "positive_images": positive_images,
+                "negative_images": negative_images,
                 "boxes": boxes,
-                "min_images": task["min_images"],
+                "min_positive_images": task["min_positive_images"],
                 "min_boxes": task["min_boxes"],
             })
             continue
-        selected.append({**task, "dates": dates, "images": images, "boxes": boxes})
+        selected.append({
+            **task,
+            "dates": dates,
+            "target_dates": dates,
+            "eligible_images": eligible_images,
+            "positive_images": positive_images,
+            "negative_images": negative_images,
+            "boxes": boxes,
+        })
         if len(selected) >= max_tasks:
             break
     return selected, skipped
+
+
+def attach_replay_dates(selected: list[dict], day_stats: dict, replay_max_days: int) -> None:
+    available_days = sorted(day_stats)
+    for task in selected:
+        first_target = min(task["target_dates"])
+        task_id = task["task_id"]
+        candidates = [
+            day for day in available_days
+            if day < first_target
+            and int(((day_stats.get(day) or {}).get("positive_images_by_task") or {}).get(task_id) or 0) > 0
+        ]
+        replay_dates = candidates[-max(0, replay_max_days):] if replay_max_days > 0 else []
+        task["replay_dates"] = replay_dates
+        task["train_dates"] = sorted(set(task["target_dates"]) | set(replay_dates))
 
 
 def a100_gpu_status(max_mem_mib: int, max_util: int) -> dict:
@@ -333,7 +317,8 @@ def a100_gpu_status(max_mem_mib: int, max_util: int) -> dict:
 
 
 def build_dataset(task: dict, run_dir: Path) -> dict:
-    date_tag = "_".join(task["dates"])
+    train_dates = task.get("train_dates") or task["target_dates"]
+    date_tag = "_".join(task["target_dates"])
     output = run_dir / "datasets" / f"{task['task_id']}_closed_loop_{date_tag}"
     log_path = run_dir / "logs" / f"{task['task_id']}_build.log"
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -346,9 +331,11 @@ def build_dataset(task: dict, run_dir: Path) -> dict:
         "--frames-root", str(FRAMES_ROOT),
         "--label-root", str(LABEL_ROOT),
         "--output", str(output),
-        "--dates", *task["dates"],
+        "--dates", *train_dates,
         "--qualities", ",".join(sorted(GOOD_QUALITIES)),
         "--include-empty",
+        "--empty-to-positive-ratio", str(task["empty_to_positive_ratio"]),
+        "--empty-sample-seed", f"{task['task_id']}:{','.join(train_dates)}",
         "--link-mode", "copy",
         "--data-yaml-mode", "dirs",
     ]
@@ -359,14 +346,18 @@ def build_dataset(task: dict, run_dir: Path) -> dict:
     summary = load_json(output / "dataset_summary.json", {})
     boxes = sum(int(v or 0) for v in (summary.get("boxes_by_class") or {}).values())
     images = sum(int((summary.get("splits") or {}).get(split, {}).get("images") or 0) for split in ("train", "val", "test"))
-    if boxes < task["min_boxes"] or images < task["min_images"]:
-        raise RuntimeError(f"build_under_threshold task={task['task_id']} images={images} boxes={boxes}")
+    positive_images = sum(int((summary.get("splits") or {}).get(split, {}).get("positive_images") or 0) for split in ("train", "val", "test"))
+    if boxes < task["min_boxes"] or positive_images < task["min_positive_images"]:
+        raise RuntimeError(f"build_under_threshold task={task['task_id']} images={images} positive_images={positive_images} boxes={boxes}")
     return {
         "task_id": task["task_id"],
-        "dates": task["dates"],
+        "target_dates": task["target_dates"],
+        "replay_dates": task.get("replay_dates") or [],
+        "train_dates": train_dates,
         "local_dataset": str(output),
         "summary": summary,
         "images": images,
+        "positive_images": positive_images,
         "boxes": boxes,
     }
 
@@ -387,6 +378,7 @@ def make_remote_job(run_tag: str, built: list[dict], selected: list[dict], run_d
     ]
     for item in built:
         task = by_task[item["task_id"]]
+        train_dates = task.get("train_dates") or task["target_dates"]
         remote_dataset = f"{A100_ROOT}/datasets/{run_tag}/{Path(item['local_dataset']).name}"
         remote_data_yaml = f"{remote_dataset}/data.yaml"
         remote_log = f"{A100_ROOT}/logs/{task['task_id']}_{run_tag}.log"
@@ -399,7 +391,7 @@ def make_remote_job(run_tag: str, built: list[dict], selected: list[dict], run_d
             "lines = [('path: ' + line) if line == " + repr(remote_dataset) + " else line for line in lines]",
             "p.write_text('\\n'.join(lines) + '\\n', encoding='utf-8')",
             f"PY_{task['task_id']}",
-            f"echo \"$(date -Is) train_start task={task['task_id']} dates={','.join(task['dates'])}\" | tee -a {remote_quote(remote_log)}",
+            f"echo \"$(date -Is) train_start task={task['task_id']} target_dates={','.join(task['target_dates'])} train_dates={','.join(train_dates)} replay_dates={','.join(task.get('replay_dates') or [])}\" | tee -a {remote_quote(remote_log)}",
             f"CUDA_VISIBLE_DEVICES={A100_GPU} \\",
             f"RELIABLE_YOLO_TASK={remote_quote(task['task_id'])} \\",
             f"RELIABLE_YOLO_RUN_TAG={remote_quote(run_tag)} \\",
@@ -443,6 +435,8 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--lookback-days", type=int, default=int(os.environ.get("YOLO_DAILY_LOOKBACK_DAYS", "5")))
+    parser.add_argument("--replay-lookback-days", type=int, default=int(os.environ.get("YOLO_DAILY_REPLAY_LOOKBACK_DAYS", "7")))
+    parser.add_argument("--replay-max-days", type=int, default=int(os.environ.get("YOLO_DAILY_REPLAY_MAX_DAYS", "4")))
     parser.add_argument("--max-tasks", type=int, default=int(os.environ.get("YOLO_DAILY_MAX_TASKS", "2")))
     parser.add_argument("--max-dates-per-task", type=int, default=int(os.environ.get("YOLO_DAILY_MAX_DATES_PER_TASK", "3")))
     parser.add_argument("--train-today-after-hour", type=int, default=int(os.environ.get("YOLO_DAILY_TRAIN_TODAY_AFTER_HOUR", "22")))
@@ -456,8 +450,10 @@ def main() -> None:
     start_day = args.start_day or default_start
     state = load_json(STATE_PATH, {"schema": "jgzj_yolo_daily_closed_loop_state.v1", "task_dates": {}, "runs": []})
     days = day_range(start_day, args.lookback_days, args.train_today_after_hour)
-    day_stats = summarize_index(set(days))
-    selected, skipped = choose_tasks(day_stats, state, args.max_tasks, args.max_dates_per_task)
+    replay_candidate_days = recent_day_range(args.replay_lookback_days, args.train_today_after_hour)
+    day_stats = summarize_index(set(days) | set(replay_candidate_days))
+    selected, skipped = choose_tasks(day_stats, days, state, args.max_tasks, args.max_dates_per_task)
+    attach_replay_dates(selected, day_stats, args.replay_max_days)
     gpu_status = a100_gpu_status(args.gpu_max_mem_mib, args.gpu_max_util)
 
     payload = {
@@ -466,6 +462,7 @@ def main() -> None:
         "checked_at": now.isoformat(),
         "start_day": start_day,
         "candidate_days": days,
+        "replay_candidate_days": replay_candidate_days,
         "day_stats": day_stats,
         "selected": [
             {k: v for k, v in item.items() if k not in {"classes"}}
@@ -497,14 +494,18 @@ def main() -> None:
     task_dates = state.setdefault("task_dates", {})
     for task in selected:
         per_task = task_dates.setdefault(task["task_id"], {})
-        for day in task["dates"]:
+        for day in task["target_dates"]:
             per_task[day] = {
                 "status": "scheduled",
                 "run_tag": run_tag,
                 "session": session,
                 "scheduled_at": now.isoformat(),
-                "images": task["images"],
+                "eligible_images": task["eligible_images"],
+                "positive_images": task["positive_images"],
+                "negative_images": task["negative_images"],
                 "boxes": task["boxes"],
+                "train_dates": task.get("train_dates") or task["target_dates"],
+                "replay_dates": task.get("replay_dates") or [],
             }
     state.setdefault("runs", []).append({
         "run_tag": run_tag,
@@ -513,8 +514,12 @@ def main() -> None:
         "tasks": [
             {
                 "task_id": task["task_id"],
-                "dates": task["dates"],
-                "images": task["images"],
+                "target_dates": task["target_dates"],
+                "train_dates": task.get("train_dates") or task["target_dates"],
+                "replay_dates": task.get("replay_dates") or [],
+                "eligible_images": task["eligible_images"],
+                "positive_images": task["positive_images"],
+                "negative_images": task["negative_images"],
                 "boxes": task["boxes"],
             }
             for task in selected
