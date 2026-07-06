@@ -478,14 +478,14 @@ def call_qwen(service_url, frames, max_side, jpeg_quality, timeout_s, max_tokens
     return extract_json(reply)
 
 
-def prepare_frames(sample, frames_root):
+def prepare_frames(sample, frames_root, require_existing_files=True):
     frames = []
     for frame in (sample.get("frames") or [])[:4]:
         image_rel = str(frame.get("image_path") or "").replace("\\", "/").lstrip("/")
-        if not image_rel:
+        if require_existing_files and not image_rel:
             continue
         abs_path = frames_root / image_rel
-        if not abs_path.exists():
+        if require_existing_files and not abs_path.exists():
             continue
         frames.append({
             "capture_id": frame.get("capture_id") or frame.get("camera_id") or f"frame_{len(frames)+1}",
@@ -680,16 +680,17 @@ def main():
             continue
         if args.limit and processed_this_run >= args.limit:
             break
-        frames = prepare_frames(sample, frames_root)
-        if not frames:
-            skipped_count += 1
-            continue
         aggregate = effective_aggregate(sample, state_samples)
         people_count = normalize_people_count(aggregate.get("people_count"))
         if args.zero_fill_only and people_count != 0:
             skipped_count += 1
             continue
         if args.nonzero_only and people_count == 0:
+            skipped_count += 1
+            continue
+        needs_images = people_count != 0 or args.no_zero_fill
+        frames = prepare_frames(sample, frames_root, require_existing_files=needs_images)
+        if not frames:
             skipped_count += 1
             continue
         if not args.force and people_count != 0 and not args.dry_run:
