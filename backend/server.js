@@ -6344,9 +6344,9 @@ async function captureLidarRelocCurrentFrame(vehicleId, status, options = {}) {
   let lastFailure = null;
   for (const toolName of toolNames) {
     const args = {
-      topic: options.topic || '/filtered_points',
+      topic: options.topic || '/rslidar_points32',
       include_pointcloud: true,
-      save_file: true,
+      save_file: false,
       include_pose: true,
       include_localization: true,
       max_frames: 1,
@@ -11705,9 +11705,9 @@ app.post(
             include_calibration_ref: true
           }
         : {
-            topic: '/filtered_points',
+            topic: '/rslidar_points32',
             include_pointcloud: true,
-            save_file: true,
+            save_file: false,
             include_pose: true,
             include_localization: true,
             max_frames: 1
