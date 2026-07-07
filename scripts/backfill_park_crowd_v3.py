@@ -591,6 +591,33 @@ def qwen_result(parsed, frames):
 
 def build_state_entry(sample, frame_results, aggregate):
     original = sample.get("analysis") if isinstance(sample.get("analysis"), dict) else {}
+    original_frames = sample.get("frames") if isinstance(sample.get("frames"), list) else []
+    frames = {}
+    metadata_keys = [
+        "capture_id",
+        "camera_id",
+        "image_size_bytes",
+        "image_width",
+        "image_height",
+        "image_mime_type",
+        "image_path",
+        "image_url",
+        "source_image_path",
+        "frame_index",
+        "row_index",
+        "collected_at",
+        "collected_at_ms",
+    ]
+    for frame in original_frames:
+        if not isinstance(frame, dict):
+            continue
+        frame_key = frame.get("capture_id") or frame.get("camera_id") or f"frame_{len(frames) + 1}"
+        metadata = {key: frame.get(key) for key in metadata_keys if frame.get(key) is not None}
+        analysis = frame_results.get(frame_key) or frame_results.get(frame.get("camera_id")) or frame.get("analysis") or {}
+        frames[frame_key] = {**metadata, **analysis}
+    for frame_key, analysis in frame_results.items():
+        if frame_key not in frames:
+            frames[frame_key] = {"capture_id": frame_key, "analysis": analysis}
     return {
         "sample_id": sample.get("sample_id"),
         "vehicle_id": sample.get("vehicle_id"),
@@ -598,7 +625,7 @@ def build_state_entry(sample, frame_results, aggregate):
         "position": sample.get("position"),
         "source": sample.get("source"),
         "upload_session_id": sample.get("upload_session_id"),
-        "frames": frame_results,
+        "frames": frames,
         "aggregate": merge_vehicle_estimate(original, aggregate),
     }
 

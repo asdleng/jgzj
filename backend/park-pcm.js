@@ -41,6 +41,7 @@ const DEFAULT_PATROL_FLOW_MAX_FRAME_ROWS = 4000;
 const DEFAULT_CROWD_ROUTE_MAX_POINTS = 700;
 const PATROL_FLOW_SCHEMA_V1 = 'auto_ad_patrol_flow_session.v1';
 const VEHICLE_PATROL_FLOW_SAMPLE_SOURCE = 'auto_ad_patrol_flow_upload';
+const CROWD_HEATMAP_DAY_AXIS_COUNT = 30;
 
 function nowIso() {
   return new Date().toISOString();
@@ -862,6 +863,33 @@ function dateStampCompact(date) {
   ].join('');
 }
 
+function crowdDayKey(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date).reduce((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return parts.year && parts.month && parts.day ? `${parts.year}-${parts.month}-${parts.day}` : '';
+}
+
+function crowdDayKeyToUtcMs(key) {
+  const match = String(key || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const ms = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function crowdDayKeyFromUtcMs(ms) {
+  if (!Number.isFinite(Number(ms))) return '';
+  return new Date(Number(ms)).toISOString().slice(0, 10);
+}
+
 function timeStampCompact(date) {
   const pad = (num) => String(num).padStart(2, '0');
   return [
@@ -1620,6 +1648,26 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return Number.isFinite(ms) ? ms : 0;
   }
 
+  function crowdAnalysisKnownFeatureCount(entry, key) {
+    const mapping = crowdAnalysisEntryAggregate(entry)[key];
+    if (!mapping || typeof mapping !== 'object') return 0;
+    return Object.entries(mapping).reduce((sum, [itemKey, value]) => {
+      const count = Number(value);
+      return itemKey !== 'unknown' && Number.isFinite(count) && count > 0 ? sum + count : sum;
+    }, 0);
+  }
+
+  function crowdAnalysisPortraitQuality(entry) {
+    const aggregate = crowdAnalysisEntryAggregate(entry);
+    let score = 0;
+    if (aggregate.portrait_repaired_at) score += 20;
+    if (crowdAnalysisModelName(entry) === 'Qwen3.6-27B-Labeler') score += 40;
+    score += Math.min(20, crowdAnalysisKnownFeatureCount(entry, 'age_stage_groups'));
+    score += Math.min(20, crowdAnalysisKnownFeatureCount(entry, 'gender_groups'));
+    score += Math.min(20, crowdAnalysisKnownFeatureCount(entry, 'person_attributes'));
+    return score;
+  }
+
   function preferCrowdAnalysisEntry(existing, incoming) {
     if (!existing) return incoming;
     if (!incoming) return existing;
@@ -1634,6 +1682,9 @@ module.exports = function registerParkPcmRoutes(app, options) {
       const incomingIsLabeler = incomingModel === 'Qwen3.6-27B-Labeler';
       if (existingIsLabeler && !incomingIsLabeler) return existing;
       if (incomingIsLabeler && !existingIsLabeler) return incoming;
+      const existingQuality = crowdAnalysisPortraitQuality(existing);
+      const incomingQuality = crowdAnalysisPortraitQuality(incoming);
+      if (existingQuality !== incomingQuality) return existingQuality > incomingQuality ? existing : incoming;
       const existingPeople = crowdAnalysisPeopleCount(existing);
       const incomingPeople = crowdAnalysisPeopleCount(incoming);
       if (existingPeople === 0 && incomingPeople != null && incomingPeople > 0) return incoming;
@@ -3264,6 +3315,103 @@ module.exports = function registerParkPcmRoutes(app, options) {
     }
   }
 
+  async function readCrowdSampleLogForAxis(filters) {
+    const vehicleId = String(filters?.vehicle_id || '').trim();
+    const source = String(filters?.source || '').trim();
+    try {
+      const text = await fsp.readFile(crowdIndexLogPath, 'utf8');
+      return text
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => safeJsonParse(line, null))
+        .filter(Boolean)
+        .filter((sample) => {
+          if (vehicleId && String(sample?.vehicle_id || '') !== vehicleId) return false;
+          if (source && String(sample?.source || 'cloud_camera_capture') !== source) return false;
+          return true;
+        });
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  function buildCrowdSampleDayAxis(samples) {
+    const stats = new Map();
+    const ensureDay = (key) => {
+      const ms = crowdDayKeyToUtcMs(key);
+      if (!key || ms == null) return null;
+      const current = stats.get(key) || {
+        key,
+        ms,
+        patrol_sample_count: 0,
+        session_count: 0,
+        frame_count: 0
+      };
+      stats.set(key, current);
+      return current;
+    };
+    (Array.isArray(samples) ? samples : []).forEach((sample) => {
+      if (!sample || sample.skipped) return;
+      const collectedAtMs = Number(sample.collected_at_ms || Date.parse(sample.collected_at || ''));
+      if (!Number.isFinite(collectedAtMs)) return;
+      const key = crowdDayKey(new Date(collectedAtMs));
+      const current = ensureDay(key);
+      if (!current) return;
+      current.patrol_sample_count += 1;
+      current.frame_count += Number(sample.frame_count) || 0;
+    });
+    return { stats, ensureDay };
+  }
+
+  function mergeCrowdUploadSessionsIntoDayAxis(axisState, sessions, filters) {
+    const vehicleId = String(filters?.vehicle_id || '').trim();
+    const source = String(filters?.source || '').trim();
+    if (source && source !== VEHICLE_PATROL_FLOW_SAMPLE_SOURCE) return;
+    Object.values(sessions || {}).forEach((session) => {
+      if (!session || session.status !== 'imported') return;
+      const vehicleIds = Array.isArray(session.vehicle_ids)
+        ? session.vehicle_ids.map((item) => String(item || '').trim()).filter(Boolean)
+        : [];
+      if (vehicleId && !vehicleIds.includes(vehicleId)) return;
+      const ts = Date.parse(session.imported_at || session.received_at || session.finished_at || session.started_at || '');
+      if (!Number.isFinite(ts)) return;
+      const key = crowdDayKey(new Date(ts));
+      const current = axisState.ensureDay(key);
+      if (!current) return;
+      current.session_count += 1;
+      current.patrol_sample_count = Math.max(current.patrol_sample_count, Number(session.sample_count) || 0);
+      current.frame_count = Math.max(current.frame_count, Number(session.frame_count) || 0);
+    });
+  }
+
+  function finalizeCrowdSampleDayAxis(axisState) {
+    const stats = axisState && axisState.stats ? axisState.stats : new Map();
+    const dataDays = [...stats.values()].sort((left, right) => left.ms - right.ms);
+    const maxMs = dataDays.length
+      ? dataDays[dataDays.length - 1].ms
+      : crowdDayKeyToUtcMs(crowdDayKey(new Date()));
+    if (maxMs == null) return [];
+    const minMs = maxMs - (CROWD_HEATMAP_DAY_AXIS_COUNT - 1) * 24 * 60 * 60 * 1000;
+    const axis = [];
+    for (let index = 0; index < CROWD_HEATMAP_DAY_AXIS_COUNT; index += 1) {
+      const ms = minMs + index * 24 * 60 * 60 * 1000;
+      const key = crowdDayKeyFromUtcMs(ms);
+      axis.push(stats.get(key) || {
+        key,
+        ms,
+        patrol_sample_count: 0,
+        session_count: 0,
+        frame_count: 0
+      });
+    }
+    return axis.map((day) => ({
+      key: day.key,
+      patrol_sample_count: day.patrol_sample_count,
+      session_count: day.session_count || 0,
+      frame_count: day.frame_count
+    }));
+  }
+
   async function readRecentCrowdSamples(limit, filters) {
     const [samples, analysisState] = await Promise.all([
       readCrowdSampleLog(limit, filters),
@@ -4399,28 +4547,110 @@ src, dst = sys.argv[1], sys.argv[2]
 img = cv2.imread(src)
 if img is None:
     raise RuntimeError("image_read_failed")
-gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+height, width = img.shape[:2]
+gray = cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
 cascade_dir = getattr(cv2.data, "haarcascades", "")
 cascade_paths = [
-    os.path.join(cascade_dir, "haarcascade_frontalface_default.xml"),
     os.path.join(cascade_dir, "haarcascade_frontalface_alt2.xml"),
-    os.path.join(cascade_dir, "haarcascade_profileface.xml"),
+    os.path.join(cascade_dir, "haarcascade_frontalface_default.xml"),
 ]
+eye_paths = [
+    os.path.join(cascade_dir, "haarcascade_eye_tree_eyeglasses.xml"),
+    os.path.join(cascade_dir, "haarcascade_eye.xml"),
+]
+eye_detectors = []
+for eye_path in eye_paths:
+    if eye_path and os.path.exists(eye_path):
+        detector = cv2.CascadeClassifier(eye_path)
+        if not detector.empty():
+            eye_detectors.append(detector)
+
+def face_has_eye_evidence(x, y, w, h):
+    if w < 34 or h < 34:
+        return True
+    roi_gray = gray[y:y + h, x:x + w]
+    if roi_gray.size <= 0:
+        return False
+    upper = roi_gray[0:max(1, int(h * 0.62)), :]
+    min_eye = max(5, int(min(w, h) * 0.10))
+    for detector in eye_detectors:
+        eyes = detector.detectMultiScale(
+            upper,
+            scaleFactor=1.08,
+            minNeighbors=4,
+            minSize=(min_eye, min_eye),
+        )
+        centers = []
+        for (ex, ey, ew, eh) in eyes:
+            ex, ey, ew, eh = int(ex), int(ey), int(ew), int(eh)
+            if ew <= 0 or eh <= 0:
+                continue
+            aspect = ew / float(eh)
+            if aspect < 0.45 or aspect > 2.4:
+                continue
+            cx = ex + ew / 2.0
+            cy = ey + eh / 2.0
+            if cy > h * 0.62:
+                continue
+            centers.append((cx, cy, ew, eh))
+        if len(centers) >= 2:
+            centers.sort(key=lambda item: item[0])
+            for left_index in range(len(centers)):
+                for right_index in range(left_index + 1, len(centers)):
+                    left, right = centers[left_index], centers[right_index]
+                    horizontal_gap = right[0] - left[0]
+                    vertical_gap = abs(right[1] - left[1])
+                    if horizontal_gap >= w * 0.18 and horizontal_gap <= w * 0.74 and vertical_gap <= h * 0.18:
+                        return True
+        elif len(centers) == 1:
+            cx, cy, ew, eh = centers[0]
+            if w <= 60 and h <= 60 and w * 0.22 <= cx <= w * 0.78 and h * 0.12 <= cy <= h * 0.55:
+                return True
+    return False
+
 faces = []
-for cascade_path in cascade_paths:
+for detector_index, cascade_path in enumerate(cascade_paths):
     if not cascade_path or not os.path.exists(cascade_path):
         continue
     detector = cv2.CascadeClassifier(cascade_path)
     if detector.empty():
         continue
-    found = detector.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=4, minSize=(18, 18))
+    found = detector.detectMultiScale(
+        gray,
+        scaleFactor=1.08,
+        minNeighbors=8 if detector_index == 0 else 9,
+        minSize=(28, 28),
+    )
     for (x, y, w, h) in found:
-        faces.append((int(x), int(y), int(w), int(h)))
+        x, y, w, h = int(x), int(y), int(w), int(h)
+        if w <= 0 or h <= 0:
+            continue
+        aspect = w / float(h)
+        area_ratio = (w * h) / float(max(1, width * height))
+        if aspect < 0.72 or aspect > 1.36:
+            continue
+        if area_ratio < 0.0012 or area_ratio > 0.045:
+            continue
+        if not face_has_eye_evidence(x, y, w, h):
+            continue
+        faces.append((x, y, w, h))
 if faces:
-    merged = []
+    faces.sort(key=lambda box: box[2] * box[3], reverse=True)
+    kept = []
     for (x, y, w, h) in faces:
-        pad_x = max(4, int(w * 0.22))
-        pad_y = max(4, int(h * 0.26))
+        cx, cy = x + w / 2.0, y + h / 2.0
+        duplicate = False
+        for (kx, ky, kw, kh) in kept:
+            kcx, kcy = kx + kw / 2.0, ky + kh / 2.0
+            if abs(cx - kcx) < min(w, kw) * 0.45 and abs(cy - kcy) < min(h, kh) * 0.45:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        kept.append((x, y, w, h))
+    for (x, y, w, h) in kept:
+        pad_x = max(2, int(w * 0.08))
+        pad_y = max(2, int(h * 0.10))
         x1 = max(0, x - pad_x)
         y1 = max(0, y - pad_y)
         x2 = min(img.shape[1], x + w + pad_x)
@@ -4433,7 +4663,6 @@ if faces:
         small = cv2.resize(roi, (block_w, block_h), interpolation=cv2.INTER_LINEAR)
         mosaic = cv2.resize(small, (roi.shape[1], roi.shape[0]), interpolation=cv2.INTER_NEAREST)
         img[y1:y2, x1:x2] = mosaic
-        merged.append((x1, y1, x2, y2))
 ok = cv2.imwrite(dst, img, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
 if not ok:
     raise RuntimeError("image_write_failed")
@@ -5365,14 +5594,22 @@ print(len(faces))
     try {
       const requestedSource = String(req.query?.source || 'all').trim();
       const source = requestedSource && requestedSource !== 'all' ? requestedSource : '';
-      const samples = await readRecentCrowdSamples(req.query?.limit, {
+      const filters = {
         vehicle_id: req.query?.vehicle_id,
         source
-      });
+      };
+      const [samples, axisSamples, uploadState] = await Promise.all([
+        readRecentCrowdSamples(req.query?.limit, filters),
+        readCrowdSampleLogForAxis(filters),
+        readPatrolFlowUploadState().catch(() => ({ sessions: {} }))
+      ]);
+      const axisState = buildCrowdSampleDayAxis(axisSamples);
+      mergeCrowdUploadSessionsIntoDayAxis(axisState, uploadState.sessions, filters);
       return res.json({
         ok: true,
         vehicle_id: req.query?.vehicle_id ? String(req.query.vehicle_id) : null,
         source: source || 'all',
+        day_axis: finalizeCrowdSampleDayAxis(axisState),
         samples
       });
     } catch (error) {

@@ -17,6 +17,7 @@ RUNTIME_ROOT = PROJECT_ROOT / ".runtime" / "yolo_model_service"
 REGISTRY_PATH = Path(os.environ.get("YOLO_MODEL_REGISTRY_PATH", RUNTIME_ROOT / "model_registry.json"))
 DOWNLOAD_ROOT = Path(os.environ.get("YOLO_MODEL_DOWNLOAD_ROOT", RUNTIME_ROOT / "downloads"))
 TREND_STATIC_PATH = Path(os.environ.get("YOLO_MODEL_TREND_STATIC_PATH", PROJECT_ROOT / "dist" / "yolo-model-training-trends.json"))
+TREND_PUBLIC_PATH = Path(os.environ.get("YOLO_MODEL_TREND_PUBLIC_PATH", PROJECT_ROOT / "public" / "yolo-model-training-trends.json"))
 A100_HOST = os.environ.get("YOLO_A100_HOST", "192.168.80.49")
 A100_USER = os.environ.get("YOLO_A100_USER", "sari")
 A100_KEY = os.environ.get("YOLO_A100_KEY", "/home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519")
@@ -788,10 +789,11 @@ def write_training_trend_static(payload):
         "monitor_status": payload.get("monitor_status") or {},
         "entries": payload.get("entries") or [],
     }
-    TREND_STATIC_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = TREND_STATIC_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(trend_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, TREND_STATIC_PATH)
+    for target_path in [TREND_PUBLIC_PATH, TREND_STATIC_PATH]:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(trend_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, target_path)
 
 
 def monitor_once():

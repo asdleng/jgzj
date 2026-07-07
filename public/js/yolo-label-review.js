@@ -50,6 +50,7 @@
     activeEvent: "all",
     dailyStats: null,
     trainingMetrics: null,
+    selectedTrainingTaskId: "",
     detailRequestSeq: 0
   };
 
@@ -256,6 +257,27 @@
     return data;
   }
 
+  async function requestStrictJson(url, options = {}) {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        Accept: "application/json",
+        ...(options.headers || {})
+      }
+    });
+    const text = await response.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (error) {
+      throw new Error(`JSON解析失败：${error?.message || "返回内容不是JSON"}`);
+    }
+    if (!response.ok || data?.ok === false) {
+      throw new Error(data?.detail || data?.error || `HTTP ${response.status}`);
+    }
+    return data;
+  }
+
   function postJson(url, body) {
     return requestJson(url, {
       method: "POST",
@@ -359,6 +381,23 @@
     return titles[taskId] || entry?.title || taskId;
   }
 
+  function yoloTaskShortText(taskId, entry) {
+    const title = yoloTaskTitle(taskId, entry);
+    if (taskId === "person_behavior_cls") return "行为分类";
+    return title;
+  }
+
+  function yoloStartDayForRecentHistory() {
+    const date = new Date();
+    date.setDate(date.getDate() - 1);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function yoloRecentRowsForEntry(entry) {
+    const startDay = yoloStartDayForRecentHistory();
+    return trendRowsForEntry(entry).filter((row) => String(row.day || "") >= startDay);
+  }
+
   function trendRowsForEntry(entry) {
     return Array.isArray(entry?.training_trends)
       ? entry.training_trends.filter((row) => row && row.day && yoloTrendScore(row) != null).slice(-10)
@@ -377,6 +416,51 @@
     const sameRun = yoloSameArtifact(entry?.source_run, row.source_run);
     if (entry?.status === "deployed" && !sameWeight && !sameRun) return "最新候选";
     return "最近";
+  }
+
+  function yoloMetricCell(label, value) {
+    const metric = createNode("div", "yolo-review-model-value");
+    metric.appendChild(createNode("span", "", label));
+    metric.appendChild(createNode("strong", "", metricPercent(value)));
+    return metric;
+  }
+
+  function yoloMetricGrid(items) {
+    const metricGrid = createNode("div", "yolo-review-model-values");
+    items.forEach(([label, value]) => {
+      metricGrid.appendChild(yoloMetricCell(label, value));
+    });
+    return metricGrid;
+  }
+
+  function yoloMetricItemsFromSource(source, scoreFallback = false) {
+    return [
+      ["P", yoloMetricValue(source, ["test_precision", "val_precision", "precision"])],
+      ["R", yoloMetricValue(source, ["test_recall", "val_recall", "recall"])],
+      ["m50", yoloMetricValue(source, ["test_map50", "val_map50", "map50"])],
+      ["m95", yoloMetricValue(source, scoreFallback ? ["test_map50_95", "val_map50_95", "map50_95", "score"] : ["test_map50_95", "val_map50_95", "map50_95"])]
+    ];
+  }
+
+  function yoloCurrentMetricItems(entry) {
+    return [
+      ["P", yoloCurrentMetric(entry, ["test_precision", "val_precision", "precision"])],
+      ["R", yoloCurrentMetric(entry, ["test_recall", "val_recall", "recall"])],
+      ["m50", yoloCurrentMetric(entry, ["test_map50", "val_map50", "map50"])],
+      ["m95", yoloCurrentMetric(entry, ["test_map50_95", "val_map50_95", "map50_95", "score"])]
+    ];
+  }
+
+  function yoloRowSummary(row, entry) {
+    const parts = [
+      `${yoloLatestRowLabel(entry, row)} ${formatDay(row?.day)}`,
+      row?.model_family || "",
+      row?.metric_source || "",
+      yoloTrendScore(row) != null ? `m95 ${metricPercent(yoloTrendScore(row))}` : "",
+      yoloTrendRecall(row) != null ? `R ${metricPercent(yoloTrendRecall(row))}` : "",
+      row?.run_count > 1 ? `${row.run_count}次训练` : ""
+    ];
+    return parts.filter(Boolean).join(" · ");
   }
 
   function createTrendSparkline(rows) {
@@ -414,7 +498,7 @@
     polyline.setAttribute("points", points);
     polyline.setAttribute("class", "yolo-review-model-sparkline-line");
     svg.appendChild(polyline);
-    rows.forEach((row, index) => {
+    rows.forEach((_, index) => {
       const [x, y] = points.split(" ")[index].split(",");
       const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       dot.setAttribute("cx", x);
@@ -1218,63 +1302,127 @@
     const title = createNode("div", "yolo-review-model-title");
     title.appendChild(createNode("strong", "", "每日模型指标"));
     const updated = payload?.updated_at ? `更新 ${formatDate(payload.updated_at)}` : "等待训练指标";
-    title.appendChild(createNode("span", "", `${updated} · P / R / mAP50 / mAP50-95`));
+    title.appendChild(createNode("span", "", `${updated} · 先选任务，再看昨日以来训练记录`));
     head.appendChild(title);
     section.appendChild(head);
 
-    const entries = normalizeTrainingMetricEntries(payload).filter((entry) => {
-      const hasMetrics = yoloCurrentMetric(entry, ["test_map50_95", "val_map50_95", "score"]) != null;
-      return hasMetrics || entry?.status === "training";
-    });
-    if (!entries.length) {
-      section.appendChild(createNode("p", "yolo-review-empty", "暂无模型训练指标。"));
+    if (payload?.error) {
+      section.appendChild(createNode("p", "yolo-review-empty", `模型指标加载失败：${payload.error}`));
       return section;
     }
 
-    const grid = createNode("div", "yolo-review-model-grid");
+    const entries = normalizeTrainingMetricEntries(payload).filter((entry) => {
+      const hasCurrentMetrics = yoloCurrentMetric(entry, ["test_map50_95", "val_map50_95", "score"]) != null;
+      const hasTrendMetrics = trendRowsForEntry(entry).length > 0;
+      return hasCurrentMetrics || hasTrendMetrics || entry?.status === "training";
+    });
+    if (!entries.length) {
+      section.appendChild(createNode("p", "yolo-review-empty", "暂无模型训练指标。请检查 /yolo-model-training-trends.json 是否正常生成。"));
+      return section;
+    }
+
+    if (!state.selectedTrainingTaskId || !entries.some((entry) => entry.task_id === state.selectedTrainingTaskId)) {
+      const withRecent = entries.find((entry) => yoloRecentRowsForEntry(entry).length);
+      state.selectedTrainingTaskId = (withRecent || entries[0])?.task_id || "";
+    }
+
+    const taskGrid = createNode("div", "yolo-review-model-task-grid");
     entries.forEach((entry) => {
-      const taskId = entry.task_id;
-      const card = createNode("article", "yolo-review-model-card");
-      card.classList.toggle("is-training", entry.status === "training");
+      const latest = yoloRecentRowsForEntry(entry).slice(-1)[0] || trendRowsForEntry(entry).slice(-1)[0];
+      const button = createNode("button", "yolo-review-model-task-card", "");
+      button.type = "button";
+      button.classList.toggle("is-active", entry.task_id === state.selectedTrainingTaskId);
+      button.classList.toggle("is-training", entry.status === "training");
       const top = createNode("div", "yolo-review-model-card-top");
       const name = createNode("div", "yolo-review-model-card-title");
-      name.appendChild(createNode("strong", "", yoloTaskTitle(taskId, entry)));
+      name.appendChild(createNode("strong", "", yoloTaskShortText(entry.task_id, entry)));
       name.appendChild(createNode("span", "", [entry.model_family || "", yoloEntryProgressText(entry)].filter(Boolean).join(" · ")));
       top.appendChild(name);
-      top.appendChild(createNode("span", "ai-history-chip tone-idle", entry.metric_source || "metric"));
-      card.appendChild(top);
-
-      const metricGrid = createNode("div", "yolo-review-model-values");
-      [
-        ["P", yoloCurrentMetric(entry, ["test_precision", "val_precision", "precision"])],
-        ["R", yoloCurrentMetric(entry, ["test_recall", "val_recall", "recall"])],
-        ["m50", yoloCurrentMetric(entry, ["test_map50", "val_map50", "map50"])],
-        ["m95", yoloCurrentMetric(entry, ["test_map50_95", "val_map50_95", "map50_95", "score"])]
-      ].forEach(([label, value]) => {
-        const metric = createNode("div", "yolo-review-model-value");
-        metric.appendChild(createNode("span", "", label));
-        metric.appendChild(createNode("strong", "", metricPercent(value)));
-        metricGrid.appendChild(metric);
-      });
-      card.appendChild(metricGrid);
-
-      const rows = trendRowsForEntry(entry);
-      card.appendChild(createTrendSparkline(rows));
-      const latest = rows[rows.length - 1];
+      top.appendChild(createNode("span", "ai-history-chip tone-idle", entry.metric_source || latest?.metric_source || "metric"));
+      button.appendChild(top);
+      button.appendChild(yoloMetricGrid([
+        ["当前m95", yoloCurrentMetric(entry, ["test_map50_95", "val_map50_95", "map50_95", "score"])],
+        ["当前R", yoloCurrentMetric(entry, ["test_recall", "val_recall", "recall"])],
+        ["候选m95", latest ? yoloTrendScore(latest) : null],
+        ["候选R", latest ? yoloTrendRecall(latest) : null]
+      ]));
       if (latest) {
-        const recall = yoloTrendRecall(latest);
-        const detail = [
-          `${yoloLatestRowLabel(entry, latest)} ${formatDay(latest.day)}`,
-          latest.model_family || "",
-          yoloTrendScore(latest) != null ? `m95 ${metricPercent(yoloTrendScore(latest))}` : "",
-          recall != null ? `R ${metricPercent(recall)}` : "",
-          latest.run_count > 1 ? `${latest.run_count}次训练` : ""
-        ].filter(Boolean).join(" · ");
-        card.appendChild(createNode("p", "yolo-review-model-meta", detail));
+        button.appendChild(createNode("p", "yolo-review-model-meta", yoloRowSummary(latest, entry)));
+      } else {
+        button.appendChild(createNode("p", "yolo-review-model-meta", "暂无训练历史"));
       }
-      grid.appendChild(card);
+      button.addEventListener("click", () => {
+        state.selectedTrainingTaskId = entry.task_id;
+        renderDailyStats();
+      });
+      taskGrid.appendChild(button);
     });
-    section.appendChild(grid);
+    section.appendChild(taskGrid);
+
+    const selected = entries.find((entry) => entry.task_id === state.selectedTrainingTaskId) || entries[0];
+    if (!selected) return section;
+    const detail = createNode("article", "yolo-review-model-detail");
+    const detailTop = createNode("div", "yolo-review-model-detail-top");
+    const detailTitle = createNode("div", "yolo-review-model-card-title");
+    detailTitle.appendChild(createNode("strong", "", `${yoloTaskTitle(selected.task_id, selected)}模型详情`));
+    detailTitle.appendChild(createNode("span", "", [selected.model_family || "", yoloEntryProgressText(selected), selected.metric_source || ""].filter(Boolean).join(" · ")));
+    detailTop.appendChild(detailTitle);
+    detailTop.appendChild(createNode("span", "ai-history-chip tone-idle", `从 ${formatDay(yoloStartDayForRecentHistory())} 开始`));
+    detail.appendChild(detailTop);
+
+    const compare = createNode("div", "yolo-review-model-compare");
+    const currentPanel = createNode("div", "yolo-review-model-panel");
+    currentPanel.appendChild(createNode("p", "yolo-review-model-panel-title", "当前线上/当前权重"));
+    currentPanel.appendChild(yoloMetricGrid(yoloCurrentMetricItems(selected)));
+    compare.appendChild(currentPanel);
+    const latestRecent = yoloRecentRowsForEntry(selected).slice(-1)[0];
+    const candidatePanel = createNode("div", "yolo-review-model-panel");
+    candidatePanel.appendChild(createNode("p", "yolo-review-model-panel-title", "最新候选"));
+    if (latestRecent) {
+      candidatePanel.appendChild(yoloMetricGrid(yoloMetricItemsFromSource(latestRecent, true)));
+      candidatePanel.appendChild(createNode("p", "yolo-review-model-meta", yoloRowSummary(latestRecent, selected)));
+    } else {
+      candidatePanel.appendChild(createNode("p", "yolo-review-empty", "昨日以来暂无新训练候选。"));
+    }
+    compare.appendChild(candidatePanel);
+    detail.appendChild(compare);
+
+    const recentRows = yoloRecentRowsForEntry(selected);
+    detail.appendChild(createTrendSparkline(recentRows));
+    if (recentRows.length) {
+      const tableWrap = createNode("div", "yolo-review-model-history-wrap");
+      const table = createNode("table", "yolo-review-model-history");
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      ["日期", "模型/Run", "口径", "P", "R", "m50", "m95", "训练数"].forEach((label) => {
+        headRow.appendChild(createNode("th", "", label));
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      recentRows.slice().reverse().forEach((row) => {
+        const tr = document.createElement("tr");
+        [
+          formatDay(row.day),
+          row.model_family || "-",
+          row.metric_source || "-",
+          metricPercent(yoloMetricValue(row, ["test_precision", "val_precision", "precision"])),
+          metricPercent(yoloMetricValue(row, ["test_recall", "val_recall", "recall"])),
+          metricPercent(yoloMetricValue(row, ["test_map50", "val_map50", "map50"])),
+          metricPercent(yoloTrendScore(row)),
+          row.run_count ? `${row.run_count}` : "-"
+        ].forEach((value) => {
+          tr.appendChild(createNode("td", "", value));
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      tableWrap.appendChild(table);
+      detail.appendChild(tableWrap);
+    } else {
+      detail.appendChild(createNode("p", "yolo-review-empty", "没有昨日以来的训练记录；旧记录因数据集口径不一致，不放入这块趋势里。"));
+    }
+    section.appendChild(detail);
     return section;
   }
 
@@ -1361,7 +1509,7 @@
     renderLoadingNode(refs.dailyStats, "每日统计加载中...", { compact: true });
     const [dailyData, trainingData] = await Promise.all([
       requestJson(endpoints.dailyStats),
-      requestJson(endpoints.trainingTrends).catch(() => null)
+      requestStrictJson(endpoints.trainingTrends).catch((error) => ({ error: error?.message || "未知错误" }))
     ]);
     state.dailyStats = dailyData;
     state.trainingMetrics = trainingData;

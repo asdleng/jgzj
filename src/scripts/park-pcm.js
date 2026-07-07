@@ -21,6 +21,7 @@
   const ROUTE_OVERLAY_MAX_REQUESTS = 12;
   const HEATMAP_TIME_ZONE = "Asia/Shanghai";
   const DAY_MS = 24 * 60 * 60 * 1000;
+  const HEATMAP_DAY_AXIS_COUNT = 30;
 
   const AMAP_KEY = root.getAttribute("data-amap-key") || "";
   const statusEl = root.querySelector("[data-park-pcm-status]");
@@ -83,6 +84,9 @@
   let sampleLoadRequestId = 0;
   let routeLoadRequestId = 0;
   let latestCrowdSamples = [];
+  let latestCrowdMetadata = {
+    day_axis: []
+  };
   let knownHeatmapDayBounds = {
     min_ms: null,
     max_ms: null
@@ -195,6 +199,23 @@
     (Array.isArray(samples) ? samples : []).forEach((sample) => {
       const key = sampleDayKey(sample);
       const ms = dayKeyToMs(key);
+      if (ms == null) return;
+      if (knownHeatmapDayBounds.min_ms == null || ms < knownHeatmapDayBounds.min_ms) {
+        knownHeatmapDayBounds.min_ms = ms;
+        changed = true;
+      }
+      if (knownHeatmapDayBounds.max_ms == null || ms > knownHeatmapDayBounds.max_ms) {
+        knownHeatmapDayBounds.max_ms = ms;
+        changed = true;
+      }
+    });
+    return changed;
+  }
+
+  function mergeKnownHeatmapBoundsFromAxis(days) {
+    let changed = false;
+    (Array.isArray(days) ? days : []).forEach((day) => {
+      const ms = dayKeyToMs(day && day.key);
       if (ms == null) return;
       if (knownHeatmapDayBounds.min_ms == null || ms < knownHeatmapDayBounds.min_ms) {
         knownHeatmapDayBounds.min_ms = ms;
@@ -357,9 +378,13 @@
     target[normalizedKey] = (target[normalizedKey] || 0) + count;
   }
 
+  function hasKnownFeatureValue(map) {
+    return Object.entries(map || {}).some(([key, value]) => key !== "unknown" && Number(value) > 0);
+  }
+
   function derivedAgeStageMap(sample) {
     const direct = featureCountMap(sample, "age_stage_groups");
-    if (Object.keys(direct).length) return direct;
+    if (hasKnownFeatureValue(direct)) return direct;
     const legacy = featureCountMap(sample, "age_groups");
     const result = {};
     addCount(result, "junior", (legacy.child || 0) + (legacy.teenager || 0));
@@ -371,7 +396,7 @@
 
   function derivedGenderMap(sample) {
     const direct = featureCountMap(sample, "gender_groups");
-    if (Object.keys(direct).length) return direct;
+    if (hasKnownFeatureValue(direct)) return direct;
     const mix = featureCountMap(sample, "gender_mix");
     const result = {};
     addCount(result, "male", mix.male || mix.man || mix.men);
@@ -382,7 +407,7 @@
 
   function derivedPersonAttributeMap(sample) {
     const direct = featureCountMap(sample, "person_attributes");
-    if (Object.keys(direct).length) return direct;
+    if (hasKnownFeatureValue(direct)) return direct;
     const roles = featureCountMap(sample, "role_types");
     const groups = featureCountMap(sample, "group_types");
     const result = {};
@@ -866,14 +891,14 @@
     chartGrid.appendChild(
       createPeopleDonutChart("客群阶段", "阶段", aggregateDerivedFeatureMap(rows, derivedAgeStageMap), PEOPLE_FEATURE_LABELS.age_stage_groups, {
         limit: 5,
-        includeUnknown: true,
+        includeUnknown: false,
         emptyText: "暂未形成客群阶段画像。"
       })
     );
     chartGrid.appendChild(
       createPeopleDonutChart("性别结构", "性别", aggregateDerivedFeatureMap(rows, derivedGenderMap), PEOPLE_FEATURE_LABELS.gender_groups, {
         limit: 3,
-        includeUnknown: true,
+        includeUnknown: false,
         emptyText: "暂未形成性别结构画像。"
       })
     );
@@ -1130,6 +1155,21 @@
 
   function buildHeatmapDayAxis(samples) {
     const stats = new Map();
+    (Array.isArray(latestCrowdMetadata.day_axis) ? latestCrowdMetadata.day_axis : []).forEach((day) => {
+      const key = String(day && day.key || "").trim();
+      const ms = dayKeyToMs(key);
+      if (!key || ms == null) return;
+      stats.set(key, {
+        key,
+        ms,
+        sample_count: 0,
+        patrol_sample_count: Number(day.patrol_sample_count) || 0,
+        recognized_count: 0,
+        people_total: 0,
+        heat_point_count: 0,
+        max_people: 0
+      });
+    });
     (Array.isArray(samples) ? samples : []).forEach((sample) => {
       const key = sampleDayKey(sample);
       const ms = dayKeyToMs(key);
@@ -1138,6 +1178,7 @@
         key,
         ms,
         sample_count: 0,
+        patrol_sample_count: 0,
         recognized_count: 0,
         people_total: 0,
         heat_point_count: 0,
@@ -1145,6 +1186,7 @@
       };
       const peopleCount = samplePeopleCount(sample);
       current.sample_count += 1;
+      current.patrol_sample_count += 1;
       if (peopleCount != null) {
         current.recognized_count += 1;
         current.people_total += Number(peopleCount);
@@ -1154,22 +1196,25 @@
       stats.set(key, current);
     });
     const dataDays = [...stats.values()].sort((left, right) => left.ms - right.ms);
-    const minMs = knownHeatmapDayBounds.min_ms ?? (dataDays[0] && dataDays[0].ms);
-    const maxMs = knownHeatmapDayBounds.max_ms ?? (dataDays[dataDays.length - 1] && dataDays[dataDays.length - 1].ms);
-    if (minMs == null || maxMs == null) {
+    const knownMaxMs = knownHeatmapDayBounds.max_ms ?? (dataDays[dataDays.length - 1] && dataDays[dataDays.length - 1].ms);
+    const maxMs = knownMaxMs ?? dayKeyToMs(dayKeyFromDate(new Date()));
+    if (maxMs == null) {
       return {
         days: [],
         latest_key: ""
       };
     }
+    const minMs = maxMs - (HEATMAP_DAY_AXIS_COUNT - 1) * DAY_MS;
     const days = [];
-    for (let ms = minMs; ms <= maxMs; ms += DAY_MS) {
+    for (let index = 0; index < HEATMAP_DAY_AXIS_COUNT; index += 1) {
+      const ms = minMs + index * DAY_MS;
       const key = dayKeyFromMs(ms);
       days.push(
         stats.get(key) || {
           key,
           ms,
           sample_count: 0,
+          patrol_sample_count: 0,
           recognized_count: 0,
           people_total: 0,
           heat_point_count: 0,
@@ -1215,9 +1260,12 @@
     heatmapDateEl.hidden = false;
     if (heatmapDateLabelEl) heatmapDateLabelEl.textContent = formatDayLabel(active.key);
     if (heatmapDateSummaryEl) {
+      const patrolCount = Math.max(Number(active.patrol_sample_count) || 0, Number(active.sample_count) || 0);
       heatmapDateSummaryEl.textContent = active.sample_count
         ? `当天 ${active.sample_count} 条 · 已识别 ${active.recognized_count} 条/${active.people_total} 人 · 热力点 ${active.heat_point_count} 个 · 峰值 ${active.max_people} 人`
-        : "当天暂无采集点。";
+        : patrolCount
+          ? `当天有巡逻记录 ${patrolCount} 条 · 暂无人流采样。`
+          : "当天暂无巡逻/人流记录。";
     }
     if (heatmapDateRangeEl) {
       heatmapDateRangeEl.min = "0";
@@ -1229,18 +1277,20 @@
     }
     if (heatmapDateTicksEl) {
       clearElement(heatmapDateTicksEl);
-      const tickWidth = Math.max(44, Math.min(72, Math.floor(360 / Math.max(1, days.length))));
-      const axisWidth = Math.max(320, (days.length - 1) * 58 + tickWidth);
+      const tickWidth = 42;
+      const axisWidth = Math.max(820, (days.length - 1) * 28 + tickWidth);
       heatmapDateTicksEl.parentElement?.style.setProperty("min-width", `${axisWidth}px`);
       heatmapDateTicksEl.parentElement?.style.setProperty("--park-pcm-date-tick-width", `${tickWidth}px`);
       days.forEach((day, index) => {
         const tick = document.createElement("span");
         tick.className = "park-pcm-date-tick";
         tick.dataset.active = day.key === active.key ? "true" : "false";
-        tick.dataset.hasData = day.sample_count > 0 ? "true" : "false";
+        const patrolCount = Math.max(Number(day.patrol_sample_count) || 0, Number(day.sample_count) || 0);
+        tick.dataset.hasData = patrolCount > 0 ? "true" : "false";
+        tick.dataset.hasHeat = day.heat_point_count > 0 ? "true" : "false";
         tick.style.setProperty("--tick-left", days.length > 1 ? `${(index / (days.length - 1)) * 100}%` : "50%");
         tick.style.setProperty("--tick-width", `${tickWidth}px`);
-        tick.title = `${formatDayLabel(day.key)} · ${day.sample_count} 条`;
+        tick.title = `${formatDayLabel(day.key)} · 巡逻 ${patrolCount} 条 · 人流 ${day.sample_count} 条`;
         tick.textContent = formatDayShortLabel(day.key);
         heatmapDateTicksEl.appendChild(tick);
       });
@@ -1601,8 +1651,8 @@
 
   function refreshPeopleHeatmap(resetMap) {
     void resetMap;
-    drawCustomHeatmap();
-    drawRouteOverlay();
+    drawCustomHeatmapNow();
+    drawRouteOverlayNow();
   }
 
   function redrawMapOverlaysNow() {
@@ -2030,8 +2080,7 @@
     const maxCount = Math.max(...heatData.map((point) => point.count), 1);
     amapLastHeatData = heatData;
     amapLastHeatMax = maxCount;
-    drawCustomHeatmap();
-    schedulePeopleHeatmapRefresh(160, true);
+    drawCustomHeatmapNow();
     if (heatLegendEl) heatLegendEl.hidden = false;
     return {
       count: heatData.length,
@@ -2094,11 +2143,11 @@
     if (!samplePoints.length) {
       renderTrackSamples();
       clearMapOverlays();
-      setMapStatus("暂无人流数据");
+      setMapStatus("暂无当日热力");
       setMapFallback(
         selectedVehicleId
-          ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 暂无人流定位样本`
-          : "暂无人流定位样本",
+          ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 暂无人流采样点`
+          : "暂无人流采样点",
         false
       );
       return;
@@ -2148,14 +2197,13 @@
       const routePoints = routeMapPoints(amapLastRoutes);
       if (!amapUserInteracted) fitHeatmapView(AMap, samplePoints.concat(routePoints), center);
       const heatStats = await renderPeopleHeatmap(AMap, samplePoints);
-      drawRouteOverlay();
-      schedulePeopleHeatmapRefresh(160, true);
+      drawRouteOverlayNow();
       [120, 420].forEach((delayMs) => {
         window.setTimeout(() => {
           if (selectedVehicleId !== viewVehicleId || selectedDayKey !== viewDayKey || !amapMap || (!amapLastHeatData.length && !amapLastRoutes.length)) return;
           if (!amapUserInteracted && !amapPointerActive) fitHeatmapView(AMap, samplePoints.concat(routeMapPoints(amapLastRoutes)), center);
-          drawCustomHeatmap();
-          drawRouteOverlay();
+          drawCustomHeatmapNow();
+          drawRouteOverlayNow();
         }, delayMs);
       });
       enableMapInteraction();
@@ -2433,12 +2481,19 @@
     });
   }
 
-  function renderCrowdSamples(samples) {
+  function renderCrowdSamples(samples, metadata) {
     const list = Array.isArray(samples)
       ? samples.filter((item) => !item.skipped && samplePosition(item))
       : [];
+    latestCrowdMetadata = metadata && typeof metadata === "object"
+      ? {
+          ...metadata,
+          day_axis: Array.isArray(metadata.day_axis) ? metadata.day_axis : []
+        }
+      : { day_axis: [] };
     latestCrowdSamples = list;
     updateKnownHeatmapDayBounds(list);
+    mergeKnownHeatmapBoundsFromAxis(latestCrowdMetadata.day_axis);
     syncSampleVehicleOptions(list);
     if (!selectedVehicleId && list.length) {
       const defaultVehicleId = chooseDefaultVehicleId(list);
@@ -2489,12 +2544,15 @@
     const fetchedSamples = Array.isArray(data.samples)
       ? data.samples.filter((item) => !item.skipped && samplePosition(item))
       : [];
-    const boundsChanged = updateKnownHeatmapDayBounds(fetchedSamples);
+    const metadata = {
+      day_axis: Array.isArray(data.day_axis) ? data.day_axis : []
+    };
+    const boundsChanged = updateKnownHeatmapDayBounds(fetchedSamples) || mergeKnownHeatmapBoundsFromAxis(metadata.day_axis);
     if (requestId !== sampleLoadRequestId) {
       if (boundsChanged && latestCrowdSamples.length) renderCurrentCrowdView();
       return data;
     }
-    renderCrowdSamples(data.samples || []);
+    renderCrowdSamples(data.samples || [], metadata);
     return data;
   }
 

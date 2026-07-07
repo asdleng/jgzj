@@ -537,10 +537,10 @@
 
   .park-pcm-date-axis {
     --park-pcm-date-thumb-size: 18px;
-    --park-pcm-date-tick-width: 56px;
+    --park-pcm-date-tick-width: 42px;
     --park-pcm-date-axis-offset: calc(var(--park-pcm-date-thumb-size) / 2);
     position: relative;
-    min-width: 320px;
+    min-width: 820px;
     padding-inline: calc(var(--park-pcm-date-tick-width) / 2);
     display: grid;
     gap: 8px;
@@ -551,8 +551,8 @@
     position: absolute;
     z-index: 0;
     top: calc((var(--park-pcm-date-thumb-size) / 2) - 2px);
-    left: calc((var(--park-pcm-date-tick-width) / 2) + var(--park-pcm-date-axis-offset));
-    right: calc((var(--park-pcm-date-tick-width) / 2) + var(--park-pcm-date-axis-offset));
+    left: calc(var(--park-pcm-date-tick-width) / 2);
+    right: calc(var(--park-pcm-date-tick-width) / 2);
     height: 4px;
     border-radius: 999px;
     background: rgba(148, 163, 184, 0.32);
@@ -614,7 +614,7 @@
     position: relative;
     min-width: 0;
     height: 38px;
-    margin-inline: var(--park-pcm-date-axis-offset);
+    margin-inline: 0;
     overflow: visible;
   }
 
@@ -641,6 +641,27 @@
     height: 7px;
     border-radius: 50%;
     background: rgba(148, 163, 184, 0.5);
+  }
+
+  .park-pcm-date-tick[data-has-data="true"] {
+    color: #dbeafe;
+  }
+
+  .park-pcm-date-tick[data-has-data="true"]::before {
+    width: 8px;
+    height: 8px;
+    background: rgba(56, 189, 248, 0.88);
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
+  }
+
+  .park-pcm-date-tick[data-has-data="true"][data-has-heat="false"]::before {
+    background: rgba(125, 211, 252, 0.72);
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.1);
+  }
+
+  .park-pcm-date-tick[data-has-heat="true"]::before {
+    background: rgba(251, 191, 36, 0.92);
+    box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.14);
   }
 
   .park-pcm-date-tick[data-has-data="false"] {
