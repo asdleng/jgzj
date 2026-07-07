@@ -508,6 +508,15 @@
       }
       if (selector.detail) addMeta(resultNode, "NDT 说明", selector.detail, "warn");
     }
+    const refCheck = data?.reference_check || null;
+    if (refCheck && refCheck.enabled) {
+      const value = refCheck.skipped
+        ? "无可靠真值"
+        : refCheck.xy_error_m === null || refCheck.xy_error_m === undefined
+          ? "-"
+          : `${formatNumber(refCheck.xy_error_m, 2)} m / ${formatNumber(refCheck.max_xy_m, 1)} m`;
+      addMeta(resultNode, "可靠定位自检", value, refCheck.passed ? "ok" : "warn");
+    }
     if (data?.detail) addMeta(resultNode, "状态", data.detail, data.ok ? "idle" : "warn");
   }
 
@@ -531,14 +540,18 @@
       setStatus(error.message || "推理失败", error.status === 501 ? "error" : "error");
       setResultState(payload.phase || "推理失败", "error");
       if (resultNode) {
-        resultNode.innerHTML = "";
-        addMeta(resultNode, "推理状态", payload.phase || "failed", "warn");
-        addMeta(resultNode, "说明", payload.detail || error.message || "推理失败", "warn");
-        if (Array.isArray(payload.required_tools) && payload.required_tools.length) {
-          addMeta(resultNode, "待接入工具", payload.required_tools.join(" / "), "warn");
-        }
-        if (payload.model?.checkpoint) {
-          addMeta(resultNode, "训练权重", payload.model.checkpoint, "idle");
+        if (payload?.ndt_selector || payload?.reference_check || payload?.raw_coarse_pose || Array.isArray(payload?.candidates)) {
+          renderInferResult(payload);
+        } else {
+          resultNode.innerHTML = "";
+          addMeta(resultNode, "推理状态", payload.phase || "failed", "warn");
+          addMeta(resultNode, "说明", payload.detail || error.message || "推理失败", "warn");
+          if (Array.isArray(payload.required_tools) && payload.required_tools.length) {
+            addMeta(resultNode, "待接入工具", payload.required_tools.join(" / "), "warn");
+          }
+          if (payload.model?.checkpoint) {
+            addMeta(resultNode, "训练权重", payload.model.checkpoint, "idle");
+          }
         }
       }
       if (rawJsonNode) rawJsonNode.textContent = JSON.stringify(payload || { error: error.message }, null, 2);

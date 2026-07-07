@@ -220,6 +220,11 @@ const lidarRelocalizationNdtSelectorMaxCorrectionM = Number(
 );
 const lidarRelocalizationNdtSelectorRequire =
   String(process.env.LIDAR_RELOCALIZATION_REQUIRE_NDT_SELECTOR || 'false').toLowerCase() === 'true';
+const lidarRelocalizationReferenceCheckEnabled =
+  String(process.env.LIDAR_RELOCALIZATION_REFERENCE_CHECK_ENABLED || 'true').toLowerCase() !== 'false';
+const lidarRelocalizationReferenceCheckMaxXyM = Number(
+  process.env.LIDAR_RELOCALIZATION_REFERENCE_CHECK_MAX_XY_M || 5
+);
 const lidarRelocalizationInferScript = path.resolve(
   process.env.LIDAR_RELOCALIZATION_INFER_SCRIPT ||
     path.resolve(__dirname, '../scripts/lidar_relocalization_infer.py')
@@ -5995,6 +6000,34 @@ function finiteDistance2d(left, right) {
     return null;
   }
   return Math.hypot(ax - bx, ay - by);
+}
+
+function buildLidarRelocReferenceCheck(capturePose, coarsePose) {
+  if (!lidarRelocalizationReferenceCheckEnabled) {
+    return {
+      enabled: false,
+      passed: true
+    };
+  }
+  if (!capturePose || capturePose.reliable !== true || !coarsePose) {
+    return {
+      enabled: true,
+      passed: true,
+      skipped: true,
+      reason: 'no_reliable_reference_pose'
+    };
+  }
+  const xyErrorM = finiteDistance2d(capturePose, coarsePose);
+  const maxXyM = Number(lidarRelocalizationReferenceCheckMaxXyM);
+  const passed = !Number.isFinite(xyErrorM) || !Number.isFinite(maxXyM) || xyErrorM <= maxXyM;
+  return {
+    enabled: true,
+    passed,
+    skipped: false,
+    xy_error_m: xyErrorM,
+    max_xy_m: Number.isFinite(maxXyM) ? maxXyM : null,
+    reference_pose: capturePose
+  };
 }
 
 async function writeLidarRelocCapturePcd(capturePath) {
@@ -11803,12 +11836,15 @@ app.post(
           const selectorPhase = String(result?.ndt_selector?.phase || '').trim();
           const selectorPassed =
             !selectorRequired || ['validated_rank1', 'selected_by_ndt'].includes(selectorPhase);
+          const capturePose = normalizeLidarRelocPose(capture.result?.pose || capture.result?.localization);
+          const referenceCheck = buildLidarRelocReferenceCheck(capturePose, coarsePose);
           const ok =
             result?.ok !== false &&
             Boolean(coarsePose) &&
             !isLegacyLocalBev &&
             passesConfidence &&
-            selectorPassed;
+            selectorPassed &&
+            referenceCheck.passed;
 
           return res.status(ok ? 200 : 409).json({
             ok,
@@ -11819,6 +11855,8 @@ app.post(
                 : 'coarse_pose_ready'
               : isLegacyLocalBev
                 ? 'legacy_prior_refine_disabled'
+                : !referenceCheck.passed
+                  ? 'reference_check_failed'
                 : !selectorPassed
                   ? 'ndt_selector_not_ready'
                   : result?.phase || 'infer_failed',
@@ -11834,13 +11872,14 @@ app.post(
             candidates: Array.isArray(result?.candidates) ? result.candidates : [],
             selected_candidate: result?.selected_candidate || null,
             ndt_selector: result?.ndt_selector || null,
+            reference_check: referenceCheck,
             capture: {
               captured_at: capture.captured_at,
               tool_name: capture.tool_name,
               capture_id: capture.result?.capture_id || null,
               point_count: readLidarRelocNumber(capture.result?.point_count, capture.result?.pointcloud?.point_count),
               source_point_count: readLidarRelocNumber(capture.result?.source_point_count),
-              pose: normalizeLidarRelocPose(capture.result?.pose || capture.result?.localization)
+              pose: capturePose
             },
             map_sync: mapSync,
             result,
@@ -11848,6 +11887,8 @@ app.post(
               ? undefined
               : isLegacyLocalBev
                 ? '旧的 prior-refine fallback 已禁用；当前不会把先验局部匹配伪装成 BEVPlace++ 粗位姿。'
+                : !referenceCheck.passed
+                  ? `可靠定位自检失败：粗位姿与当前可靠定位相差 ${referenceCheck.xy_error_m?.toFixed?.(2) ?? '-'}m，超过 ${referenceCheck.max_xy_m ?? '-'}m；不返回给 NDT。`
                 : !selectorPassed
                   ? `NDT selector 未通过要求：${selectorPhase || 'unknown'}。`
                 : !passesConfidence
