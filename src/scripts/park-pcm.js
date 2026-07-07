@@ -448,12 +448,58 @@
 
   function chartFeatureRows(map, labels, options) {
     const opts = options || {};
+    const limit = opts.limit == null ? 6 : Number(opts.limit);
     const rows = Object.entries(map || {})
       .map(([key, value]) => ({ key, label: labels[key] || key, count: Number(value) }))
       .filter((item) => Number.isFinite(item.count) && item.count > 0)
       .filter((item) => opts.includeUnknown || item.key !== "unknown")
       .sort((left, right) => right.count - left.count);
-    return rows.slice(0, opts.limit || 6);
+    return Number.isFinite(limit) && limit >= 0 ? rows.slice(0, limit) : rows;
+  }
+
+  function chartRowTotal(rows) {
+    return (Array.isArray(rows) ? rows : []).reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+  }
+
+  function normalizedPopulationTotal(rows) {
+    const counts = (Array.isArray(rows) ? rows : [])
+      .map((sample) => samplePeopleCount(sample))
+      .map((count) => Number(count))
+      .filter((count) => Number.isFinite(count) && count >= 0);
+    if (!counts.length) return null;
+    return Math.round(counts.reduce((sum, count) => sum + count, 0));
+  }
+
+  function capChartRowsToPopulation(rows, populationTotal) {
+    const target = Math.round(Number(populationTotal));
+    const total = chartRowTotal(rows);
+    if (!Number.isFinite(target) || target <= 0 || total <= target) return rows;
+    const scaled = rows.map((item) => {
+      const exact = (Number(item.count) || 0) * target / total;
+      const base = Math.floor(exact);
+      return {
+        ...item,
+        count: base,
+        raw_count: item.count,
+        remainder: exact - base
+      };
+    });
+    let remaining = target - chartRowTotal(scaled);
+    scaled
+      .slice()
+      .sort((left, right) => {
+        if (right.remainder !== left.remainder) return right.remainder - left.remainder;
+        return (Number(right.raw_count) || 0) - (Number(left.raw_count) || 0);
+      })
+      .forEach((item) => {
+        if (remaining <= 0) return;
+        item.count += 1;
+        remaining -= 1;
+      });
+    return scaled
+      .map(({ remainder, ...item }) => item)
+      .filter((item) => item.count > 0)
+      .sort((left, right) => right.count - left.count);
   }
 
   function formatRiskHints(risks) {
@@ -524,17 +570,23 @@
     return totals;
   }
 
-  function chartFill(rows) {
+  function chartFill(rows, denominator) {
     const total = rows.reduce((sum, item) => sum + item.count, 0);
-    if (!total) return "conic-gradient(rgba(148, 163, 184, 0.2) 0 360deg)";
+    const base = Number.isFinite(Number(denominator)) && Number(denominator) > 0
+      ? Math.max(Number(denominator), total)
+      : total;
+    if (!base) return "conic-gradient(rgba(148, 163, 184, 0.2) 0 360deg)";
     let cursor = 0;
     const stops = rows.map((item, index) => {
       const start = cursor;
-      const end = cursor + (item.count / total) * 360;
+      const end = cursor + (item.count / base) * 360;
       cursor = end;
       const color = item.color || PEOPLE_CHART_COLORS[index % PEOPLE_CHART_COLORS.length];
       return `${color} ${start.toFixed(2)}deg ${end.toFixed(2)}deg`;
     });
+    if (cursor < 359.5) {
+      stops.push(`rgba(148, 163, 184, 0.18) ${cursor.toFixed(2)}deg 360deg`);
+    }
     return `conic-gradient(${stops.join(", ")})`;
   }
 
@@ -794,27 +846,41 @@
 
   function createPeopleDonutChart(title, subtitle, map, labels, options) {
     const opts = options || {};
-    const rows = chartFeatureRows(map, labels, opts).map((item, index) => ({
+    const sourceRows = chartFeatureRows(map, labels, opts);
+    const visibleRows = opts.capToPopulation
+      ? capChartRowsToPopulation(sourceRows, opts.populationTotal)
+      : sourceRows;
+    const rows = visibleRows.map((item, index) => ({
       ...item,
       color: PEOPLE_CHART_COLORS[index % PEOPLE_CHART_COLORS.length]
     }));
-    const total = rows.reduce((sum, item) => sum + item.count, 0);
+    const judgedTotal = chartRowTotal(rows);
+    const populationTotal = Number(opts.populationTotal);
+    const denominator = Number.isFinite(populationTotal) && populationTotal > 0
+      ? Math.max(populationTotal, judgedTotal)
+      : judgedTotal;
+    const coreTotal = Number.isFinite(populationTotal) && populationTotal > 0 && opts.showPopulationTotal
+      ? Math.round(populationTotal)
+      : judgedTotal;
+    const headerLabel = typeof opts.headerLabel === "function"
+      ? opts.headerLabel({ judgedTotal, populationTotal: Number.isFinite(populationTotal) ? Math.round(populationTotal) : null })
+      : null;
     const card = document.createElement("article");
     card.className = "park-pcm-chart-card";
 
     const head = document.createElement("div");
     head.className = "park-pcm-chart-head";
     head.appendChild(textNode("h3", "", title));
-    head.appendChild(textNode("span", "", total ? `${total} ${opts.unitLabel || "项画像"}` : (opts.emptyStateLabel || "等待画像")));
+    head.appendChild(textNode("span", "", judgedTotal ? (headerLabel || `${judgedTotal} ${opts.unitLabel || "项画像"}`) : (opts.emptyStateLabel || "等待画像")));
 
     const body = document.createElement("div");
     body.className = "park-pcm-chart-body";
     const donut = document.createElement("div");
     donut.className = "park-pcm-donut";
-    donut.style.setProperty("--chart-fill", chartFill(rows));
+    donut.style.setProperty("--chart-fill", chartFill(rows, denominator));
     const core = document.createElement("div");
     core.className = "park-pcm-donut-core";
-    core.appendChild(textNode("strong", "", total ? String(total) : "-"));
+    core.appendChild(textNode("strong", "", coreTotal ? String(coreTotal) : "-"));
     core.appendChild(textNode("span", "", subtitle));
     donut.appendChild(core);
 
@@ -824,7 +890,7 @@
       legend.appendChild(textNode("p", "park-pcm-chart-empty", opts.emptyText || "Qwen3.6 正在回填画像。"));
     } else {
       rows.forEach((item) => {
-        const percent = total ? Math.round((item.count / total) * 100) : 0;
+        const percent = denominator ? Math.round((item.count / denominator) * 100) : 0;
         const row = document.createElement("div");
         row.className = "park-pcm-chart-row";
         const label = document.createElement("span");
@@ -885,11 +951,21 @@
 
   function renderPeopleCharts(container, rows) {
     if (!container) return;
+    const populationTotal = normalizedPopulationTotal(rows);
+    const portraitChartOptions = {
+      populationTotal,
+      showPopulationTotal: true,
+      capToPopulation: true,
+      headerLabel: ({ judgedTotal, populationTotal: total }) => (
+        total ? `已判断 ${judgedTotal} / 总人数 ${total}` : `${judgedTotal} 项画像`
+      )
+    };
     const chartGrid = document.createElement("div");
     chartGrid.className = "park-pcm-chart-grid";
     chartGrid.appendChild(createPeopleTrendChart(rows));
     chartGrid.appendChild(
       createPeopleDonutChart("客群阶段", "阶段", aggregateDerivedFeatureMap(rows, derivedAgeStageMap), PEOPLE_FEATURE_LABELS.age_stage_groups, {
+        ...portraitChartOptions,
         limit: 5,
         includeUnknown: false,
         emptyText: "暂未形成客群阶段画像。"
@@ -897,6 +973,7 @@
     );
     chartGrid.appendChild(
       createPeopleDonutChart("性别结构", "性别", aggregateDerivedFeatureMap(rows, derivedGenderMap), PEOPLE_FEATURE_LABELS.gender_groups, {
+        ...portraitChartOptions,
         limit: 3,
         includeUnknown: false,
         emptyText: "暂未形成性别结构画像。"
@@ -904,6 +981,7 @@
     );
     chartGrid.appendChild(
       createPeopleDonutChart("人员属性", "属性", aggregateDerivedFeatureMap(rows, derivedPersonAttributeMap), PEOPLE_FEATURE_LABELS.person_attributes, {
+        ...portraitChartOptions,
         limit: 6,
         includeUnknown: false,
         emptyText: "暂未识别出游客、商务、家庭或工作人员等属性。"
