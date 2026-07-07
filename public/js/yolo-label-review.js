@@ -317,6 +317,12 @@
     return null;
   }
 
+  function yoloCurrentMetric(entry, names) {
+    const direct = yoloMetricValue(entry?.metrics, names);
+    if (direct != null) return direct;
+    return yoloLatestMetric(entry, names);
+  }
+
   function yoloTrendScore(row) {
     return yoloMetricValue(row, ["test_map50_95", "val_map50_95", "map50_95", "score"]);
   }
@@ -357,6 +363,20 @@
     return Array.isArray(entry?.training_trends)
       ? entry.training_trends.filter((row) => row && row.day && yoloTrendScore(row) != null).slice(-10)
       : [];
+  }
+
+  function yoloSameArtifact(left, right) {
+    const safeLeft = String(left || "").trim();
+    const safeRight = String(right || "").trim();
+    return Boolean(safeLeft && safeRight && safeLeft === safeRight);
+  }
+
+  function yoloLatestRowLabel(entry, row) {
+    if (!row) return "最近";
+    const sameWeight = yoloSameArtifact(entry?.best_weight, row.best_weight);
+    const sameRun = yoloSameArtifact(entry?.source_run, row.source_run);
+    if (entry?.status === "deployed" && !sameWeight && !sameRun) return "最新候选";
+    return "最近";
   }
 
   function createTrendSparkline(rows) {
@@ -1203,7 +1223,7 @@
     section.appendChild(head);
 
     const entries = normalizeTrainingMetricEntries(payload).filter((entry) => {
-      const hasMetrics = yoloLatestMetric(entry, ["test_map50_95", "val_map50_95", "score"]) != null;
+      const hasMetrics = yoloCurrentMetric(entry, ["test_map50_95", "val_map50_95", "score"]) != null;
       return hasMetrics || entry?.status === "training";
     });
     if (!entries.length) {
@@ -1226,10 +1246,10 @@
 
       const metricGrid = createNode("div", "yolo-review-model-values");
       [
-        ["P", yoloLatestMetric(entry, ["test_precision", "val_precision", "precision"])],
-        ["R", yoloLatestMetric(entry, ["test_recall", "val_recall", "recall"])],
-        ["m50", yoloLatestMetric(entry, ["test_map50", "val_map50", "map50"])],
-        ["m95", yoloLatestMetric(entry, ["test_map50_95", "val_map50_95", "map50_95", "score"])]
+        ["P", yoloCurrentMetric(entry, ["test_precision", "val_precision", "precision"])],
+        ["R", yoloCurrentMetric(entry, ["test_recall", "val_recall", "recall"])],
+        ["m50", yoloCurrentMetric(entry, ["test_map50", "val_map50", "map50"])],
+        ["m95", yoloCurrentMetric(entry, ["test_map50_95", "val_map50_95", "map50_95", "score"])]
       ].forEach(([label, value]) => {
         const metric = createNode("div", "yolo-review-model-value");
         metric.appendChild(createNode("span", "", label));
@@ -1244,7 +1264,7 @@
       if (latest) {
         const recall = yoloTrendRecall(latest);
         const detail = [
-          `最近 ${formatDay(latest.day)}`,
+          `${yoloLatestRowLabel(entry, latest)} ${formatDay(latest.day)}`,
           latest.model_family || "",
           yoloTrendScore(latest) != null ? `m95 ${metricPercent(yoloTrendScore(latest))}` : "",
           recall != null ? `R ${metricPercent(recall)}` : "",
