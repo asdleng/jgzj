@@ -6,8 +6,9 @@
 >
   <header class="yolo-review-head">
     <div class="yolo-review-title-wrap">
-      <p class="yolo-review-kicker">YOLO DATASET VIEWER</p>
-      <h1>YOLO 训练标签浏览</h1>
+      <p class="yolo-review-kicker">AI DETECTION CLOSED LOOP</p>
+      <h1>AI检测数据闭环</h1>
+      <p class="yolo-review-subtitle">跟踪车端与云端数据回流、标注质量、模型候选效果，并进入样本库复核具体图片。</p>
     </div>
     <div class="yolo-review-head-actions">
       <p id="yolo-review-status" class="cloud-chat-status" data-state="idle">待加载</p>
@@ -16,6 +17,13 @@
   </header>
 
   <section class="yolo-review-daily-strip" aria-label="每日上传、标注与模型指标">
+    <div class="yolo-review-section-intro">
+      <div>
+        <p class="yolo-review-section-kicker">闭环看板</p>
+        <h2>数据回流与模型训练</h2>
+      </div>
+      <p>先看每天进来的数据、标注状态和昨日以来的候选模型效果。</p>
+    </div>
     <div id="yolo-review-daily-stats" class="yolo-review-daily-stats" aria-label="每日上传与标注统计">
       <div class="yolo-review-loading yolo-review-loading--compact">
         <span class="yolo-review-spinner"></span>
@@ -24,9 +32,19 @@
     </div>
   </section>
 
-  <section class="yolo-review-event-strip" aria-label="事件筛选">
+  <section class="yolo-review-review-strip" aria-label="样本库查看">
+    <div class="yolo-review-section-intro">
+      <div>
+        <p class="yolo-review-section-kicker">样本库查看</p>
+        <h2>事件、来源与具体数据</h2>
+      </div>
+      <p>按事件类型、数据来源和数据集筛选，查看图片、框、Qwen标注和人工复核结果。</p>
+    </div>
+  </section>
+
+  <section class="yolo-review-event-strip" aria-label="事件类型">
     <div class="yolo-review-event-strip-head">
-      <p class="yolo-review-event-title">事件筛选</p>
+      <p class="yolo-review-event-title">事件类型</p>
       <p id="yolo-review-event-status" class="yolo-review-event-status">全部图片</p>
     </div>
     <div class="yolo-review-event-grid">
@@ -81,10 +99,10 @@
     </div>
   </section>
 
-  <section class="yolo-review-dataset-strip" aria-label="来源与数据集">
+  <section class="yolo-review-dataset-strip" aria-label="数据来源与数据集">
     <div class="yolo-review-dataset-strip-head">
       <div>
-        <p class="yolo-review-dataset-title">来源与数据集</p>
+        <p class="yolo-review-dataset-title">数据来源与数据集</p>
         <p id="yolo-review-dataset-status" class="yolo-review-dataset-status">正在读取数据集。</p>
       </div>
     </div>
@@ -185,4 +203,4 @@
   </div>
 </section>
 
-<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260707-3" defer></script>
+<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260707-4" defer></script>

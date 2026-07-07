@@ -3,6 +3,7 @@ const fsSync = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const net = require('net');
+const zlib = require('zlib');
 const { pathToFileURL } = require('url');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
@@ -169,19 +170,19 @@ const lidarRelocalizationCaptureRoot = path.resolve(
 const lidarRelocalizationA100Root =
   process.env.LIDAR_RELOCALIZATION_A100_ROOT || '/home/sari/lidar_reloc_bevplace_20260629';
 const lidarRelocalizationModelLabel =
-  process.env.LIDAR_RELOCALIZATION_MODEL_LABEL || 'BEVPlace++ global descriptor';
+  process.env.LIDAR_RELOCALIZATION_MODEL_LABEL || 'BEVPlace++ GPU5 patrol-all global descriptor';
 const lidarRelocalizationModelCheckpoint =
   process.env.LIDAR_RELOCALIZATION_MODEL_CHECKPOINT ||
-  `${lidarRelocalizationA100Root}/runs/bevplace_keyframe_yawaware10v_patrol37_multicar_20260704_patrol37_13_14_20_35_gpu3/model_best.pth.tar`;
+  `${lidarRelocalizationA100Root}/runs/bevplace_keyframe_yawaware10v_20260706_patrol_all_gpu5/model_best.pth.tar`;
 const lidarRelocalizationFallbackCheckpoint =
   process.env.LIDAR_RELOCALIZATION_FALLBACK_CHECKPOINT ||
   `${lidarRelocalizationA100Root}/runs/jgzj_bevplace_yaw3_kdtree_20260630_gpu3/model_best.pth.tar`;
 const lidarRelocalizationBevplaceDatasetRoot =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_DATASET_ROOT ||
-  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_yawaware10v_patrol37_multicar_20260704_patrol37_13_14_20_35/map_db/datasets/KITTI`;
+  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_yawaware10v_20260706_patrol_all_gpu5/map_db/datasets/KITTI`;
 const lidarRelocalizationBevplaceManifest =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_MANIFEST ||
-  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_yawaware10v_patrol37_multicar_20260704_patrol37_13_14_20_35/map_db/manifest.jsonl`;
+  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_yawaware10v_20260706_patrol_all_gpu5/map_db/manifest.jsonl`;
 const lidarRelocalizationBevplaceScript =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_SCRIPT ||
   `${lidarRelocalizationA100Root}/scripts/bevplace_global_infer.py`;
@@ -191,10 +192,34 @@ const lidarRelocalizationA100Key = process.env.LIDAR_RELOCALIZATION_A100_KEY || 
 const lidarRelocalizationA100Python =
   process.env.LIDAR_RELOCALIZATION_A100_PYTHON ||
   `${lidarRelocalizationA100Root}/.venv_sys/bin/python3`;
-const lidarRelocalizationA100Gpu = process.env.LIDAR_RELOCALIZATION_A100_GPU || '3';
+const lidarRelocalizationA100Gpu = process.env.LIDAR_RELOCALIZATION_A100_GPU || '5';
 const lidarRelocalizationA100WorkRoot =
   process.env.LIDAR_RELOCALIZATION_A100_WORK_ROOT ||
   `${lidarRelocalizationA100Root}/runtime_infer`;
+const lidarRelocalizationNdtRunner = path.resolve(
+  process.env.LIDAR_RELOCALIZATION_NDT_RUNNER ||
+    path.join(lidarRelocalizationRoot, 'ndt_eval_tools/build/ndt_eval_runner')
+);
+const lidarRelocalizationNdtSelectorEnabled =
+  String(process.env.LIDAR_RELOCALIZATION_NDT_SELECTOR_ENABLED || 'true').toLowerCase() !== 'false';
+const lidarRelocalizationNdtSelectorTopk = toFiniteInteger(
+  process.env.LIDAR_RELOCALIZATION_NDT_SELECTOR_TOPK,
+  3,
+  { min: 1, max: 5 }
+);
+const lidarRelocalizationNdtSelectorTimeoutMs = toFiniteInteger(
+  process.env.LIDAR_RELOCALIZATION_NDT_SELECTOR_TIMEOUT_MS,
+  6000,
+  { min: 1000, max: 30000 }
+);
+const lidarRelocalizationNdtSelectorScoreMargin = Number(
+  process.env.LIDAR_RELOCALIZATION_NDT_SELECTOR_SCORE_MARGIN || 0.3
+);
+const lidarRelocalizationNdtSelectorMaxCorrectionM = Number(
+  process.env.LIDAR_RELOCALIZATION_NDT_SELECTOR_MAX_CORRECTION_M || 5
+);
+const lidarRelocalizationNdtSelectorRequire =
+  String(process.env.LIDAR_RELOCALIZATION_REQUIRE_NDT_SELECTOR || 'false').toLowerCase() === 'true';
 const lidarRelocalizationInferScript = path.resolve(
   process.env.LIDAR_RELOCALIZATION_INFER_SCRIPT ||
     path.resolve(__dirname, '../scripts/lidar_relocalization_infer.py')
@@ -5936,6 +5961,344 @@ function hasLidarRelocPointcloud(result) {
   );
 }
 
+function getLidarRelocPointcloudPayload(capture) {
+  const result =
+    capture?.result ||
+    capture?.response?.result ||
+    capture?.data?.response?.result ||
+    capture?.data?.result ||
+    capture;
+  const pointcloud = result?.pointcloud || result?.points || {};
+  return pointcloud && typeof pointcloud === 'object' ? pointcloud : null;
+}
+
+function extractLidarRelocCandidatePose(candidate, fallbackPose = null) {
+  const pose = normalizeLidarRelocPose(candidate) || normalizeLidarRelocPose(candidate?.pose) || null;
+  if (!pose) {
+    return null;
+  }
+  return {
+    x: pose.x,
+    y: pose.y,
+    z: pose.z ?? fallbackPose?.z ?? 0,
+    yaw: pose.yaw ?? pose.heading ?? fallbackPose?.yaw ?? 0,
+    heading: pose.yaw ?? pose.heading ?? fallbackPose?.yaw ?? 0
+  };
+}
+
+function finiteDistance2d(left, right) {
+  const ax = Number(left?.x);
+  const ay = Number(left?.y);
+  const bx = Number(right?.x);
+  const by = Number(right?.y);
+  if (![ax, ay, bx, by].every(Number.isFinite)) {
+    return null;
+  }
+  return Math.hypot(ax - bx, ay - by);
+}
+
+async function writeLidarRelocCapturePcd(capturePath) {
+  const text = await fs.readFile(capturePath, 'utf8');
+  const capture = parseJsonField(text, null);
+  const pointcloud = getLidarRelocPointcloudPayload(capture);
+  if (
+    !pointcloud ||
+    pointcloud.encoding !== 'float32_xyz_zlib_base64' ||
+    typeof pointcloud.points_base64 !== 'string'
+  ) {
+    throw new Error('capture_pointcloud_missing');
+  }
+
+  const raw = zlib.inflateSync(Buffer.from(pointcloud.points_base64, 'base64'));
+  if (raw.length < 12 || raw.length % 12 !== 0) {
+    throw new Error('capture_pointcloud_bad_float32_xyz_payload');
+  }
+
+  const lines = [];
+  for (let offset = 0; offset + 12 <= raw.length; offset += 12) {
+    const x = raw.readFloatLE(offset);
+    const y = raw.readFloatLE(offset + 4);
+    const z = raw.readFloatLE(offset + 8);
+    if (![x, y, z].every(Number.isFinite)) {
+      continue;
+    }
+    lines.push(`${x.toFixed(6)} ${y.toFixed(6)} ${z.toFixed(6)} 0`);
+  }
+
+  if (lines.length < 30) {
+    throw new Error('capture_pointcloud_too_few_points');
+  }
+
+  const pcdPath = path.join(path.dirname(capturePath), 'last_capture_for_ndt.pcd');
+  const header = [
+    '# .PCD v0.7 - Point Cloud Data file format',
+    'VERSION 0.7',
+    'FIELDS x y z intensity',
+    'SIZE 4 4 4 4',
+    'TYPE F F F F',
+    'COUNT 1 1 1 1',
+    `WIDTH ${lines.length}`,
+    'HEIGHT 1',
+    'VIEWPOINT 0 0 0 1 0 0 0',
+    `POINTS ${lines.length}`,
+    'DATA ascii'
+  ];
+  await fs.writeFile(pcdPath, `${header.concat(lines).join('\n')}\n`);
+  return {
+    path: pcdPath,
+    point_count: lines.length,
+    source_point_count: readLidarRelocNumber(pointcloud.source_point_count, pointcloud.point_count)
+  };
+}
+
+async function runLidarRelocNdtCandidate(sourcePcdPath, mapPath, candidate, fallbackPose = null) {
+  const initPose = extractLidarRelocCandidatePose(candidate, fallbackPose);
+  if (!initPose) {
+    return {
+      ok: false,
+      rank: candidate?.rank ?? null,
+      error: 'candidate_pose_missing',
+      candidate
+    };
+  }
+
+  const args = [
+    '--source',
+    sourcePcdPath,
+    '--target',
+    mapPath,
+    '--init',
+    String(initPose.x),
+    String(initPose.y),
+    String(initPose.z ?? 0),
+    String(initPose.yaw ?? 0),
+    '--source-leaf',
+    process.env.LIDAR_RELOCALIZATION_NDT_SOURCE_LEAF || '0.5',
+    '--target-leaf',
+    process.env.LIDAR_RELOCALIZATION_NDT_TARGET_LEAF || '0.8',
+    '--crop-radius',
+    process.env.LIDAR_RELOCALIZATION_NDT_CROP_RADIUS || '80',
+    '--resolution',
+    process.env.LIDAR_RELOCALIZATION_NDT_RESOLUTION || '1.5',
+    '--step-size',
+    process.env.LIDAR_RELOCALIZATION_NDT_STEP_SIZE || '0.1',
+    '--trans-eps',
+    process.env.LIDAR_RELOCALIZATION_NDT_TRANS_EPS || '0.01',
+    '--max-iter',
+    process.env.LIDAR_RELOCALIZATION_NDT_MAX_ITER || '35'
+  ];
+
+  const startedAt = Date.now();
+  try {
+    const { stdout, stderr } = await execFileAsync(lidarRelocalizationNdtRunner, args, {
+      timeout: lidarRelocalizationNdtSelectorTimeoutMs,
+      maxBuffer: 4 * 1024 * 1024
+    });
+    const lines = String(stdout || '').trim().split(/\r?\n/).filter(Boolean);
+    const payload = parseJsonField(lines[lines.length - 1] || stdout, null) || {
+      ok: false,
+      error: 'ndt_empty_output'
+    };
+    const finalPose = normalizeLidarRelocPose(payload.final_pose) || null;
+    const correction_xy_m = finalPose ? finiteDistance2d(initPose, finalPose) : null;
+    return {
+      ...payload,
+      ok: payload.ok !== false,
+      rank: candidate?.rank ?? null,
+      candidate,
+      init_candidate_pose: initPose,
+      correction_xy_m,
+      stderr: stderr ? String(stderr).slice(0, 1000) : undefined,
+      server_elapsed_ms: Date.now() - startedAt
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      rank: candidate?.rank ?? null,
+      candidate,
+      init_candidate_pose: initPose,
+      error: error?.code === 'ETIMEDOUT' ? 'ndt_timeout' : 'ndt_failed',
+      detail: error?.message || String(error),
+      server_elapsed_ms: Date.now() - startedAt
+    };
+  }
+}
+
+function isLidarRelocNdtCandidateUsable(row) {
+  const correction = readLidarRelocNumber(row?.correction_xy_m);
+  const maxCorrection = Number(lidarRelocalizationNdtSelectorMaxCorrectionM);
+  return (
+    row?.ok !== false &&
+    row?.converged === true &&
+    normalizeLidarRelocPose(row?.final_pose) &&
+    (!Number.isFinite(correction) || !Number.isFinite(maxCorrection) || correction <= maxCorrection)
+  );
+}
+
+function selectLidarRelocNdtCandidate(ndtRows, candidates) {
+  const usable = ndtRows.filter(isLidarRelocNdtCandidateUsable);
+  const byRank = new Map(ndtRows.map((row) => [Number(row.rank), row]));
+  const rank1 = usable.find((row) => Number(row.rank) === 1) || byRank.get(1) || null;
+  let selected = rank1 && isLidarRelocNdtCandidateUsable(rank1) ? rank1 : usable[0] || null;
+  let reason = selected ? 'rank1_preserved' : 'no_usable_ndt_candidate';
+  const usableWithScore = usable.filter((row) => Number.isFinite(Number(row.fitness_score)));
+  const bestByScore = usableWithScore.length
+    ? usableWithScore.reduce((best, row) =>
+        Number(row.fitness_score) < Number(best.fitness_score) ? row : best
+      )
+    : null;
+  const rank1Score = Number(rank1?.fitness_score);
+  const bestScore = Number(bestByScore?.fitness_score);
+  const margin = Number.isFinite(lidarRelocalizationNdtSelectorScoreMargin)
+    ? lidarRelocalizationNdtSelectorScoreMargin
+    : 0.3;
+
+  if (
+    bestByScore &&
+    Number(bestByScore.rank) !== 1 &&
+    Number.isFinite(rank1Score) &&
+    Number.isFinite(bestScore) &&
+    bestScore <= rank1Score * Math.max(0, 1 - margin)
+  ) {
+    selected = bestByScore;
+    reason = 'ndt_score_margin';
+  }
+
+  if (!selected && Array.isArray(candidates) && candidates.length) {
+    reason = 'bevplace_fallback_no_ndt_selection';
+  }
+
+  return {
+    selected,
+    reason,
+    usable_count: usable.length,
+    evaluated_count: ndtRows.length
+  };
+}
+
+async function attachLidarRelocNdtSelector(vehicleId, mapPath, capturePath, result, options = {}) {
+  const requestedEnabled =
+    typeof options.ndt_selector_enabled === 'boolean'
+      ? options.ndt_selector_enabled
+      : lidarRelocalizationNdtSelectorEnabled;
+  const candidates = Array.isArray(result?.candidates) ? result.candidates : [];
+  if (!requestedEnabled) {
+    return {
+      ...result,
+      ndt_selector: {
+        enabled: false,
+        phase: 'disabled'
+      }
+    };
+  }
+  if (!candidates.length) {
+    return {
+      ...result,
+      ndt_selector: {
+        enabled: true,
+        phase: 'skipped',
+        detail: 'no_bevplace_candidates'
+      }
+    };
+  }
+  if (!mapPath || !fsSync.existsSync(mapPath)) {
+    return {
+      ...result,
+      ndt_selector: {
+        enabled: true,
+        phase: 'skipped',
+        detail: 'global_map_missing',
+        map_path: mapPath || null
+      }
+    };
+  }
+  if (!fsSync.existsSync(lidarRelocalizationNdtRunner)) {
+    return {
+      ...result,
+      ndt_selector: {
+        enabled: true,
+        phase: 'skipped',
+        detail: 'ndt_runner_missing',
+        runner: lidarRelocalizationNdtRunner
+      }
+    };
+  }
+
+  const selectorStartedAt = Date.now();
+  try {
+    const originalCoarsePose =
+      normalizeLidarRelocPose(result?.coarse_pose || result?.pose || result?.best_pose || result) || null;
+    const sourcePcd = await writeLidarRelocCapturePcd(capturePath);
+    const topk = toFiniteInteger(options.ndt_selector_topk, lidarRelocalizationNdtSelectorTopk, {
+      min: 1,
+      max: 5
+    });
+    const fallbackPose = normalizeLidarRelocPose(result?.coarse_pose || result?.pose || candidates[0]) || null;
+    const rows = [];
+    for (const candidate of candidates.slice(0, topk)) {
+      rows.push(await runLidarRelocNdtCandidate(sourcePcd.path, mapPath, candidate, fallbackPose));
+    }
+    const selection = selectLidarRelocNdtCandidate(rows, candidates);
+    const selectedCandidate = selection.selected?.candidate || candidates[0] || null;
+    const selectedPose =
+      normalizeLidarRelocPose(selection.selected?.final_pose) ||
+      extractLidarRelocCandidatePose(selectedCandidate, fallbackPose) ||
+      normalizeLidarRelocPose(result?.coarse_pose || result?.pose || result);
+    const rank1Pose =
+      normalizeLidarRelocPose(rows.find((row) => Number(row.rank) === 1)?.final_pose) ||
+      extractLidarRelocCandidatePose(candidates[0], fallbackPose) ||
+      null;
+    const usedNdtPose = Boolean(selection.selected && normalizeLidarRelocPose(selection.selected.final_pose));
+    const phase = selection.selected
+      ? Number(selection.selected.rank) === 1
+        ? 'validated_rank1'
+        : 'selected_by_ndt'
+      : 'fallback_bevplace';
+
+    return {
+      ...result,
+      bevplace_coarse_pose: originalCoarsePose,
+      coarse_pose: selectedPose || result?.coarse_pose || result?.pose || null,
+      pose: selectedPose || result?.pose || null,
+      selected_candidate: selectedCandidate,
+      ndt_selector: {
+        enabled: true,
+        phase,
+        reason: selection.reason,
+        topk,
+        used_ndt_pose: usedNdtPose,
+        selected_rank: selection.selected?.rank ?? selectedCandidate?.rank ?? null,
+        selected_pose: selectedPose,
+        rank1_pose: rank1Pose,
+        rank1_changed: Number(selection.selected?.rank ?? 1) !== 1,
+        evaluated_count: selection.evaluated_count,
+        usable_count: selection.usable_count,
+        source_pcd: sourcePcd,
+        runner: lidarRelocalizationNdtRunner,
+        params: {
+          score_margin: lidarRelocalizationNdtSelectorScoreMargin,
+          max_correction_m: lidarRelocalizationNdtSelectorMaxCorrectionM,
+          timeout_ms: lidarRelocalizationNdtSelectorTimeoutMs
+        },
+        rows,
+        elapsed_ms: Date.now() - selectorStartedAt
+      }
+    };
+  } catch (error) {
+    return {
+      ...result,
+      bevplace_coarse_pose:
+        normalizeLidarRelocPose(result?.coarse_pose || result?.pose || result?.best_pose || result) || null,
+      ndt_selector: {
+        enabled: true,
+        phase: 'failed',
+        detail: error?.message || 'ndt_selector_failed',
+        elapsed_ms: Date.now() - selectorStartedAt
+      }
+    };
+  }
+}
+
 async function captureLidarRelocCurrentFrame(vehicleId, status, options = {}) {
   const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
   const statusTools = Array.isArray(status?.tools?.capture_tools) ? status.tools.capture_tools : [];
@@ -5995,6 +6358,8 @@ async function copyLidarRelocCaptureToA100(vehicleId, capturePath) {
       '-i',
       lidarRelocalizationA100Key,
       '-o',
+      'ClearAllForwardings=yes',
+      '-o',
       'BatchMode=yes',
       '-o',
       'StrictHostKeyChecking=no',
@@ -6008,6 +6373,8 @@ async function copyLidarRelocCaptureToA100(vehicleId, capturePath) {
     [
       '-i',
       lidarRelocalizationA100Key,
+      '-o',
+      'ClearAllForwardings=yes',
       '-o',
       'BatchMode=yes',
       '-o',
@@ -6054,6 +6421,8 @@ async function runLidarRelocBevplaceGlobalInfer(vehicleId, capturePath, options 
     [
       '-i',
       lidarRelocalizationA100Key,
+      '-o',
+      'ClearAllForwardings=yes',
       '-o',
       'BatchMode=yes',
       '-o',
@@ -11396,7 +11765,7 @@ app.post(
             args: req.body?.capture_args,
             timeout_s: req.body?.capture_timeout_s
           });
-          const result = await runLidarRelocServerInfer(
+          const rawResult = await runLidarRelocServerInfer(
             vehicleId,
             mapSync.map.path,
             capture.local_record,
@@ -11405,29 +11774,66 @@ app.post(
               return_topk: req.body?.return_topk
             }
           );
+          const rawMethod = String(rawResult?.method || '').trim();
+          const result =
+            rawMethod === 'bevplace_global_descriptor'
+              ? await attachLidarRelocNdtSelector(vehicleId, mapSync.map.path, capture.local_record, rawResult, {
+                  ndt_selector_enabled:
+                    typeof req.body?.ndt_selector_enabled === 'boolean'
+                      ? req.body.ndt_selector_enabled
+                      : undefined,
+                  ndt_selector_topk: req.body?.ndt_selector_topk
+                })
+              : rawResult;
           const coarsePose =
             normalizeLidarRelocPose(result?.pose || result?.coarse_pose || result?.best_pose || result) || null;
+          const rawCoarsePose =
+            normalizeLidarRelocPose(result?.bevplace_coarse_pose || rawResult?.coarse_pose || rawResult?.pose || rawResult) ||
+            coarsePose;
           const confidence = readLidarRelocNumber(result?.confidence, result?.score, result?.best_score);
           const method = String(result?.method || '').trim();
           const isLegacyLocalBev = method === 'server_bev_prior_refine';
           const passesConfidence =
             confidence === null || !Number.isFinite(lidarRelocalizationMinConfidence) ||
             confidence >= lidarRelocalizationMinConfidence;
+          const selectorRequired =
+            typeof req.body?.require_ndt_selector === 'boolean'
+              ? req.body.require_ndt_selector
+              : lidarRelocalizationNdtSelectorRequire;
+          const selectorPhase = String(result?.ndt_selector?.phase || '').trim();
+          const selectorPassed =
+            !selectorRequired || ['validated_rank1', 'selected_by_ndt'].includes(selectorPhase);
           const ok =
             result?.ok !== false &&
             Boolean(coarsePose) &&
             !isLegacyLocalBev &&
-            passesConfidence;
+            passesConfidence &&
+            selectorPassed;
 
           return res.status(ok ? 200 : 409).json({
             ok,
             vehicle_id: vehicleId,
-            phase: ok ? 'coarse_pose_ready' : isLegacyLocalBev ? 'legacy_prior_refine_disabled' : result?.phase || 'infer_failed',
-            tool_name: method === 'bevplace_global_descriptor' ? 'server.bevplace_global' : 'server.lidar_relocalization',
+            phase: ok
+              ? result?.ndt_selector?.phase === 'selected_by_ndt'
+                ? 'coarse_pose_ready_ndt_selected'
+                : 'coarse_pose_ready'
+              : isLegacyLocalBev
+                ? 'legacy_prior_refine_disabled'
+                : !selectorPassed
+                  ? 'ndt_selector_not_ready'
+                  : result?.phase || 'infer_failed',
+            tool_name:
+              method === 'bevplace_global_descriptor'
+                ? result?.ndt_selector?.enabled
+                  ? 'server.bevplace_global+ndt_selector'
+                  : 'server.bevplace_global'
+                : 'server.lidar_relocalization',
             coarse_pose: ok ? coarsePose : null,
-            raw_coarse_pose: coarsePose,
+            raw_coarse_pose: rawCoarsePose,
             confidence,
             candidates: Array.isArray(result?.candidates) ? result.candidates : [],
+            selected_candidate: result?.selected_candidate || null,
+            ndt_selector: result?.ndt_selector || null,
             capture: {
               captured_at: capture.captured_at,
               tool_name: capture.tool_name,
@@ -11442,6 +11848,8 @@ app.post(
               ? undefined
               : isLegacyLocalBev
                 ? '旧的 prior-refine fallback 已禁用；当前不会把先验局部匹配伪装成 BEVPlace++ 粗位姿。'
+                : !selectorPassed
+                  ? `NDT selector 未通过要求：${selectorPhase || 'unknown'}。`
                 : !passesConfidence
                   ? `BEVPlace++ 全局检索置信度低于阈值 ${lidarRelocalizationMinConfidence}，不返回给 NDT。`
                   : result?.detail || 'server_bevplace_global_infer_failed'

@@ -1278,22 +1278,28 @@
     if (heatmapDateTicksEl) {
       clearElement(heatmapDateTicksEl);
       const tickWidth = 42;
-      const axisWidth = Math.max(820, (days.length - 1) * 28 + tickWidth);
+      const axisWidth = Math.max(1260, days.length * tickWidth);
       heatmapDateTicksEl.parentElement?.style.setProperty("min-width", `${axisWidth}px`);
       heatmapDateTicksEl.parentElement?.style.setProperty("--park-pcm-date-tick-width", `${tickWidth}px`);
-      days.forEach((day, index) => {
+      heatmapDateTicksEl.parentElement?.style.setProperty("--park-pcm-date-tick-count", String(days.length));
+      let activeTick = null;
+      days.forEach((day) => {
         const tick = document.createElement("span");
         tick.className = "park-pcm-date-tick";
         tick.dataset.active = day.key === active.key ? "true" : "false";
         const patrolCount = Math.max(Number(day.patrol_sample_count) || 0, Number(day.sample_count) || 0);
         tick.dataset.hasData = patrolCount > 0 ? "true" : "false";
         tick.dataset.hasHeat = day.heat_point_count > 0 ? "true" : "false";
-        tick.style.setProperty("--tick-left", days.length > 1 ? `${(index / (days.length - 1)) * 100}%` : "50%");
-        tick.style.setProperty("--tick-width", `${tickWidth}px`);
         tick.title = `${formatDayLabel(day.key)} · 巡逻 ${patrolCount} 条 · 人流 ${day.sample_count} 条`;
         tick.textContent = formatDayShortLabel(day.key);
+        if (day.key === active.key) activeTick = tick;
         heatmapDateTicksEl.appendChild(tick);
       });
+      if (activeTick && typeof activeTick.scrollIntoView === "function") {
+        window.requestAnimationFrame(() => {
+          activeTick.scrollIntoView({ block: "nearest", inline: "center" });
+        });
+      }
     }
   }
 

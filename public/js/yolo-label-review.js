@@ -1300,9 +1300,9 @@
     const section = createNode("section", "yolo-review-model-metrics", "");
     const head = createNode("div", "yolo-review-model-head");
     const title = createNode("div", "yolo-review-model-title");
-    title.appendChild(createNode("strong", "", "每日模型指标"));
+    title.appendChild(createNode("strong", "", "模型候选效果"));
     const updated = payload?.updated_at ? `更新 ${formatDate(payload.updated_at)}` : "等待训练指标";
-    title.appendChild(createNode("span", "", `${updated} · 先选任务，再看昨日以来训练记录`));
+    title.appendChild(createNode("span", "", `${updated} · 按任务查看昨日以来训练记录`));
     head.appendChild(title);
     section.appendChild(head);
 
@@ -1447,8 +1447,8 @@
 
     const head = createNode("div", "yolo-review-daily-head");
     const title = createNode("div", "yolo-review-daily-title");
-    title.appendChild(createNode("strong", "", "每日上传与标注"));
-    title.appendChild(createNode("span", "", `近 ${payload.days || rows.length} 天 · ${payload.time_zone || "Asia/Shanghai"}`));
+    title.appendChild(createNode("strong", "", "数据回流与标注进度"));
+    title.appendChild(createNode("span", "", `近 ${payload.days || rows.length} 天 · 上传 / Qwen框 / 人工保存`));
     head.appendChild(title);
     const indexText = payload.index_built_at ? `索引 ${formatDate(payload.index_built_at)}` : "索引时间未知";
     head.appendChild(createNode("p", "yolo-review-daily-meta", indexText));

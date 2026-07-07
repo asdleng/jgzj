@@ -538,10 +538,9 @@
   .park-pcm-date-axis {
     --park-pcm-date-thumb-size: 18px;
     --park-pcm-date-tick-width: 42px;
-    --park-pcm-date-axis-offset: calc(var(--park-pcm-date-thumb-size) / 2);
+    --park-pcm-date-tick-count: 30;
     position: relative;
-    min-width: 820px;
-    padding-inline: calc(var(--park-pcm-date-tick-width) / 2);
+    min-width: 1260px;
     display: grid;
     gap: 8px;
   }
@@ -562,9 +561,9 @@
   .park-pcm-date-control input[type="range"] {
     appearance: none;
     -webkit-appearance: none;
-    width: 100%;
+    width: calc(100% - var(--park-pcm-date-tick-width));
     height: var(--park-pcm-date-thumb-size);
-    margin: 0;
+    margin: 0 calc(var(--park-pcm-date-tick-width) / 2);
     position: relative;
     z-index: 1;
     background: transparent;
@@ -611,20 +610,15 @@
   }
 
   .park-pcm-date-ticks {
-    position: relative;
-    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(var(--park-pcm-date-tick-count), var(--park-pcm-date-tick-width));
+    width: 100%;
     height: 38px;
-    margin-inline: 0;
     overflow: visible;
   }
 
   .park-pcm-date-tick {
-    position: absolute;
-    top: 0;
-    left: var(--tick-left, 0%);
-    width: var(--tick-width, 56px);
     min-width: 0;
-    transform: translateX(-50%);
     display: grid;
     justify-items: center;
     gap: 5px;
@@ -633,6 +627,7 @@
     line-height: 1.2;
     text-align: center;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
   .park-pcm-date-tick::before {

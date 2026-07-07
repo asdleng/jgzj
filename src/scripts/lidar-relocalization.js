@@ -127,6 +127,12 @@
     ].join(" / ");
   }
 
+  function formatMs(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "-";
+    return `${Math.round(num)} ms`;
+  }
+
   function addMeta(container, label, value, tone = "idle") {
     const item = createNode("article", `lidar-reloc-meta-item is-${tone}`);
     item.appendChild(createNode("p", "lidar-reloc-meta-label", label));
@@ -481,10 +487,27 @@
     resultNode.innerHTML = "";
     addMeta(resultNode, "推理阶段", data?.phase || "-");
     addMeta(resultNode, "粗位姿", formatPose(data?.coarse_pose), data?.coarse_pose ? "ok" : "warn");
+    if (data?.raw_coarse_pose) {
+      addMeta(resultNode, "BEVPlace++ top1", formatPose(data.raw_coarse_pose), "idle");
+    }
     addMeta(resultNode, "置信度", formatNumber(data?.confidence, 3));
     addMeta(resultNode, "工具", data?.tool_name || "-");
     const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
     addMeta(resultNode, "候选数量", candidates.length || "-");
+    const selector = data?.ndt_selector || null;
+    if (selector) {
+      addMeta(resultNode, "NDT selector", selector.phase || "-", selector.phase === "failed" ? "warn" : "ok");
+      addMeta(resultNode, "选中候选", selector.selected_rank ? `rank ${selector.selected_rank}` : "-", selector.rank1_changed ? "ok" : "idle");
+      addMeta(resultNode, "NDT 候选", `${selector.usable_count ?? 0}/${selector.evaluated_count ?? 0}`, selector.usable_count ? "ok" : "warn");
+      addMeta(resultNode, "NDT 耗时", formatMs(selector.elapsed_ms), selector.elapsed_ms > 8000 ? "warn" : "idle");
+      const rows = Array.isArray(selector.rows) ? selector.rows : [];
+      const selected = rows.find((row) => Number(row.rank) === Number(selector.selected_rank)) || rows[0] || null;
+      if (selected) {
+        addMeta(resultNode, "NDT fitness", formatNumber(selected.fitness_score, 3), selected.converged ? "ok" : "warn");
+        addMeta(resultNode, "NDT 校正", selected.correction_xy_m === null || selected.correction_xy_m === undefined ? "-" : `${formatNumber(selected.correction_xy_m, 2)} m`);
+      }
+      if (selector.detail) addMeta(resultNode, "NDT 说明", selector.detail, "warn");
+    }
     if (data?.detail) addMeta(resultNode, "状态", data.detail, data.ok ? "idle" : "warn");
   }
 
