@@ -1171,6 +1171,9 @@ module.exports = function registerParkPcmRoutes(app, options) {
   const reportStatePath = path.join(runtimeRoot, 'report-state.json');
   const crowdFramesRoot = path.join(runtimeRoot, 'crowd-frames');
   const crowdRedactedFramesRoot = path.join(runtimeRoot, 'crowd-frames-redacted');
+  const crowdRedactionPersonModelPath = path.resolve(
+    process.env.PARK_CROWD_REDACTION_PERSON_MODEL_PATH || path.join(rootDir, '.runtime/yolo_model_service/weights/person_yolo_best.pt')
+  );
   const crowdUploadsRoot = path.join(runtimeRoot, 'patrol-flow-uploads');
   const crowdIndexLogPath = path.join(runtimeRoot, 'crowd-samples.jsonl');
   const crowdStatePath = path.join(runtimeRoot, 'crowd-capture-state.json');
@@ -4544,6 +4547,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     const script = String.raw`
 import cv2, os, sys
 src, dst = sys.argv[1], sys.argv[2]
+person_model_path = sys.argv[3] if len(sys.argv) > 3 else ""
 img = cv2.imread(src)
 if img is None:
     raise RuntimeError("image_read_failed")
@@ -4634,6 +4638,51 @@ for detector_index, cascade_path in enumerate(cascade_paths):
         if not face_has_eye_evidence(x, y, w, h):
             continue
         faces.append((x, y, w, h))
+
+def add_person_head_candidates():
+    if not person_model_path or not os.path.exists(person_model_path):
+        return
+    try:
+        from ultralytics import YOLO
+        model = YOLO(person_model_path)
+        results = model.predict(
+            source=src,
+            imgsz=640,
+            conf=0.38,
+            iou=0.45,
+            device="cpu",
+            verbose=False,
+        )
+        for result in results:
+            names = getattr(result, "names", {}) or {}
+            boxes = getattr(result, "boxes", None)
+            if boxes is None:
+                continue
+            for box in boxes:
+                cls = int(box.cls[0])
+                label = names.get(cls, str(cls))
+                if label != "person":
+                    continue
+                conf = float(box.conf[0])
+                if conf < 0.38:
+                    continue
+                x1, y1, x2, y2 = [float(value) for value in box.xyxy[0].tolist()]
+                bw = x2 - x1
+                bh = y2 - y1
+                if bw < 18 or bh < 55:
+                    continue
+                if (bw * bh) / float(max(1, width * height)) > 0.35:
+                    continue
+                head_h = max(22, int(bh * 0.28))
+                head_w = max(20, int(min(bw * 0.90, head_h * 1.05)))
+                cx = (x1 + x2) / 2.0
+                hx = int(round(cx - head_w / 2.0))
+                hy = int(round(y1))
+                faces.append((max(0, hx), max(0, hy), head_w, head_h))
+    except Exception:
+        return
+
+add_person_head_candidates()
 if faces:
     faces.sort(key=lambda box: box[2] * box[3], reverse=True)
     kept = []
@@ -4669,8 +4718,8 @@ if not ok:
 print(len(faces))
 `;
     try {
-      await execFileAsync('python3', ['-c', script, source.target_path, tmpPath], {
-        timeout: 15000,
+      await execFileAsync('python3', ['-c', script, source.target_path, tmpPath, crowdRedactionPersonModelPath], {
+        timeout: 30000,
         maxBuffer: 64 * 1024
       });
       await fsp.rename(tmpPath, output.target_path);
