@@ -540,6 +540,7 @@
     --park-pcm-date-tick-width: 42px;
     --park-pcm-date-tick-count: 30;
     position: relative;
+    width: calc(var(--park-pcm-date-tick-width) * var(--park-pcm-date-tick-count));
     min-width: 1260px;
     display: grid;
     gap: 8px;
@@ -561,9 +562,9 @@
   .park-pcm-date-control input[type="range"] {
     appearance: none;
     -webkit-appearance: none;
-    width: calc(100% - var(--park-pcm-date-tick-width));
+    width: calc(100% - var(--park-pcm-date-tick-width) + var(--park-pcm-date-thumb-size));
     height: var(--park-pcm-date-thumb-size);
-    margin: 0 calc(var(--park-pcm-date-tick-width) / 2);
+    margin: 0 calc((var(--park-pcm-date-tick-width) - var(--park-pcm-date-thumb-size)) / 2);
     position: relative;
     z-index: 1;
     background: transparent;

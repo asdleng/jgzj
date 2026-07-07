@@ -1279,6 +1279,7 @@
       clearElement(heatmapDateTicksEl);
       const tickWidth = 42;
       const axisWidth = Math.max(1260, days.length * tickWidth);
+      heatmapDateTicksEl.parentElement?.style.setProperty("width", `${axisWidth}px`);
       heatmapDateTicksEl.parentElement?.style.setProperty("min-width", `${axisWidth}px`);
       heatmapDateTicksEl.parentElement?.style.setProperty("--park-pcm-date-tick-width", `${tickWidth}px`);
       heatmapDateTicksEl.parentElement?.style.setProperty("--park-pcm-date-tick-count", String(days.length));
