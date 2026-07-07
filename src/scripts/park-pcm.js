@@ -854,14 +854,17 @@
       ...item,
       color: PEOPLE_CHART_COLORS[index % PEOPLE_CHART_COLORS.length]
     }));
-    const judgedTotal = chartRowTotal(rows);
+    const displayTotal = chartRowTotal(rows);
+    const judgedTotal = opts.knownOnlyHeader
+      ? chartRowTotal(rows.filter((item) => item.key !== "unknown"))
+      : displayTotal;
     const populationTotal = Number(opts.populationTotal);
     const denominator = Number.isFinite(populationTotal) && populationTotal > 0
-      ? Math.max(populationTotal, judgedTotal)
-      : judgedTotal;
+      ? Math.max(populationTotal, displayTotal)
+      : displayTotal;
     const coreTotal = Number.isFinite(populationTotal) && populationTotal > 0 && opts.showPopulationTotal
       ? Math.round(populationTotal)
-      : judgedTotal;
+      : displayTotal;
     const headerLabel = typeof opts.headerLabel === "function"
       ? opts.headerLabel({ judgedTotal, populationTotal: Number.isFinite(populationTotal) ? Math.round(populationTotal) : null })
       : null;
@@ -871,7 +874,7 @@
     const head = document.createElement("div");
     head.className = "park-pcm-chart-head";
     head.appendChild(textNode("h3", "", title));
-    head.appendChild(textNode("span", "", judgedTotal ? (headerLabel || `${judgedTotal} ${opts.unitLabel || "项画像"}`) : (opts.emptyStateLabel || "等待画像")));
+    head.appendChild(textNode("span", "", displayTotal ? (headerLabel || `${judgedTotal} ${opts.unitLabel || "项画像"}`) : (opts.emptyStateLabel || "等待画像")));
 
     const body = document.createElement("div");
     body.className = "park-pcm-chart-body";
@@ -975,7 +978,8 @@
       createPeopleDonutChart("性别结构", "性别", aggregateDerivedFeatureMap(rows, derivedGenderMap), PEOPLE_FEATURE_LABELS.gender_groups, {
         ...portraitChartOptions,
         limit: 3,
-        includeUnknown: false,
+        includeUnknown: true,
+        knownOnlyHeader: true,
         emptyText: "暂未形成性别结构画像。"
       })
     );
@@ -1150,6 +1154,11 @@
     if (!imageUrl) return;
     ensureImagePreview();
     const peopleText = frame.analysis && frame.analysis.people_count != null ? `${frame.analysis.people_count} 人` : "人数待识别";
+    imagePreview.image.hidden = false;
+    imagePreview.image.onerror = () => {
+      imagePreview.image.hidden = true;
+      if (imagePreview.meta) imagePreview.meta.textContent = "历史图片未留存";
+    };
     imagePreview.image.src = redactedCrowdImageUrl(imageUrl);
     imagePreview.image.alt = `${sample && sample.vehicle_id || ""} ${frame.camera_id || "camera"}`;
     imagePreview.title.textContent = `${sample && sample.vehicle_id || "-"} · ${frame.camera_id || "camera"}`;
@@ -1223,6 +1232,25 @@
     const index = raw.indexOf(marker);
     if (index < 0) return raw;
     return `${raw.slice(0, index)}/api/park-pcm/crowd/redacted-files/${raw.slice(index + marker.length)}`;
+  }
+
+  function createCrowdImagePlaceholder(text) {
+    const placeholder = document.createElement("div");
+    placeholder.className = "park-pcm-image-placeholder";
+    placeholder.textContent = text || "历史图片未留存";
+    return placeholder;
+  }
+
+  function replaceMissingCrowdImage(img, previewBtn) {
+    if (!img || img.dataset.missing === "true") return;
+    img.dataset.missing = "true";
+    const placeholder = createCrowdImagePlaceholder();
+    img.replaceWith(placeholder);
+    if (previewBtn) {
+      previewBtn.disabled = true;
+      previewBtn.classList.add("park-pcm-frame-preview-button--disabled");
+      previewBtn.setAttribute("aria-label", "历史图片未留存");
+    }
   }
 
   function selectedVehicleCrowdSamples() {
@@ -1456,12 +1484,18 @@
       img.loading = "lazy";
       img.decoding = "async";
       img.alt = `${sample.vehicle_id || ""} ${frame.camera_id || "camera"}`;
-      img.src = redactedCrowdImageUrl(frame.image_url || "");
       const previewBtn = document.createElement("button");
       previewBtn.type = "button";
       previewBtn.className = "park-pcm-frame-preview-button";
       previewBtn.setAttribute("aria-label", "放大查看图片");
       previewBtn.addEventListener("click", () => openImagePreview(frame, sample));
+      img.addEventListener("error", () => replaceMissingCrowdImage(img, previewBtn), { once: true });
+      const imageSrc = redactedCrowdImageUrl(frame.image_url || "");
+      if (imageSrc) {
+        img.src = imageSrc;
+      } else {
+        window.requestAnimationFrame(() => replaceMissingCrowdImage(img, previewBtn));
+      }
       const caption = document.createElement("figcaption");
       caption.appendChild(textNode("span", "", frame.camera_id || "camera"));
       caption.appendChild(textNode("span", "", `${formatBytes(frame.image_size_bytes)} · ${frame.analysis && frame.analysis.people_count != null ? `${frame.analysis.people_count}人` : "待识别"}`));

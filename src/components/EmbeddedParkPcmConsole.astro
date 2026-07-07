@@ -1164,17 +1164,39 @@
     cursor: zoom-in;
   }
 
+  .park-pcm-frame-preview-button--disabled {
+    cursor: default;
+  }
+
   .park-pcm-frame-preview-button:focus-visible {
     outline: 2px solid #38bdf8;
     outline-offset: 2px;
   }
 
-  .park-pcm-crowd-frame img {
+  .park-pcm-crowd-frame img,
+  .park-pcm-image-placeholder {
     display: block;
     width: 100%;
     aspect-ratio: 4 / 3;
+    min-height: 0;
+  }
+
+  .park-pcm-crowd-frame img {
     object-fit: cover;
     background: #020617;
+  }
+
+  .park-pcm-image-placeholder {
+    display: grid;
+    place-items: center;
+    padding: 12px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    background: #020617;
+    color: #94a3b8;
+    font-size: 0.82rem;
+    font-weight: 800;
+    line-height: 1.4;
+    text-align: center;
   }
 
   .park-pcm-crowd-frame figcaption {

@@ -376,6 +376,42 @@ def has_v3(sample, state_samples):
     )
 
 
+def analysis_model_name(aggregate):
+    if not isinstance(aggregate, dict):
+        return ""
+    server_vlm = aggregate.get("server_vlm") if isinstance(aggregate.get("server_vlm"), dict) else {}
+    return str(aggregate.get("model") or server_vlm.get("model") or "")
+
+
+def known_gender_count(aggregate):
+    if not isinstance(aggregate, dict):
+        return 0
+    gender = aggregate.get("gender_groups") if isinstance(aggregate.get("gender_groups"), dict) else {}
+    if gender:
+        return sum(
+            normalize_people_count(value) or 0
+            for key, value in gender.items()
+            if key != "unknown"
+        )
+    mix = aggregate.get("gender_mix") if isinstance(aggregate.get("gender_mix"), dict) else {}
+    total = 0
+    for key in ("male", "man", "men", "female", "woman", "women"):
+        total += normalize_people_count(mix.get(key)) or 0
+    return total
+
+
+def needs_gender_backfill(sample, state_samples, frames_root, include_labeler_unknown=False):
+    aggregate = effective_aggregate(sample, state_samples)
+    people_count = normalize_people_count(aggregate.get("people_count"))
+    if people_count is None or people_count <= 0:
+        return False
+    if known_gender_count(aggregate) > 0:
+        return False
+    if not include_labeler_unknown and analysis_model_name(aggregate) == MODEL:
+        return False
+    return bool(prepare_frames(sample, frames_root, require_existing_files=True))
+
+
 def image_mime(path):
     ext = Path(path).suffix.lower()
     if ext == ".png":
@@ -630,7 +666,7 @@ def build_state_entry(sample, frame_results, aggregate):
     }
 
 
-def flush_updates(state_path, progress_path, lock_path, updates, progress, force=False):
+def flush_updates(state_path, progress_path, lock_path, updates, progress, force=False, overwrite_existing_v3=False):
     written_count = 0
     skipped_current_count = 0
     with directory_lock(lock_path):
@@ -641,7 +677,7 @@ def flush_updates(state_path, progress_path, lock_path, updates, progress, force
         if not isinstance(samples, dict):
             samples = {}
         for sample_id, entry in updates.items():
-            if not force:
+            if not force and not overwrite_existing_v3:
                 aggregate = samples.get(sample_id, {}).get("aggregate", {}) if isinstance(samples.get(sample_id), dict) else {}
                 if (
                     isinstance(aggregate, dict)
@@ -703,6 +739,8 @@ def main():
     parser.add_argument("--nonzero-only", action="store_true", help="Only backfill samples whose effective people_count is positive or unknown.")
     parser.add_argument("--fallback-missing-images", action="store_true", help="For nonzero samples with missing local images, fill v3 fields from existing counts and unknown buckets.")
     parser.add_argument("--fallback-missing-images-only", action="store_true")
+    parser.add_argument("--gender-unknown-only", action="store_true", help="Only run Qwen for positive samples that have local images but no known male/female count.")
+    parser.add_argument("--include-labeler-unknown", action="store_true", help="With --gender-unknown-only, also retry samples already analyzed by the Labeler model.")
     parser.add_argument("--progress-path", default="")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--dry-run", action="store_true")
@@ -724,7 +762,13 @@ def main():
     rows = [row for row in rows if row.get("sample_id") and isinstance(row.get("frames"), list) and row.get("frames")]
     rows.sort(key=lambda item: item.get("collected_at") or "", reverse=args.order == "newest")
 
-    candidates = [row for row in rows if args.force or not has_v3(row, state_samples)]
+    if args.gender_unknown_only:
+        candidates = [
+            row for row in rows
+            if needs_gender_backfill(row, state_samples, frames_root, include_labeler_unknown=args.include_labeler_unknown)
+        ]
+    else:
+        candidates = [row for row in rows if args.force or not has_v3(row, state_samples)]
     log(f"loaded samples={len(rows)} candidates={len(candidates)} order={args.order} dry_run={args.dry_run}")
     progress = load_json(progress_path, {})
     if not isinstance(progress, dict) or args.force:
@@ -773,7 +817,11 @@ def main():
         if not args.force and people_count != 0 and not args.dry_run:
             latest_state = load_json(state_path, {"samples": {}})
             latest_samples = latest_state.get("samples") if isinstance(latest_state.get("samples"), dict) else {}
-            if has_v3(sample, latest_samples):
+            if args.gender_unknown_only:
+                if not needs_gender_backfill(sample, latest_samples, frames_root, include_labeler_unknown=args.include_labeler_unknown):
+                    skipped_count += 1
+                    continue
+            elif has_v3(sample, latest_samples):
                 skipped_count += 1
                 continue
         try:
@@ -810,7 +858,15 @@ def main():
             processed_this_run += 1
             log(f"{action} sample={sample_id} vehicle={sample.get('vehicle_id')} people={aggregate_result.get('people_count')} processed={processed_this_run} qwen={qwen_count} zero={zero_fill_count} missing_fallback={missing_image_fallback_count}")
             if not args.dry_run and len(updates) >= max(1, args.flush_every):
-                written_count, skipped_current_count = flush_updates(state_path, progress_path, lock_path, updates, progress, force=args.force)
+                written_count, skipped_current_count = flush_updates(
+                    state_path,
+                    progress_path,
+                    lock_path,
+                    updates,
+                    progress,
+                    force=args.force,
+                    overwrite_existing_v3=args.gender_unknown_only,
+                )
                 log(f"flushed updates={len(updates)} written={written_count} skipped_current={skipped_current_count}")
                 updates = {}
             if args.sleep_s > 0:
@@ -832,7 +888,15 @@ def main():
             time.sleep(max(1.0, args.sleep_s))
 
     if not args.dry_run and updates:
-        written_count, skipped_current_count = flush_updates(state_path, progress_path, lock_path, updates, progress, force=args.force)
+        written_count, skipped_current_count = flush_updates(
+            state_path,
+            progress_path,
+            lock_path,
+            updates,
+            progress,
+            force=args.force,
+            overwrite_existing_v3=args.gender_unknown_only,
+        )
         log(f"flushed final updates={len(updates)} written={written_count} skipped_current={skipped_current_count}")
     log(f"done processed={processed_this_run} qwen={qwen_count} zero_fill={zero_fill_count} missing_fallback={missing_image_fallback_count} skipped={skipped_count} errors={error_count}")
 

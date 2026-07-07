@@ -4514,6 +4514,31 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return 'image/jpeg';
   }
 
+  function isMissingCrowdFrameError(error) {
+    if (!error) return false;
+    if (error.code === 'ENOENT') return true;
+    const message = String(error.message || '');
+    return message.includes('ENOENT') || message === 'crowd_frame_source_missing';
+  }
+
+  function sendMissingCrowdFramePlaceholder(res) {
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+  <rect width="640" height="480" fill="#020617"/>
+  <rect x="26" y="26" width="588" height="428" rx="18" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+  <path d="M236 206h168v92H236z" fill="#1e293b" stroke="#475569" stroke-width="2"/>
+  <circle cx="276" cy="236" r="14" fill="#64748b"/>
+  <path d="M252 282l44-42 34 29 26-24 42 37z" fill="#475569"/>
+  <text x="320" y="342" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#cbd5e1">历史图片未留存</text>
+  <text x="320" y="380" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#94a3b8">统计数据仍保留</text>
+</svg>`;
+    res.status(200);
+    res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('X-Crowd-Frame-Missing', '1');
+    return res.send(svg);
+  }
+
   function resolveCrowdFramePath(relativePath, rootPath) {
     const cleanRelativePath = String(relativePath || '').replace(/^\/+/, '');
     const targetPath = path.resolve(rootPath, cleanRelativePath);
@@ -5828,6 +5853,9 @@ print(len(faces))
         }
       });
     } catch (error) {
+      if (isMissingCrowdFrameError(error)) {
+        return sendMissingCrowdFramePlaceholder(res);
+      }
       return res.status(error.status || 500).json({
         ok: false,
         error: error.message || 'crowd_frame_redaction_failed'
@@ -5848,6 +5876,9 @@ print(len(faces))
         }
       });
     } catch (error) {
+      if (isMissingCrowdFrameError(error)) {
+        return sendMissingCrowdFramePlaceholder(res);
+      }
       return res.status(error.status || 500).json({
         ok: false,
         error: error.message || 'crowd_frame_redaction_failed'
