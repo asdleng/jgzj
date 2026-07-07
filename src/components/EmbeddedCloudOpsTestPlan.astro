@@ -14,17 +14,61 @@ const tabs = [
   { id: "agent", label: "智能体运维", eyebrow: "长期运营", desc: "事件队列原型" }
 ];
 
-const readOnlyTools = [
-  ["一键健康检查", "health.autodrive_check", "定位/规划/底盘综合只读检查"],
-  ["工具列表", "tool_list", "查看当前车辆 auto_ad_ai 工具能力"],
-  ["单车详情", "vehicle_detail", "读取云端车辆详情和遥测快照"],
-  ["定位状态", "status.localization", "检查 location_topic_、NDT、地图和融合状态"],
-  ["规划状态", "status.planning", "检查 planning 输出和阻塞状态"],
-  ["Routing 状态", "status.routing", "检查 route/task 是否正常"],
-  ["底盘 CAN", "status.can", "查看 CAN、速度、档位等只读信息"],
-  ["相机状态", "status.camera", "检查相机在线和频率"],
-  ["障碍处理", "status.obstacle_processor", "检查障碍物处理链路"],
-  ["ROS 总览", "ros.overview", "查看 ROS 节点和 topic 概览"]
+const readOnlyToolGroups = [
+  {
+    title: "核心诊断",
+    tools: [
+      { label: "关键节点", tool: "status.key_nodes", desc: "自动驾驶关键节点在线状态", timeout: 35 },
+      { label: "一键健康检查", tool: "health.autodrive_check", desc: "定位/规划/底盘综合只读检查", timeout: 35 },
+      { label: "单车详情", tool: "vehicle_detail", desc: "读取云端车辆详情和遥测快照", action: "vehicle_detail" },
+      { label: "工具列表", tool: "tool_list", desc: "查看当前车辆 auto_ad_ai 工具能力", action: "tool_list", timeout: 35 },
+      { label: "健康快照", tool: "health.snapshot", desc: "车端资源、ROS、主控状态快照", timeout: 30 },
+      { label: "云端连通", tool: "network.cloud_probe", desc: "车端到云端链路检查", timeout: 30 },
+      { label: "主控探测", tool: "network.master_probe", desc: "media 到主控网络/SSH 探测", args: { include_ssh: true }, timeout: 25 },
+      { label: "ROS 总览", tool: "ros.overview", desc: "ROS 节点、topic、service 概览", timeout: 30 },
+      { label: "系统快照", tool: "system.snapshot", desc: "CPU/内存/磁盘/温度和进程", args: { include_processes: true }, timeout: 30 },
+      { label: "整车快照", tool: "vehicle.snapshot", desc: "车辆运行状态和 topic 样本", args: { include_topic_samples: true }, timeout: 25 }
+    ]
+  },
+  {
+    title: "感知 / 定位 / 规划",
+    tools: [
+      { label: "相机状态", tool: "status.camera", desc: "相机在线、频率和图像链路", args: { include_rate: true, sample_seconds: 1.0 }, timeout: 30 },
+      { label: "上传链路", tool: "camera.upload_chain", desc: "相机上传链路状态", timeout: 35 },
+      { label: "AI检测配置", tool: "ai_detection.config", desc: "AI 检测开关和模型配置", timeout: 30 },
+      { label: "AI检测图片", tool: "ai_detection.images", desc: "最近检测图片列表", args: { limit: 6 }, timeout: 35 },
+      { label: "地图查看", tool: "map.preview", desc: "当前地图预览图", args: { image_size: 1024, include_base64: true }, timeout: 40 },
+      { label: "定位状态", tool: "status.localization", desc: "location_topic_、NDT、融合状态", timeout: 30 },
+      { label: "底盘 CAN", tool: "status.can", desc: "速度、档位、底盘反馈", timeout: 30 },
+      { label: "车身状态", tool: "status.body_control", desc: "灯光、广告屏反馈状态", timeout: 30 },
+      { label: "规划状态", tool: "status.planning", desc: "planning 输出和阻塞状态", timeout: 30 },
+      { label: "Routing 状态", tool: "status.routing", desc: "route/task 是否正常", timeout: 30 },
+      { label: "障碍处理", tool: "status.obstacle_processor", desc: "障碍物处理链路", timeout: 30 },
+      { label: "障碍俯视图", tool: "obstacle.preview", desc: "融合障碍物俯视预览", args: { topic: "/fusion/objects", range_m: 15, image_size: 768, save_file: true, include_base64: true }, timeout: 40 },
+      { label: "路线列表", tool: "route.list", desc: "车端可用巡逻路线", timeout: 30 }
+    ]
+  }
+];
+
+const blockedActionGroups = [
+  {
+    title: "控制 / 重启",
+    actions: [
+      ["重启主控接口", "controller.reboot_master", "高风险：会中断主控 auto_ad_ai 接口"],
+      ["重启 Media 接口", "controller.reboot_media", "高风险：会中断 media auto_ad_ai 接口"],
+      ["碰撞停复位", "vehicle.clear_collision_stop", "需要现场安全确认"],
+      ["广告屏/灯光控制", "vehicle.body_control", "测试页先不绑定执行"]
+    ]
+  },
+  {
+    title: "任务 / 地图 / 参数写入",
+    actions: [
+      ["启动巡逻", "route.start_patrol", "任务重发必须人工确认后单独接"],
+      ["地图插件启动", "map_editor.start", "地图编辑会打开车端插件，当前禁用"],
+      ["地图插件关闭", "map_editor.stop", "当前禁用"],
+      ["参数写入", "param.write", "必须有白名单、差异预览、回滚和审计"]
+    ]
+  }
 ];
 
 const paramSchemas = [
@@ -59,10 +103,26 @@ const agentRules = [
 
   <div class="cloud-ops-test-safety-band">
     <strong>安全边界</strong>
-    <span>自动加载：只调用 <code>/api/lidar-relocalization/vehicles</code> 读取云端车辆注册列表</span>
+    <span>自动加载：只调用 <code>/api/cloud-ops/vehicles-lite</code> 读取云端车辆注册列表</span>
     <span>不会自动调用：<code>/api/cloud-ops/execute</code>、tool-list、vehicle_detail</span>
     <span>点击执行：只读工具调用</span>
     <span>禁用：重启、写参数、任务重发、灯光/车身控制</span>
+  </div>
+
+  <div class="cloud-ops-test-global-controls">
+    <button class="cloud-ops-test-command-button is-primary" type="button" data-action="refresh-vehicles">刷新车辆列表</button>
+    <label class="cloud-ops-test-select-field">
+      当前车辆
+      <select data-role="vehicle-select">
+        <option value="">加载车辆中...</option>
+      </select>
+    </label>
+    <div class="cloud-ops-test-selected-strip">
+      <span>已选车辆</span>
+      <strong data-role="selected-vehicle-title">--</strong>
+      <small>切换车辆只更新页面上下文，不会自动执行任何车端工具。</small>
+    </div>
+    <p class="cloud-ops-test-status" data-role="status">只读初始化中...</p>
   </div>
 
   <div class="cloud-ops-test-stats">
@@ -97,17 +157,6 @@ const agentRules = [
           <p class="cloud-ops-test-kicker">FLEET OVERVIEW</p>
           <h2>车辆总览：先看真实在线车辆，再进入故障判断</h2>
           <p>车辆列表来自真实云端接口。故障判断目前先做页面端粗略归类，后续再迁移成后端 fleet fault aggregator。</p>
-        </div>
-
-        <div class="cloud-ops-test-toolbar">
-          <button class="cloud-ops-test-command-button is-primary" type="button" data-action="refresh-vehicles">刷新车辆列表</button>
-          <label class="cloud-ops-test-select-field">
-            当前车辆
-            <select data-role="vehicle-select">
-              <option value="">加载车辆中...</option>
-            </select>
-          </label>
-          <p class="cloud-ops-test-status" data-role="status">只读初始化中...</p>
         </div>
 
         <div class="cloud-ops-test-workbench cloud-ops-test-workbench--overview">
@@ -150,19 +199,53 @@ const agentRules = [
       <section id="cloud-ops-test-status" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head">
           <p class="cloud-ops-test-kicker">READ ONLY TOOLS</p>
-          <h2>车辆状态检查：所有车端工具都必须点击后才执行</h2>
-          <p>这里只绑定只读检查。重启、灯光、碰撞停恢复、写参数、任务重发不会在测试页执行。</p>
+          <h2>车辆状态检查：按老版云端运维整理按钮，点击后才查车</h2>
+          <p>只读检查按钮已经接到真实接口；控制、重启、写参数、任务重发先展示但禁用。</p>
         </div>
 
-        <div class="cloud-ops-test-command-grid">
-          {readOnlyTools.map(([label, tool, desc]) => (
-            <button class="cloud-ops-test-command-button" type="button" data-action="readonly-tool" data-tool={tool}>
-              <strong>{label}</strong>
-              <span>{tool}</span>
-              <small>{desc}</small>
-            </button>
-          ))}
-        </div>
+        {readOnlyToolGroups.map((group) => (
+          <section class="cloud-ops-test-tool-group">
+            <div class="cloud-ops-test-tool-group-head">
+              <h3>{group.title}</h3>
+              <span>点击执行只读接口</span>
+            </div>
+            <div class="cloud-ops-test-command-grid">
+              {group.tools.map((item) => (
+                <button
+                  class="cloud-ops-test-command-button"
+                  type="button"
+                  data-action="readonly-tool"
+                  data-tool={item.tool}
+                  data-tool-action={"action" in item ? item.action : "tool_call"}
+                  data-tool-args={JSON.stringify("args" in item ? item.args : {})}
+                  data-timeout-s={String("timeout" in item ? item.timeout : 30)}
+                >
+                  <strong>{item.label}</strong>
+                  <span>{item.tool}</span>
+                  <small>{item.desc}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        ))}
+
+        {blockedActionGroups.map((group) => (
+          <section class="cloud-ops-test-tool-group is-disabled">
+            <div class="cloud-ops-test-tool-group-head">
+              <h3>{group.title}</h3>
+              <span>当前只做界面，不绑定执行</span>
+            </div>
+            <div class="cloud-ops-test-command-grid">
+              {group.actions.map(([label, tool, desc]) => (
+                <button class="cloud-ops-test-command-button is-disabled" type="button" disabled>
+                  <strong>{label}</strong>
+                  <span>{tool}</span>
+                  <small>{desc}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        ))}
 
         <section class="cloud-ops-test-panel cloud-ops-test-panel--result">
           <div class="cloud-ops-test-panel-head">
@@ -225,7 +308,7 @@ const agentRules = [
         </div>
         <section class="cloud-ops-test-panel cloud-ops-test-panel--result">
           <div class="cloud-ops-test-panel-head"><h3>页面安全审计</h3><span>当前版本</span></div>
-          <pre class="cloud-ops-test-json">自动调用清单：/api/lidar-relocalization/vehicles\n禁止自动调用：/api/cloud-ops/execute、tool-list、vehicle_detail\n只读工具调用：必须点击按钮\n控制类动作：未绑定执行</pre>
+          <pre class="cloud-ops-test-json">自动调用清单：/api/cloud-ops/vehicles-lite\n禁止自动调用：/api/cloud-ops/execute、tool-list、vehicle_detail\n只读工具调用：必须点击按钮\n控制类动作：未绑定执行</pre>
         </section>
       </section>
     </div>
@@ -237,19 +320,32 @@ const agentRules = [
     const shell = document.querySelector("[data-cloud-ops-test]");
     if (!shell) return;
 
-    const VEHICLES_URL = "/api/lidar-relocalization/vehicles";
+    const VEHICLES_URL = "/api/cloud-ops/vehicles-lite";
     const EXECUTE_URL = "/api/cloud-ops/execute";
     const READONLY_TOOL_ALLOWLIST = new Set([
+      "status.key_nodes",
       "health.autodrive_check",
       "tool_list",
       "vehicle_detail",
+      "health.snapshot",
+      "network.cloud_probe",
+      "network.master_probe",
       "status.localization",
       "status.planning",
       "status.routing",
       "status.can",
+      "status.body_control",
       "status.camera",
       "status.obstacle_processor",
-      "ros.overview"
+      "ros.overview",
+      "system.snapshot",
+      "vehicle.snapshot",
+      "camera.upload_chain",
+      "ai_detection.config",
+      "ai_detection.images",
+      "map.preview",
+      "obstacle.preview",
+      "route.list"
     ]);
 
     const tabs = [...shell.querySelectorAll(".cloud-ops-test-tabs button")];
@@ -259,10 +355,12 @@ const agentRules = [
     const vehicleList = shell.querySelector('[data-role="vehicle-list"]');
     const vehicleCount = shell.querySelector('[data-role="vehicle-count"]');
     const selectedVehicleChip = shell.querySelector('[data-role="selected-vehicle-chip"]');
+    const selectedVehicleTitle = shell.querySelector('[data-role="selected-vehicle-title"]');
     const vehicleSummary = shell.querySelector('[data-role="vehicle-summary"]');
     const toolResult = shell.querySelector('[data-role="tool-result"]');
     const lastToolLabel = shell.querySelector('[data-role="last-tool-label"]');
     let vehicles = [];
+    let currentVehicleId = "";
 
     const setStatus = (text, state = "idle") => {
       if (!statusNode) return;
@@ -280,6 +378,7 @@ const agentRules = [
     const vehicleIdOf = (vehicle) => String(vehicle?.vehicle_id || vehicle?.plate_number || vehicle?.id || "").trim();
     const lastSeenOf = (vehicle) => String(vehicle?.last_seen || vehicle?.last_seen_at || vehicle?.updated_at || "").trim();
     const toolCountOf = (vehicle) => Number(vehicle?.tool_count || vehicle?.tools_count || 0) || 0;
+    const selectedVehicleId = () => String(currentVehicleId || vehicleSelect?.value || "").trim();
     const formatAge = (iso) => {
       const ts = Date.parse(iso || "");
       if (!Number.isFinite(ts)) return "未知";
@@ -300,6 +399,15 @@ const agentRules = [
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;");
+    const parseJsonDataset = (value, fallback = {}) => {
+      const text = String(value || "").trim();
+      if (!text) return fallback;
+      try {
+        return JSON.parse(text);
+      } catch (_error) {
+        return fallback;
+      }
+    };
     const setStat = (key, value, note) => {
       const card = shell.querySelector(`[data-stat="${key}"]`);
       if (!card) return;
@@ -310,13 +418,36 @@ const agentRules = [
     };
 
     const selectedVehicle = () => {
-      const id = String(vehicleSelect?.value || "").trim();
+      const id = selectedVehicleId();
       return vehicles.find((vehicle) => vehicleIdOf(vehicle) === id) || null;
+    };
+
+    const syncSelectedVehicleUi = () => {
+      if (vehicleSelect && selectedVehicleId() && vehicleSelect.value !== selectedVehicleId()) {
+        vehicleSelect.value = selectedVehicleId();
+      }
+      shell.querySelectorAll("[data-vehicle-id]").forEach((button) => {
+        button.classList.toggle("is-selected", button.dataset.vehicleId === selectedVehicleId());
+      });
+      if (selectedVehicleTitle) selectedVehicleTitle.textContent = selectedVehicleId() || "--";
+    };
+
+    const setSelectedVehicle = (vehicleId, options = {}) => {
+      const normalized = String(vehicleId || "").trim();
+      currentVehicleId = vehicles.some((vehicle) => vehicleIdOf(vehicle) === normalized)
+        ? normalized
+        : vehicleIdOf(vehicles[0] || {});
+      syncSelectedVehicleUi();
+      renderSummary();
+      if (options.silent !== true) {
+        setStatus(`已选择 ${currentVehicleId || "车辆"}，未执行任何车端工具。`, "ok");
+      }
     };
 
     const renderSummary = () => {
       const vehicle = selectedVehicle();
       if (selectedVehicleChip) selectedVehicleChip.textContent = vehicle ? vehicleIdOf(vehicle) : "未选择";
+      if (selectedVehicleTitle) selectedVehicleTitle.textContent = vehicle ? vehicleIdOf(vehicle) : "--";
       if (!vehicleSummary) return;
       if (!vehicle) {
         vehicleSummary.innerHTML = "<div><dt>车辆</dt><dd>--</dd></div><div><dt>工具数</dt><dd>--</dd></div><div><dt>最近在线</dt><dd>--</dd></div><div><dt>状态判断</dt><dd>--</dd></div>";
@@ -344,7 +475,8 @@ const agentRules = [
         const stale = isStale(vehicle);
         const toolCount = toolCountOf(vehicle);
         const host = vehicle?.hostname || vehicle?.host || "";
-        return `<button type="button" class="cloud-ops-test-vehicle-row${stale ? " is-stale" : ""}" data-vehicle-id="${escapeHtml(vid)}">
+        const selected = vid === selectedVehicleId();
+        return `<button type="button" class="cloud-ops-test-vehicle-row${stale ? " is-stale" : ""}${selected ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
           <span class="cloud-ops-test-severity">${stale ? "待确认" : "在线"}</span>
           <strong>${escapeHtml(vid || "未知车辆")}</strong>
           <small>${escapeHtml(host || "无主机名")} · ${escapeHtml(formatAge(lastSeenOf(vehicle)))} · tools ${escapeHtml(toolCount || "?")}</small>
@@ -369,8 +501,13 @@ const agentRules = [
         vehicleSelect.appendChild(option);
       });
       if (previous && vehicles.some((vehicle) => vehicleIdOf(vehicle) === previous)) {
-        vehicleSelect.value = previous;
+        currentVehicleId = previous;
       }
+      if (!currentVehicleId || !vehicles.some((vehicle) => vehicleIdOf(vehicle) === currentVehicleId)) {
+        currentVehicleId = vehicleIdOf(vehicles[0]);
+      }
+      vehicleSelect.value = currentVehicleId;
+      syncSelectedVehicleUi();
       renderSummary();
     };
 
@@ -386,7 +523,7 @@ const agentRules = [
     const loadVehicles = async () => {
       setStatus("读取真实车辆列表...", "loading");
       try {
-        const response = await fetch(VEHICLES_URL, { headers: { Accept: "application/json" }, cache: "no-store" });
+        const response = await fetch(VEHICLES_URL, { headers: { Accept: "application/json" }, cache: "no-store", credentials: "same-origin" });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload?.ok === false) {
           throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
@@ -394,10 +531,12 @@ const agentRules = [
         vehicles = Array.isArray(payload.vehicles) ? payload.vehicles : [];
         renderVehicleOptions();
         renderVehicles();
+        syncSelectedVehicleUi();
         updateStats();
         setStatus(`已读取 ${vehicles.length} 台真实车辆。未自动执行任何车端工具。`, "ok");
       } catch (error) {
         vehicles = [];
+        currentVehicleId = "";
         renderVehicleOptions();
         renderVehicles();
         updateStats();
@@ -405,7 +544,11 @@ const agentRules = [
       }
     };
 
-    const runReadOnlyTool = async (toolName) => {
+    const runReadOnlyTool = async (button) => {
+      const toolName = String(button?.dataset?.tool || "").trim();
+      const toolAction = String(button?.dataset?.toolAction || "tool_call").trim();
+      const args = parseJsonDataset(button?.dataset?.toolArgs, {});
+      const timeout_s = Number.parseInt(button?.dataset?.timeoutS || "30", 10) || 30;
       const vehicle = selectedVehicle();
       const vehicleId = vehicleIdOf(vehicle);
       if (!vehicleId) {
@@ -421,24 +564,25 @@ const agentRules = [
       setStatus(`点击触发只读工具：${toolName}`, "loading");
       try {
         let payload;
-        if (toolName === "tool_list") {
-          const response = await fetch(`/api/cloud-ops/vehicles/${encodeURIComponent(vehicleId)}/tool-list?timeout_s=20`, { headers: { Accept: "application/json" } });
+        if (toolAction === "tool_list" || toolName === "tool_list") {
+          const response = await fetch(`/api/cloud-ops/vehicles/${encodeURIComponent(vehicleId)}/tool-list?timeout_s=${encodeURIComponent(timeout_s)}`, { headers: { Accept: "application/json" }, credentials: "same-origin" });
           payload = await response.json().catch(() => ({}));
           if (!response.ok || payload?.ok === false) throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
-        } else if (toolName === "vehicle_detail") {
-          const response = await fetch(`/api/cloud-ops/vehicles/${encodeURIComponent(vehicleId)}`, { headers: { Accept: "application/json" } });
+        } else if (toolAction === "vehicle_detail" || toolName === "vehicle_detail") {
+          const response = await fetch(`/api/cloud-ops/vehicles/${encodeURIComponent(vehicleId)}`, { headers: { Accept: "application/json" }, credentials: "same-origin" });
           payload = await response.json().catch(() => ({}));
           if (!response.ok || payload?.ok === false) throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
         } else {
           const response = await fetch(EXECUTE_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
+            credentials: "same-origin",
             body: JSON.stringify({
               action: "tool_call",
               vehicle_id: vehicleId,
               tool_name: toolName,
-              args: {},
-              timeout_s: 30,
+              args,
+              timeout_s,
               request_id: `cloud-ops-test-readonly-${Date.now()}`
             })
           });
@@ -458,9 +602,7 @@ const agentRules = [
       const target = event.target;
       const vehicleButton = target?.closest?.("[data-vehicle-id]");
       if (vehicleButton && vehicleSelect) {
-        vehicleSelect.value = vehicleButton.dataset.vehicleId || "";
-        renderSummary();
-        setStatus(`已选择 ${vehicleSelect.value}，未执行任何车端工具。`, "ok");
+        setSelectedVehicle(vehicleButton.dataset.vehicleId || "");
         return;
       }
       const actionButton = target?.closest?.("[data-action]");
@@ -469,12 +611,11 @@ const agentRules = [
       if (action === "refresh-vehicles") {
         loadVehicles();
       } else if (action === "readonly-tool") {
-        runReadOnlyTool(actionButton.dataset.tool || "");
+        runReadOnlyTool(actionButton);
       }
     });
     vehicleSelect?.addEventListener("change", () => {
-      renderSummary();
-      setStatus(`已选择 ${vehicleSelect.value || "车辆"}，未执行任何车端工具。`, "ok");
+      setSelectedVehicle(vehicleSelect.value || "");
     });
 
     loadVehicles();

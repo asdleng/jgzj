@@ -11518,6 +11518,68 @@ app.get('/api/cloud-agent-health', authStore.requirePermission('vehicle:read'), 
   });
 });
 
+app.get('/api/cloud-ops/vehicles-lite', authStore.requirePermission('vehicle:read'), async (_req, res) => {
+  try {
+    const vehicles = await listCloudAgentVehicles();
+    const vehicleMap = new Map();
+
+    vehicles.forEach((vehicle) => {
+      const vehicleId = getCloudOpsVehicleId(vehicle);
+      if (!vehicleId) {
+        return;
+      }
+      const previous = vehicleMap.get(vehicleId);
+      const previousTime = Date.parse(previous?.last_seen || '') || 0;
+      const nextTime = Date.parse(vehicle?.last_seen || '') || 0;
+      const previousToolCount = Number(previous?.tool_count || 0);
+      const toolNames = extractCloudOpsToolNames(vehicle);
+      const nextToolCount = Number(vehicle?.tool_count || toolNames.size || 0);
+
+      if (
+        !previous ||
+        nextToolCount > previousToolCount ||
+        (nextToolCount === previousToolCount && nextTime >= previousTime)
+      ) {
+        const heartbeat = vehicle?.heartbeat || vehicle?.snapshot?.health || {};
+        vehicleMap.set(vehicleId, {
+          vehicle_id: vehicleId,
+          plate_number: vehicle?.plate_number || vehicleId,
+          vin: vehicle?.vin || null,
+          role: vehicle?.role || null,
+          hostname: heartbeat?.hostname || vehicle?.hostname || null,
+          local_primary_ip: heartbeat?.local_primary_ip || vehicle?.local_primary_ip || null,
+          master_host: heartbeat?.master_host || vehicle?.master_host || null,
+          master_ping_ok: typeof heartbeat?.master_ping_ok === 'boolean' ? heartbeat.master_ping_ok : null,
+          last_seen: vehicle?.last_seen || null,
+          connected_at: vehicle?.connected_at || null,
+          message_count: vehicle?.message_count ?? null,
+          has_heartbeat: Boolean(vehicle?.has_heartbeat),
+          has_snapshot: Boolean(vehicle?.has_snapshot),
+          has_telemetry: Boolean(vehicle?.has_telemetry),
+          tool_count: nextToolCount,
+          protocol_version: vehicle?.protocol_version || null,
+          remote: vehicle?.remote || null
+        });
+      }
+    });
+
+    return res.json({
+      ok: true,
+      source: 'cloud_agent_registry',
+      safe_auto_load: true,
+      note: 'This endpoint only reads cloud-agent vehicle registry data and does not call vehicle tools.',
+      vehicles: Array.from(vehicleMap.values()).sort((left, right) =>
+        String(left.vehicle_id).localeCompare(String(right.vehicle_id))
+      )
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      detail: error?.message || 'cloud_ops_vehicle_lite_list_failed'
+    });
+  }
+});
+
 app.get('/api/cloud-ops/vehicles', authStore.requirePermission('vehicle:read'), async (_req, res) => {
   try {
     const vehicles = await listCloudAgentVehicles();

@@ -2208,6 +2208,38 @@
   gap: 10px;
 }
 
+.cloud-ops-test-tool-group {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(71, 85, 105, 0.58);
+  background: rgba(2, 6, 23, 0.44);
+}
+
+.cloud-ops-test-tool-group.is-disabled {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.36);
+}
+
+.cloud-ops-test-tool-group-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.cloud-ops-test-tool-group-head h3 {
+  margin: 0;
+  color: #f8fafc;
+}
+
+.cloud-ops-test-tool-group-head span {
+  color: #93c5fd;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
 .cloud-ops-test-command-button {
   position: relative;
   min-height: 70px;
@@ -2240,6 +2272,27 @@
   transform: translateY(-1px);
   border-color: rgba(103, 232, 249, 0.58);
   box-shadow: 0 12px 30px rgba(6, 182, 212, 0.14);
+}
+
+.cloud-ops-test-command-button:disabled,
+.cloud-ops-test-command-button.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+  border-color: rgba(71, 85, 105, 0.42);
+  background:
+    linear-gradient(135deg, rgba(30, 41, 59, 0.42), rgba(15, 23, 42, 0.72)),
+    rgba(2, 6, 23, 0.48);
+  box-shadow: none;
+}
+
+.cloud-ops-test-command-button:disabled::after,
+.cloud-ops-test-command-button.is-disabled::after {
+  opacity: 0.18;
+}
+
+.cloud-ops-test-command-button:disabled:hover,
+.cloud-ops-test-command-button.is-disabled:hover {
+  transform: none;
 }
 
 .cloud-ops-test-command-button.is-primary {
@@ -2306,6 +2359,19 @@
   align-items: end;
 }
 
+.cloud-ops-test-global-controls {
+  display: grid;
+  grid-template-columns: auto minmax(240px, 340px) minmax(280px, 1fr) minmax(200px, 0.8fr);
+  gap: 12px;
+  align-items: end;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(103, 232, 249, 0.24);
+  background:
+    linear-gradient(90deg, rgba(8, 47, 73, 0.42), rgba(15, 23, 42, 0.62)),
+    rgba(2, 6, 23, 0.56);
+}
+
 .cloud-ops-test-select-field {
   display: grid;
   gap: 7px;
@@ -2343,6 +2409,32 @@
   color: #fca5a5;
 }
 
+.cloud-ops-test-selected-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(103, 232, 249, 0.28);
+  background:
+    linear-gradient(90deg, rgba(8, 47, 73, 0.44), rgba(15, 23, 42, 0.52)),
+    rgba(2, 6, 23, 0.46);
+}
+
+.cloud-ops-test-selected-strip span,
+.cloud-ops-test-selected-strip small {
+  color: #94a3b8;
+  font-weight: 800;
+}
+
+.cloud-ops-test-selected-strip strong {
+  color: #67e8f9;
+  font-family: "Orbitron", "Noto Sans SC", sans-serif;
+  font-size: 1.2rem;
+  letter-spacing: 0.04em;
+}
+
 .cloud-ops-test-workbench--overview {
   grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.7fr);
 }
@@ -2375,6 +2467,16 @@
 .cloud-ops-test-vehicle-row:hover {
   border-color: rgba(103, 232, 249, 0.58);
   background: rgba(8, 47, 73, 0.5);
+}
+
+.cloud-ops-test-vehicle-row.is-selected {
+  border-color: rgba(103, 232, 249, 0.86);
+  background:
+    linear-gradient(90deg, rgba(8, 145, 178, 0.42), rgba(15, 23, 42, 0.72)),
+    rgba(2, 6, 23, 0.64);
+  box-shadow:
+    0 0 0 1px rgba(103, 232, 249, 0.12),
+    inset 4px 0 0 rgba(103, 232, 249, 0.82);
 }
 
 .cloud-ops-test-vehicle-row.is-stale {
@@ -2559,6 +2661,7 @@
   }
 
   .cloud-ops-test-toolbar,
+  .cloud-ops-test-global-controls,
   .cloud-ops-test-workbench--overview {
     grid-template-columns: 1fr;
   }
@@ -2574,7 +2677,8 @@
   .cloud-ops-test-card-grid,
   .cloud-ops-test-flow-grid,
   .cloud-ops-test-command-grid,
-  .cloud-ops-test-toolbar {
+  .cloud-ops-test-toolbar,
+  .cloud-ops-test-global-controls {
     grid-template-columns: 1fr;
   }
 
