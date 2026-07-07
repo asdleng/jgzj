@@ -1,0 +1,18 @@
+---
+import "../../styles/app.css";
+import EmbeddedCloudOpsTestPlan from "../../components/EmbeddedCloudOpsTestPlan.astro";
+import SiteLayout from "../../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="云端智能运维(测试)"
+  description="云端智能运维大改测试界面，验证车辆总览、车辆状态检查、参数设置、地图管理和智能体运维五个二级页面的信息架构。"
+  currentPath="/app/cloud-operations-test"
+  noindex={true}
+>
+  <main class="page-main grid-bg cloud-ops-test-main">
+    <section class="page-section cloud-ops-test-section">
+      <EmbeddedCloudOpsTestPlan />
+    </section>
+  </main>
+</SiteLayout>

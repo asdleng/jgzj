@@ -1157,7 +1157,7 @@
     imagePreview.image.hidden = false;
     imagePreview.image.onerror = () => {
       imagePreview.image.hidden = true;
-      if (imagePreview.meta) imagePreview.meta.textContent = "历史图片未留存";
+      if (imagePreview.meta) imagePreview.meta.textContent = "没有了";
     };
     imagePreview.image.src = redactedCrowdImageUrl(imageUrl);
     imagePreview.image.alt = `${sample && sample.vehicle_id || ""} ${frame.camera_id || "camera"}`;
@@ -1237,7 +1237,7 @@
   function createCrowdImagePlaceholder(text) {
     const placeholder = document.createElement("div");
     placeholder.className = "park-pcm-image-placeholder";
-    placeholder.textContent = text || "历史图片未留存";
+    placeholder.textContent = text || "没有了";
     return placeholder;
   }
 
@@ -1249,7 +1249,7 @@
     if (previewBtn) {
       previewBtn.disabled = true;
       previewBtn.classList.add("park-pcm-frame-preview-button--disabled");
-      previewBtn.setAttribute("aria-label", "历史图片未留存");
+      previewBtn.setAttribute("aria-label", "没有了");
     }
   }
 
@@ -1370,8 +1370,8 @@
       heatmapDateSummaryEl.textContent = active.sample_count
         ? `当天 ${active.sample_count} 条 · 已识别 ${active.recognized_count} 条/${active.people_total} 人 · 热力点 ${active.heat_point_count} 个 · 峰值 ${active.max_people} 人`
         : patrolCount
-          ? `当天有巡逻记录 ${patrolCount} 条 · 暂无人流采样。`
-          : "当天暂无巡逻/人流记录。";
+          ? `当天有巡逻记录 ${patrolCount} 条 · 没有了。`
+          : "当天没有了。";
     }
     if (heatmapDateRangeEl) {
       heatmapDateRangeEl.min = "0";
@@ -1548,7 +1548,7 @@
           "p",
           "park-pcm-empty",
           selectedVehicleId
-            ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 暂无人流记录。`
+            ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 没有了。`
             : "请先选择一台车辆。"
         )
       );
@@ -1586,7 +1586,7 @@
           "p",
           "park-pcm-empty",
           selectedVehicleId
-            ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 暂无人流记录。`
+            ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 没有了。`
             : "请选择一台车辆查看人流热力。"
         )
       );
@@ -2262,11 +2262,11 @@
     if (!samplePoints.length) {
       renderTrackSamples();
       clearMapOverlays();
-      setMapStatus("暂无当日热力");
+      setMapStatus("没有了");
       setMapFallback(
         selectedVehicleId
-          ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 暂无人流采样点`
-          : "暂无人流采样点",
+          ? `${selectedVehicleId} · ${selectedDayKey ? formatDayLabel(selectedDayKey) : "当前日期"} 没有了`
+          : "没有了",
         false
       );
       return;

@@ -13562,6 +13562,11 @@ const privateNavigationItems = [
     permissions: ['vehicle:read', 'runtime:read']
   },
   {
+    href: '/app/cloud-operations-test',
+    label: '云端运维(测试)',
+    permissions: ['vehicle:read', 'runtime:read']
+  },
+  {
     href: '/app/lidar-relocalization',
     label: '激光重定位',
     permissions: ['vehicle:read']
@@ -13663,6 +13668,11 @@ const protectedAppPages = [
   {
     paths: ['/app/cloud-operations', '/app/cloud-operations/'],
     file: 'app/cloud-operations/index.html',
+    permissions: ['vehicle:read', 'runtime:read']
+  },
+  {
+    paths: ['/app/cloud-operations-test', '/app/cloud-operations-test/'],
+    file: 'app/cloud-operations-test/index.html',
     permissions: ['vehicle:read', 'runtime:read']
   },
   {

@@ -33,8 +33,8 @@ const DEFAULT_CROWD_ANALYSIS_TIMEOUT_MS = 90 * 1000;
 const DEFAULT_CROWD_ANALYSIS_MAX_SAMPLES = 1;
 const DEFAULT_CROWD_ANALYSIS_IDLE_GPU_UTIL_MAX = 25;
 const DEFAULT_CROWD_ANALYSIS_IDLE_CHECK_TIMEOUT_MS = 3000;
-const DEFAULT_CROWD_STORAGE_RETENTION_DAYS = 14;
-const DEFAULT_CROWD_STORAGE_MAX_BYTES = 12 * 1024 * 1024 * 1024;
+const DEFAULT_CROWD_STORAGE_RETENTION_DAYS = 30;
+const DEFAULT_CROWD_STORAGE_MAX_BYTES = 120 * 1024 * 1024 * 1024;
 const DEFAULT_CROWD_STORAGE_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_PATROL_FLOW_UPLOAD_MAX_BYTES = 128 * 1024 * 1024;
 const DEFAULT_PATROL_FLOW_MAX_FRAME_ROWS = 4000;
@@ -3294,6 +3294,31 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return serverAnalysis;
   }
 
+  async function sampleHasStoredCrowdImage(sample) {
+    const frames = Array.isArray(sample?.frames) ? sample.frames : [];
+    const imagePaths = frames
+      .map((frame) => String(frame?.image_path || '').trim())
+      .filter(Boolean);
+    if (!imagePaths.length) return false;
+    for (const imagePath of imagePaths) {
+      try {
+        const resolved = resolveCrowdFramePath(imagePath, crowdFramesRoot);
+        const stat = await fsp.stat(resolved.target_path);
+        if (stat.isFile() && stat.size > 0) return true;
+      } catch (_error) {
+        // Missing historical frame; keep checking the other camera images.
+      }
+    }
+    return false;
+  }
+
+  async function filterSamplesWithStoredCrowdImages(samples) {
+    const rows = Array.isArray(samples) ? samples : [];
+    return (await mapWithConcurrency(rows, 16, async (sample) => (
+      await sampleHasStoredCrowdImage(sample) ? sample : null
+    ))).filter(Boolean);
+  }
+
   async function readCrowdSampleLog(limit, filters) {
     const normalizedLimit = toFiniteInteger(limit, 20, { min: 1, max: 20000 });
     const vehicleId = String(filters?.vehicle_id || '').trim();
@@ -3420,7 +3445,8 @@ module.exports = function registerParkPcmRoutes(app, options) {
       readCrowdSampleLog(limit, filters),
       readCrowdAnalysisState()
     ]);
-    return samples.map((sample) => mergeCrowdAnalysisIntoSample(sample, analysisState));
+    const storedSamples = await filterSamplesWithStoredCrowdImages(samples);
+    return storedSamples.map((sample) => mergeCrowdAnalysisIntoSample(sample, analysisState));
   }
 
   function routeFileNameCandidates(routeId) {
@@ -4529,8 +4555,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   <path d="M236 206h168v92H236z" fill="#1e293b" stroke="#475569" stroke-width="2"/>
   <circle cx="276" cy="236" r="14" fill="#64748b"/>
   <path d="M252 282l44-42 34 29 26-24 42 37z" fill="#475569"/>
-  <text x="320" y="342" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#cbd5e1">历史图片未留存</text>
-  <text x="320" y="380" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#94a3b8">统计数据仍保留</text>
+  <text x="320" y="342" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#cbd5e1">没有了</text>
 </svg>`;
     res.status(200);
     res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
