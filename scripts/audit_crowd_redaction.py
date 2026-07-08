@@ -484,6 +484,23 @@ def run_once(args, person_model):
     if args.day:
         wanted_days = set(args.day)
         all_images = [(rel, path) for rel, path in all_images if rel_day(rel) in wanted_days]
+    if args.only_missing_or_stale:
+        filtered = []
+        for rel_path, src_path in all_images:
+            dst_path = os.path.join(redacted_root, rel_path)
+            try:
+                src_stat = os.stat(src_path)
+            except OSError:
+                filtered.append((rel_path, src_path))
+                continue
+            try:
+                dst_stat = os.stat(dst_path)
+            except OSError:
+                filtered.append((rel_path, src_path))
+                continue
+            if dst_stat.st_mtime < src_stat.st_mtime or dst_stat.st_size <= 0:
+                filtered.append((rel_path, src_path))
+        all_images = filtered
     if args.limit > 0:
         all_images = all_images[:args.limit]
     summary = {
@@ -492,6 +509,7 @@ def run_once(args, person_model):
         "frames_root": frames_root,
         "redacted_root": redacted_root,
         "person_model_enabled": person_model is not None,
+        "only_missing_or_stale": bool(args.only_missing_or_stale),
         "image_count": len(all_images),
         "checked": 0,
         "ok_count": 0,
@@ -591,6 +609,7 @@ def parse_args():
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--day", action="append", default=[])
     parser.add_argument("--rel-list", default="")
+    parser.add_argument("--only-missing-or-stale", action="store_true")
     parser.add_argument("--progress-every", type=int, default=200)
     parser.add_argument("--max-findings", type=int, default=200)
     parser.add_argument("--summary-json", default="")
