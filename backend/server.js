@@ -6124,6 +6124,10 @@ function buildCloudOpsAgentSystemPrompt() {
     '自动驾驶停止不是具体故障，只是诊断入口；需要先判断定位、规划、控制/底盘、感知/障碍物、任务配置、通信/软件这些层级。',
     '定位诊断必须区分两种模式：无组合导航模式不等于故障，使用纯 LiDAR NDT；有组合导航模式下 NDT+GPS/组合导航都是融合观测。',
     '如果涉及组合导航，第一步通常是确认车辆档案并检查 10.168.1.43 是否可达；无组合导航车辆不能把 ping 不通 10.168.1.43 当故障。',
+    '巡逻路线库存优先看 route.list；route.list 只能说明车端当前有哪些可用路线，不能证明云端未来任务计划表。',
+    '任务计划/夜间巡逻是否真实下发，车端证据链是 mqtt_cam 收云端路线消息并发布 /SocketCAN/remote_navi_path_detail_select_request，auto_ad_websocket_driver 记录“任务计划下发”并发布 /navi_seting 给 routing/planning。',
+    '任务计划日志里的 MainPathID 是巡逻/运营主路径，AuxPathID 是回巢/充电路径；back_time 是任务结束/回巢时间，naviTimes 是圈数，naviVelocity 是速度。',
+    '判断“计划是否会跑”时要把 route.list、status.routing、status.planning、status.can、vehicle.snapshot 和 websocket_driver 任务下发证据合起来看；没有日志证据时只能说“路线存在，计划下发待确认”。',
     '回答使用中文，结构固定为：判断、依据、建议下一步、需要人工确认的动作。',
     '不要输出 markdown 表格。'
   ].join('\n');
@@ -6153,6 +6157,8 @@ function buildCloudOpsDeepDiagnosePrompt(question, evidence) {
     '下面是真实深度诊断证据，包含 cloud-agent/auto_ad_ai WebSocket 只读工具返回，以及在可用时的 SSH 只读巡检结果。',
     '请不要声称执行了证据之外的操作；不要建议立即重启、写参数、控车或重发任务，除非放在“需要人工确认的动作”。',
     '请优先给出明确结论：正常/待确认/故障，并说明故障层级（通信、主控/ROS、定位、规划、控制/底盘、感知/障碍物、任务状态、资源）。',
+    '涉及“任务计划、夜间巡逻、巡逻信息、回巢路径”时，优先解释证据来源：route.list 是路线库存；status.routing/status.planning 是当前任务状态；真正的任务计划下发证据来自车端 mqtt_cam -> /SocketCAN/remote_navi_path_detail_select_request -> auto_ad_websocket_driver -> /navi_seting 链路及 websocket_driver 日志。',
+    '如果证据里只有路线库存，没有“任务计划下发”日志或 /navi_seting 样本，不要断言未来计划已经存在，只能建议继续查对应时间点日志或补充只读 SSH 采样。',
     '',
     `诊断证据：${safeJsonStringify(evidence, cloudOpsAgentDiagnoseMaxEvidenceChars)}`,
     '',
@@ -6193,6 +6199,7 @@ function cloudOpsAgentReadOnlyDiagnosticTools() {
     { action: 'tool_call', tool_name: 'health.snapshot', label: '系统健康快照', args: {}, timeout_s: 18 },
     { action: 'tool_call', tool_name: 'network.master_probe', label: '主控链路探测', args: { include_ssh: true }, timeout_s: 18 },
     { action: 'tool_call', tool_name: 'ros.overview', label: 'ROS 总览', args: {}, timeout_s: 18 },
+    { action: 'tool_call', tool_name: 'route.list', label: '巡逻路线库存', args: {}, timeout_s: 18 },
     { action: 'tool_call', tool_name: 'status.localization', label: '定位状态', args: {}, timeout_s: 18 },
     { action: 'tool_call', tool_name: 'status.planning', label: '规划状态', args: {}, timeout_s: 18 },
     { action: 'tool_call', tool_name: 'status.routing', label: 'Routing 状态', args: {}, timeout_s: 18 },
