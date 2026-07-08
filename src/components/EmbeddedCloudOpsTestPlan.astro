@@ -350,9 +350,9 @@ const agentRules = [
             <small data-role="agent-route">7791 / JGZJ / subapi</small>
           </article>
           <article class="cloud-ops-test-agent-status-card">
-            <span>安全模式</span>
-            <strong data-role="agent-mode">只读参谋</strong>
-            <small>不自动执行车端工具</small>
+            <span>Codex 部署</span>
+            <strong data-role="agent-codex">检查中</strong>
+            <small data-role="agent-codex-note">本机 App Server</small>
           </article>
           <article class="cloud-ops-test-agent-status-card">
             <span>监控范围</span>
@@ -390,6 +390,10 @@ const agentRules = [
               <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-current">
                 <strong>分析当前车辆</strong>
                 <span>车辆上下文</span>
+              </button>
+              <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-deep-diagnose">
+                <strong>深度诊断</strong>
+                <span>WebSocket + SSH</span>
               </button>
               <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-stops">
                 <strong>分析停车车辆</strong>
@@ -446,6 +450,7 @@ const agentRules = [
     const AGENT_STATUS_URL = "/api/cloud-ops-agent/status";
     const AGENT_HISTORY_URL = "/api/cloud-ops-agent/history";
     const AGENT_CHAT_URL = "/api/cloud-ops-agent/chat";
+    const AGENT_DIAGNOSE_URL = "/api/cloud-ops-agent/diagnose";
     const READONLY_TOOL_ALLOWLIST = new Set([
       "status.key_nodes",
       "health.autodrive_check",
@@ -493,7 +498,8 @@ const agentRules = [
     const agentStatusNote = shell.querySelector('[data-role="agent-status-note"]');
     const agentModel = shell.querySelector('[data-role="agent-model"]');
     const agentRoute = shell.querySelector('[data-role="agent-route"]');
-    const agentMode = shell.querySelector('[data-role="agent-mode"]');
+    const agentCodex = shell.querySelector('[data-role="agent-codex"]');
+    const agentCodexNote = shell.querySelector('[data-role="agent-codex-note"]');
     const agentFleet = shell.querySelector('[data-role="agent-fleet"]');
     const agentFleetNote = shell.querySelector('[data-role="agent-fleet-note"]');
     const agentContext = shell.querySelector('[data-role="agent-context"]');
@@ -950,7 +956,12 @@ const agentRules = [
       }
       if (agentModel) agentModel.textContent = payload?.model || "--";
       if (agentRoute) agentRoute.textContent = payload?.upstream_base_url || "JGZJ / subapi";
-      if (agentMode) agentMode.textContent = payload?.mode || "advisory_read_only";
+      const codex = payload?.codex || {};
+      if (agentCodex) agentCodex.textContent = codex?.deployed ? "已部署" : "未就绪";
+      if (agentCodexNote) {
+        const cliVersion = codex?.cli?.version ? ` · ${codex.cli.version}` : "";
+        agentCodexNote.textContent = codex?.listen ? `${codex.listen}${cliVersion}` : (codex?.app_server?.detail || "本机 App Server");
+      }
       if (agentFleet) agentFleet.textContent = `${payload?.fleet?.vehicle_count ?? vehicles.length} 台`;
       if (agentFleetNote) {
         const fleet = payload?.fleet || {};
@@ -982,6 +993,8 @@ const agentRules = [
         if (agentStatus) agentStatus.textContent = "状态异常";
         if (agentStatusNote) agentStatusNote.textContent = error?.message || "读取失败";
         if (agentModel) agentModel.textContent = "--";
+        if (agentCodex) agentCodex.textContent = "未知";
+        if (agentCodexNote) agentCodexNote.textContent = "状态接口异常";
       }
       updateAgentContext();
     };
@@ -1080,6 +1093,59 @@ const agentRules = [
       }
       const diag = stopDiagnosisOf(vehicle);
       sendAgentMessage(`请基于当前缓存分析车辆 ${vehicleIdOf(vehicle)} 的云端运维状态，重点看自动驾驶停止入口、定位、规划、控制/底盘、通信链路。当前页面初判：${diag.label}，原因：${diag.reason}`);
+    };
+
+    const deepDiagnoseCurrentVehicle = async () => {
+      const vehicle = selectedVehicle();
+      const vehicleId = vehicleIdOf(vehicle);
+      const question = String(agentInput?.value || "").trim() || `请深度诊断 ${vehicleId} 车辆现在状态如何，有没有故障或潜在问题。`;
+      if (!vehicleId) {
+        setStatus("请先选择车辆", "error");
+        return;
+      }
+      if (!agentCanChat) {
+        appendAgentMessage("error", "智能体模型链路还没有配置服务端 subapi key，不能发起深度诊断。");
+        setStatus("智能体未配置 CLOUD_OPS_AGENT_API_KEY", "error");
+        return;
+      }
+      appendAgentMessage("user", question, `深度诊断车辆 ${vehicleId}`);
+      if (agentInput) agentInput.value = "";
+      if (agentLatency) agentLatency.textContent = "深度诊断中...";
+      if (toolResult) toolResult.textContent = "正在执行 WebSocket 只读工具和 SSH 只读巡检...";
+      setStatus("深度诊断中：优先 auto_ad_ai WebSocket，只读 SSH 作为补充。", "loading");
+      try {
+        const response = await fetch(AGENT_DIAGNOSE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            vehicle_id: vehicleId,
+            question,
+            include_ssh: true
+          })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.ok === false) {
+          throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+        }
+        appendAgentMessage("agent", payload.answer || "深度诊断没有返回文本。", `${payload.model || "--"} · ${payload.latency_ms || "--"}ms · ${payload.mode || "深度诊断"}`);
+        if (toolResult) {
+          toolResult.textContent = JSON.stringify({
+            audit_id: payload.audit_id,
+            mode: payload.mode,
+            evidence: payload.evidence
+          }, null, 2);
+        }
+        if (agentLatency) agentLatency.textContent = `${payload.latency_ms || "--"} ms`;
+        setStatus("深度诊断完成。未执行重启、控车、写参数或任务重发。", "ok");
+        loadAgentHistory();
+      } catch (error) {
+        appendAgentMessage("error", error?.message || "深度诊断调用失败");
+        if (agentLatency) agentLatency.textContent = "诊断失败";
+        if (toolResult) toolResult.textContent = `深度诊断失败：${error?.message || "未知错误"}`;
+        setStatus(`深度诊断失败：${error?.message || "未知错误"}`, "error");
+        loadAgentHistory();
+      }
     };
 
     const analyzeStopVehicles = () => {
@@ -1195,6 +1261,8 @@ const agentRules = [
         sendAgentMessage(agentInput?.value || "");
       } else if (action === "agent-analyze-current") {
         analyzeCurrentVehicle();
+      } else if (action === "agent-deep-diagnose") {
+        deepDiagnoseCurrentVehicle();
       } else if (action === "agent-analyze-stops") {
         analyzeStopVehicles();
       }
