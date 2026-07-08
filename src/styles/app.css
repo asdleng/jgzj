@@ -2439,6 +2439,32 @@
   grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.7fr);
 }
 
+.cloud-ops-test-api-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.cloud-ops-test-api-strip span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(71, 85, 105, 0.72);
+  background: rgba(2, 6, 23, 0.42);
+}
+
+.cloud-ops-test-api-strip strong {
+  margin-left: 5px;
+  color: #67e8f9;
+}
+
 .cloud-ops-test-vehicle-list {
   display: grid;
   gap: 9px;
@@ -2483,6 +2509,14 @@
   border-color: rgba(251, 191, 36, 0.42);
 }
 
+.cloud-ops-test-vehicle-row.is-warn {
+  border-color: rgba(251, 191, 36, 0.46);
+}
+
+.cloud-ops-test-vehicle-row.is-danger {
+  border-color: rgba(248, 113, 113, 0.5);
+}
+
 .cloud-ops-test-vehicle-row strong,
 .cloud-ops-test-vehicle-row small {
   min-width: 0;
@@ -2511,6 +2545,107 @@
 .cloud-ops-test-vehicle-row.is-stale .cloud-ops-test-severity {
   border-color: rgba(251, 191, 36, 0.42);
   color: #fde68a;
+}
+
+.cloud-ops-test-vehicle-row.is-warn .cloud-ops-test-severity {
+  border-color: rgba(251, 191, 36, 0.48);
+  color: #fde68a;
+}
+
+.cloud-ops-test-vehicle-row.is-danger .cloud-ops-test-severity {
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #fecaca;
+}
+
+.cloud-ops-test-table-shell--fleet {
+  margin-top: 16px;
+}
+
+.cloud-ops-test-fleet-table {
+  min-width: 1120px;
+}
+
+.cloud-ops-test-fleet-table tbody tr.is-selected td {
+  background:
+    linear-gradient(90deg, rgba(8, 145, 178, 0.2), rgba(15, 23, 42, 0.1)),
+    rgba(8, 47, 73, 0.18);
+}
+
+.cloud-ops-test-fleet-table td strong,
+.cloud-ops-test-fleet-table td small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-fleet-table td small {
+  margin-top: 4px;
+  color: #94a3b8;
+  line-height: 1.45;
+}
+
+.cloud-ops-test-row-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  margin: 0 0 7px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(103, 232, 249, 0.45);
+  background:
+    linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(20, 184, 166, 0.16)),
+    rgba(2, 6, 23, 0.74);
+  color: #cffafe;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.cloud-ops-test-row-select:hover,
+.cloud-ops-test-row-select.is-selected {
+  border-color: rgba(103, 232, 249, 0.9);
+  color: #ffffff;
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.22);
+}
+
+.cloud-ops-test-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  margin: 2px 4px 2px 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.72);
+  font-size: 0.7rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.cloud-ops-test-pill.is-ok {
+  border-color: rgba(52, 211, 153, 0.42);
+  color: #86efac;
+}
+
+.cloud-ops-test-pill.is-warn {
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fde68a;
+}
+
+.cloud-ops-test-pill.is-danger {
+  border-color: rgba(248, 113, 113, 0.48);
+  color: #fecaca;
+}
+
+.cloud-ops-test-signal-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 6px;
 }
 
 .cloud-ops-test-empty {

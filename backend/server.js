@@ -11540,18 +11540,70 @@ app.get('/api/cloud-ops/vehicles-lite', authStore.requirePermission('vehicle:rea
         nextToolCount > previousToolCount ||
         (nextToolCount === previousToolCount && nextTime >= previousTime)
       ) {
-        const heartbeat = vehicle?.heartbeat || vehicle?.snapshot?.health || {};
+        const heartbeat = vehicle?.heartbeat || {};
+        const snapshotHealth = vehicle?.snapshot?.health || {};
+        const identity = vehicle?.snapshot?.identity || {};
+        const telemetry = vehicle?.telemetry || {};
+        const telemetryMedia = telemetry?.media || {};
+        const telemetryMaster = telemetry?.master || {};
+        const autodriveCheck = vehicle?.snapshot?.autodrive_check || null;
+        const health = {
+          ...snapshotHealth,
+          ...heartbeat
+        };
+        const masterPingLatencyMs =
+          health?.master_ping_latency_ms ??
+          snapshotHealth?.master_ping_latency_ms ??
+          heartbeat?.master_ping_latency_ms ??
+          null;
+        const masterReachable =
+          typeof telemetryMaster?.reachable === 'boolean'
+            ? telemetryMaster.reachable
+            : typeof health?.master_ping_ok === 'boolean'
+              ? health.master_ping_ok
+              : null;
         vehicleMap.set(vehicleId, {
           vehicle_id: vehicleId,
           plate_number: vehicle?.plate_number || vehicleId,
           vin: vehicle?.vin || null,
           role: vehicle?.role || null,
-          hostname: heartbeat?.hostname || vehicle?.hostname || null,
-          local_primary_ip: heartbeat?.local_primary_ip || vehicle?.local_primary_ip || null,
-          master_host: heartbeat?.master_host || vehicle?.master_host || null,
-          master_ping_ok: typeof heartbeat?.master_ping_ok === 'boolean' ? heartbeat.master_ping_ok : null,
+          hostname: health?.hostname || identity?.hostname || vehicle?.hostname || null,
+          local_primary_ip:
+            health?.local_primary_ip || identity?.local_primary_ip || vehicle?.local_primary_ip || null,
+          master_host:
+            health?.master_host || telemetryMaster?.host || identity?.master_host || vehicle?.master_host || null,
+          master_ping_ok: masterReachable,
+          master_ping_latency_ms: masterPingLatencyMs,
+          ros_master_uri: health?.ros_master_uri || identity?.ros_master_uri || null,
+          topic_count: health?.topic_count ?? telemetryMaster?.topic_count ?? null,
+          node_count: health?.node_count ?? telemetryMaster?.node_count ?? null,
+          service_count: health?.service_count ?? null,
+          cpu_percent: health?.cpu_percent ?? telemetryMedia?.cpu_percent ?? null,
+          memory_percent: health?.memory_percent ?? telemetryMedia?.memory_percent ?? null,
+          disk_percent: health?.disk_percent ?? telemetryMedia?.disk_percent ?? null,
+          load_avg_1m: telemetryMedia?.load_avg_1m ?? null,
+          telemetry_master_ros_ok:
+            typeof telemetryMaster?.ros_ok === 'boolean' ? telemetryMaster.ros_ok : null,
+          key_topics_ok: telemetry?.key_topics
+            ? Object.values(telemetry.key_topics).filter(Boolean).length
+            : null,
+          key_topics_total: telemetry?.key_topics ? Object.keys(telemetry.key_topics).length : null,
+          key_nodes_ok: telemetry?.key_nodes
+            ? Object.values(telemetry.key_nodes).filter(Boolean).length
+            : null,
+          key_nodes_total: telemetry?.key_nodes ? Object.keys(telemetry.key_nodes).length : null,
+          autodrive_health: autodriveCheck?.health || null,
+          ready_for_autodrive:
+            typeof autodriveCheck?.ready_for_autodrive === 'boolean'
+              ? autodriveCheck.ready_for_autodrive
+              : null,
+          blocker_count: Array.isArray(autodriveCheck?.blockers) ? autodriveCheck.blockers.length : null,
+          warning_count: Array.isArray(autodriveCheck?.warnings) ? autodriveCheck.warnings.length : null,
           last_seen: vehicle?.last_seen || null,
           connected_at: vehicle?.connected_at || null,
+          heartbeat_generated_at: heartbeat?.generated_at || null,
+          snapshot_generated_at: vehicle?.snapshot?.generated_at || snapshotHealth?.generated_at || null,
+          telemetry_generated_at: telemetry?.generated_at || null,
           message_count: vehicle?.message_count ?? null,
           has_heartbeat: Boolean(vehicle?.has_heartbeat),
           has_snapshot: Boolean(vehicle?.has_snapshot),

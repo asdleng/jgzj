@@ -1,7 +1,7 @@
 ---
 const fleetStats = [
-  { key: "online", label: "在线车辆", value: "--", note: "来自云端车辆注册列表" },
-  { key: "tool", label: "有工具车辆", value: "--", note: "按 tool_count 或工具列表判断" },
+  { key: "online", label: "在线车辆", value: "--", note: "last_seen 5 分钟内" },
+  { key: "tool", label: "工具可用", value: "--", note: "按 tool_count 判断" },
   { key: "stale", label: "遥测过期", value: "--", note: "按 last_seen 粗略判断" },
   { key: "safe", label: "自动控车", value: "0", note: "页面加载不执行车端工具" }
 ];
@@ -165,6 +165,11 @@ const agentRules = [
               <h3>真实车辆列表</h3>
               <span data-role="vehicle-count">--</span>
             </div>
+            <div class="cloud-ops-test-api-strip">
+              <span>接口 <strong data-role="interface-source">--</strong></span>
+              <span>刷新 <strong data-role="last-refresh">--</strong></span>
+              <span data-role="api-note">只读车辆注册表</span>
+            </div>
             <div class="cloud-ops-test-vehicle-list" data-role="vehicle-list">
               <p class="cloud-ops-test-empty">等待车辆列表...</p>
             </div>
@@ -182,6 +187,24 @@ const agentRules = [
               <div><dt>状态判断</dt><dd>--</dd></div>
             </dl>
           </section>
+        </div>
+
+        <div class="cloud-ops-test-table-shell cloud-ops-test-table-shell--fleet">
+          <table class="cloud-ops-test-table cloud-ops-test-fleet-table">
+            <thead>
+              <tr>
+                <th>车辆</th>
+                <th>真实身份</th>
+                <th>车端链路</th>
+                <th>主控/ROS</th>
+                <th>资源</th>
+                <th>最近状态</th>
+              </tr>
+            </thead>
+            <tbody data-role="vehicle-table-body">
+              <tr><td colspan="6">等待真实车辆信息...</td></tr>
+            </tbody>
+          </table>
         </div>
 
         <div class="cloud-ops-test-table-shell">
@@ -354,11 +377,15 @@ const agentRules = [
     const vehicleSelect = shell.querySelector('[data-role="vehicle-select"]');
     const vehicleList = shell.querySelector('[data-role="vehicle-list"]');
     const vehicleCount = shell.querySelector('[data-role="vehicle-count"]');
+    const vehicleTableBody = shell.querySelector('[data-role="vehicle-table-body"]');
     const selectedVehicleChip = shell.querySelector('[data-role="selected-vehicle-chip"]');
     const selectedVehicleTitle = shell.querySelector('[data-role="selected-vehicle-title"]');
     const vehicleSummary = shell.querySelector('[data-role="vehicle-summary"]');
     const toolResult = shell.querySelector('[data-role="tool-result"]');
     const lastToolLabel = shell.querySelector('[data-role="last-tool-label"]');
+    const interfaceSource = shell.querySelector('[data-role="interface-source"]');
+    const lastRefresh = shell.querySelector('[data-role="last-refresh"]');
+    const apiNote = shell.querySelector('[data-role="api-note"]');
     let vehicles = [];
     let currentVehicleId = "";
 
@@ -379,6 +406,25 @@ const agentRules = [
     const lastSeenOf = (vehicle) => String(vehicle?.last_seen || vehicle?.last_seen_at || vehicle?.updated_at || "").trim();
     const toolCountOf = (vehicle) => Number(vehicle?.tool_count || vehicle?.tools_count || 0) || 0;
     const selectedVehicleId = () => String(currentVehicleId || vehicleSelect?.value || "").trim();
+    const displayValue = (value, fallback = "--") => {
+      if (value === null || value === undefined || value === "") return fallback;
+      return String(value);
+    };
+    const boolText = (value, trueText = "是", falseText = "否", unknownText = "未知") => {
+      if (value === true) return trueText;
+      if (value === false) return falseText;
+      return unknownText;
+    };
+    const percentText = (value) => {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return "--";
+      return `${num.toFixed(num >= 10 ? 0 : 1)}%`;
+    };
+    const msText = (value) => {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return "--";
+      return `${num.toFixed(num >= 10 ? 0 : 1)} ms`;
+    };
     const formatAge = (iso) => {
       const ts = Date.parse(iso || "");
       if (!Number.isFinite(ts)) return "未知";
@@ -394,6 +440,16 @@ const agentRules = [
       const ts = Date.parse(lastSeenOf(vehicle));
       return !Number.isFinite(ts) || Date.now() - ts > 5 * 60 * 1000;
     };
+    const vehicleHealthOf = (vehicle) => {
+      if (isStale(vehicle)) return { label: "遥测过期", tone: "warn" };
+      if (vehicle?.master_ping_ok === false) return { label: "主控不可达", tone: "danger" };
+      if (!vehicle?.has_heartbeat) return { label: "无心跳", tone: "warn" };
+      if (!vehicle?.has_telemetry) return { label: "无telemetry", tone: "warn" };
+      return { label: "在线", tone: "ok" };
+    };
+    const renderPill = (label, tone = "neutral") => (
+      `<span class="cloud-ops-test-pill is-${escapeHtml(tone)}">${escapeHtml(label)}</span>`
+    );
     const escapeHtml = (value) => String(value ?? "")
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
@@ -429,6 +485,9 @@ const agentRules = [
       shell.querySelectorAll("[data-vehicle-id]").forEach((button) => {
         button.classList.toggle("is-selected", button.dataset.vehicleId === selectedVehicleId());
       });
+      shell.querySelectorAll("[data-vehicle-row-id]").forEach((row) => {
+        row.classList.toggle("is-selected", row.dataset.vehicleRowId === selectedVehicleId());
+      });
       if (selectedVehicleTitle) selectedVehicleTitle.textContent = selectedVehicleId() || "--";
     };
 
@@ -450,16 +509,19 @@ const agentRules = [
       if (selectedVehicleTitle) selectedVehicleTitle.textContent = vehicle ? vehicleIdOf(vehicle) : "--";
       if (!vehicleSummary) return;
       if (!vehicle) {
-        vehicleSummary.innerHTML = "<div><dt>车辆</dt><dd>--</dd></div><div><dt>工具数</dt><dd>--</dd></div><div><dt>最近在线</dt><dd>--</dd></div><div><dt>状态判断</dt><dd>--</dd></div>";
+        vehicleSummary.innerHTML = "<div><dt>车辆</dt><dd>--</dd></div><div><dt>真实身份</dt><dd>--</dd></div><div><dt>车端链路</dt><dd>--</dd></div><div><dt>主控/ROS</dt><dd>--</dd></div><div><dt>资源</dt><dd>--</dd></div><div><dt>状态判断</dt><dd>--</dd></div>";
         return;
       }
       const vid = vehicleIdOf(vehicle);
-      const stale = isStale(vehicle);
+      const health = vehicleHealthOf(vehicle);
       vehicleSummary.innerHTML = [
-        ["车辆", vid],
-        ["工具数", toolCountOf(vehicle) || "未知"],
-        ["最近在线", `${formatAge(lastSeenOf(vehicle))} · ${lastSeenOf(vehicle) || "无时间戳"}`],
-        ["状态判断", stale ? "遥测过期/需确认通信" : "在线/可做只读检查"]
+        ["车辆", `${vid} / ${displayValue(vehicle?.plate_number, vid)}`],
+        ["真实身份", `VIN ${displayValue(vehicle?.vin)} · ${displayValue(vehicle?.role)}`],
+        ["车端链路", `${displayValue(vehicle?.hostname)} · media ${displayValue(vehicle?.local_primary_ip)} · cloud ${displayValue(vehicle?.remote)}`],
+        ["主控/ROS", `主控 ${displayValue(vehicle?.master_host)} · ping ${boolText(vehicle?.master_ping_ok, "可达", "不可达")} ${msText(vehicle?.master_ping_latency_ms)} · topic/node/service ${displayValue(vehicle?.topic_count)}/${displayValue(vehicle?.node_count)}/${displayValue(vehicle?.service_count)}`],
+        ["资源", `CPU ${percentText(vehicle?.cpu_percent)} · 内存 ${percentText(vehicle?.memory_percent)} · 磁盘 ${percentText(vehicle?.disk_percent)} · tools ${toolCountOf(vehicle) || "未知"}`],
+        ["最近在线", `${formatAge(lastSeenOf(vehicle))} · ${lastSeenOf(vehicle) || "无时间戳"} · msg ${displayValue(vehicle?.message_count)}`],
+        ["状态判断", health.label]
       ].map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`).join("");
     };
 
@@ -472,15 +534,60 @@ const agentRules = [
       }
       vehicleList.innerHTML = vehicles.map((vehicle) => {
         const vid = vehicleIdOf(vehicle);
-        const stale = isStale(vehicle);
+        const health = vehicleHealthOf(vehicle);
         const toolCount = toolCountOf(vehicle);
         const host = vehicle?.hostname || vehicle?.host || "";
         const selected = vid === selectedVehicleId();
-        return `<button type="button" class="cloud-ops-test-vehicle-row${stale ? " is-stale" : ""}${selected ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
-          <span class="cloud-ops-test-severity">${stale ? "待确认" : "在线"}</span>
+        return `<button type="button" class="cloud-ops-test-vehicle-row is-${escapeHtml(health.tone)}${selected ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
+          <span class="cloud-ops-test-severity">${escapeHtml(health.label)}</span>
           <strong>${escapeHtml(vid || "未知车辆")}</strong>
-          <small>${escapeHtml(host || "无主机名")} · ${escapeHtml(formatAge(lastSeenOf(vehicle)))} · tools ${escapeHtml(toolCount || "?")}</small>
+          <small>${escapeHtml(host || "无主机名")} · media ${escapeHtml(displayValue(vehicle?.local_primary_ip))} · master ${escapeHtml(boolText(vehicle?.master_ping_ok, "可达", "不可达"))} · ${escapeHtml(formatAge(lastSeenOf(vehicle)))} · tools ${escapeHtml(toolCount || "?")}</small>
         </button>`;
+      }).join("");
+    };
+
+    const renderVehicleTable = () => {
+      if (!vehicleTableBody) return;
+      if (!vehicles.length) {
+        vehicleTableBody.innerHTML = '<tr><td colspan="6">没有读取到车辆，或当前账号未授权。</td></tr>';
+        return;
+      }
+      vehicleTableBody.innerHTML = vehicles.map((vehicle) => {
+        const vid = vehicleIdOf(vehicle);
+        const health = vehicleHealthOf(vehicle);
+        const selected = vid === selectedVehicleId();
+        const signalHtml = [
+          vehicle?.has_heartbeat ? renderPill("heartbeat", "ok") : renderPill("无心跳", "warn"),
+          vehicle?.has_snapshot ? renderPill("snapshot", "ok") : renderPill("无snapshot", "warn"),
+          vehicle?.has_telemetry ? renderPill("telemetry", "ok") : renderPill("无telemetry", "warn")
+        ].join("");
+        return `<tr class="${selected ? "is-selected" : ""}" data-vehicle-row-id="${escapeHtml(vid)}">
+          <td>
+            <button type="button" class="cloud-ops-test-row-select" data-vehicle-id="${escapeHtml(vid)}">${escapeHtml(vid)}</button>
+            <div>${renderPill(health.label, health.tone)}</div>
+          </td>
+          <td>
+            <strong>${escapeHtml(displayValue(vehicle?.plate_number, vid))}</strong>
+            <small>VIN ${escapeHtml(displayValue(vehicle?.vin))}</small>
+          </td>
+          <td>
+            <strong>${escapeHtml(displayValue(vehicle?.hostname))}</strong>
+            <small>media ${escapeHtml(displayValue(vehicle?.local_primary_ip))} · remote ${escapeHtml(displayValue(vehicle?.remote))}</small>
+          </td>
+          <td>
+            <strong>${escapeHtml(displayValue(vehicle?.master_host))} · ${escapeHtml(boolText(vehicle?.master_ping_ok, "可达", "不可达"))}</strong>
+            <small>ping ${escapeHtml(msText(vehicle?.master_ping_latency_ms))} · ROS ${escapeHtml(displayValue(vehicle?.topic_count))}/${escapeHtml(displayValue(vehicle?.node_count))}/${escapeHtml(displayValue(vehicle?.service_count))}</small>
+          </td>
+          <td>
+            <strong>CPU ${escapeHtml(percentText(vehicle?.cpu_percent))} · MEM ${escapeHtml(percentText(vehicle?.memory_percent))}</strong>
+            <small>DISK ${escapeHtml(percentText(vehicle?.disk_percent))} · tools ${escapeHtml(toolCountOf(vehicle) || "未知")}</small>
+          </td>
+          <td>
+            <strong>${escapeHtml(formatAge(lastSeenOf(vehicle)))}</strong>
+            <small>${escapeHtml(lastSeenOf(vehicle) || "无时间戳")} · msg ${escapeHtml(displayValue(vehicle?.message_count))}</small>
+            <div class="cloud-ops-test-signal-row">${signalHtml}</div>
+          </td>
+        </tr>`;
       }).join("");
     };
 
@@ -514,7 +621,8 @@ const agentRules = [
     const updateStats = () => {
       const withTools = vehicles.filter((vehicle) => toolCountOf(vehicle) > 0).length;
       const staleCount = vehicles.filter(isStale).length;
-      setStat("online", vehicles.length, "真实车辆列表数量");
+      const onlineCount = vehicles.length - staleCount;
+      setStat("online", onlineCount, `总计 ${vehicles.length} 台真实车辆`);
       setStat("tool", withTools, "tool_count > 0 的车辆");
       setStat("stale", staleCount, "last_seen 超过 5 分钟或无时间戳");
       setStat("safe", 0, "页面加载没有执行车端工具");
@@ -529,8 +637,12 @@ const agentRules = [
           throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
         }
         vehicles = Array.isArray(payload.vehicles) ? payload.vehicles : [];
+        if (interfaceSource) interfaceSource.textContent = payload.source || "cloud_agent_registry";
+        if (lastRefresh) lastRefresh.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        if (apiNote) apiNote.textContent = payload.note || "只读车辆注册表";
         renderVehicleOptions();
         renderVehicles();
+        renderVehicleTable();
         syncSelectedVehicleUi();
         updateStats();
         setStatus(`已读取 ${vehicles.length} 台真实车辆。未自动执行任何车端工具。`, "ok");
@@ -539,6 +651,7 @@ const agentRules = [
         currentVehicleId = "";
         renderVehicleOptions();
         renderVehicles();
+        renderVehicleTable();
         updateStats();
         setStatus(`车辆列表读取失败：${error?.message || "未知错误"}`, "error");
       }
