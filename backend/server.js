@@ -243,6 +243,20 @@ const lidarRelocalizationMapUploadBaseUrl = String(
 const cloudOpsRouteCatalogCache = new Map();
 const cloudOpsAudioAlsaCache = new Map();
 const projectRoot = path.resolve(__dirname, '..');
+const cloudOpsAgentBaseUrl = normalizeCloudOpsAgentBaseUrl(
+  process.env.CLOUD_OPS_AGENT_BASE_URL || process.env.ONE_API_BASE_URL || 'http://127.0.0.1:8080'
+);
+const cloudOpsAgentApiKey =
+  process.env.CLOUD_OPS_AGENT_API_KEY || process.env.CLOUD_OPS_AGENT_SUBAPI_KEY || '';
+const cloudOpsAgentModel = process.env.CLOUD_OPS_AGENT_MODEL || 'gpt-4.1';
+const cloudOpsAgentTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_TIMEOUT_MS || 120000);
+const cloudOpsAgentMaxContextVehicles = Number(process.env.CLOUD_OPS_AGENT_MAX_CONTEXT_VEHICLES || 30);
+const cloudOpsAgentHistoryPath = path.resolve(
+  process.env.CLOUD_OPS_AGENT_HISTORY_PATH ||
+    path.join(projectRoot, '.runtime/cloud-ops-agent/chat-history.jsonl')
+);
+const cloudOpsAgentEnabled =
+  String(process.env.CLOUD_OPS_AGENT_ENABLED || 'true').toLowerCase() !== 'false';
 const yoloModelTestRoot = path.resolve(
   process.env.YOLO_MODEL_TEST_ROOT || path.join(projectRoot, '.runtime/yolo_model_test')
 );
@@ -1097,6 +1111,59 @@ function parseJsonField(value, fallback = null) {
   } catch (_error) {
     return fallback;
   }
+}
+
+function normalizeCloudOpsAgentBaseUrl(value) {
+  const source = String(value || 'http://127.0.0.1:8080').trim() || 'http://127.0.0.1:8080';
+  try {
+    const url = new URL(source);
+    const pathname = url.pathname && url.pathname !== '/' ? url.pathname : '/v1';
+    url.pathname = pathname.replace(/\/+$/, '');
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/+$/, '');
+  } catch (_error) {
+    return source.replace(/\/+$/, '');
+  }
+}
+
+function publicCloudOpsAgentBaseLabel() {
+  try {
+    const url = new URL(cloudOpsAgentBaseUrl);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch (_error) {
+    return cloudOpsAgentBaseUrl.replace(/\/\/[^:@/]+:[^@/]+@/, '//<redacted>@');
+  }
+}
+
+function cloudOpsAgentChatUrl() {
+  return new URL('chat/completions', `${cloudOpsAgentBaseUrl}/`).toString();
+}
+
+function cloudOpsAgentConfigured() {
+  return Boolean(cloudOpsAgentApiKey && cloudOpsAgentApiKey.trim());
+}
+
+function probeTcpPort(host, portNumber, timeoutMs = 500) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port: portNumber });
+    let settled = false;
+    const finish = (ok, detail = null) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve({
+        ok,
+        host,
+        port: portNumber,
+        detail
+      });
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false, 'timeout'));
+    socket.once('error', (error) => finish(false, error?.code || error?.message || 'connect_failed'));
+  });
 }
 
 function resolveExecutable(configured, candidates = []) {
@@ -5645,6 +5712,507 @@ async function listCloudAgentVehicles() {
   return vehicles;
 }
 
+function readFiniteNumber(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function isCloudOpsAgentVehicleStale(vehicle, maxAgeMs = 5 * 60 * 1000) {
+  const timestamp = Date.parse(vehicle?.last_seen || '');
+  return !Number.isFinite(timestamp) || Date.now() - timestamp > maxAgeMs;
+}
+
+function makeCloudOpsAgentStopDiagnosis(summary) {
+  if (isCloudOpsAgentVehicleStale(summary)) {
+    return {
+      label: '通信过期',
+      severity: 'warn',
+      reason: 'last_seen 超过 5 分钟或无有效时间戳，不能确认自动驾驶状态。',
+      next_step: '先检查云端连接、media 心跳和 auto_ad_ai。'
+    };
+  }
+
+  if (summary.master_ping_ok === false || summary.telemetry_master_ros_ok === false) {
+    return {
+      label: '主控链路异常',
+      severity: 'danger',
+      reason: 'media 到主控或 ROS 状态异常，自动驾驶状态不可确认。',
+      next_step: '先检查主控网络、ROS master、关键节点。'
+    };
+  }
+
+  if (summary.emergency_stop_pressed === true) {
+    return {
+      label: '阻断：急停',
+      severity: 'danger',
+      reason: '急停已触发，车辆停止属于安全阻断。',
+      next_step: '现场确认急停原因，再进入控制/底盘诊断。'
+    };
+  }
+
+  if (summary.collision_stop === true) {
+    return {
+      label: '阻断：碰撞停',
+      severity: 'danger',
+      reason: '碰撞停已触发，车辆停止属于安全阻断。',
+      next_step: '先查障碍物、碰撞停输入和底盘反馈。'
+    };
+  }
+
+  if (summary.localization_reliable === false) {
+    return {
+      label: '阻断：定位不可靠',
+      severity: 'danger',
+      reason: 'location_topic_ reliable=false，自动驾驶应停止。',
+      next_step: '进入定位故障树，先区分组合导航模式和纯 LiDAR NDT 模式。'
+    };
+  }
+
+  if (summary.trajectory_estop === true) {
+    return {
+      label: '阻断：规划 estop',
+      severity: 'danger',
+      reason: 'planning trajectory estop=true。',
+      next_step: '进入规划/障碍物故障诊断。'
+    };
+  }
+
+  const speedKph = readFiniteNumber(summary.speed_kph);
+  const locSpeedMps = readFiniteNumber(summary.localization_speed_mps);
+  const targetSpeed = readFiniteNumber(summary.control_target_speed);
+  const plannerState = String(summary.planner_state || '').trim().toLowerCase();
+  const plannerRunning = readFiniteNumber(summary.planner_running);
+  const vehicleIdleStatus = readFiniteNumber(summary.vehicle_idle_status);
+  const totalLoop = readFiniteNumber(summary.total_loop_sum);
+  const currentLoop = readFiniteNumber(summary.current_loop_index);
+  const totalRefline = readFiniteNumber(summary.total_refline_sum);
+  const currentRefline = readFiniteNumber(summary.current_refline_index);
+  const trajectoryPointCount = readFiniteNumber(summary.trajectory_point_count);
+  const trajectoryLength = readFiniteNumber(summary.trajectory_total_length);
+  const currentPathCount = readFiniteNumber(summary.current_path_count);
+  const stopped = Number.isFinite(speedKph)
+    ? speedKph < 0.2
+    : Number.isFinite(locSpeedMps) && Math.abs(locSpeedMps) < 0.05;
+  const routeProgress =
+    Number.isFinite(totalLoop) &&
+    Number.isFinite(currentLoop) &&
+    Number.isFinite(totalRefline) &&
+    Number.isFinite(currentRefline) &&
+    totalLoop > 0 &&
+    totalRefline > 0 &&
+    currentLoop >= 0 &&
+    currentRefline >= 0;
+  const hasTrajectory =
+    Number.isFinite(trajectoryPointCount) &&
+    trajectoryPointCount > 0 &&
+    Number.isFinite(trajectoryLength) &&
+    trajectoryLength > 0;
+  const plannerActive = plannerState === 'running' || (Number.isFinite(plannerRunning) && plannerRunning > 0);
+  const taskEvidence =
+    plannerActive ||
+    (Number.isFinite(currentPathCount) && currentPathCount > 0) ||
+    routeProgress ||
+    hasTrajectory ||
+    (Number.isFinite(vehicleIdleStatus) && vehicleIdleStatus === 0);
+
+  if (taskEvidence && stopped) {
+    return {
+      label: '疑似停车故障',
+      severity: 'warn',
+      reason: '有任务/规划证据，但速度接近 0；仍需任务状态和 60 秒位移历史最终确认。',
+      next_step: '进入自动驾驶停止诊断树，优先查定位、规划、底盘/控制、障碍物和任务配置。'
+    };
+  }
+
+  if (taskEvidence && !stopped) {
+    return {
+      label: '运行中',
+      severity: 'ok',
+      reason: '有任务/规划证据且车辆有速度。',
+      next_step: '暂不触发自动驾驶停止诊断。'
+    };
+  }
+
+  if (stopped) {
+    return {
+      label: '停止待确认',
+      severity: 'neutral',
+      reason: `车辆速度接近 0，但当前缓存未看到明确任务运行证据；target_speed=${targetSpeed ?? 'unknown'}。`,
+      next_step: '需要补充任务计划、任务进度和 60 秒位移历史，区分正常等待/任务完成/异常停车。'
+    };
+  }
+
+  return {
+    label: '不可判定',
+    severity: 'neutral',
+    reason: '当前缓存缺少足够任务状态和运动状态证据。',
+    next_step: '先点击只读检查获取定位、规划、routing、CAN 状态。'
+  };
+}
+
+function makeCloudOpsAgentVehicleSummary(vehicle) {
+  const heartbeat = vehicle?.heartbeat || {};
+  const snapshotHealth = vehicle?.snapshot?.health || {};
+  const identity = vehicle?.snapshot?.identity || {};
+  const telemetry = vehicle?.telemetry || {};
+  const telemetryMedia = telemetry?.media || {};
+  const telemetryMaster = telemetry?.master || {};
+  const telemetryVehicle = telemetry?.vehicle || {};
+  const autodriveCheck = vehicle?.snapshot?.autodrive_check || null;
+  const statusRefs = autodriveCheck?.status_refs || {};
+  const localizationSummary = statusRefs?.localization?.summary || {};
+  const planningSummary = statusRefs?.planning?.summary || {};
+  const controlSummary = statusRefs?.control?.summary || {};
+  const routingSummary = statusRefs?.routing?.summary || {};
+  const vehicleId = getCloudOpsVehicleId(vehicle);
+  const health = {
+    ...snapshotHealth,
+    ...heartbeat
+  };
+  const masterPingLatencyMs =
+    health?.master_ping_latency_ms ??
+    snapshotHealth?.master_ping_latency_ms ??
+    heartbeat?.master_ping_latency_ms ??
+    null;
+  const masterReachable =
+    typeof telemetryMaster?.reachable === 'boolean'
+      ? telemetryMaster.reachable
+      : typeof health?.master_ping_ok === 'boolean'
+        ? health.master_ping_ok
+        : null;
+  const toolNames = extractCloudOpsToolNames(vehicle);
+  const summary = {
+    vehicle_id: vehicleId,
+    plate_number: vehicle?.plate_number || vehicleId,
+    vin: vehicle?.vin || null,
+    role: vehicle?.role || null,
+    hostname: health?.hostname || identity?.hostname || vehicle?.hostname || null,
+    local_primary_ip:
+      health?.local_primary_ip || identity?.local_primary_ip || vehicle?.local_primary_ip || null,
+    master_host:
+      health?.master_host || telemetryMaster?.host || identity?.master_host || vehicle?.master_host || null,
+    master_ping_ok: masterReachable,
+    master_ping_latency_ms: masterPingLatencyMs,
+    ros_master_uri: health?.ros_master_uri || identity?.ros_master_uri || null,
+    topic_count: health?.topic_count ?? telemetryMaster?.topic_count ?? null,
+    node_count: health?.node_count ?? telemetryMaster?.node_count ?? null,
+    service_count: health?.service_count ?? null,
+    cpu_percent: health?.cpu_percent ?? telemetryMedia?.cpu_percent ?? null,
+    memory_percent: health?.memory_percent ?? telemetryMedia?.memory_percent ?? null,
+    disk_percent: health?.disk_percent ?? telemetryMedia?.disk_percent ?? null,
+    load_avg_1m: telemetryMedia?.load_avg_1m ?? null,
+    vehicle_ready: typeof telemetryVehicle?.ready === 'boolean' ? telemetryVehicle.ready : null,
+    gear: telemetryVehicle?.gear ?? null,
+    running_mode: telemetryVehicle?.running_mode ?? null,
+    speed_kph: telemetryVehicle?.speed_kph ?? null,
+    emergency_stop_pressed:
+      typeof telemetryVehicle?.emergency_stop_pressed === 'boolean'
+        ? telemetryVehicle.emergency_stop_pressed
+        : null,
+    collision_stop:
+      typeof telemetryVehicle?.collision_stop === 'boolean' ? telemetryVehicle.collision_stop : null,
+    battery_soc: telemetryVehicle?.battery_soc ?? null,
+    vehicle_data_age_s: telemetryVehicle?.data_age_s ?? null,
+    telemetry_master_ros_ok:
+      typeof telemetryMaster?.ros_ok === 'boolean' ? telemetryMaster.ros_ok : null,
+    key_topics_ok: telemetry?.key_topics
+      ? Object.values(telemetry.key_topics).filter(Boolean).length
+      : null,
+    key_topics_total: telemetry?.key_topics ? Object.keys(telemetry.key_topics).length : null,
+    key_nodes_ok: telemetry?.key_nodes
+      ? Object.values(telemetry.key_nodes).filter(Boolean).length
+      : null,
+    key_nodes_total: telemetry?.key_nodes ? Object.keys(telemetry.key_nodes).length : null,
+    autodrive_health: autodriveCheck?.health || null,
+    ready_for_autodrive:
+      typeof autodriveCheck?.ready_for_autodrive === 'boolean'
+        ? autodriveCheck.ready_for_autodrive
+        : null,
+    localization_reliable:
+      typeof localizationSummary?.reliable === 'boolean' ? localizationSummary.reliable : null,
+    localization_speed_mps: localizationSummary?.speed_mps ?? null,
+    planner_state: planningSummary?.planner_state || null,
+    planner_running: planningSummary?.planner_running ?? null,
+    vehicle_idle_status: planningSummary?.vehicle_idle_status ?? null,
+    long_time_stop:
+      typeof planningSummary?.long_time_stop === 'boolean' ? planningSummary.long_time_stop : null,
+    current_loop_index: planningSummary?.current_loop_index ?? null,
+    total_loop_sum: planningSummary?.total_loop_sum ?? null,
+    current_refline_index: planningSummary?.current_refline_index ?? null,
+    total_refline_sum: planningSummary?.total_refline_sum ?? null,
+    trajectory_point_count: planningSummary?.trajectory_point_count ?? null,
+    trajectory_total_length: planningSummary?.trajectory_total_length ?? null,
+    trajectory_estop:
+      typeof planningSummary?.trajectory_estop === 'boolean' ? planningSummary.trajectory_estop : null,
+    control_target_speed: controlSummary?.target_speed ?? null,
+    route_count: routingSummary?.route_count ?? null,
+    current_path_count: Array.isArray(routingSummary?.current_path_string_ids)
+      ? routingSummary.current_path_string_ids.length
+      : null,
+    blocker_count: Array.isArray(autodriveCheck?.blockers) ? autodriveCheck.blockers.length : null,
+    warning_count: Array.isArray(autodriveCheck?.warnings) ? autodriveCheck.warnings.length : null,
+    last_seen: vehicle?.last_seen || null,
+    connected_at: vehicle?.connected_at || null,
+    heartbeat_generated_at: heartbeat?.generated_at || null,
+    snapshot_generated_at: vehicle?.snapshot?.generated_at || snapshotHealth?.generated_at || null,
+    telemetry_generated_at: telemetry?.generated_at || null,
+    message_count: vehicle?.message_count ?? null,
+    has_heartbeat: Boolean(vehicle?.has_heartbeat),
+    has_snapshot: Boolean(vehicle?.has_snapshot),
+    has_telemetry: Boolean(vehicle?.has_telemetry),
+    tool_count: Number(vehicle?.tool_count || toolNames.size || 0) || 0,
+    remote: vehicle?.remote || null
+  };
+  summary.stop_diagnosis = makeCloudOpsAgentStopDiagnosis(summary);
+  return summary;
+}
+
+function dedupeCloudOpsAgentVehicles(vehicles = []) {
+  const vehicleMap = new Map();
+  vehicles.forEach((vehicle) => {
+    const vehicleId = getCloudOpsVehicleId(vehicle);
+    if (!vehicleId) {
+      return;
+    }
+    const previous = vehicleMap.get(vehicleId);
+    const previousTime = Date.parse(previous?.last_seen || '') || 0;
+    const nextTime = Date.parse(vehicle?.last_seen || '') || 0;
+    const previousToolCount = Number(previous?.tool_count || 0);
+    const toolNames = extractCloudOpsToolNames(vehicle);
+    const nextToolCount = Number(vehicle?.tool_count || toolNames.size || 0);
+    if (
+      !previous ||
+      nextToolCount > previousToolCount ||
+      (nextToolCount === previousToolCount && nextTime >= previousTime)
+    ) {
+      vehicleMap.set(vehicleId, vehicle);
+    }
+  });
+  return Array.from(vehicleMap.values()).sort((left, right) =>
+    String(getCloudOpsVehicleId(left)).localeCompare(String(getCloudOpsVehicleId(right)))
+  );
+}
+
+async function listCloudOpsAgentVehicleSummaries() {
+  const vehicles = await listCloudAgentVehicles();
+  return dedupeCloudOpsAgentVehicles(vehicles).map(makeCloudOpsAgentVehicleSummary);
+}
+
+function summarizeCloudOpsAgentFleet(vehicles = []) {
+  const stopDiagnoses = vehicles.map((vehicle) => vehicle.stop_diagnosis || makeCloudOpsAgentStopDiagnosis(vehicle));
+  const stale = vehicles.filter((vehicle) => isCloudOpsAgentVehicleStale(vehicle)).length;
+  const stopConcern = stopDiagnoses.filter((diag) => diag.severity === 'danger' || diag.label === '疑似停车故障').length;
+  const stopPending = stopDiagnoses.filter((diag) => diag.label === '停止待确认').length;
+  return {
+    vehicle_count: vehicles.length,
+    online_count: Math.max(0, vehicles.length - stale),
+    stale_count: stale,
+    stop_concern_count: stopConcern,
+    stop_pending_count: stopPending,
+    stop_labels: stopDiagnoses.reduce((acc, item) => {
+      const key = item?.label || 'unknown';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {})
+  };
+}
+
+function cloudOpsAgentHistoryRecord(record) {
+  const prompt = String(record.prompt || '').trim();
+  const answer = String(record.answer || '').trim();
+  const error = String(record.error || '').trim();
+  return {
+    id: record.id || `coa_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+    at: record.at || new Date().toISOString(),
+    ok: record.ok !== false,
+    actor: record.actor || null,
+    vehicle_id: record.vehicle_id || null,
+    model: record.model || cloudOpsAgentModel,
+    latency_ms: Number.isFinite(Number(record.latency_ms)) ? Number(record.latency_ms) : null,
+    prompt_snippet: prompt.slice(0, 500),
+    answer_snippet: answer.slice(0, 900),
+    error: error ? error.slice(0, 500) : null,
+    mode: 'advisory_read_only'
+  };
+}
+
+async function appendCloudOpsAgentHistory(record) {
+  await fs.mkdir(path.dirname(cloudOpsAgentHistoryPath), { recursive: true });
+  await fs.appendFile(
+    cloudOpsAgentHistoryPath,
+    `${JSON.stringify(cloudOpsAgentHistoryRecord(record))}\n`,
+    'utf-8'
+  );
+}
+
+async function readCloudOpsAgentHistory(limit = 20) {
+  try {
+    const content = await fs.readFile(cloudOpsAgentHistoryPath, 'utf-8');
+    const items = content
+      .split(/\n+/)
+      .filter(Boolean)
+      .slice(-Math.max(1, Math.min(100, limit)))
+      .map((line) => parseJsonField(line, null))
+      .filter(Boolean)
+      .reverse();
+    return items;
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function buildCloudOpsAgentSystemPrompt() {
+  return [
+    '你是“云端智能运维智能体”的只读诊断参谋。',
+    '你只能基于用户问题和系统提供的车辆缓存上下文做分析、判断和建议。',
+    '严禁声称你已经操作车辆、重启服务、写入参数、重发任务、发布 initialpose、SSH 进车或执行任何命令。',
+    '如果需要执行动作，只能列为“需要人工确认的动作”，并说明风险和确认条件。',
+    '必须优先遵守安全边界：车辆控制、参数写入、重启、任务下发/重发、地图插件启动都需要人工确认。',
+    '自动驾驶停止不是具体故障，只是诊断入口；需要先判断定位、规划、控制/底盘、感知/障碍物、任务配置、通信/软件这些层级。',
+    '定位诊断必须区分两种模式：无组合导航模式不等于故障，使用纯 LiDAR NDT；有组合导航模式下 NDT+GPS/组合导航都是融合观测。',
+    '如果涉及组合导航，第一步通常是确认车辆档案并检查 10.168.1.43 是否可达；无组合导航车辆不能把 ping 不通 10.168.1.43 当故障。',
+    '回答使用中文，结构固定为：判断、依据、建议下一步、需要人工确认的动作。',
+    '不要输出 markdown 表格。'
+  ].join('\n');
+}
+
+function buildCloudOpsAgentUserPrompt(message, context) {
+  return [
+    `用户问题：${message}`,
+    '',
+    `当前时间：${new Date().toISOString()}`,
+    `当前选中车辆：${context.selected_vehicle_id || '未选择'}`,
+    `车队摘要：${safeJsonStringify(context.fleet, 3000)}`,
+    context.selected_vehicle
+      ? `选中车辆缓存：${safeJsonStringify(context.selected_vehicle, 5000)}`
+      : '选中车辆缓存：无',
+    `重点车辆缓存：${safeJsonStringify(context.focus_vehicles, 10000)}`,
+    '',
+    '请按“判断 / 依据 / 建议下一步 / 需要人工确认的动作”输出。'
+  ].join('\n');
+}
+
+function extractCloudOpsAgentAnswer(payload) {
+  const choice = Array.isArray(payload?.choices) ? payload.choices[0] : null;
+  const message = choice?.message;
+  if (typeof message?.content === 'string') {
+    return normalizeReply(message.content);
+  }
+  if (Array.isArray(message?.content)) {
+    return normalizeReply(
+      message.content
+        .map((item) => item?.text || item?.content || '')
+        .filter(Boolean)
+        .join('\n')
+    );
+  }
+  if (typeof choice?.text === 'string') {
+    return normalizeReply(choice.text);
+  }
+  if (typeof payload?.output_text === 'string') {
+    return normalizeReply(payload.output_text);
+  }
+  return '';
+}
+
+async function runCloudOpsAgentChatCompletion({ message, vehicleId }) {
+  if (!cloudOpsAgentEnabled) {
+    const error = new Error('cloud_ops_agent_disabled');
+    error.status = 503;
+    throw error;
+  }
+  if (!cloudOpsAgentConfigured()) {
+    const error = new Error('CLOUD_OPS_AGENT_API_KEY is not configured.');
+    error.status = 503;
+    error.code = 'cloud_ops_agent_not_configured';
+    throw error;
+  }
+
+  const startedAt = Date.now();
+  const allVehicles = await listCloudOpsAgentVehicleSummaries().catch(() => []);
+  const selectedVehicle = vehicleId
+    ? allVehicles.find((vehicle) => vehicle.vehicle_id === vehicleId) || null
+    : null;
+  const stopConcernVehicles = allVehicles
+    .filter((vehicle) => {
+      const diag = vehicle.stop_diagnosis || {};
+      return diag.severity === 'danger' || diag.label === '疑似停车故障' || diag.label === '停止待确认';
+    })
+    .slice(0, Math.max(1, Math.min(10, cloudOpsAgentMaxContextVehicles)));
+  const focusVehicles = selectedVehicle
+    ? [selectedVehicle, ...stopConcernVehicles.filter((vehicle) => vehicle.vehicle_id !== selectedVehicle.vehicle_id)]
+    : stopConcernVehicles;
+  const context = {
+    selected_vehicle_id: vehicleId || '',
+    selected_vehicle: selectedVehicle,
+    focus_vehicles: focusVehicles.slice(0, Math.max(1, cloudOpsAgentMaxContextVehicles)),
+    fleet: summarizeCloudOpsAgentFleet(allVehicles)
+  };
+  const payload = {
+    model: cloudOpsAgentModel,
+    messages: [
+      { role: 'system', content: buildCloudOpsAgentSystemPrompt() },
+      { role: 'user', content: buildCloudOpsAgentUserPrompt(message, context) }
+    ],
+    temperature: 0.2,
+    stream: false
+  };
+
+  let upstreamResponse;
+  try {
+    upstreamResponse = await fetch(cloudOpsAgentChatUrl(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${cloudOpsAgentApiKey}`
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(cloudOpsAgentTimeoutMs)
+    });
+  } catch (error) {
+    const wrapped = new Error(`cloud_ops_agent_request_failed: ${error.message}`);
+    wrapped.status = error.name === 'TimeoutError' || error.name === 'AbortError' ? 504 : 502;
+    throw wrapped;
+  }
+
+  const text = await upstreamResponse.text();
+  const responsePayload = parseJsonField(text, null);
+  if (!upstreamResponse.ok) {
+    const detail =
+      responsePayload?.error?.message ||
+      responsePayload?.message ||
+      responsePayload?.detail ||
+      normalizeReply(text) ||
+      `HTTP ${upstreamResponse.status}`;
+    const error = new Error(detail);
+    error.status = upstreamResponse.status >= 400 && upstreamResponse.status < 600
+      ? upstreamResponse.status
+      : 502;
+    throw error;
+  }
+
+  const answer = extractCloudOpsAgentAnswer(responsePayload);
+  return {
+    answer: answer || '模型没有返回有效文本。',
+    model: responsePayload?.model || cloudOpsAgentModel,
+    latency_ms: Date.now() - startedAt,
+    context: {
+      selected_vehicle_id: vehicleId || null,
+      vehicle_count: allVehicles.length,
+      focus_vehicle_count: focusVehicles.length,
+      fleet: context.fleet
+    },
+    usage: responsePayload?.usage || null
+  };
+}
+
 function unwrapCloudOpsToolResult(execution) {
   return (
     execution?.data?.response?.result ||
@@ -6165,36 +6733,59 @@ function isLidarRelocNdtCandidateUsable(row) {
     row?.converged === true &&
     normalizeLidarRelocPose(row?.final_pose) &&
     (!Number.isFinite(correction) || !Number.isFinite(maxCorrection) || correction <= maxCorrection)
+      );
+}
+
+function getLidarRelocCandidateLocalQuality(row) {
+  const candidate = row?.candidate || {};
+  const localRefine = candidate?.local_refine || {};
+  if (candidate?.pose_source !== 'local_ransac' || localRefine?.accepted !== true) {
+    return 0;
+  }
+  return Math.max(
+    0,
+    readLidarRelocNumber(candidate?.local_quality, localRefine?.quality) || 0
   );
+}
+
+function compareLidarRelocNdtRows(left, right) {
+  const leftLocalQuality = getLidarRelocCandidateLocalQuality(left);
+  const rightLocalQuality = getLidarRelocCandidateLocalQuality(right);
+  if (leftLocalQuality !== rightLocalQuality) {
+    return rightLocalQuality - leftLocalQuality;
+  }
+
+  const leftScore = readLidarRelocNumber(left?.fitness_score);
+  const rightScore = readLidarRelocNumber(right?.fitness_score);
+  if (Number.isFinite(leftScore) && Number.isFinite(rightScore) && leftScore !== rightScore) {
+    return leftScore - rightScore;
+  }
+  if (Number.isFinite(leftScore) !== Number.isFinite(rightScore)) {
+    return Number.isFinite(leftScore) ? -1 : 1;
+  }
+
+  const leftCorrection = readLidarRelocNumber(left?.correction_xy_m);
+  const rightCorrection = readLidarRelocNumber(right?.correction_xy_m);
+  if (
+    Number.isFinite(leftCorrection) &&
+    Number.isFinite(rightCorrection) &&
+    leftCorrection !== rightCorrection
+  ) {
+    return leftCorrection - rightCorrection;
+  }
+
+  return Number(left?.rank || 9999) - Number(right?.rank || 9999);
 }
 
 function selectLidarRelocNdtCandidate(ndtRows, candidates) {
   const usable = ndtRows.filter(isLidarRelocNdtCandidateUsable);
-  const byRank = new Map(ndtRows.map((row) => [Number(row.rank), row]));
-  const rank1 = usable.find((row) => Number(row.rank) === 1) || byRank.get(1) || null;
-  let selected = rank1 && isLidarRelocNdtCandidateUsable(rank1) ? rank1 : usable[0] || null;
-  let reason = selected ? 'rank1_preserved' : 'no_usable_ndt_candidate';
-  const usableWithScore = usable.filter((row) => Number.isFinite(Number(row.fitness_score)));
-  const bestByScore = usableWithScore.length
-    ? usableWithScore.reduce((best, row) =>
-        Number(row.fitness_score) < Number(best.fitness_score) ? row : best
-      )
-    : null;
-  const rank1Score = Number(rank1?.fitness_score);
-  const bestScore = Number(bestByScore?.fitness_score);
-  const margin = Number.isFinite(lidarRelocalizationNdtSelectorScoreMargin)
-    ? lidarRelocalizationNdtSelectorScoreMargin
-    : 0.3;
-
-  if (
-    bestByScore &&
-    Number(bestByScore.rank) !== 1 &&
-    Number.isFinite(rank1Score) &&
-    Number.isFinite(bestScore) &&
-    bestScore <= rank1Score * Math.max(0, 1 - margin)
-  ) {
-    selected = bestByScore;
-    reason = 'ndt_score_margin';
+  const sorted = usable.slice().sort(compareLidarRelocNdtRows);
+  const selected = sorted[0] || null;
+  let reason = selected ? 'ndt_ranked_by_local_ransac_then_score' : 'no_usable_ndt_candidate';
+  if (selected && getLidarRelocCandidateLocalQuality(selected) > 0) {
+    reason = 'bevplace_local_ransac_preferred';
+  } else if (selected && Number(selected.rank) === 1) {
+    reason = 'rank1_validated_no_local_refine';
   }
 
   if (!selected && Array.isArray(candidates) && candidates.length) {
@@ -6204,6 +6795,13 @@ function selectLidarRelocNdtCandidate(ndtRows, candidates) {
   return {
     selected,
     reason,
+    ranked_usable: sorted.map((row) => ({
+      rank: row.rank,
+      fitness_score: readLidarRelocNumber(row?.fitness_score),
+      correction_xy_m: readLidarRelocNumber(row?.correction_xy_m),
+      local_quality: getLidarRelocCandidateLocalQuality(row),
+      pose_source: row?.candidate?.pose_source || null
+    })),
     usable_count: usable.length,
     evaluated_count: ndtRows.length
   };
@@ -6304,6 +6902,7 @@ async function attachLidarRelocNdtSelector(vehicleId, mapPath, capturePath, resu
         selected_pose: selectedPose,
         rank1_pose: rank1Pose,
         rank1_changed: Number(selection.selected?.rank ?? 1) !== 1,
+        ranked_usable: selection.ranked_usable || [],
         evaluated_count: selection.evaluated_count,
         usable_count: selection.usable_count,
         source_pcd: sourcePcd,
@@ -6602,7 +7201,12 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
       label: lidarRelocalizationModelLabel,
       checkpoint: lidarRelocalizationModelCheckpoint,
       fallback_checkpoint: lidarRelocalizationFallbackCheckpoint,
-      infer_script: lidarRelocalizationInferScript,
+      infer_script: serverInference ? lidarRelocalizationBevplaceScript : lidarRelocalizationInferScript,
+      bevplace_script: lidarRelocalizationBevplaceScript,
+      bevplace_dataset_root: lidarRelocalizationBevplaceDatasetRoot,
+      bevplace_manifest: lidarRelocalizationBevplaceManifest,
+      a100_gpu: lidarRelocalizationA100Gpu,
+      method: serverInference ? 'bevplace_global_local_ransac' : null,
       service_ready: inferTools.length > 0 || serverInference,
       phase: inferTools.length ? 'tool_ready' : serverInference ? 'bevplace_global_ready' : 'not_deployed'
     },
@@ -10834,7 +11438,12 @@ function auditBodySummary(req) {
     };
   }
 
-  if (requestPath === '/api/qwen36-chat' || requestPath === '/api/cloud-chat' || requestPath === '/api/openclaw-chat') {
+  if (
+    requestPath === '/api/qwen36-chat' ||
+    requestPath === '/api/cloud-chat' ||
+    requestPath === '/api/openclaw-chat' ||
+    requestPath === '/api/cloud-ops-agent/chat'
+  ) {
     return {
       message: String(body.message || '').trim().slice(0, 800),
       session_id: String(body.session_id || '').trim(),
@@ -10949,6 +11558,18 @@ function classifyOperationAuditRequest(req) {
       action: 'cloud_ops.openclaw_chat',
       target_type: 'vehicle',
       target_id: String(req.body?.vehicle_id || '').trim(),
+      vehicle_id: String(req.body?.vehicle_id || '').trim(),
+      permission: 'vehicle:read',
+      detail: auditBodySummary(req)
+    };
+  }
+
+  if (requestPath === '/api/cloud-ops-agent/chat' && method === 'POST') {
+    return {
+      category: 'cloud_ops_agent',
+      action: 'cloud_ops_agent.advisory_chat',
+      target_type: 'vehicle',
+      target_id: String(req.body?.vehicle_id || '').trim() || null,
       vehicle_id: String(req.body?.vehicle_id || '').trim(),
       permission: 'vehicle:read',
       detail: auditBodySummary(req)
@@ -11670,6 +12291,121 @@ app.get('/api/cloud-ops/vehicles-lite', authStore.requirePermission('vehicle:rea
     return res.status(502).json({
       ok: false,
       detail: error?.message || 'cloud_ops_vehicle_lite_list_failed'
+    });
+  }
+});
+
+app.get('/api/cloud-ops-agent/status', authStore.requirePermission('vehicle:read'), async (_req, res) => {
+  const [codexAppServer, vehicles] = await Promise.all([
+    probeTcpPort('127.0.0.1', 14521, 500).catch((error) => ({
+      ok: false,
+      host: '127.0.0.1',
+      port: 14521,
+      detail: error?.message || 'probe_failed'
+    })),
+    listCloudOpsAgentVehicleSummaries().catch(() => [])
+  ]);
+  const configured = cloudOpsAgentConfigured();
+  return res.json({
+    ok: true,
+    enabled: cloudOpsAgentEnabled,
+    configured,
+    provider: 'subapi_openai_compatible',
+    route: 'server_side_only',
+    public_entry_hint: '7791 -> JGZJ -> /api/cloud-ops-agent/*',
+    upstream_base_url: publicCloudOpsAgentBaseLabel(),
+    model: cloudOpsAgentModel,
+    mode: 'advisory_read_only',
+    can_chat: cloudOpsAgentEnabled && configured,
+    codex_app_server: codexAppServer,
+    fleet: summarizeCloudOpsAgentFleet(vehicles),
+    safeguards: [
+      '页面加载只读取车辆缓存、智能体状态和对话历史。',
+      '智能体接口不调用 /api/cloud-ops/execute。',
+      '重启、写参数、任务重发、地图编辑、灯光/车身控制必须人工确认。',
+      'API key 只允许保存在服务器环境变量，不下发到前端。'
+    ],
+    missing_config: configured
+      ? []
+      : ['CLOUD_OPS_AGENT_API_KEY or CLOUD_OPS_AGENT_SUBAPI_KEY']
+  });
+});
+
+app.get('/api/cloud-ops-agent/history', authStore.requirePermission('vehicle:read'), async (req, res) => {
+  const limit = toFiniteInteger(req.query?.limit, 20, { min: 1, max: 50 });
+  try {
+    const items = await readCloudOpsAgentHistory(limit);
+    return res.json({
+      ok: true,
+      items
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      detail: error?.message || 'cloud_ops_agent_history_failed'
+    });
+  }
+});
+
+app.post('/api/cloud-ops-agent/chat', authStore.requirePermission('vehicle:read'), async (req, res) => {
+  const message = normalizeReply(req.body?.message || '');
+  const vehicleId = String(req.body?.vehicle_id || '').trim().slice(0, 80);
+  if (!message) {
+    return res.status(400).json({
+      ok: false,
+      error: 'message_required',
+      detail: 'message is required.'
+    });
+  }
+  if (message.length > 6000) {
+    return res.status(400).json({
+      ok: false,
+      error: 'message_too_long',
+      detail: 'message must be <= 6000 characters.'
+    });
+  }
+
+  const actor = req.jgzjAuth?.user?.username || null;
+  try {
+    const result = await runCloudOpsAgentChatCompletion({ message, vehicleId });
+    const historyRecord = cloudOpsAgentHistoryRecord({
+      ok: true,
+      actor,
+      vehicle_id: vehicleId || null,
+      model: result.model,
+      latency_ms: result.latency_ms,
+      prompt: message,
+      answer: result.answer
+    });
+    await appendCloudOpsAgentHistory(historyRecord).catch((error) => {
+      console.info('cloud_ops_agent_history_write_failed', JSON.stringify({ error: error.message }));
+    });
+    return res.json({
+      ok: true,
+      provider: 'subapi_openai_compatible',
+      mode: 'advisory_read_only',
+      audit_id: historyRecord.id,
+      ...result
+    });
+  } catch (error) {
+    const status = error?.status && Number.isFinite(Number(error.status)) ? Number(error.status) : 502;
+    await appendCloudOpsAgentHistory({
+      ok: false,
+      actor,
+      vehicle_id: vehicleId || null,
+      model: cloudOpsAgentModel,
+      prompt: message,
+      error: error?.message || 'cloud_ops_agent_chat_failed'
+    }).catch((writeError) => {
+      console.info('cloud_ops_agent_history_write_failed', JSON.stringify({ error: writeError.message }));
+    });
+    return res.status(status).json({
+      ok: false,
+      error: error?.code || (status === 503 ? 'cloud_ops_agent_unavailable' : 'cloud_ops_agent_chat_failed'),
+      detail: error?.message || 'cloud_ops_agent_chat_failed',
+      provider: 'subapi_openai_compatible',
+      mode: 'advisory_read_only',
+      configured: cloudOpsAgentConfigured()
     });
   }
 });
