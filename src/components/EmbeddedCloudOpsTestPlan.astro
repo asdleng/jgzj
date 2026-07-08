@@ -3,7 +3,7 @@ const fleetStats = [
   { key: "online", label: "在线车辆", value: "--", note: "last_seen 5 分钟内" },
   { key: "tool", label: "工具可用", value: "--", note: "按 tool_count 判断" },
   { key: "stale", label: "遥测过期", value: "--", note: "按 last_seen 粗略判断" },
-  { key: "safe", label: "自动控车", value: "0", note: "页面加载不执行车端工具" }
+  { key: "stop", label: "停车故障", value: "--", note: "疑似停车/安全阻断" }
 ];
 
 const tabs = [
@@ -189,11 +189,25 @@ const agentRules = [
           </section>
         </div>
 
+        <section class="cloud-ops-test-stop-monitor">
+          <div class="cloud-ops-test-panel-head">
+            <div>
+              <h3>自动驾驶停止故障监控</h3>
+              <p>先用真实缓存做入口预判；最终故障必须接任务状态和 60 秒位移历史后确认。</p>
+            </div>
+            <span data-role="stop-fault-count">--</span>
+          </div>
+          <div class="cloud-ops-test-stop-grid" data-role="stop-fault-list">
+            <p class="cloud-ops-test-empty">等待车辆停止故障判断...</p>
+          </div>
+        </section>
+
         <div class="cloud-ops-test-table-shell cloud-ops-test-table-shell--fleet">
           <table class="cloud-ops-test-table cloud-ops-test-fleet-table">
             <thead>
               <tr>
                 <th>车辆</th>
+                <th>自动驾驶停止</th>
                 <th>真实身份</th>
                 <th>车端链路</th>
                 <th>主控/ROS</th>
@@ -202,7 +216,7 @@ const agentRules = [
               </tr>
             </thead>
             <tbody data-role="vehicle-table-body">
-              <tr><td colspan="6">等待真实车辆信息...</td></tr>
+              <tr><td colspan="7">等待真实车辆信息...</td></tr>
             </tbody>
           </table>
         </div>
@@ -378,6 +392,8 @@ const agentRules = [
     const vehicleList = shell.querySelector('[data-role="vehicle-list"]');
     const vehicleCount = shell.querySelector('[data-role="vehicle-count"]');
     const vehicleTableBody = shell.querySelector('[data-role="vehicle-table-body"]');
+    const stopFaultCount = shell.querySelector('[data-role="stop-fault-count"]');
+    const stopFaultList = shell.querySelector('[data-role="stop-fault-list"]');
     const selectedVehicleChip = shell.querySelector('[data-role="selected-vehicle-chip"]');
     const selectedVehicleTitle = shell.querySelector('[data-role="selected-vehicle-title"]');
     const vehicleSummary = shell.querySelector('[data-role="vehicle-summary"]');
@@ -410,18 +426,28 @@ const agentRules = [
       if (value === null || value === undefined || value === "") return fallback;
       return String(value);
     };
+    const finiteNumber = (value) => {
+      if (value === null || value === undefined || value === "") return NaN;
+      const num = Number(value);
+      return Number.isFinite(num) ? num : NaN;
+    };
     const boolText = (value, trueText = "是", falseText = "否", unknownText = "未知") => {
       if (value === true) return trueText;
       if (value === false) return falseText;
       return unknownText;
     };
     const percentText = (value) => {
-      const num = Number(value);
+      const num = finiteNumber(value);
       if (!Number.isFinite(num)) return "--";
       return `${num.toFixed(num >= 10 ? 0 : 1)}%`;
     };
+    const numberText = (value, digits = 1) => {
+      const num = finiteNumber(value);
+      if (!Number.isFinite(num)) return "--";
+      return num.toFixed(digits);
+    };
     const msText = (value) => {
-      const num = Number(value);
+      const num = finiteNumber(value);
       if (!Number.isFinite(num)) return "--";
       return `${num.toFixed(num >= 10 ? 0 : 1)} ms`;
     };
@@ -447,6 +473,131 @@ const agentRules = [
       if (!vehicle?.has_telemetry) return { label: "无telemetry", tone: "warn" };
       return { label: "在线", tone: "ok" };
     };
+    const stopDiagnosisOf = (vehicle) => {
+      if (isStale(vehicle)) {
+        return {
+          label: "通信过期",
+          tone: "warn",
+          reason: "last_seen 已过期，不能判断自动驾驶停止。",
+          next: "先查云端连接和车端 auto_ad_ai 心跳。"
+        };
+      }
+      if (vehicle?.master_ping_ok === false || vehicle?.telemetry_master_ros_ok === false) {
+        return {
+          label: "主控链路异常",
+          tone: "danger",
+          reason: "media 到主控或 ROS 不可达，自动驾驶状态不可确认。",
+          next: "先查主控网络、ROS master、关键节点。"
+        };
+      }
+      if (vehicle?.emergency_stop_pressed === true) {
+        return {
+          label: "阻断：急停",
+          tone: "danger",
+          reason: "急停已触发，车辆停止是安全阻断。",
+          next: "进入控制/底盘故障诊断，现场确认后处理。"
+        };
+      }
+      if (vehicle?.collision_stop === true) {
+        return {
+          label: "阻断：碰撞停",
+          tone: "danger",
+          reason: "碰撞停已触发，车辆停止是安全阻断。",
+          next: "进入感知/底盘安全链路诊断。"
+        };
+      }
+      if (vehicle?.localization_reliable === false) {
+        return {
+          label: "阻断：定位不可靠",
+          tone: "danger",
+          reason: "location_topic_ 不可靠，自动驾驶应停止。",
+          next: "进入定位故障树，区分组合导航模式和纯 LiDAR NDT。"
+        };
+      }
+      if (vehicle?.trajectory_estop === true) {
+        return {
+          label: "阻断：规划estop",
+          tone: "danger",
+          reason: "planning trajectory estop=true。",
+          next: "进入规划/障碍物故障诊断。"
+        };
+      }
+      const speedKph = finiteNumber(vehicle?.speed_kph);
+      const locSpeedMps = finiteNumber(vehicle?.localization_speed_mps);
+      const targetSpeed = finiteNumber(vehicle?.control_target_speed);
+      const runningMode = finiteNumber(vehicle?.running_mode);
+      const plannerState = String(vehicle?.planner_state || "").trim().toLowerCase();
+      const plannerRunning = finiteNumber(vehicle?.planner_running);
+      const vehicleIdleStatus = finiteNumber(vehicle?.vehicle_idle_status);
+      const longTimeStop = vehicle?.long_time_stop === true;
+      const totalLoop = finiteNumber(vehicle?.total_loop_sum);
+      const currentLoop = finiteNumber(vehicle?.current_loop_index);
+      const totalRefline = finiteNumber(vehicle?.total_refline_sum);
+      const currentRefline = finiteNumber(vehicle?.current_refline_index);
+      const trajectoryPointCount = finiteNumber(vehicle?.trajectory_point_count);
+      const trajectoryLength = finiteNumber(vehicle?.trajectory_total_length);
+      const currentPathCount = finiteNumber(vehicle?.current_path_count);
+      const stopped = Number.isFinite(speedKph)
+        ? speedKph < 0.2
+        : Number.isFinite(locSpeedMps) && Math.abs(locSpeedMps) < 0.05;
+      const routeProgress = Number.isFinite(totalLoop) && Number.isFinite(currentLoop) &&
+        Number.isFinite(totalRefline) && Number.isFinite(currentRefline) &&
+        totalLoop > 0 && totalRefline > 0 && currentLoop >= 0 && currentRefline >= 0;
+      const hasTrajectory = Number.isFinite(trajectoryPointCount) && trajectoryPointCount > 0 &&
+        Number.isFinite(trajectoryLength) && trajectoryLength > 0;
+      const plannerActive = plannerState === "running" || (Number.isFinite(plannerRunning) && plannerRunning > 0);
+      const taskEvidence = plannerActive ||
+        (Number.isFinite(currentPathCount) && currentPathCount > 0) ||
+        routeProgress ||
+        hasTrajectory ||
+        (Number.isFinite(vehicleIdleStatus) && vehicleIdleStatus === 0);
+      if (taskEvidence && !stopped) {
+        return {
+          label: "运行中",
+          tone: "ok",
+          reason: `有任务/规划证据，当前速度 ${numberText(speedKph)} km/h。`,
+          next: "未发现停止入口。"
+        };
+      }
+      if (stopped && taskEvidence) {
+        return {
+          label: "疑似停车故障",
+          tone: "warn",
+          reason: `有任务/规划证据但车速接近 0，当前速度 ${numberText(speedKph)} km/h，planner=${displayValue(vehicle?.planner_running, plannerState || "--")}。`,
+          next: "还缺任务状态和 60 秒位移历史；接 fleet aggregator 后才能确认“自动驾驶停止故障”。"
+        };
+      }
+      if (stopped) {
+        return {
+          label: "停止待确认",
+          tone: "neutral",
+          reason: `当前速度 ${numberText(speedKph)} km/h，但未看到任务运行证据；mode=${displayValue(runningMode)}，target=${numberText(targetSpeed)} m/s。`,
+          next: "需要接任务计划/任务进度后区分正常等待、任务完成、异常停车。"
+        };
+      }
+      if (Number.isFinite(speedKph) && speedKph >= 0.2) {
+        return {
+          label: "运行中",
+          tone: "ok",
+          reason: `当前速度 ${numberText(speedKph)} km/h，未触发停止入口。`,
+          next: "未发现停止入口。"
+        };
+      }
+      if (Number.isFinite(targetSpeed) && targetSpeed > 0.2 && longTimeStop) {
+        return {
+          label: "疑似控制未动",
+          tone: "warn",
+          reason: `long_time_stop=true 且控制目标速度 ${numberText(targetSpeed)} m/s。`,
+          next: "需要结合 60 秒位移历史确认，再查控制/底盘链路。"
+        };
+      }
+      return {
+        label: "不可判定",
+        tone: "neutral",
+        reason: `running_mode=${displayValue(vehicle?.running_mode)}，当前缓存缺任务执行状态。`,
+        next: "需接任务状态、路线进度和位移历史。"
+      };
+    };
     const renderPill = (label, tone = "neutral") => (
       `<span class="cloud-ops-test-pill is-${escapeHtml(tone)}">${escapeHtml(label)}</span>`
     );
@@ -464,13 +615,15 @@ const agentRules = [
         return fallback;
       }
     };
-    const setStat = (key, value, note) => {
+    const setStat = (key, value, note, tone = "") => {
       const card = shell.querySelector(`[data-stat="${key}"]`);
       if (!card) return;
       const strong = card.querySelector("strong");
       const p = card.querySelector("p");
       if (strong) strong.textContent = String(value);
       if (note && p) p.textContent = note;
+      card.classList.remove("is-ok", "is-warn", "is-danger");
+      if (tone) card.classList.add(`is-${tone}`);
     };
 
     const selectedVehicle = () => {
@@ -514,12 +667,15 @@ const agentRules = [
       }
       const vid = vehicleIdOf(vehicle);
       const health = vehicleHealthOf(vehicle);
+      const stopDiag = stopDiagnosisOf(vehicle);
       vehicleSummary.innerHTML = [
         ["车辆", `${vid} / ${displayValue(vehicle?.plate_number, vid)}`],
         ["真实身份", `VIN ${displayValue(vehicle?.vin)} · ${displayValue(vehicle?.role)}`],
         ["车端链路", `${displayValue(vehicle?.hostname)} · media ${displayValue(vehicle?.local_primary_ip)} · cloud ${displayValue(vehicle?.remote)}`],
         ["主控/ROS", `主控 ${displayValue(vehicle?.master_host)} · ping ${boolText(vehicle?.master_ping_ok, "可达", "不可达")} ${msText(vehicle?.master_ping_latency_ms)} · topic/node/service ${displayValue(vehicle?.topic_count)}/${displayValue(vehicle?.node_count)}/${displayValue(vehicle?.service_count)}`],
         ["资源", `CPU ${percentText(vehicle?.cpu_percent)} · 内存 ${percentText(vehicle?.memory_percent)} · 磁盘 ${percentText(vehicle?.disk_percent)} · tools ${toolCountOf(vehicle) || "未知"}`],
+        ["自动驾驶停止", `${stopDiag.label} · ${stopDiag.reason}`],
+        ["下一步", stopDiag.next],
         ["最近在线", `${formatAge(lastSeenOf(vehicle))} · ${lastSeenOf(vehicle) || "无时间戳"} · msg ${displayValue(vehicle?.message_count)}`],
         ["状态判断", health.label]
       ].map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`).join("");
@@ -535,13 +691,19 @@ const agentRules = [
       vehicleList.innerHTML = vehicles.map((vehicle) => {
         const vid = vehicleIdOf(vehicle);
         const health = vehicleHealthOf(vehicle);
+        const stopDiag = stopDiagnosisOf(vehicle);
         const toolCount = toolCountOf(vehicle);
         const host = vehicle?.hostname || vehicle?.host || "";
         const selected = vid === selectedVehicleId();
-        return `<button type="button" class="cloud-ops-test-vehicle-row is-${escapeHtml(health.tone)}${selected ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
+        const rowTone = stopDiag.tone === "danger" || stopDiag.tone === "warn" ? stopDiag.tone : health.tone;
+        return `<button type="button" class="cloud-ops-test-vehicle-row is-${escapeHtml(rowTone)}${selected ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
           <span class="cloud-ops-test-severity">${escapeHtml(health.label)}</span>
           <strong>${escapeHtml(vid || "未知车辆")}</strong>
-          <small>${escapeHtml(host || "无主机名")} · media ${escapeHtml(displayValue(vehicle?.local_primary_ip))} · master ${escapeHtml(boolText(vehicle?.master_ping_ok, "可达", "不可达"))} · ${escapeHtml(formatAge(lastSeenOf(vehicle)))} · tools ${escapeHtml(toolCount || "?")}</small>
+          <span class="cloud-ops-test-stop-inline is-${escapeHtml(stopDiag.tone)}">${escapeHtml(stopDiag.label)}</span>
+          <small>
+            ${escapeHtml(host || "无主机名")} · media ${escapeHtml(displayValue(vehicle?.local_primary_ip))} · master ${escapeHtml(boolText(vehicle?.master_ping_ok, "可达", "不可达"))} · speed ${escapeHtml(numberText(vehicle?.speed_kph))} km/h · mode ${escapeHtml(displayValue(vehicle?.running_mode))} · ${escapeHtml(formatAge(lastSeenOf(vehicle)))} · tools ${escapeHtml(toolCount || "?")}
+            <span>${escapeHtml(stopDiag.reason)}</span>
+          </small>
         </button>`;
       }).join("");
     };
@@ -549,12 +711,13 @@ const agentRules = [
     const renderVehicleTable = () => {
       if (!vehicleTableBody) return;
       if (!vehicles.length) {
-        vehicleTableBody.innerHTML = '<tr><td colspan="6">没有读取到车辆，或当前账号未授权。</td></tr>';
+        vehicleTableBody.innerHTML = '<tr><td colspan="7">没有读取到车辆，或当前账号未授权。</td></tr>';
         return;
       }
       vehicleTableBody.innerHTML = vehicles.map((vehicle) => {
         const vid = vehicleIdOf(vehicle);
         const health = vehicleHealthOf(vehicle);
+        const stopDiag = stopDiagnosisOf(vehicle);
         const selected = vid === selectedVehicleId();
         const signalHtml = [
           vehicle?.has_heartbeat ? renderPill("heartbeat", "ok") : renderPill("无心跳", "warn"),
@@ -565,6 +728,11 @@ const agentRules = [
           <td>
             <button type="button" class="cloud-ops-test-row-select" data-vehicle-id="${escapeHtml(vid)}">${escapeHtml(vid)}</button>
             <div>${renderPill(health.label, health.tone)}</div>
+          </td>
+          <td>
+            <strong>${renderPill(stopDiag.label, stopDiag.tone)}</strong>
+            <small>${escapeHtml(stopDiag.reason)}</small>
+            <small>${escapeHtml(stopDiag.next)}</small>
           </td>
           <td>
             <strong>${escapeHtml(displayValue(vehicle?.plate_number, vid))}</strong>
@@ -589,6 +757,33 @@ const agentRules = [
           </td>
         </tr>`;
       }).join("");
+    };
+
+    const renderStopFaultMonitor = () => {
+      if (!stopFaultList) return;
+      const diagnosed = vehicles.map((vehicle) => ({ vehicle, diag: stopDiagnosisOf(vehicle) }));
+      const actionable = diagnosed.filter((item) => item.diag.tone === "danger" || item.diag.tone === "warn");
+      const pending = diagnosed.filter((item) => item.diag.label === "停止待确认");
+      if (stopFaultCount) {
+        stopFaultCount.textContent = `疑似/阻断 ${actionable.length} 台 · 停止待确认 ${pending.length} 台`;
+      }
+      const displayItems = actionable.length
+        ? actionable.concat(pending.slice(0, Math.max(0, 6 - actionable.length)))
+        : pending.length
+          ? pending.slice(0, 6)
+          : diagnosed.slice(0, 6);
+      const cards = displayItems.map(({ vehicle, diag }) => {
+        const vid = vehicleIdOf(vehicle);
+        return `<button type="button" class="cloud-ops-test-stop-card is-${escapeHtml(diag.tone)}" data-vehicle-id="${escapeHtml(vid)}">
+          <span>${escapeHtml(diag.label)}</span>
+          <strong>${escapeHtml(vid || "未知车辆")}</strong>
+          <small>${escapeHtml(diag.reason)}</small>
+          <em>${escapeHtml(diag.next)}</em>
+        </button>`;
+      });
+      stopFaultList.innerHTML = cards.length
+        ? cards.join("")
+        : '<p class="cloud-ops-test-empty">暂无车辆数据，无法判断自动驾驶停止故障。</p>';
     };
 
     const renderVehicleOptions = () => {
@@ -622,10 +817,14 @@ const agentRules = [
       const withTools = vehicles.filter((vehicle) => toolCountOf(vehicle) > 0).length;
       const staleCount = vehicles.filter(isStale).length;
       const onlineCount = vehicles.length - staleCount;
-      setStat("online", onlineCount, `总计 ${vehicles.length} 台真实车辆`);
-      setStat("tool", withTools, "tool_count > 0 的车辆");
-      setStat("stale", staleCount, "last_seen 超过 5 分钟或无时间戳");
-      setStat("safe", 0, "页面加载没有执行车端工具");
+      const stopDiagnoses = vehicles.map(stopDiagnosisOf);
+      const stopConcernCount = stopDiagnoses.filter((diag) => diag.tone === "danger" || String(diag.label || "").startsWith("疑似")).length;
+      const stopWarnCount = stopDiagnoses.filter((diag) => diag.tone === "warn").length;
+      const stopPendingCount = stopDiagnoses.filter((diag) => diag.label === "停止待确认").length;
+      setStat("online", onlineCount, `总计 ${vehicles.length} 台真实车辆`, onlineCount ? "ok" : "");
+      setStat("tool", withTools, "tool_count > 0 的车辆", withTools ? "ok" : "");
+      setStat("stale", staleCount, "last_seen 超过 5 分钟或无时间戳", staleCount ? "warn" : "ok");
+      setStat("stop", `${stopConcernCount}/${stopPendingCount}`, `疑似/阻断 ${stopConcernCount} 台，停止待确认 ${stopPendingCount} 台`, stopConcernCount ? "danger" : (stopPendingCount ? "warn" : (stopWarnCount ? "warn" : "ok")));
     };
 
     const loadVehicles = async () => {
@@ -642,6 +841,7 @@ const agentRules = [
         if (apiNote) apiNote.textContent = payload.note || "只读车辆注册表";
         renderVehicleOptions();
         renderVehicles();
+        renderStopFaultMonitor();
         renderVehicleTable();
         syncSelectedVehicleUi();
         updateStats();
@@ -651,6 +851,7 @@ const agentRules = [
         currentVehicleId = "";
         renderVehicleOptions();
         renderVehicles();
+        renderStopFaultMonitor();
         renderVehicleTable();
         updateStats();
         setStatus(`车辆列表读取失败：${error?.message || "未知错误"}`, "error");

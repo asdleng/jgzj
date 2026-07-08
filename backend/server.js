@@ -11546,7 +11546,13 @@ app.get('/api/cloud-ops/vehicles-lite', authStore.requirePermission('vehicle:rea
         const telemetry = vehicle?.telemetry || {};
         const telemetryMedia = telemetry?.media || {};
         const telemetryMaster = telemetry?.master || {};
+        const telemetryVehicle = telemetry?.vehicle || {};
         const autodriveCheck = vehicle?.snapshot?.autodrive_check || null;
+        const statusRefs = autodriveCheck?.status_refs || {};
+        const localizationSummary = statusRefs?.localization?.summary || {};
+        const planningSummary = statusRefs?.planning?.summary || {};
+        const controlSummary = statusRefs?.control?.summary || {};
+        const routingSummary = statusRefs?.routing?.summary || {};
         const health = {
           ...snapshotHealth,
           ...heartbeat
@@ -11582,6 +11588,19 @@ app.get('/api/cloud-ops/vehicles-lite', authStore.requirePermission('vehicle:rea
           memory_percent: health?.memory_percent ?? telemetryMedia?.memory_percent ?? null,
           disk_percent: health?.disk_percent ?? telemetryMedia?.disk_percent ?? null,
           load_avg_1m: telemetryMedia?.load_avg_1m ?? null,
+          vehicle_ready:
+            typeof telemetryVehicle?.ready === 'boolean' ? telemetryVehicle.ready : null,
+          gear: telemetryVehicle?.gear ?? null,
+          running_mode: telemetryVehicle?.running_mode ?? null,
+          speed_kph: telemetryVehicle?.speed_kph ?? null,
+          emergency_stop_pressed:
+            typeof telemetryVehicle?.emergency_stop_pressed === 'boolean'
+              ? telemetryVehicle.emergency_stop_pressed
+              : null,
+          collision_stop:
+            typeof telemetryVehicle?.collision_stop === 'boolean' ? telemetryVehicle.collision_stop : null,
+          battery_soc: telemetryVehicle?.battery_soc ?? null,
+          vehicle_data_age_s: telemetryVehicle?.data_age_s ?? null,
           telemetry_master_ros_ok:
             typeof telemetryMaster?.ros_ok === 'boolean' ? telemetryMaster.ros_ok : null,
           key_topics_ok: telemetry?.key_topics
@@ -11597,6 +11616,29 @@ app.get('/api/cloud-ops/vehicles-lite', authStore.requirePermission('vehicle:rea
             typeof autodriveCheck?.ready_for_autodrive === 'boolean'
               ? autodriveCheck.ready_for_autodrive
               : null,
+          localization_reliable:
+            typeof localizationSummary?.reliable === 'boolean' ? localizationSummary.reliable : null,
+          localization_speed_mps: localizationSummary?.speed_mps ?? null,
+          planner_state: planningSummary?.planner_state || null,
+          planner_running: planningSummary?.planner_running ?? null,
+          vehicle_idle_status: planningSummary?.vehicle_idle_status ?? null,
+          long_time_stop:
+            typeof planningSummary?.long_time_stop === 'boolean'
+              ? planningSummary.long_time_stop
+              : null,
+          current_loop_index: planningSummary?.current_loop_index ?? null,
+          total_loop_sum: planningSummary?.total_loop_sum ?? null,
+          current_refline_index: planningSummary?.current_refline_index ?? null,
+          total_refline_sum: planningSummary?.total_refline_sum ?? null,
+          trajectory_point_count: planningSummary?.trajectory_point_count ?? null,
+          trajectory_total_length: planningSummary?.trajectory_total_length ?? null,
+          trajectory_estop:
+            typeof planningSummary?.trajectory_estop === 'boolean' ? planningSummary.trajectory_estop : null,
+          control_target_speed: controlSummary?.target_speed ?? null,
+          route_count: routingSummary?.route_count ?? null,
+          current_path_count: Array.isArray(routingSummary?.current_path_string_ids)
+            ? routingSummary.current_path_string_ids.length
+            : null,
           blocker_count: Array.isArray(autodriveCheck?.blockers) ? autodriveCheck.blockers.length : null,
           warning_count: Array.isArray(autodriveCheck?.warnings) ? autodriveCheck.warnings.length : null,
           last_seen: vehicle?.last_seen || null,

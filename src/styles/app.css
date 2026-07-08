@@ -2475,7 +2475,7 @@
 .cloud-ops-test-vehicle-row {
   width: 100%;
   display: grid;
-  grid-template-columns: auto minmax(120px, 180px) minmax(0, 1fr);
+  grid-template-columns: auto minmax(105px, 150px) minmax(118px, 160px) minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   min-height: 54px;
@@ -2542,6 +2542,47 @@
   white-space: nowrap;
 }
 
+.cloud-ops-test-stop-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  background: rgba(15, 23, 42, 0.74);
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.cloud-ops-test-stop-inline.is-ok {
+  border-color: rgba(52, 211, 153, 0.42);
+  color: #86efac;
+}
+
+.cloud-ops-test-stop-inline.is-warn {
+  border-color: rgba(251, 191, 36, 0.48);
+  color: #fde68a;
+}
+
+.cloud-ops-test-stop-inline.is-danger {
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #fecaca;
+}
+
+.cloud-ops-test-stop-inline.is-neutral {
+  border-color: rgba(148, 163, 184, 0.34);
+  color: #cbd5e1;
+}
+
+.cloud-ops-test-vehicle-row small span {
+  display: block;
+  margin-top: 3px;
+  color: #cbd5e1;
+}
+
 .cloud-ops-test-vehicle-row.is-stale .cloud-ops-test-severity {
   border-color: rgba(251, 191, 36, 0.42);
   color: #fde68a;
@@ -2561,8 +2602,123 @@
   margin-top: 16px;
 }
 
+.cloud-ops-test-stop-monitor {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(103, 232, 249, 0.22);
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.16), transparent 34%),
+    linear-gradient(135deg, rgba(2, 6, 23, 0.82), rgba(15, 23, 42, 0.72));
+}
+
+.cloud-ops-test-stop-monitor .cloud-ops-test-panel-head {
+  margin-bottom: 12px;
+}
+
+.cloud-ops-test-stop-monitor .cloud-ops-test-panel-head p {
+  margin: 5px 0 0;
+  color: #94a3b8;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.cloud-ops-test-stop-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cloud-ops-test-stop-card {
+  display: grid;
+  gap: 7px;
+  min-height: 132px;
+  padding: 13px;
+  border-radius: 14px;
+  border: 1px solid rgba(71, 85, 105, 0.72);
+  background:
+    linear-gradient(145deg, rgba(15, 23, 42, 0.78), rgba(2, 6, 23, 0.82)),
+    rgba(2, 6, 23, 0.72);
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cloud-ops-test-stop-card:hover {
+  border-color: rgba(103, 232, 249, 0.58);
+  transform: translateY(-1px);
+}
+
+.cloud-ops-test-stop-card span {
+  width: fit-content;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.cloud-ops-test-stop-card strong {
+  color: #f8fafc;
+  font-family: "Orbitron", "Noto Sans SC", sans-serif;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}
+
+.cloud-ops-test-stop-card small,
+.cloud-ops-test-stop-card em {
+  color: #94a3b8;
+  font-style: normal;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-stop-card.is-ok {
+  border-color: rgba(52, 211, 153, 0.32);
+}
+
+.cloud-ops-test-stop-card.is-ok span {
+  border-color: rgba(52, 211, 153, 0.42);
+  color: #86efac;
+}
+
+.cloud-ops-test-stop-card.is-neutral {
+  border-color: rgba(148, 163, 184, 0.28);
+}
+
+.cloud-ops-test-stop-card.is-neutral span {
+  border-color: rgba(148, 163, 184, 0.34);
+  color: #cbd5e1;
+}
+
+.cloud-ops-test-stop-card.is-warn {
+  border-color: rgba(251, 191, 36, 0.46);
+  background:
+    linear-gradient(145deg, rgba(69, 26, 3, 0.34), rgba(15, 23, 42, 0.78)),
+    rgba(2, 6, 23, 0.72);
+}
+
+.cloud-ops-test-stop-card.is-warn span {
+  border-color: rgba(251, 191, 36, 0.48);
+  color: #fde68a;
+}
+
+.cloud-ops-test-stop-card.is-danger {
+  border-color: rgba(248, 113, 113, 0.54);
+  background:
+    linear-gradient(145deg, rgba(127, 29, 29, 0.34), rgba(15, 23, 42, 0.78)),
+    rgba(2, 6, 23, 0.72);
+}
+
+.cloud-ops-test-stop-card.is-danger span {
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #fecaca;
+}
+
 .cloud-ops-test-fleet-table {
-  min-width: 1120px;
+  min-width: 1320px;
 }
 
 .cloud-ops-test-fleet-table tbody tr.is-selected td {
@@ -2800,6 +2956,10 @@
   .cloud-ops-test-workbench--overview {
     grid-template-columns: 1fr;
   }
+
+  .cloud-ops-test-stop-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -2818,6 +2978,10 @@
   }
 
   .cloud-ops-test-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-ops-test-stop-grid {
     grid-template-columns: 1fr;
   }
 
