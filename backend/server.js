@@ -170,19 +170,19 @@ const lidarRelocalizationCaptureRoot = path.resolve(
 const lidarRelocalizationA100Root =
   process.env.LIDAR_RELOCALIZATION_A100_ROOT || '/home/sari/lidar_reloc_bevplace_20260629';
 const lidarRelocalizationModelLabel =
-  process.env.LIDAR_RELOCALIZATION_MODEL_LABEL || 'BEVPlace++ GPU5 patrol-all global descriptor';
+  process.env.LIDAR_RELOCALIZATION_MODEL_LABEL || 'BEVPlace++ raw rslidar 12-car global+local RANSAC';
 const lidarRelocalizationModelCheckpoint =
   process.env.LIDAR_RELOCALIZATION_MODEL_CHECKPOINT ||
-  `${lidarRelocalizationA100Root}/runs/bevplace_keyframe_yawaware10v_20260706_patrol_all_gpu5/model_best.pth.tar`;
+  `${lidarRelocalizationA100Root}/runs/bevplace_rawrslidar_yawfix_20260708_12cars_1891_gpu3/model_best.pth.tar`;
 const lidarRelocalizationFallbackCheckpoint =
   process.env.LIDAR_RELOCALIZATION_FALLBACK_CHECKPOINT ||
   `${lidarRelocalizationA100Root}/runs/jgzj_bevplace_yaw3_kdtree_20260630_gpu3/model_best.pth.tar`;
 const lidarRelocalizationBevplaceDatasetRoot =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_DATASET_ROOT ||
-  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_yawaware10v_20260706_patrol_all_gpu5/map_db/datasets/KITTI`;
+  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260708_12cars_1891_yawfix/map_db/datasets/KITTI`;
 const lidarRelocalizationBevplaceManifest =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_MANIFEST ||
-  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_yawaware10v_20260706_patrol_all_gpu5/map_db/manifest.jsonl`;
+  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260708_12cars_1891_yawfix/map_db/manifest.jsonl`;
 const lidarRelocalizationBevplaceScript =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_SCRIPT ||
   `${lidarRelocalizationA100Root}/scripts/bevplace_global_infer.py`;
@@ -192,7 +192,7 @@ const lidarRelocalizationA100Key = process.env.LIDAR_RELOCALIZATION_A100_KEY || 
 const lidarRelocalizationA100Python =
   process.env.LIDAR_RELOCALIZATION_A100_PYTHON ||
   `${lidarRelocalizationA100Root}/.venv_sys/bin/python3`;
-const lidarRelocalizationA100Gpu = process.env.LIDAR_RELOCALIZATION_A100_GPU || '5';
+const lidarRelocalizationA100Gpu = process.env.LIDAR_RELOCALIZATION_A100_GPU || '3';
 const lidarRelocalizationA100WorkRoot =
   process.env.LIDAR_RELOCALIZATION_A100_WORK_ROOT ||
   `${lidarRelocalizationA100Root}/runtime_infer`;
@@ -11964,8 +11964,10 @@ app.post(
             }
           );
           const rawMethod = String(rawResult?.method || '').trim();
+          const isBevplaceServerMethod =
+            rawMethod === 'bevplace_global_descriptor' || rawMethod === 'bevplace_global_local_ransac';
           const result =
-            rawMethod === 'bevplace_global_descriptor'
+            isBevplaceServerMethod
               ? await attachLidarRelocNdtSelector(vehicleId, mapSync.map.path, capture.local_record, rawResult, {
                   ndt_selector_enabled:
                     typeof req.body?.ndt_selector_enabled === 'boolean'
@@ -12017,10 +12019,14 @@ app.post(
                   ? 'ndt_selector_not_ready'
                   : result?.phase || 'infer_failed',
             tool_name:
-              method === 'bevplace_global_descriptor'
+              isBevplaceServerMethod
                 ? result?.ndt_selector?.enabled
-                  ? 'server.bevplace_global+ndt_selector'
-                  : 'server.bevplace_global'
+                  ? method === 'bevplace_global_local_ransac'
+                    ? 'server.bevplace_global+local_ransac+ndt_selector'
+                    : 'server.bevplace_global+ndt_selector'
+                  : method === 'bevplace_global_local_ransac'
+                    ? 'server.bevplace_global+local_ransac'
+                    : 'server.bevplace_global'
                 : 'server.lidar_relocalization',
             coarse_pose: ok ? coarsePose : null,
             raw_coarse_pose: rawCoarsePose,
