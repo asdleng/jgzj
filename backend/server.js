@@ -257,6 +257,7 @@ const cloudOpsCodexBin = process.env.CLOUD_OPS_CODEX_BIN || '/home/admin1/.local
 const cloudOpsCodexStatusTimeoutMs = Number(process.env.CLOUD_OPS_CODEX_STATUS_TIMEOUT_MS || 1500);
 const cloudOpsAgentDiagnoseToolTimeoutS = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_TOOL_TIMEOUT_S || 18);
 const cloudOpsAgentDiagnoseSshTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_SSH_TIMEOUT_MS || 8000);
+const cloudOpsAgentDiagnoseSshKey = process.env.CLOUD_OPS_AGENT_DIAGNOSE_SSH_KEY || '/home/admin1/.ssh/jgzj_vehicle_diag_ed25519';
 const cloudOpsAgentDiagnoseMaxEvidenceChars = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_MAX_EVIDENCE_CHARS || 26000);
 const cloudOpsAgentHistoryPath = path.resolve(
   process.env.CLOUD_OPS_AGENT_HISTORY_PATH ||
@@ -6218,12 +6219,35 @@ function compactCloudOpsExecutionForDiagnosis(item, limit = 4500) {
 
 function findCloudOpsVehicleRaw(vehicleId, vehicles = []) {
   const target = String(vehicleId || '').trim().toLowerCase();
-  return vehicles.find((vehicle) => {
+  const matches = vehicles.filter((vehicle) => {
     return [vehicle?.vehicle_id, vehicle?.plate_number, vehicle?.vin]
       .map((value) => String(value || '').trim().toLowerCase())
       .filter(Boolean)
       .includes(target);
-  }) || null;
+  });
+  if (!matches.length) {
+    return null;
+  }
+
+  return matches
+    .map((vehicle) => {
+      const toolNames = extractCloudOpsToolNames(vehicle);
+      const hasInterfaces = Array.isArray(vehicle?.snapshot?.identity?.interfaces);
+      const hasSnapshot = Boolean(vehicle?.snapshot);
+      const hasTelemetry = Boolean(vehicle?.telemetry);
+      const lastSeen = Date.parse(vehicle?.last_seen || '') || 0;
+      return {
+        vehicle,
+        score:
+          (extractCloudOpsVehicleTailscaleIp(vehicle) ? 1000 : 0) +
+          (hasInterfaces ? 300 : 0) +
+          (hasSnapshot ? 200 : 0) +
+          (hasTelemetry ? 100 : 0) +
+          Math.min(100, Number(vehicle?.tool_count || toolNames.size || 0) || 0) +
+          lastSeen / 1e13
+      };
+    })
+    .sort((left, right) => right.score - left.score)[0].vehicle;
 }
 
 function extractCloudOpsVehicleTailscaleIp(vehicle) {
@@ -6232,10 +6256,26 @@ function extractCloudOpsVehicleTailscaleIp(vehicle) {
     const addrs = Array.isArray(item?.ipv4) ? item.ipv4 : [];
     for (const addr of addrs) {
       const address = String(addr?.address || '').trim();
-      if (address.startsWith('100.')) {
+      if (/^100\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(address)) {
         return address;
       }
     }
+  }
+
+  const stack = [vehicle];
+  const seen = new WeakSet();
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current) continue;
+    if (typeof current === 'string') {
+      const match = current.match(/\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
+      if (match?.[0]) return match[0];
+      continue;
+    }
+    if (typeof current !== 'object') continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    Object.values(current).forEach((value) => stack.push(value));
   }
   return '';
 }
@@ -6273,6 +6313,9 @@ async function runCloudOpsSshReadOnlyProbe(target) {
     return { ok: false, kind, host, user, detail: 'invalid_ssh_target' };
   }
   const args = [
+    ...(cloudOpsAgentDiagnoseSshKey && fsSync.existsSync(cloudOpsAgentDiagnoseSshKey)
+      ? ['-i', cloudOpsAgentDiagnoseSshKey]
+      : []),
     '-o', 'BatchMode=yes',
     '-o', 'ClearAllForwardings=yes',
     '-o', 'ConnectTimeout=5',
