@@ -170,19 +170,20 @@ const lidarRelocalizationCaptureRoot = path.resolve(
 const lidarRelocalizationA100Root =
   process.env.LIDAR_RELOCALIZATION_A100_ROOT || '/home/sari/lidar_reloc_bevplace_20260629';
 const lidarRelocalizationModelLabel =
-  process.env.LIDAR_RELOCALIZATION_MODEL_LABEL || 'BEVPlace++ raw rslidar 12-car global+local RANSAC';
+  process.env.LIDAR_RELOCALIZATION_MODEL_LABEL ||
+  'BEVPlace++ 20260709 keyframe official raw-rslidar global+local RANSAC yaw-fix';
 const lidarRelocalizationModelCheckpoint =
   process.env.LIDAR_RELOCALIZATION_MODEL_CHECKPOINT ||
-  `${lidarRelocalizationA100Root}/runs/bevplace_rawrslidar_yawfix_20260708_12cars_1891_gpu3/model_best.pth.tar`;
+  `${lidarRelocalizationA100Root}/runs/bevplace_rawrslidar_to_keyframe_20260709_keyframe_official_large_v3_gpu3/model_best.pth.tar`;
 const lidarRelocalizationFallbackCheckpoint =
   process.env.LIDAR_RELOCALIZATION_FALLBACK_CHECKPOINT ||
   `${lidarRelocalizationA100Root}/runs/jgzj_bevplace_yaw3_kdtree_20260630_gpu3/model_best.pth.tar`;
 const lidarRelocalizationBevplaceDatasetRoot =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_DATASET_ROOT ||
-  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260708_12cars_1891_yawfix/map_db/datasets/KITTI`;
+  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260709_verified_currentmaps_official_1025_xy5yaw30/map_db/datasets/KITTI`;
 const lidarRelocalizationBevplaceManifest =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_MANIFEST ||
-  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260708_12cars_1891_yawfix/map_db/manifest.jsonl`;
+  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260709_verified_currentmaps_official_1025_xy5yaw30/map_db/manifest.jsonl`;
 const lidarRelocalizationBevplaceScript =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_SCRIPT ||
   `${lidarRelocalizationA100Root}/scripts/bevplace_global_infer.py`;

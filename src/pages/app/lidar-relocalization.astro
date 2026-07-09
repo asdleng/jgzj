@@ -38,7 +38,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
         <p class="section-kicker">重定位工作台</p>
         <h2 class="section-title">切车、加载地图、抓当前帧、推粗位姿</h2>
         <p class="section-copy">
-          当前页面走 cloud-agent 车端工具链路，地图元信息和定位状态实时读取；服务器侧已接入 2026-07-04 BEVPlace++ keyframe-map 模型，输出给 NDT 使用的粗位姿。
+          当前页面走 cloud-agent 车端工具链路，地图元信息和定位状态实时读取；服务器侧已接入 2026-07-09 BEVPlace++ keyframe official raw-rslidar global+local RANSAC yaw-fix 链路，输出给 NDT 使用的粗位姿。
         </p>
         <EmbeddedLidarRelocalization />
       </div>
