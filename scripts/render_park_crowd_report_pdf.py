@@ -136,84 +136,186 @@ def trend_chart(days):
     if not days:
         return '<p class="empty">没有数据</p>'
     max_people = max(float(day.get("people_total") or 0) for day in days) or 1
+    width, height = 700, 210
+    pad_left, pad_right, pad_top, pad_bottom = 44, 18, 18, 38
+    plot_w = width - pad_left - pad_right
+    plot_h = height - pad_top - pad_bottom
+    slot = plot_w / max(1, len(days))
+    bar_w = max(8, min(34, slot * 0.58))
+    label_step = max(1, math.ceil(len(days) / 10))
     bars = []
-    for day in days:
+    for idx, day in enumerate(days):
         value = float(day.get("people_total") or 0)
-        height = max(4, min(100, value * 100 / max_people))
-        bars.append(
+        bar_h = max(3, value / max_people * plot_h) if value > 0 else 3
+        x = pad_left + idx * slot + (slot - bar_w) / 2
+        y = pad_top + plot_h - bar_h
+        color = "#14b8a6" if value > 0 else "#cbd5e1"
+        bars.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{bar_h:.1f}" rx="5" fill="{color}" />')
+        if value == max_people or len(days) <= 8:
+            bars.append(f'<text x="{x + bar_w / 2:.1f}" y="{max(12, y - 5):.1f}" text-anchor="middle" class="trend-num">{number(value)}</text>')
+        if idx % label_step == 0 or idx == len(days) - 1:
+            bars.append(f'<text x="{x + bar_w / 2:.1f}" y="{height - 13}" text-anchor="middle" class="trend-label">{esc(date_label(day.get("key")))}</text>')
+    grid = []
+    for ratio in (0, 0.5, 1):
+        y = pad_top + plot_h * (1 - ratio)
+        grid.append(f'<line x1="{pad_left}" y1="{y:.1f}" x2="{width - pad_right}" y2="{y:.1f}" />')
+        grid.append(f'<text x="{pad_left - 8}" y="{y + 4:.1f}" text-anchor="end" class="trend-label">{number(max_people * ratio)}</text>')
+    return f"""
+    <svg class="trend-svg" viewBox="0 0 {width} {height}" role="img" aria-label="人流趋势">
+      <rect x="0" y="0" width="{width}" height="{height}" rx="14" fill="#f8fafc" stroke="#dbe5ef" />
+      <g class="trend-grid">{''.join(grid)}</g>
+      <g>{''.join(bars)}</g>
+    </svg>
+    """
+
+
+def metric_table(totals, active_days):
+    rows = [
+        ("识别人数", number(totals.get("people_total"))),
+        ("巡逻记录", number(totals.get("sample_count"))),
+        ("活跃天数", number(active_days)),
+        ("单点峰值", number(totals.get("max_people"))),
+    ]
+    cells = "".join(
+        f'<td><div class="metric-cell"><span>{esc(label)}</span><strong>{esc(value)}</strong></div></td>'
+        for label, value in rows
+    )
+    return f'<table class="metric-table"><tr>{cells}</tr></table>'
+
+
+def cover_svg(payload, totals, active_days, date_range, generated):
+    rows = [
+        ("识别人数", number(totals.get("people_total"))),
+        ("巡逻记录", number(totals.get("sample_count"))),
+        ("活跃天数", number(active_days)),
+        ("单点峰值", number(totals.get("max_people"))),
+    ]
+    metric_nodes = []
+    for idx, (label, value) in enumerate(rows):
+        x = 30 + idx * 162
+        metric_nodes.append(
             f"""
-            <div class="trend-item">
-              <div class="trend-value">{number(value)}</div>
-              <div class="trend-bar" style="height:{height:.1f}%"></div>
-              <span>{esc(date_label(day.get("key")))}</span>
-            </div>
+            <rect x="{x}" y="104" width="142" height="42" rx="10" fill="#ffffff" fill-opacity=".16" stroke="#ffffff" stroke-opacity=".22" />
+            <text x="{x + 14}" y="121" fill="#ffffff" fill-opacity=".76" font-size="10">{esc(label)}</text>
+            <text x="{x + 14}" y="141" fill="#ffffff" font-size="20" font-weight="900">{esc(value)}</text>
             """
         )
-    return f'<div class="trend-bars">{"".join(bars)}</div>'
+    vehicle_id = payload.get("vehicle_id", "-")
+    return f"""
+    <svg class="cover-svg" viewBox="0 0 700 160" role="img" aria-label="园区人流报告封面">
+      <rect x="0" y="0" width="700" height="160" rx="16" fill="#0f766e" />
+      <path d="M 350 0 H 700 V 160 H 260 C 345 124 388 88 430 0 Z" fill="#0ea5e9" opacity=".65" />
+      <path d="M 520 0 H 700 V 160 H 620 C 590 112 575 58 600 0 Z" fill="#1e293b" opacity=".30" />
+      <circle cx="720" cy="0" r="120" fill="none" stroke="#ffffff" stroke-opacity=".14" stroke-width="34" />
+      <text x="30" y="38" fill="#ffffff" fill-opacity=".86" font-size="10" font-weight="800" letter-spacing="1.8">PARK PEOPLE FLOW REPORT</text>
+      <text x="30" y="72" fill="#ffffff" font-size="28" font-weight="900">{esc(vehicle_id)} 园区人流报告</text>
+      <text x="30" y="96" fill="#ffffff" fill-opacity=".84" font-size="11">日期范围：{esc(date_range)} · 生成时间：{esc(generated)}</text>
+      {''.join(metric_nodes)}
+    </svg>
+    """
+
+
+def chart_table(features):
+    cards = [
+        donut_chart(features.get("age_stage_groups") or [], "客群阶段"),
+        donut_chart(features.get("gender_groups") or [], "性别结构"),
+        donut_chart(features.get("person_attributes") or [], "人员属性"),
+        donut_chart(features.get("attention_signals") or [], "关照线索"),
+    ]
+    return f"""
+    <table class="chart-table">
+      <tr><td>{cards[0]}</td><td>{cards[1]}</td></tr>
+      <tr><td>{cards[2]}</td><td>{cards[3]}</td></tr>
+    </table>
+    """
+
+
+def insight_panel(items):
+    return f"""
+    <section class="panel">
+      <h2>关键结论</h2>
+      <ul>{insight_list(items)}</ul>
+    </section>
+    """
+
+
+def date_overview_panel(days):
+    return f"""
+    <section class="panel">
+      <h2>日期概览</h2>
+      {daily_cards(days)}
+    </section>
+    """
 
 
 def daily_cards(days):
+    days = list(days or [])
+    if not days:
+        return '<p class="empty">没有数据</p>'
     rows = []
-    for day in (days or []):
-        active = float(day.get("people_total") or 0) > 0
-        rows.append(
-            f"""
-            <div class="day-chip{' is-active' if active else ''}">
-              <span>{esc(date_label(day.get("key")))}</span>
-              <strong>{number(day.get("people_total"))}</strong>
-            </div>
-            """
-        )
-    return f'<div class="day-grid">{"".join(rows)}</div>' if rows else '<p class="empty">没有数据</p>'
+    for start in range(0, len(days), 7):
+        cells = []
+        for day in days[start:start + 7]:
+            active = float(day.get("people_total") or 0) > 0
+            cells.append(
+                f"""
+                <td class="{'is-active' if active else ''}">
+                  <span>{esc(date_label(day.get("key")))}</span>
+                  <strong>{number(day.get("people_total"))}</strong>
+                </td>
+                """
+            )
+        while len(cells) < 7:
+            cells.append("<td></td>")
+        rows.append(f"<tr>{''.join(cells)}</tr>")
+    return f'<table class="day-table">{"".join(rows)}</table>'
 
 
-def heatmap_svg(points):
+def mercator_xy(lng, lat, zoom):
+    scale = 256 * (2 ** int(zoom))
+    x = (float(lng) + 180.0) / 360.0 * scale
+    sin_lat = math.sin(math.radians(max(-85.05112878, min(85.05112878, float(lat)))))
+    y = (0.5 - math.log((1 + sin_lat) / (1 - sin_lat)) / (4 * math.pi)) * scale
+    return x, y
+
+
+def heatmap_overlay(points, static_map):
     points = list(points or [])
     if not points:
         return '<div class="heatmap-empty">本期暂无有效热力点</div>'
-    lngs = [float(p["lng"]) for p in points]
-    lats = [float(p["lat"]) for p in points]
-    min_lng, max_lng = min(lngs), max(lngs)
-    min_lat, max_lat = min(lats), max(lats)
-    pad_lng = max((max_lng - min_lng) * 0.08, 0.0002)
-    pad_lat = max((max_lat - min_lat) * 0.08, 0.0002)
-    min_lng -= pad_lng
-    max_lng += pad_lng
-    min_lat -= pad_lat
-    max_lat += pad_lat
+    if not static_map or not static_map.get("image_data_uri"):
+        return '<div class="heatmap-empty">地图底图暂不可用，请稍后重新生成报告。</div>'
     width, height = 700, 320
+    map_width = float(static_map.get("width") or 1024)
+    map_height = float(static_map.get("height") or 468)
+    zoom = int(static_map.get("zoom") or 16)
+    center = static_map.get("center") or {}
+    center_lng = float(center.get("lng"))
+    center_lat = float(center.get("lat"))
+    center_x, center_y = mercator_xy(center_lng, center_lat, zoom)
+    scale_x = width / map_width
+    scale_y = height / map_height
     max_count = max(float(p.get("count") or 0) for p in points) or 1
     circles = []
     for p in sorted(points, key=lambda item: float(item.get("count") or 0)):
         lng = float(p["lng"])
         lat = float(p["lat"])
         count = float(p.get("count") or 0)
-        x = (lng - min_lng) / max(1e-9, max_lng - min_lng) * width
-        y = height - (lat - min_lat) / max(1e-9, max_lat - min_lat) * height
+        px, py = mercator_xy(lng, lat, zoom)
+        x = width / 2 + (px - center_x) * scale_x
+        y = height / 2 + (py - center_y) * scale_y
+        if x < -80 or x > width + 80 or y < -80 or y > height + 80:
+            continue
         ratio = max(0.12, min(1.0, count / max_count))
-        r = 8 + ratio * 28
-        opacity = 0.16 + ratio * 0.34
+        r = 9 + ratio * 34
+        opacity = 0.20 + ratio * 0.42
         circles.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.1f}" fill="#ef4444" opacity="{opacity:.3f}" />')
         if ratio > 0.65:
-            circles.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{max(3, r * 0.25):.1f}" fill="#fbbf24" opacity="0.78" />')
-    grid = []
-    for i in range(1, 5):
-        x = width * i / 5
-        y = height * i / 5
-        grid.append(f'<line x1="{x:.1f}" y1="0" x2="{x:.1f}" y2="{height}" />')
-        grid.append(f'<line x1="0" y1="{y:.1f}" x2="{width}" y2="{y:.1f}" />')
+            circles.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{max(4, r * 0.25):.1f}" fill="#fbbf24" opacity="0.82" />')
     return f"""
-    <svg class="heatmap" viewBox="0 0 {width} {height}" role="img" aria-label="人流热力图">
-      <defs>
-        <linearGradient id="heatBg" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0" stop-color="#ecfeff"/>
-          <stop offset="1" stop-color="#f8fafc"/>
-        </linearGradient>
-      </defs>
-      <rect width="{width}" height="{height}" rx="18" fill="url(#heatBg)" />
-      <g class="heat-grid">{''.join(grid)}</g>
-      <path d="M 40 {height-58} C 170 {height-120}, 290 {height-84}, 408 {height-162} S 610 {height-210}, 662 62" fill="none" stroke="#94a3b8" stroke-width="10" stroke-linecap="round" opacity=".35"/>
-      <path d="M 46 {height-56} C 176 {height-118}, 292 {height-82}, 410 {height-160} S 610 {height-208}, 660 64" fill="none" stroke="#64748b" stroke-width="2.5" stroke-dasharray="8 8" opacity=".55"/>
+    <svg class="heatmap-frame" viewBox="0 0 {width} {height}" role="img" aria-label="人流热力图">
+      <image href="{esc(static_map.get("image_data_uri"))}" x="0" y="0" width="{width}" height="{height}" preserveAspectRatio="xMidYMid slice" />
+      <rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff" opacity=".08" />
       <g>{''.join(circles)}</g>
     </svg>
     """
@@ -260,6 +362,7 @@ def render(payload):
   <style>
     @page {{ size: A4; margin: 14mm 13mm; }}
     * {{ box-sizing: border-box; }}
+    header, section, article {{ display: block; }}
     body {{
       margin: 0;
       font-family: "Noto Sans CJK SC", "Noto Sans CJK", "Droid Sans Fallback", sans-serif;
@@ -269,41 +372,34 @@ def render(payload):
       background: #ffffff;
     }}
     h1, h2, h3, p, ul {{ margin: 0; }}
-    .cover {{
-      position: relative;
-      padding: 22px 24px;
-      border-radius: 16px;
-      background: linear-gradient(135deg, #0f766e, #0ea5e9 58%, #1e293b);
-      color: #fff;
-      overflow: hidden;
-    }}
-    .cover:after {{
-      content: "";
-      position: absolute;
-      right: -60px;
-      top: -70px;
-      width: 210px;
-      height: 210px;
-      border-radius: 50%;
-      border: 32px solid rgba(255,255,255,.14);
-    }}
+    .cover-svg {{ display: block; width: 100%; height: 160px; }}
+    .cover-kicker {{ fill: rgba(255,255,255,.86); font-size: 10px; font-weight: 800; letter-spacing: 1.8px; }}
+    .cover-title {{ fill: #fff; font-size: 28px; font-weight: 900; }}
+    .cover-meta {{ fill: rgba(255,255,255,.84); font-size: 11px; }}
+    .cover-metric-label {{ fill: rgba(255,255,255,.76); font-size: 10px; }}
+    .cover-metric-value {{ fill: #fff; font-size: 20px; font-weight: 900; }}
     .kicker {{ font-size: 10px; font-weight: 800; letter-spacing: 1.8px; opacity: .86; }}
     h1 {{ margin-top: 6px; font-size: 28px; line-height: 1.15; }}
     .meta {{ margin-top: 10px; color: rgba(255,255,255,.84); }}
-    .metric-grid {{
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 9px;
-      margin: 12px 0 0;
+    .metric-table {{
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      margin-top: 14px;
+      table-layout: fixed;
     }}
-    .metric {{
-      padding: 11px 12px;
+    .metric-table td {{
+      width: 25%;
+      padding: 0 4px;
+    }}
+    .metric-cell {{
+      padding: 10px 12px 12px;
       border-radius: 12px;
       background: rgba(255,255,255,.16);
       border: 1px solid rgba(255,255,255,.18);
     }}
-    .metric span {{ display: block; font-size: 10px; color: rgba(255,255,255,.76); }}
-    .metric strong {{ display: block; margin-top: 3px; font-size: 21px; line-height: 1.2; }}
+    .metric-table span {{ display: block; font-size: 10px; color: rgba(255,255,255,.76); }}
+    .metric-table strong {{ display: block; margin-top: 3px; font-size: 20px; line-height: 1.15; }}
     section {{ margin-top: 14px; page-break-inside: avoid; }}
     h2 {{ font-size: 16px; margin-bottom: 9px; color: #0f172a; }}
     h3 {{ font-size: 12px; margin-bottom: 8px; color: #164e63; }}
@@ -313,69 +409,37 @@ def render(payload):
       padding: 13px;
       background: #fff;
     }}
-    .insights {{
-      display: grid;
-      grid-template-columns: 1.1fr .9fr;
-      gap: 12px;
+    .panel ul {{ padding-left: 17px; }}
+    .panel li {{ margin-bottom: 6px; }}
+    .day-table {{
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 5px;
     }}
-    .insights ul {{ padding-left: 17px; }}
-    .insights li {{ margin-bottom: 6px; }}
-    .day-grid {{
-      display: grid;
-      grid-template-columns: repeat(7, 1fr);
-      gap: 5px;
-    }}
-    .day-chip {{
+    .day-table td {{
+      width: 14.285%;
       border-radius: 9px;
       padding: 6px 5px;
       background: #f1f5f9;
       color: #64748b;
       text-align: center;
     }}
-    .day-chip.is-active {{ background: #ecfeff; color: #0f766e; border: 1px solid #99f6e4; }}
-    .day-chip span {{ display:block; font-size: 9px; }}
-    .day-chip strong {{ display:block; font-size: 12px; }}
-    .trend-bars {{
-      height: 145px;
-      display: flex;
-      align-items: flex-end;
-      gap: 6px;
-      padding: 10px 8px 25px;
-      border-radius: 12px;
-      background: linear-gradient(#f8fafc, #eef6f7);
-      border: 1px solid #dbe5ef;
+    .day-table td.is-active {{ background: #ecfeff; color: #0f766e; border: 1px solid #99f6e4; }}
+    .day-table span {{ display:block; font-size: 9px; }}
+    .day-table strong {{ display:block; font-size: 12px; }}
+    .trend-svg {{ width: 100%; height: 210px; }}
+    .trend-grid line {{ stroke: #cbd5e1; stroke-width: 1; opacity: .58; }}
+    .trend-label {{ fill: #64748b; font-size: 8px; }}
+    .trend-num {{ fill: #0f766e; font-size: 9px; font-weight: 800; }}
+    .chart-table {{
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 10px;
+      margin: -10px;
     }}
-    .trend-item {{
-      flex: 1;
-      min-width: 0;
-      height: 100%;
-      position: relative;
-      display: flex;
-      align-items: flex-end;
-      justify-content: center;
-    }}
-    .trend-bar {{
-      width: 70%;
-      min-height: 4px;
-      border-radius: 8px 8px 2px 2px;
-      background: linear-gradient(180deg, #f59e0b, #14b8a6);
-    }}
-    .trend-value {{
-      position: absolute;
-      bottom: calc(100% + 3px);
-      display: none;
-    }}
-    .trend-item span {{
-      position: absolute;
-      bottom: -20px;
-      font-size: 8px;
-      color: #64748b;
-      white-space: nowrap;
-    }}
-    .chart-grid {{
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
+    .chart-table td {{
+      width: 50%;
+      vertical-align: top;
     }}
     .chart-card {{
       border: 1px solid #dbe5ef;
@@ -383,34 +447,26 @@ def render(payload):
       padding: 12px;
       background: #fff;
     }}
-    .donut-layout {{
-      display: grid;
-      grid-template-columns: 140px 1fr;
-      gap: 10px;
-      align-items: center;
-    }}
+    .donut-layout {{ min-height: 142px; }}
     .donut {{ width: 140px; height: 140px; }}
     .donut-main {{ font-size: 12px; font-weight: 800; fill: #0f172a; }}
     .donut-sub {{ font-size: 15px; font-weight: 900; fill: #0f766e; }}
-    .legend {{ list-style: none; padding: 0; }}
+    .legend {{ list-style: none; padding: 0; margin-left: 150px; margin-top: -132px; }}
     .legend li {{
-      display: grid;
-      grid-template-columns: 10px minmax(0, 1fr) auto;
-      gap: 6px;
-      align-items: center;
       padding: 3px 0;
       border-bottom: 1px solid #edf2f7;
     }}
-    .legend i {{ width: 8px; height: 8px; border-radius: 50%; }}
-    .legend span {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-    .legend strong {{ font-size: 10px; color: #334155; }}
-    .heatmap {{
+    .legend i {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }}
+    .legend span {{ display: inline-block; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }}
+    .legend strong {{ float: right; font-size: 10px; color: #334155; }}
+    .heatmap-frame {{
+      display: block;
       width: 100%;
       height: 320px;
       border-radius: 14px;
       border: 1px solid #dbe5ef;
+      background: #e2e8f0;
     }}
-    .heat-grid line {{ stroke: #cbd5e1; stroke-width: 1; opacity: .36; }}
     .heatmap-empty, .empty-card, .empty {{
       color: #94a3b8;
       padding: 16px;
@@ -459,28 +515,10 @@ def render(payload):
   </style>
 </head>
 <body>
-  <header class="cover">
-    <p class="kicker">PARK PEOPLE FLOW REPORT</p>
-    <h1>{esc(vehicle_id)} 园区人流报告</h1>
-    <p class="meta">日期范围：{esc(date_range)} · 生成时间：{esc(generated)}</p>
-    <div class="metric-grid">
-      <div class="metric"><span>识别人数</span><strong>{number(totals.get("people_total"))}</strong></div>
-      <div class="metric"><span>巡逻记录</span><strong>{number(totals.get("sample_count"))}</strong></div>
-      <div class="metric"><span>活跃天数</span><strong>{number(active_days)}</strong></div>
-      <div class="metric"><span>单点峰值</span><strong>{number(totals.get("max_people"))}</strong></div>
-    </div>
-  </header>
+  {cover_svg(payload, totals, active_days, date_range, generated)}
 
-  <section class="insights">
-    <div class="panel">
-      <h2>关键结论</h2>
-      <ul>{insight_list(payload.get("insights") or [])}</ul>
-    </div>
-    <div class="panel">
-      <h2>日期概览</h2>
-      {daily_cards(days)}
-    </div>
-  </section>
+  {insight_panel(payload.get("insights") or [])}
+  {date_overview_panel(days)}
 
   <section>
     <h2>人流趋势</h2>
@@ -489,17 +527,12 @@ def render(payload):
 
   <section>
     <h2>人流热力图</h2>
-    {heatmap_svg(payload.get("heatmap_points") or [])}
+    {heatmap_overlay(payload.get("heatmap_points") or [], payload.get("heatmap_static_map") or {})}
   </section>
 
   <section>
     <h2>客群画像</h2>
-    <div class="chart-grid">
-      {donut_chart(features.get("age_stage_groups") or [], "客群阶段")}
-      {donut_chart(features.get("gender_groups") or [], "性别结构")}
-      {donut_chart(features.get("person_attributes") or [], "人员属性")}
-      {donut_chart(features.get("attention_signals") or [], "关照线索")}
-    </div>
+    {chart_table(features)}
   </section>
 
   <section>

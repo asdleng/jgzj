@@ -888,14 +888,12 @@ const agentRules = [
         const host = vehicle?.hostname || vehicle?.host || "";
         const selected = vid === selectedVehicleId();
         const rowTone = stopDiag.tone === "danger" || stopDiag.tone === "warn" ? stopDiag.tone : health.tone;
-        return `<button type="button" class="cloud-ops-test-vehicle-row is-${escapeHtml(rowTone)}${selected ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
+        return `<button type="button" class="cloud-ops-test-vehicle-row is-${escapeHtml(rowTone)}${selected ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}" title="${escapeHtml(`${vid} · ${stopDiag.label} · ${stopDiag.reason}`)}">
           <span class="cloud-ops-test-severity">${escapeHtml(health.label)}</span>
-          <strong>${escapeHtml(vid || "未知车辆")}</strong>
+          <strong class="cloud-ops-test-vehicle-id">${escapeHtml(vid || "未知车辆")}</strong>
           <span class="cloud-ops-test-stop-inline is-${escapeHtml(stopDiag.tone)}">${escapeHtml(stopDiag.label)}</span>
-          <small>
-            ${escapeHtml(host || "无主机名")} · media ${escapeHtml(displayValue(vehicle?.local_primary_ip))} · master ${escapeHtml(boolText(vehicle?.master_ping_ok, "可达", "不可达"))} · speed ${escapeHtml(numberText(vehicle?.speed_kph))} km/h · mode ${escapeHtml(displayValue(vehicle?.running_mode))} · ${escapeHtml(formatAge(lastSeenOf(vehicle)))} · tools ${escapeHtml(toolCount || "?")}
-            <span>${escapeHtml(stopDiag.reason)}</span>
-          </small>
+          <span class="cloud-ops-test-vehicle-meta">${escapeHtml(host || "无主机名")} · media ${escapeHtml(displayValue(vehicle?.local_primary_ip))} · master ${escapeHtml(boolText(vehicle?.master_ping_ok, "可达", "不可达"))} · speed ${escapeHtml(numberText(vehicle?.speed_kph))} km/h · ${escapeHtml(formatAge(lastSeenOf(vehicle)))} · tools ${escapeHtml(toolCount || "?")}</span>
+          <span class="cloud-ops-test-vehicle-reason">${escapeHtml(stopDiag.reason)}</span>
         </button>`;
       }).join("");
     };

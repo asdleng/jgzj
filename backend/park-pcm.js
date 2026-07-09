@@ -3580,6 +3580,85 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return `data:${imageMimeFromPath(targetPath)};base64,${buffer.toString('base64')}`;
   }
 
+  function reportStaticMapZoom(points, width, height) {
+    const valid = (Array.isArray(points) ? points : [])
+      .filter((point) => Number.isFinite(point.lng) && Number.isFinite(point.lat));
+    if (valid.length < 2) return 17;
+    const lngs = valid.map((point) => point.lng);
+    const lats = valid.map((point) => point.lat);
+    const lngSpan = Math.max(...lngs) - Math.min(...lngs);
+    const latSpan = Math.max(...lats) - Math.min(...lats);
+    if (lngSpan <= 0 && latSpan <= 0) return 17;
+    const paddingRatio = 0.72;
+    const targetWorldPx = 256;
+    let zoom = 17;
+    for (let candidate = 19; candidate >= 12; candidate -= 1) {
+      const scale = targetWorldPx * Math.pow(2, candidate);
+      const xSpanPx = Math.max(1, (lngSpan / 360) * scale);
+      const centerLat = valid.reduce((sum, point) => sum + point.lat, 0) / valid.length;
+      const latRad = Math.max(-85, Math.min(85, centerLat)) * Math.PI / 180;
+      const ySpanPx = Math.max(1, (latSpan / 360) * scale / Math.max(0.18, Math.cos(latRad)));
+      if (xSpanPx <= width * paddingRatio && ySpanPx <= height * paddingRatio) {
+        zoom = candidate;
+        break;
+      }
+    }
+    return zoom;
+  }
+
+  async function buildReportStaticMap(points) {
+    const valid = (Array.isArray(points) ? points : [])
+      .filter((point) => Number.isFinite(point.lng) && Number.isFinite(point.lat));
+    if (!valid.length) return null;
+    const width = 1024;
+    const height = 468;
+    const lngs = valid.map((point) => point.lng);
+    const lats = valid.map((point) => point.lat);
+    const center = {
+      lng: (Math.min(...lngs) + Math.max(...lngs)) / 2,
+      lat: (Math.min(...lats) + Math.max(...lats)) / 2
+    };
+    const zoom = reportStaticMapZoom(valid, width, height);
+    const amapKey = String(
+      process.env.PARK_CROWD_REPORT_AMAP_KEY ||
+        process.env.AMAP_KEY ||
+        process.env.GAODE_MAP_KEY ||
+        '8c2f9f3401e8d0ddfd619074c5f034ef'
+    ).trim();
+    if (!amapKey) return null;
+    const url = new URL('https://restapi.amap.com/v3/staticmap');
+    url.searchParams.set('location', `${center.lng.toFixed(6)},${center.lat.toFixed(6)}`);
+    url.searchParams.set('zoom', String(zoom));
+    url.searchParams.set('size', `${width}*${height}`);
+    url.searchParams.set('scale', '2');
+    url.searchParams.set('key', amapKey);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: { accept: 'image/png,image/jpeg,*/*' }
+      });
+      if (!response.ok) return null;
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (!contentType.startsWith('image/')) return null;
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length < 1024) return null;
+      return {
+        provider: 'amap_static',
+        center,
+        zoom,
+        width,
+        height,
+        image_data_uri: `data:${contentType.split(';')[0] || 'image/png'};base64,${buffer.toString('base64')}`
+      };
+    } catch (_error) {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function buildReportRepresentativeImages(samples) {
     const candidates = [];
     const seen = new Set();
@@ -3817,6 +3896,8 @@ module.exports = function registerParkPcmRoutes(app, options) {
     });
     const daySeries = buildReportDaySeries(range, samples);
     const representativeImages = await buildReportRepresentativeImages(orderedSamples);
+    const heatmapPoints = buildReportHeatmapPoints(samples);
+    const staticMap = await buildReportStaticMap(heatmapPoints);
     return {
       ok: true,
       title: '园区人流报告',
@@ -3829,7 +3910,8 @@ module.exports = function registerParkPcmRoutes(app, options) {
       day_series: daySeries,
       features: featureRows,
       insights: buildReportInsights(range, totals, daySeries, featureRows),
-      heatmap_points: buildReportHeatmapPoints(samples),
+      heatmap_points: heatmapPoints,
+      heatmap_static_map: staticMap,
       representative_images: representativeImages,
       analysis_model: crowdAnalysisModel,
       top_samples: orderedSamples.slice(0, 12).map(compactReportSample),

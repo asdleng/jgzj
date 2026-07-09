@@ -7820,3 +7820,147 @@ body.yolo-review-is-panning {
     animation: none !important;
   }
 }
+
+
+/* Cloud Ops Test vehicle list readability fix. */
+.cloud-ops-test-vehicle-row {
+  grid-template-columns: 92px minmax(108px, 150px) minmax(124px, 180px) minmax(0, 1fr) !important;
+  grid-template-areas:
+    "severity vehicle stop meta"
+    "severity vehicle stop reason";
+  align-items: center !important;
+  row-gap: 6px;
+  min-height: 82px;
+  padding: 12px 14px;
+}
+
+.cloud-ops-test-vehicle-row .cloud-ops-test-severity {
+  grid-area: severity;
+  justify-self: start;
+  align-self: center;
+}
+
+.cloud-ops-test-vehicle-id,
+.cloud-ops-test-vehicle-row > strong {
+  grid-area: vehicle;
+  align-self: center;
+  color: #f8fafc;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.cloud-ops-test-vehicle-row .cloud-ops-test-stop-inline {
+  grid-area: stop;
+  justify-self: stretch;
+  align-self: center;
+  text-align: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cloud-ops-test-vehicle-meta,
+.cloud-ops-test-vehicle-reason {
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.35;
+}
+
+.cloud-ops-test-vehicle-meta {
+  grid-area: meta;
+  align-self: end;
+  color: #cbd5e1;
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.cloud-ops-test-vehicle-reason {
+  grid-area: reason;
+  align-self: start;
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.cloud-ops-test-vehicle-row small,
+.cloud-ops-test-vehicle-row small span {
+  display: block;
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .cloud-ops-test-vehicle-row {
+    grid-template-columns: 1fr !important;
+    grid-template-areas:
+      "severity"
+      "vehicle"
+      "stop"
+      "meta"
+      "reason";
+    min-height: 0;
+  }
+
+  .cloud-ops-test-vehicle-row .cloud-ops-test-stop-inline {
+    justify-self: start;
+    min-width: 120px;
+  }
+}
+
+
+/* Cloud Ops Test agent rail header offset fix. */
+@media (min-width: 1101px) {
+  .cloud-ops-test-agent-rail {
+    top: clamp(168px, 20vh, 248px) !important;
+    max-height: calc(100vh - clamp(188px, 22vh, 268px)) !important;
+  }
+
+  .cloud-ops-test-agent-panel {
+    max-height: calc(100vh - clamp(188px, 22vh, 268px)) !important;
+  }
+}
+
+
+/* Cloud Ops Test overview panel equal-height alignment. */
+.cloud-ops-test-workbench--overview {
+  align-items: stretch !important;
+}
+
+.cloud-ops-test-workbench--overview > .cloud-ops-test-panel {
+  height: clamp(430px, 56vh, 640px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cloud-ops-test-workbench--overview > .cloud-ops-test-panel--wide {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.cloud-ops-test-workbench--overview > .cloud-ops-test-panel:not(.cloud-ops-test-panel--wide) {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.cloud-ops-test-workbench--overview .cloud-ops-test-vehicle-list {
+  max-height: none;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.cloud-ops-test-workbench--overview .cloud-ops-test-kv {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+@media (max-width: 1100px) {
+  .cloud-ops-test-workbench--overview > .cloud-ops-test-panel {
+    height: auto;
+    max-height: none;
+  }
+
+  .cloud-ops-test-workbench--overview .cloud-ops-test-vehicle-list,
+  .cloud-ops-test-workbench--overview .cloud-ops-test-kv {
+    max-height: 520px;
+  }
+}
