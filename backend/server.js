@@ -197,6 +197,25 @@ const lidarRelocalizationA100Gpu = process.env.LIDAR_RELOCALIZATION_A100_GPU || 
 const lidarRelocalizationA100WorkRoot =
   process.env.LIDAR_RELOCALIZATION_A100_WORK_ROOT ||
   `${lidarRelocalizationA100Root}/runtime_infer`;
+const lidarRelocalizationA100NumWorkers = toFiniteInteger(
+  process.env.LIDAR_RELOCALIZATION_A100_NUM_WORKERS,
+  0,
+  { min: 0, max: 2 }
+);
+const lidarRelocalizationIndexedVehicles = new Set(
+  String(
+    process.env.LIDAR_RELOCALIZATION_INDEXED_VEHICLES ||
+      'BIT-0013,BIT-0014,BIT-0015,BIT-0016,BIT-0019,BIT-0020,BIT-0026,BIT-0032,BIT-0039'
+  )
+    .split(',')
+    .map((vehicleId) => getLidarRelocVehicleId(vehicleId))
+    .filter(Boolean)
+);
+const lidarRelocalizationCoverageCacheTtlMs = toFiniteInteger(
+  process.env.LIDAR_RELOCALIZATION_COVERAGE_CACHE_TTL_MS,
+  300000,
+  { min: 10000, max: 3600000 }
+);
 const lidarRelocalizationNdtRunner = path.resolve(
   process.env.LIDAR_RELOCALIZATION_NDT_RUNNER ||
     path.join(lidarRelocalizationRoot, 'ndt_eval_tools/build/ndt_eval_runner')
@@ -241,6 +260,7 @@ const lidarRelocalizationMinConfidence = Number(
 const lidarRelocalizationMapUploadBaseUrl = String(
   process.env.LIDAR_RELOCALIZATION_MAP_UPLOAD_BASE_URL || 'http://100.118.150.2:19080'
 ).replace(/\/+$/, '');
+const lidarRelocalizationCoverageCache = new Map();
 const lidarRelocalizationVisualizationMapMaxPoints = toFiniteInteger(
   process.env.LIDAR_RELOCALIZATION_VIS_MAP_MAX_POINTS,
   2600,
@@ -7835,6 +7855,120 @@ async function copyLidarRelocCaptureToA100(vehicleId, capturePath) {
   return remoteCapture;
 }
 
+function normalizeLidarRelocCoveragePayload(vehicleId, payload, cached = false) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  const count = toFiniteInteger(payload?.count, 0, { min: 0, max: Number.MAX_SAFE_INTEGER });
+  const available = Boolean(count > 0 || payload?.available === true);
+  return {
+    available,
+    vehicle_id: normalizedVehicleId,
+    descriptor_count: count,
+    manifest: lidarRelocalizationBevplaceManifest,
+    dataset_root: lidarRelocalizationBevplaceDatasetRoot,
+    checked_at: payload?.checked_at || new Date().toISOString(),
+    cached
+  };
+}
+
+async function getLidarRelocBevplaceCoverage(vehicleId, options = {}) {
+  const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
+  if (!normalizedVehicleId) {
+    return normalizeLidarRelocCoveragePayload(vehicleId, { count: 0 });
+  }
+  if (!options.force) {
+    const indexed = lidarRelocalizationIndexedVehicles.has(normalizedVehicleId);
+    return {
+      ...normalizeLidarRelocCoveragePayload(normalizedVehicleId, {
+        count: indexed ? 1 : 0,
+        checked_at: new Date().toISOString()
+      }),
+      descriptor_count: indexed ? null : 0,
+      indexed_vehicles: Array.from(lidarRelocalizationIndexedVehicles).sort(),
+      source: 'server_static_indexed_vehicle_set'
+    };
+  }
+  const now = Date.now();
+  const cached = lidarRelocalizationCoverageCache.get(normalizedVehicleId);
+  if (
+    !options.force &&
+    cached &&
+    now - Number(cached.cached_at_ms || 0) <= lidarRelocalizationCoverageCacheTtlMs
+  ) {
+    return normalizeLidarRelocCoveragePayload(normalizedVehicleId, cached.payload, true);
+  }
+
+  const coverageCode = [
+    'import json, sys',
+    'manifest, vehicle_id = sys.argv[1], sys.argv[2]',
+    'count = 0',
+    'try:',
+    '    with open(manifest, "r", encoding="utf-8") as handle:',
+    '        for line in handle:',
+    '            if not line.strip():',
+    '                continue',
+    '            try:',
+    '                row = json.loads(line)',
+    '            except Exception:',
+    '                continue',
+    '            if (row.get("vehicle_id") or row.get("vehicle")) == vehicle_id:',
+    '                count += 1',
+    'except FileNotFoundError:',
+    '    pass',
+    'print(json.dumps({"count": count}))'
+  ].join('\\n');
+  const command = [
+    shellQuote(lidarRelocalizationA100Python),
+    '-c',
+    shellQuote(coverageCode),
+    shellQuote(lidarRelocalizationBevplaceManifest),
+    shellQuote(normalizedVehicleId)
+  ].join(' ');
+  try {
+    const { stdout } = await execFileAsync(
+      'ssh',
+      [
+        '-i',
+        lidarRelocalizationA100Key,
+        '-o',
+        'ClearAllForwardings=yes',
+        '-o',
+        'BatchMode=yes',
+        '-o',
+        'ConnectTimeout=8',
+        '-o',
+        'StrictHostKeyChecking=no',
+        `${lidarRelocalizationA100User}@${lidarRelocalizationA100Host}`,
+        command
+      ],
+      { timeout: 15000, maxBuffer: 128 * 1024 }
+    );
+    const payload = parseJsonField(String(stdout || '').trim().split(/\r?\n/).filter(Boolean).pop(), { count: 0 });
+    const next = {
+      ...payload,
+      checked_at: new Date().toISOString()
+    };
+    lidarRelocalizationCoverageCache.set(normalizedVehicleId, {
+      cached_at_ms: now,
+      payload: next
+    });
+    return normalizeLidarRelocCoveragePayload(normalizedVehicleId, next, false);
+  } catch (error) {
+    const fallback = {
+      count: 0,
+      checked_at: new Date().toISOString(),
+      error: error?.message || 'coverage_check_failed'
+    };
+    lidarRelocalizationCoverageCache.set(normalizedVehicleId, {
+      cached_at_ms: now,
+      payload: fallback
+    });
+    return {
+      ...normalizeLidarRelocCoveragePayload(normalizedVehicleId, fallback, false),
+      error: fallback.error
+    };
+  }
+}
+
 async function runLidarRelocBevplaceGlobalInfer(vehicleId, capturePath, options = {}) {
   const remoteCapture = await copyLidarRelocCaptureToA100(vehicleId, capturePath);
   const topk = toFiniteInteger(options.return_topk, 10, { min: 1, max: 50 });
@@ -7861,7 +7995,7 @@ async function runLidarRelocBevplaceGlobalInfer(vehicleId, capturePath, options 
     '--batch-size',
     '96',
     '--num-workers',
-    '4'
+    String(lidarRelocalizationA100NumWorkers)
   ].join(' ');
   const startedAt = Date.now();
   const { stdout, stderr } = await execFileAsync(
@@ -7978,6 +8112,9 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
   }
 
   const lastCapture = await readLastLidarRelocCapture(normalizedVehicleId);
+  const coverage = serverInference
+    ? await getLidarRelocBevplaceCoverage(normalizedVehicleId)
+    : normalizeLidarRelocCoveragePayload(normalizedVehicleId, { count: 0 });
   return {
     ok: true,
     vehicle_id: normalizedVehicleId,
@@ -8022,9 +8159,17 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
       bevplace_dataset_root: lidarRelocalizationBevplaceDatasetRoot,
       bevplace_manifest: lidarRelocalizationBevplaceManifest,
       a100_gpu: lidarRelocalizationA100Gpu,
+      a100_num_workers: lidarRelocalizationA100NumWorkers,
       method: serverInference ? 'bevplace_global_local_ransac' : null,
-      service_ready: inferTools.length > 0 || serverInference,
-      phase: inferTools.length ? 'tool_ready' : serverInference ? 'bevplace_global_ready' : 'not_deployed'
+      coverage,
+      service_ready: inferTools.length > 0 || (serverInference && coverage.available),
+      phase: inferTools.length
+        ? 'tool_ready'
+        : serverInference
+          ? coverage.available
+            ? 'bevplace_global_ready'
+            : 'vehicle_not_indexed'
+          : 'not_deployed'
     },
     capture: {
       last: lastCapture
@@ -13601,6 +13746,17 @@ app.post(
     }
 
     try {
+      const preflightCoverage = await getLidarRelocBevplaceCoverage(vehicleId);
+      if (!preflightCoverage.available) {
+        return res.status(409).json({
+          ok: false,
+          vehicle_id: vehicleId,
+          phase: 'vehicle_not_indexed',
+          detail: `当前上线 BEVPlace++ 检索库没有 ${vehicleId} 的地图描述子，不能推测粗位姿。需要先为该车生成/同步 keyframe map_db 后再测。`,
+          coverage: preflightCoverage
+        });
+      }
+
       const status = await collectLidarRelocStatus(vehicleId, { tool_timeout_s: 20 });
       const inferTools = Array.isArray(status?.tools?.infer_tools) ? status.tools.infer_tools : [];
       const toolName = inferTools[0] || '';
@@ -13608,6 +13764,20 @@ app.post(
 
       if (!toolName) {
         if (status?.tools?.server_inference) {
+          const coverage =
+            status?.model?.coverage ||
+            await getLidarRelocBevplaceCoverage(vehicleId);
+          if (!coverage.available) {
+            return res.status(409).json({
+              ok: false,
+              vehicle_id: vehicleId,
+              phase: 'vehicle_not_indexed',
+              detail: `当前上线 BEVPlace++ 检索库没有 ${vehicleId} 的地图描述子，不能推测粗位姿。需要先为该车生成/同步 keyframe map_db 后再测。`,
+              model: status.model,
+              coverage
+            });
+          }
+
           const mapSync = await ensureLidarRelocVehicleMap(vehicleId, status);
           if (!mapSync.ok || !mapSync.map?.available) {
             return res.status(502).json({

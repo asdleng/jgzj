@@ -1,6 +1,6 @@
 {
   "schema": "jgzj_yolo_training_trends.v1",
-  "updated_at": "2026-07-09T21:04:27.488012+08:00",
+  "updated_at": "2026-07-09T21:13:59.639329+08:00",
   "training_trends": {
     "person_yolo": [
       {
@@ -127,7 +127,7 @@
         "finished_at": "2026-07-06T14:13:59.473890",
         "source_run": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260706_215225_20260706_215225_20260706_141000",
         "best_weight": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260706_215225_20260706_215225_20260706_141000/weights/best.pt",
-        "run_count": 2
+        "run_count": 4
       },
       {
         "day": "2026-07-07",
@@ -148,7 +148,7 @@
         "finished_at": "2026-07-07T14:58:14.353580",
         "source_run": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260707_223430_20260707_223430_20260707_145247",
         "best_weight": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260707_223430_20260707_223430_20260707_145247/weights/best.pt",
-        "run_count": 1
+        "run_count": 2
       },
       {
         "day": "2026-07-08",
@@ -169,7 +169,7 @@
         "finished_at": "2026-07-07T18:40:57.981051",
         "source_run": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260708_021311_20260708_021311_20260707_183452",
         "best_weight": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260708_021311_20260708_021311_20260707_183452/weights/best.pt",
-        "run_count": 1
+        "run_count": 2
       }
     ],
     "vehicle_yolo": [
@@ -547,7 +547,7 @@
   },
   "monitor_status": {
     "a100_host": "192.168.80.49",
-    "collected_at": 1783602287.6195216,
+    "collected_at": 1783602859.8039634,
     "tmux": [
       "bevplace-rawrslidar-20260708-12cars-gpu3: 1 windows (created Wed Jul  8 02:01:42 2026)",
       "qwen36-labeler-gpu4: 1 windows (created Thu Jun 25 09:16:46 2026)",
@@ -555,11 +555,11 @@
       "qwen36vllm: 1 windows (created Fri Jun 19 11:02:12 2026)"
     ],
     "gpus": [
-      "0, 75849, 81920, 0, 27",
-      "1, 72751, 81920, 0, 30",
+      "0, 75849, 81920, 0, 25",
+      "1, 72751, 81920, 0, 29",
       "2, 17362, 81920, 0, 25",
       "3, 0, 81920, 0, 24",
-      "4, 74441, 81920, 0, 39",
+      "4, 74441, 81920, 100, 57",
       "5, 0, 81920, 0, 23"
     ]
   },
@@ -568,27 +568,27 @@
       "task_id": "person_yolo",
       "title": "人员识别",
       "status": "deployed",
-      "model_family": "yolo26s",
+      "model_family": "20260708_021311",
       "metric_source": "same_dataset_test",
       "metrics": {
-        "test_precision": 0.8222774796029292,
-        "test_recall": 0.6464606961282753,
-        "test_map50": 0.7410611508403913,
-        "test_map50_95": 0.48267884522407867,
-        "val_precision": 0.8371675097208339,
-        "val_recall": 0.7193802695844809,
-        "val_map50": 0.8168661942092221,
-        "val_map50_95": 0.5839622198535568
+        "test_precision": 0.8105989305202222,
+        "test_recall": 0.7688603531300161,
+        "test_map50": 0.8513923220511164,
+        "test_map50_95": 0.5922742574309978,
+        "val_precision": 0.8968769984508753,
+        "val_recall": 0.8112580026269613,
+        "val_map50": 0.9096145794217683,
+        "val_map50_95": 0.6535383202700944
       },
       "train_progress": null,
-      "source_run": "/home/sari/jgzj_yolo_runs_reliable_vehicle_20260704/person_yolo_yolo26s_today_reliable_gpu5_20260703_174035",
-      "best_weight": "/home/sari/jgzj_yolo_runs_reliable_vehicle_20260704/person_yolo_yolo26s_today_reliable_gpu5_20260703_174035/weights/best.pt",
+      "source_run": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260708_021311_20260708_021311_20260707_183452",
+      "best_weight": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260708_021311_20260708_021311_20260707_183452/weights/best.pt",
       "local_weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/person_yolo_best.pt",
       "download_file": "person_yolo_best.pt",
-      "weight_sha256": "c3a4ca887e6d7a2ce73cd5941193f72be2d1aca69960c0cbf220e8cd6b9205a0",
-      "weight_size_bytes": 20288197,
-      "deployed_at": "2026-07-09T21:04:23.453155+08:00",
-      "updated_at": "2026-07-09T21:04:23.453201+08:00",
+      "weight_sha256": "e1040e25d6b3ad0a438545ed6b90bd32078646b2fbaa5f97ff0c32c8e5230f34",
+      "weight_size_bytes": 20282309,
+      "deployed_at": "2026-07-09T21:13:55.704311+08:00",
+      "updated_at": "2026-07-09T21:13:55.704356+08:00",
       "training_trends": [
         {
           "day": "2026-06-23",
@@ -714,7 +714,7 @@
           "finished_at": "2026-07-06T14:13:59.473890",
           "source_run": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260706_215225_20260706_215225_20260706_141000",
           "best_weight": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260706_215225_20260706_215225_20260706_141000/weights/best.pt",
-          "run_count": 2
+          "run_count": 4
         },
         {
           "day": "2026-07-07",
@@ -735,7 +735,7 @@
           "finished_at": "2026-07-07T14:58:14.353580",
           "source_run": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260707_223430_20260707_223430_20260707_145247",
           "best_weight": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260707_223430_20260707_223430_20260707_145247/weights/best.pt",
-          "run_count": 1
+          "run_count": 2
         },
         {
           "day": "2026-07-08",
@@ -756,7 +756,7 @@
           "finished_at": "2026-07-07T18:40:57.981051",
           "source_run": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260708_021311_20260708_021311_20260707_183452",
           "best_weight": "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo/person_yolo_20260708_021311_20260708_021311_20260707_183452/weights/best.pt",
-          "run_count": 1
+          "run_count": 2
         }
       ]
     },
@@ -783,7 +783,7 @@
       "download_file": "vehicle_yolo_best.pt",
       "weight_sha256": "7cf7a94d8f978bc5b4168b763e57f3b8e9aa328315fc468ca43062fcad6f6486",
       "weight_size_bytes": 19152090,
-      "updated_at": "2026-07-09T21:04:23.490925+08:00",
+      "updated_at": "2026-07-09T21:13:55.740663+08:00",
       "note": "车辆识别：2026-07-04 使用 20260703 车端可靠自采框增量微调；同一新混合数据集上优于旧 yolo11s（旧 test P/R/mAP50/mAP50-95=0.678/0.792/0.797/0.722，新=0.659/0.838/0.815/0.727），优先保召回。",
       "training_trends": [
         {
@@ -958,8 +958,8 @@
       "download_file": "pet_yolo_best.pt",
       "weight_sha256": "60e57fd4e89815dfea297aa683a520bd31b7af15e47bfea67a8b4b8e670a8fbe",
       "weight_size_bytes": 18909978,
-      "deployed_at": "2026-07-09T21:04:27.331333+08:00",
-      "updated_at": "2026-07-09T21:04:27.331376+08:00",
+      "deployed_at": "2026-07-09T21:13:59.501359+08:00",
+      "updated_at": "2026-07-09T21:13:59.501390+08:00",
       "training_trends": [
         {
           "day": "2026-06-23",
@@ -1040,7 +1040,7 @@
       "download_file": "phone_yolo_best.pt",
       "weight_sha256": "ac674ecddb3e55acf84a8b09e2c3d0041a607550cbed9df8edf867ef331ba3b6",
       "weight_size_bytes": 6240874,
-      "updated_at": "2026-07-09T21:04:27.345530+08:00",
+      "updated_at": "2026-07-09T21:13:59.518070+08:00",
       "note": "手机识别当前作为拆分模型使用；public-data 微调结果只进入每日指标，不自动覆盖线上权重。",
       "training_trends": [
         {
@@ -1110,7 +1110,7 @@
       "download_file": "trash_yolo_best.pt",
       "weight_sha256": "ac93669d6e9905e3034b52a51282c57fbb5e89ecba828c3ca681ed2444bdbb7c",
       "weight_size_bytes": 6230435,
-      "updated_at": "2026-07-09T21:04:27.359139+08:00",
+      "updated_at": "2026-07-09T21:13:59.531526+08:00",
       "note": "小垃圾细类：bottle / box / paper / bag；2026-06-27 server-proxy GPU2 重训，按独立 test 稳定性选用 yolov8n。",
       "training_trends": [
         {
@@ -1150,7 +1150,7 @@
       "download_file": "stall_yolo_best.pt",
       "weight_sha256": "cd6b6a93f1ac3bbe752df8639c3701b3149fc94e419a85d0980b72045c076378",
       "weight_size_bytes": 6255658,
-      "updated_at": "2026-07-09T21:04:27.372427+08:00",
+      "updated_at": "2026-07-09T21:13:59.544340+08:00",
       "note": "摆摊识别当前作为拆分模型使用；public-data 微调结果只进入每日指标，不自动覆盖线上权重。",
       "training_trends": [
         {
@@ -1216,7 +1216,7 @@
       "download_file": "fire_smoke_yolo_best.pt",
       "weight_sha256": "c27dea32c449cc98fb52bb95fbef36cf8176b596818a8beec5a643ed8fce5d74",
       "weight_size_bytes": 18956250,
-      "updated_at": "2026-07-09T21:04:27.432039+08:00",
+      "updated_at": "2026-07-09T21:13:59.581562+08:00",
       "note": "烟火已由单独新架构实验选定 yolo12s；不在本监控里用旧 val 口径重选。",
       "training_trends": [
         {
@@ -1285,7 +1285,7 @@
       "download_file": "person_behavior_cls_best.pt",
       "weight_sha256": "f76af5d93f784d694ee89e7a040b9e26943cdcc2722a1d7b353b2ed1c60b94ac",
       "weight_size_bytes": 2967041,
-      "updated_at": "2026-07-09T21:04:27.438577+08:00",
+      "updated_at": "2026-07-09T21:13:59.588283+08:00",
       "note": "二阶段人员行为分类：other / phone_use / smoking；用于人员ROI分类。",
       "training_trends": []
     },
@@ -1312,7 +1312,7 @@
       "download_file": "license_plate_yolo_best.pt",
       "weight_sha256": "cefdd65e6a44e2490a146f6897d55491e38085ee9b4f9aa410a09b02a56106c3",
       "weight_size_bytes": 6229859,
-      "updated_at": "2026-07-09T21:04:27.451215+08:00",
+      "updated_at": "2026-07-09T21:13:59.601218+08:00",
       "note": "中国车牌检测：CCPD2020 绿牌数据训练；工作台车牌识别链路为车辆YOLO -> 车牌YOLO -> OCR。",
       "training_trends": []
     },
@@ -1339,7 +1339,7 @@
       "download_file": "fishing_rod_yolo_best.pt",
       "weight_sha256": "14bdee0fc98f24e15f76159d1da535a00a8be0782e22f9205c65a4b8081933e2",
       "weight_size_bytes": 19245523,
-      "updated_at": "2026-07-09T21:04:27.487984+08:00",
+      "updated_at": "2026-07-09T21:13:59.639279+08:00",
       "note": "钓鱼杆种子模型：Objects365/LVIS公开鱼竿框 + 现场钓鱼NO负样本；需结合人员检测与水边ROI规则使用。",
       "training_trends": []
     }

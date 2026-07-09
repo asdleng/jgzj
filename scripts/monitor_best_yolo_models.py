@@ -33,11 +33,13 @@ TARGETS = {
         "score_metric": "test_map50_95",
         "metric_source_override": "same_dataset_test",
         "roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/runs/person_yolo",
             "/home/sari/jgzj_yolo_runs_reliable_vehicle_20260704",
             "/home/sari/jgzj_yolo_runs_person_v2",
             "/home/sari/jgzj_yolo_runs",
         ],
         "summary_roots": [
+            "/home/sari/jgzj_yolo_daily_closed_loop/results/person_yolo",
             "/home/sari/reliable_vehicle_yolo_20260704/results/person_yolo_today_finetune_gpu5",
             "/home/sari/reliable_vehicle_yolo_20260704/results/person_yolo_today_alt_gpu5",
             "/home/sari/person_yolo_experiments_20260627",
