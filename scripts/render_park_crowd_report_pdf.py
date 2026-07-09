@@ -296,27 +296,55 @@ def heatmap_overlay(points, static_map):
     scale_x = width / map_width
     scale_y = height / map_height
     max_count = max(float(p.get("count") or 0) for p in points) or 1
-    circles = []
-    for p in sorted(points, key=lambda item: float(item.get("count") or 0)):
+    bucket_size = 18
+    buckets = {}
+    for p in points:
         lng = float(p["lng"])
         lat = float(p["lat"])
         count = float(p.get("count") or 0)
+        if count <= 0:
+            continue
         px, py = mercator_xy(lng, lat, zoom)
         x = width / 2 + (px - center_x) * scale_x
         y = height / 2 + (py - center_y) * scale_y
         if x < -80 or x > width + 80 or y < -80 or y > height + 80:
             continue
-        ratio = max(0.12, min(1.0, count / max_count))
-        r = 9 + ratio * 34
-        opacity = 0.20 + ratio * 0.42
-        circles.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.1f}" fill="#ef4444" opacity="{opacity:.3f}" />')
-        if ratio > 0.65:
-            circles.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{max(4, r * 0.25):.1f}" fill="#fbbf24" opacity="0.82" />')
+        key = (round(x / bucket_size), round(y / bucket_size))
+        current = buckets.setdefault(key, {"x": 0.0, "y": 0.0, "count": 0.0, "weight": 0.0})
+        current["x"] += x * count
+        current["y"] += y * count
+        current["count"] += count
+        current["weight"] += min(1.0, count / max_count)
+    blobs = []
+    defs = []
+    for idx, bucket in enumerate(sorted(buckets.values(), key=lambda item: item["count"])):
+        count = bucket["count"]
+        if count <= 0:
+            continue
+        x = bucket["x"] / count
+        y = bucket["y"] / count
+        density = max(count / max_count, bucket["weight"])
+        strength = max(0.16, min(1.0, density))
+        radius = 36 * (0.85 + min(1.35, density) * 0.55)
+        gid = f"heatGrad{idx}"
+        defs.append(
+            f"""
+            <radialGradient id="{gid}" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#ef4444" stop-opacity="{0.17 + strength * 0.15:.3f}" />
+              <stop offset="26%" stop-color="#f97316" stop-opacity="{0.13 + strength * 0.12:.3f}" />
+              <stop offset="54%" stop-color="#facc15" stop-opacity="{0.08 + strength * 0.09:.3f}" />
+              <stop offset="78%" stop-color="#22c55e" stop-opacity="{0.035 + strength * 0.055:.3f}" />
+              <stop offset="100%" stop-color="#22c55e" stop-opacity="0" />
+            </radialGradient>
+            """
+        )
+        blobs.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{radius:.1f}" fill="url(#{gid})" />')
     return f"""
     <svg class="heatmap-frame" viewBox="0 0 {width} {height}" role="img" aria-label="人流热力图">
+      <defs>{''.join(defs)}</defs>
       <image href="{esc(static_map.get("image_data_uri"))}" x="0" y="0" width="{width}" height="{height}" preserveAspectRatio="xMidYMid slice" />
-      <rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff" opacity=".08" />
-      <g>{''.join(circles)}</g>
+      <rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff" opacity=".04" />
+      <g opacity=".9">{''.join(blobs)}</g>
     </svg>
     """
 

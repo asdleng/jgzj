@@ -7964,3 +7964,33 @@ body.yolo-review-is-panning {
     max-height: 520px;
   }
 }
+
+
+/* Cloud Ops Test overview height and sorting controls refinement. */
+.cloud-ops-test-global-controls {
+  grid-template-columns: auto minmax(220px, 320px) minmax(190px, 280px) minmax(280px, 1fr) minmax(200px, 0.8fr) !important;
+}
+
+.cloud-ops-test-workbench--overview > .cloud-ops-test-panel {
+  height: clamp(645px, 84vh, 960px) !important;
+}
+
+.cloud-ops-test-stop-grid {
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .cloud-ops-test-global-controls {
+    grid-template-columns: 1fr !important;
+  }
+
+  .cloud-ops-test-workbench--overview > .cloud-ops-test-panel {
+    height: auto !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .cloud-ops-test-stop-grid {
+    grid-template-columns: 1fr;
+  }
+}
