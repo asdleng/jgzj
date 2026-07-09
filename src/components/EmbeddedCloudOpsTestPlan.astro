@@ -109,29 +109,6 @@ const agentRules = [
     <span>禁用：重启、写参数、任务重发、灯光/车身控制</span>
   </div>
 
-  <div class="cloud-ops-test-global-controls">
-    <button class="cloud-ops-test-command-button is-primary" type="button" data-action="refresh-vehicles">刷新车辆列表</button>
-    <label class="cloud-ops-test-select-field">
-      当前车辆
-      <select data-role="vehicle-select">
-        <option value="">加载车辆中...</option>
-      </select>
-    </label>
-    <label class="cloud-ops-test-select-field">
-      列表排序
-      <select data-role="vehicle-sort-select">
-        <option value="status">按车辆状态：异常在前</option>
-        <option value="id">按车辆编号</option>
-      </select>
-    </label>
-    <div class="cloud-ops-test-selected-strip">
-      <span>已选车辆</span>
-      <strong data-role="selected-vehicle-title">--</strong>
-      <small>切换车辆只更新页面上下文，不会自动执行任何车端工具。</small>
-    </div>
-    <p class="cloud-ops-test-status" data-role="status">只读初始化中...</p>
-  </div>
-
   <div class="cloud-ops-test-stats">
     {fleetStats.map((item) => (
       <article class="cloud-ops-test-stat" data-stat={item.key}>
@@ -273,6 +250,28 @@ const agentRules = [
             <div class="cloud-ops-test-panel-head">
               <h3>真实车辆列表</h3>
               <span data-role="vehicle-count">--</span>
+            </div>
+            <div class="cloud-ops-test-list-controls">
+              <button class="cloud-ops-test-command-button is-primary" type="button" data-action="refresh-vehicles">刷新车辆列表</button>
+              <label class="cloud-ops-test-select-field">
+                当前车辆
+                <select data-role="vehicle-select">
+                  <option value="">加载车辆中...</option>
+                </select>
+              </label>
+              <label class="cloud-ops-test-select-field">
+                列表排序
+                <select data-role="vehicle-sort-select">
+                  <option value="status">按车辆状态：异常在前</option>
+                  <option value="id">按车辆编号</option>
+                </select>
+              </label>
+              <div class="cloud-ops-test-selected-strip">
+                <span>已选</span>
+                <strong data-role="selected-vehicle-title">--</strong>
+                <small>切换车辆只更新上下文，不会自动执行车端工具。</small>
+              </div>
+              <p class="cloud-ops-test-status" data-role="status">只读初始化中...</p>
             </div>
             <div class="cloud-ops-test-api-strip">
               <span>接口 <strong data-role="interface-source">--</strong></span>
