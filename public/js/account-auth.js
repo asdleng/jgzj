@@ -7,6 +7,7 @@
     register: "/api/auth/register",
     verifyEmail: "/api/auth/request-email-verification",
     users: "/api/auth/users",
+    user: (username) => `/api/auth/users/${encodeURIComponent(username)}`,
     permissions: "/api/auth/permissions",
     privateNavigation: "/api/site/private-navigation"
   };
@@ -31,6 +32,7 @@
   const adminActive = document.getElementById("jgzj-admin-active");
   const adminPermissionList = document.getElementById("jgzj-admin-permission-list");
   const adminSave = document.getElementById("jgzj-admin-save");
+  const adminDelete = document.getElementById("jgzj-admin-delete");
 
   let authState = { authenticated: false, user: null, permissions: [] };
   let allPermissions = [];
@@ -417,7 +419,10 @@
     selectedUsername = username;
     const user = adminUsers.find((item) => item.username === username);
     renderAdminUsers();
-    if (!user || !adminPermissionList || !adminSelected || !adminActive || !adminSave) return;
+    if (!user || !adminPermissionList || !adminSelected || !adminActive || !adminSave) {
+      if (adminDelete) adminDelete.disabled = true;
+      return;
+    }
     adminSelected.textContent = `正在编辑：${user.username}${user.super_admin ? "（超级管理员不可修改权限）" : ""}`;
     adminActive.checked = user.active !== false;
     adminActive.disabled = Boolean(user.super_admin);
@@ -443,6 +448,9 @@
       adminPermissionList.appendChild(groupNode);
     });
     adminSave.disabled = Boolean(user.super_admin);
+    if (adminDelete) {
+      adminDelete.disabled = Boolean(user.super_admin) || user.username === authState.user?.username;
+    }
   }
 
   async function loadAdminUsers() {
@@ -462,7 +470,7 @@
     const permissions = [...adminPermissionList.querySelectorAll("input[type='checkbox']:checked")].map((input) => input.value);
     setStatus("正在保存权限...", "loading");
     try {
-      const data = await requestJson(`${endpoints.users}/${encodeURIComponent(user.username)}`, {
+      const data = await requestJson(endpoints.user(user.username), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -479,12 +487,43 @@
     }
   }
 
+  async function deleteAdminUser() {
+    const user = adminUsers.find((item) => item.username === selectedUsername);
+    if (!user || user.super_admin || user.username === authState.user?.username) return;
+    const confirmed = window.prompt(`确认删除账号 ${user.username}？请输入完整用户名。`);
+    if (confirmed !== user.username) {
+      setStatus("已取消删除。", "idle");
+      return;
+    }
+    if (adminDelete) adminDelete.disabled = true;
+    setStatus(`正在删除账号 ${user.username}...`, "loading");
+    try {
+      await requestJson(endpoints.user(user.username), { method: "DELETE" });
+      adminUsers = adminUsers.filter((item) => item.username !== user.username);
+      selectedUsername = adminUsers.find((item) => !item.super_admin)?.username || adminUsers[0]?.username || "";
+      renderAdminUsers();
+      if (selectedUsername) {
+        selectAdminUser(selectedUsername);
+      } else if (adminSelected && adminPermissionList && adminSave) {
+        adminSelected.textContent = "没有可编辑成员。";
+        adminPermissionList.innerHTML = "";
+        adminSave.disabled = true;
+        if (adminDelete) adminDelete.disabled = true;
+      }
+      setStatus(`账号 ${user.username} 已删除。`, "ok");
+    } catch (error) {
+      setStatus(error?.message || "删除失败。", "error");
+      selectAdminUser(user.username);
+    }
+  }
+
   loginForm?.addEventListener("submit", handleLogin);
   registerForm?.addEventListener("submit", handleRegister);
   emailForm?.addEventListener("submit", handleEmailVerification);
   logoutBtn?.addEventListener("click", handleLogout);
   adminRefreshBtn?.addEventListener("click", () => loadAdminUsers().catch((error) => setStatus(error?.message || "加载失败。", "error")));
   adminForm?.addEventListener("submit", saveAdminUser);
+  adminDelete?.addEventListener("click", deleteAdminUser);
   window.addEventListener("jgzj:permissions-refresh", () => refreshMe());
 
   function bootAuthUi() {

@@ -80,7 +80,10 @@ const isPageMode = mode === "page";
             <span>启用</span>
           </label>
           <div id="jgzj-admin-permission-list" class="site-auth-permission-list"></div>
-          <button id="jgzj-admin-save" type="submit" disabled>保存设置</button>
+          <div class="site-auth-admin-actions">
+            <button id="jgzj-admin-save" type="submit" disabled>保存设置</button>
+            <button id="jgzj-admin-delete" class="site-auth-danger-button" type="button" disabled>删除账号</button>
+          </div>
         </form>
       </div>
     </section>
@@ -89,4 +92,4 @@ const isPageMode = mode === "page";
   </section>
 ) : null}
 
-<script is:inline data-cfasync="false" src="/js/account-auth.js?v=20260610-3" defer data-auth-mode={mode}></script>
+<script is:inline data-cfasync="false" src="/js/account-auth.js?v=20260709-1" defer data-auth-mode={mode}></script>

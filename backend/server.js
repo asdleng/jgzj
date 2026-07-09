@@ -12413,6 +12413,29 @@ app.patch('/api/auth/users/:username', (req, res, next) => authStore.requireSupe
   }
 });
 
+app.delete('/api/auth/users/:username', (req, res, next) => authStore.requireSuperAdmin(req, res, next), async (req, res) => {
+  try {
+    const result = await authStore.deleteUser(req.jgzjAuth?.user, req.params.username, requestMeta(req));
+    return res.json({
+      ok: true,
+      ...result
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      ok: false,
+      error: error.message || 'user_delete_failed',
+      detail:
+        error.message === 'cannot_delete_super_admin'
+          ? '不能删除超级管理员账号。'
+          : error.message === 'cannot_delete_self'
+            ? '不能删除当前登录账号。'
+            : error.message === 'user_not_found'
+              ? '账号不存在。'
+              : '账号删除失败。'
+    });
+  }
+});
+
 app.get('/api/operation-audit', authStore.requirePermission('audit:read'), async (req, res) => {
   try {
     const legacyRecords = legacyAuthAuditRecords(await authStore.listAudit());

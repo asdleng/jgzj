@@ -164,6 +164,7 @@ a {
 .site-auth-form button,
 .site-auth-admin-form button,
 .site-auth-secondary-button,
+.site-auth-danger-button,
 .site-auth-icon-button {
   border: 1px solid rgba(34, 211, 238, 0.38);
   background: rgba(15, 23, 42, 0.84);
@@ -351,21 +352,23 @@ a {
 
 .site-auth-form button,
 .site-auth-admin-form button,
-.site-auth-secondary-button {
+.site-auth-secondary-button,
+.site-auth-danger-button {
   min-height: 38px;
   border-radius: 10px;
   padding: 8px 12px;
 }
 
 .site-auth-form button,
-.site-auth-admin-form button {
+.site-auth-admin-form button:not(.site-auth-danger-button) {
   background: linear-gradient(135deg, rgba(6, 182, 212, 0.88), rgba(37, 99, 235, 0.78));
   color: #fff;
 }
 
 .site-auth-form button:disabled,
 .site-auth-admin-form button:disabled,
-.site-auth-secondary-button:disabled {
+.site-auth-secondary-button:disabled,
+.site-auth-danger-button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -460,6 +463,24 @@ a {
 .site-auth-admin-form {
   display: grid;
   gap: 12px;
+}
+
+.site-auth-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.site-auth-danger-button {
+  color: #fecdd3;
+  border-color: rgba(251, 113, 133, 0.56);
+  background: rgba(127, 29, 29, 0.34);
+}
+
+.site-auth-danger-button:not(:disabled):hover {
+  color: #fff1f2;
+  border-color: rgba(251, 113, 133, 0.82);
+  background: rgba(190, 18, 60, 0.42);
 }
 
 .site-auth-active-row {

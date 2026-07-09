@@ -229,6 +229,7 @@ class AuthStore {
       users: {},
       sessions: {},
       email_verification_tokens: {},
+      deleted_users: {},
       audit: [],
       ...(state && typeof state === 'object' ? state : {})
     };
@@ -239,6 +240,8 @@ class AuthStore {
       next.email_verification_tokens && typeof next.email_verification_tokens === 'object'
         ? next.email_verification_tokens
         : {};
+    next.deleted_users =
+      next.deleted_users && typeof next.deleted_users === 'object' ? next.deleted_users : {};
     next.audit = Array.isArray(next.audit) ? next.audit.slice(-MAX_AUDIT_ITEMS) : [];
 
     this.ensureSeedUser(next, 'asdleng', process.env.JGZJ_SUPERADMIN_PASSWORD || 'Asd174524', {
@@ -280,6 +283,9 @@ class AuthStore {
 
   ensureSeedUser(state, username, password, options) {
     const normalized = normalizeUsername(username);
+    if (!options.super_admin && state.deleted_users?.[normalized]) {
+      return;
+    }
     const existing = state.users[normalized];
     if (!existing) {
       state.users[normalized] = createDefaultUser(normalized, password, options);
@@ -830,6 +836,67 @@ class AuthStore {
         active: user.active
       });
       return publicUser(user);
+    });
+  }
+
+  async deleteUser(actor, usernameRaw, meta = {}) {
+    const actorName = normalizeUsername(actor?.username || actor);
+    const username = normalizeUsername(usernameRaw);
+    return this.withWriteLock((state) => {
+      const user = state.users[username];
+      if (!user) {
+        const error = new Error('user_not_found');
+        error.status = 404;
+        throw error;
+      }
+      if (username === actorName) {
+        const error = new Error('cannot_delete_self');
+        error.status = 400;
+        throw error;
+      }
+      if (user.super_admin) {
+        const error = new Error('cannot_delete_super_admin');
+        error.status = 403;
+        throw error;
+      }
+
+      let removedSessions = 0;
+      Object.entries(state.sessions || {}).forEach(([hash, session]) => {
+        if (normalizeUsername(session?.username) === username) {
+          delete state.sessions[hash];
+          removedSessions += 1;
+        }
+      });
+
+      let removedEmailTokens = 0;
+      Object.entries(state.email_verification_tokens || {}).forEach(([hash, item]) => {
+        if (normalizeUsername(item?.username) === username) {
+          delete state.email_verification_tokens[hash];
+          removedEmailTokens += 1;
+        }
+      });
+
+      delete state.users[username];
+      state.deleted_users = state.deleted_users && typeof state.deleted_users === 'object'
+        ? state.deleted_users
+        : {};
+      state.deleted_users[username] = {
+        at: nowIso(),
+        actor: actorName,
+        ip: meta.ip || null
+      };
+      this.addAudit(state, actorName, 'auth.user.delete', username, {
+        email: user.email || '',
+        active: user.active !== false,
+        removed_sessions: removedSessions,
+        removed_email_tokens: removedEmailTokens,
+        ip: meta.ip || null
+      });
+      return {
+        username,
+        removed_sessions: removedSessions,
+        removed_email_tokens: removedEmailTokens
+      };
     });
   }
 
