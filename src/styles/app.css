@@ -7425,3 +7425,398 @@ body.yolo-review-is-panning {
     transform: rotate(360deg);
   }
 }
+
+
+/* Cloud Ops Test v2: signal-spine layout and resident agent rail. */
+.cloud-ops-test-shell {
+  --ops-rail-collapsed: 72px;
+  --ops-rail-width: min(420px, calc(100vw - 32px));
+  --ops-panel-ink: #e6eef5;
+  --ops-muted-ink: #9fb0bf;
+  --ops-signal-cyan: #00a6c8;
+  --ops-signal-green: #2c8c5a;
+  --ops-signal-amber: #d88900;
+  --ops-signal-red: #c9362c;
+  position: relative;
+  padding-right: var(--ops-rail-collapsed);
+}
+
+.cloud-ops-test-shell.has-agent-pinned {
+  padding-right: calc(var(--ops-rail-width) + 14px);
+}
+
+.cloud-ops-test-fleet-spine-shell {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(103, 232, 249, 0.24);
+  background:
+    linear-gradient(90deg, rgba(2, 6, 23, 0.72), rgba(8, 47, 73, 0.38)),
+    repeating-linear-gradient(90deg, rgba(103, 232, 249, 0.06) 0 1px, transparent 1px 18px);
+}
+
+.cloud-ops-test-fleet-spine-shell h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: clamp(1rem, 1.4vw, 1.35rem);
+}
+
+.cloud-ops-test-fleet-spine-shell p {
+  margin: 5px 0 0;
+  color: var(--ops-muted-ink);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.cloud-ops-test-fleet-spine {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
+  gap: 7px;
+}
+
+.cloud-ops-test-signal-cell {
+  position: relative;
+  min-height: 58px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 7px 8px 7px 10px;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  background: rgba(15, 23, 42, 0.78);
+  color: var(--ops-panel-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cloud-ops-test-signal-cell::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: #64748b;
+}
+
+.cloud-ops-test-signal-cell strong {
+  position: relative;
+  z-index: 1;
+  color: #f8fafc;
+  font-family: "Orbitron", "Noto Sans SC", sans-serif;
+  font-size: 0.78rem;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cloud-ops-test-signal-cell span {
+  position: relative;
+  z-index: 1;
+  color: #cbd5e1;
+  font-size: 0.66rem;
+  font-weight: 900;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cloud-ops-test-signal-cell.is-ok::before { background: var(--ops-signal-green); }
+.cloud-ops-test-signal-cell.is-warn::before { background: var(--ops-signal-amber); }
+.cloud-ops-test-signal-cell.is-danger::before { background: var(--ops-signal-red); }
+.cloud-ops-test-signal-cell.is-neutral::before { background: #94a3b8; }
+.cloud-ops-test-signal-cell.is-selected,
+.cloud-ops-test-signal-cell:focus-visible {
+  outline: none;
+  border-color: rgba(103, 232, 249, 0.9);
+  box-shadow: 0 0 0 2px rgba(0, 166, 200, 0.22), 0 12px 28px rgba(2, 6, 23, 0.24);
+}
+
+.cloud-ops-test-disclosure {
+  display: grid;
+  gap: 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(71, 85, 105, 0.58);
+  background: rgba(2, 6, 23, 0.42);
+}
+
+.cloud-ops-test-disclosure > summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  color: #dbeafe;
+  font-size: 0.9rem;
+  font-weight: 900;
+  list-style-position: inside;
+}
+
+.cloud-ops-test-disclosure[open] {
+  border-color: rgba(103, 232, 249, 0.34);
+}
+
+.cloud-ops-test-disclosure > :not(summary) {
+  margin: 0 12px 12px;
+}
+
+.cloud-ops-test-result-summary {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(52, 211, 153, 0.24);
+  background: rgba(6, 78, 59, 0.18);
+  color: #d1fae5;
+  line-height: 1.55;
+}
+
+.cloud-ops-test-json--compact {
+  min-height: 140px;
+  max-height: 260px;
+}
+
+.cloud-ops-test-agent-rail {
+  position: fixed;
+  z-index: 120;
+  top: 92px;
+  right: 14px;
+  width: var(--ops-rail-collapsed);
+  max-height: calc(100vh - 108px);
+  display: grid;
+  justify-items: end;
+  pointer-events: none;
+}
+
+.cloud-ops-test-agent-tab,
+.cloud-ops-test-agent-panel {
+  pointer-events: auto;
+}
+
+.cloud-ops-test-agent-tab {
+  width: var(--ops-rail-collapsed);
+  min-height: 92px;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  padding: 10px 8px;
+  border-radius: 18px;
+  border: 1px solid rgba(103, 232, 249, 0.46);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(103, 232, 249, 0.28), transparent 42%),
+    rgba(2, 6, 23, 0.92);
+  color: #e0f2fe;
+  box-shadow: 0 18px 42px rgba(2, 6, 23, 0.45);
+  cursor: pointer;
+}
+
+.cloud-ops-test-agent-tab strong {
+  font-family: "Orbitron", "Noto Sans SC", sans-serif;
+  font-size: 1.15rem;
+  letter-spacing: 0.08em;
+}
+
+.cloud-ops-test-agent-tab small {
+  writing-mode: vertical-rl;
+  color: #93c5fd;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.cloud-ops-test-agent-tab-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 18px rgba(34, 197, 94, 0.82);
+}
+
+.cloud-ops-test-agent-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--ops-rail-width);
+  max-height: calc(100vh - 108px);
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  overflow: auto;
+  border-radius: 22px;
+  border: 1px solid rgba(103, 232, 249, 0.34);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(0, 166, 200, 0.18), transparent 36%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 0.98));
+  box-shadow: 0 26px 70px rgba(2, 6, 23, 0.68);
+  opacity: 0;
+  transform: translateX(calc(100% - var(--ops-rail-collapsed))) scale(0.98);
+  transform-origin: top right;
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+
+.cloud-ops-test-agent-rail.is-open .cloud-ops-test-agent-panel,
+.cloud-ops-test-agent-rail.is-pinned .cloud-ops-test-agent-panel,
+.cloud-ops-test-agent-rail:focus-within .cloud-ops-test-agent-panel {
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  pointer-events: auto;
+}
+
+.cloud-ops-test-agent-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cloud-ops-test-agent-panel-head h2 {
+  margin: 3px 0 0;
+  color: #f8fafc;
+  font-size: 1.4rem;
+}
+
+.cloud-ops-test-agent-panel-head p:not(.cloud-ops-test-kicker) {
+  margin: 5px 0 0;
+  color: #94a3b8;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.cloud-ops-test-agent-pin {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(103, 232, 249, 0.38);
+  background: rgba(8, 47, 73, 0.62);
+  color: #cffafe;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.cloud-ops-test-agent-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cloud-ops-test-agent-mini-grid article {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(71, 85, 105, 0.58);
+  background: rgba(2, 6, 23, 0.55);
+}
+
+.cloud-ops-test-agent-mini-grid span,
+.cloud-ops-test-agent-mini-grid small,
+.cloud-ops-test-agent-context-bar,
+.cloud-ops-test-agent-safe-copy,
+.cloud-ops-test-agent-history-count {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.cloud-ops-test-agent-mini-grid strong {
+  color: #f8fafc;
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-agent-context-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(103, 232, 249, 0.2);
+  background: rgba(8, 47, 73, 0.3);
+}
+
+.cloud-ops-test-agent-rail .cloud-ops-test-agent-messages {
+  min-height: 220px;
+  max-height: min(34vh, 360px);
+}
+
+.cloud-ops-test-agent-rail .cloud-ops-test-agent-input {
+  min-height: 86px;
+}
+
+.cloud-ops-test-agent-rail .cloud-ops-test-agent-toolbar {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cloud-ops-test-agent-rail .cloud-ops-test-command-button {
+  min-height: 58px;
+}
+
+.cloud-ops-test-agent-safe-copy {
+  margin: 0;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(52, 211, 153, 0.22);
+  background: rgba(6, 78, 59, 0.18);
+  color: #bbf7d0;
+}
+
+@media (max-width: 1100px) {
+  .cloud-ops-test-shell,
+  .cloud-ops-test-shell.has-agent-pinned {
+    padding-right: 0;
+  }
+
+  .cloud-ops-test-agent-rail {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    width: min(420px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+  }
+
+  .cloud-ops-test-agent-tab {
+    justify-self: end;
+    width: auto;
+    min-height: 50px;
+    grid-auto-flow: column;
+    padding: 8px 12px;
+  }
+
+  .cloud-ops-test-agent-tab small {
+    writing-mode: horizontal-tb;
+  }
+
+  .cloud-ops-test-agent-panel {
+    top: auto;
+    bottom: 0;
+    width: min(420px, calc(100vw - 24px));
+    max-height: min(82vh, 720px);
+    transform: translateY(24px) scale(0.98);
+  }
+
+  .cloud-ops-test-agent-rail.is-open .cloud-ops-test-agent-panel,
+  .cloud-ops-test-agent-rail.is-pinned .cloud-ops-test-agent-panel,
+  .cloud-ops-test-agent-rail:focus-within .cloud-ops-test-agent-panel {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 720px) {
+  .cloud-ops-test-fleet-spine {
+    grid-template-columns: repeat(auto-fill, minmax(54px, 1fr));
+  }
+
+  .cloud-ops-test-agent-mini-grid,
+  .cloud-ops-test-agent-rail .cloud-ops-test-agent-toolbar {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-ops-test-agent-panel,
+  .cloud-ops-test-tabs button,
+  .cloud-ops-test-command-button,
+  .cloud-ops-test-stop-card {
+    transition: none !important;
+    animation: none !important;
+  }
+}

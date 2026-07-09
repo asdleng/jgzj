@@ -5,6 +5,7 @@
   const AUTH_URL = "/api/auth/me";
   const CROWD_VEHICLES_URL = "/api/park-pcm/crowd/vehicles";
   const CROWD_SAMPLES_URL = "/api/park-pcm/crowd/samples";
+  const CROWD_REPORT_PDF_URL = "/api/park-pcm/crowd/report/pdf";
   const CROWD_ROUTES_URL = "/api/park-pcm/crowd/routes";
   const CROWD_PATROLS_URL = "/api/park-pcm/crowd/patrols";
   const CROWD_UPLOADS_URL = "/api/park-pcm/crowd/uploads";
@@ -52,6 +53,12 @@
   const crowdStatusEl = root.querySelector("[data-park-pcm-crowd-status]");
   const crowdLastEl = root.querySelector("[data-park-pcm-crowd-last]");
   const crowdSamplesEl = root.querySelector("[data-park-pcm-crowd-samples]");
+  const reportVehicleSelect = root.querySelector("[data-park-pcm-report-vehicle]");
+  const reportStartInput = root.querySelector("[data-park-pcm-report-start]");
+  const reportEndInput = root.querySelector("[data-park-pcm-report-end]");
+  const reportDownloadBtn = root.querySelector("[data-park-pcm-report-download]");
+  const reportDownloadLabel = root.querySelector("[data-park-pcm-report-download-label]");
+  const reportStatusEl = root.querySelector("[data-park-pcm-report-status]");
   const imagePreview = {
     overlay: null,
     image: null,
@@ -81,6 +88,7 @@
   let selectedSampleId = "";
   let selectedDayKey = "";
   let heatmapDateTouched = false;
+  let reportDownloadInFlight = false;
   let sampleLoadRequestId = 0;
   let routeLoadRequestId = 0;
   let latestCrowdSamples = [];
@@ -115,6 +123,7 @@
     busy = Boolean(nextBusy);
     if (patrolRefreshBtn) patrolRefreshBtn.disabled = busy || !authenticated;
     if (collectorRefreshBtn) collectorRefreshBtn.disabled = busy || !authenticated;
+    if (reportDownloadBtn) reportDownloadBtn.disabled = busy || !authenticated || reportDownloadInFlight;
   }
 
   async function fetchJson(url, options) {
@@ -1338,6 +1347,56 @@
     return buildHeatmapDayAxis(selectedVehicleCrowdSamples());
   }
 
+  function setReportStatus(text) {
+    if (reportStatusEl) reportStatusEl.textContent = text || "";
+  }
+
+  function setReportLoading(loading) {
+    reportDownloadInFlight = Boolean(loading);
+    if (reportDownloadBtn) {
+      reportDownloadBtn.disabled = busy || !authenticated || reportDownloadInFlight;
+      reportDownloadBtn.dataset.loading = reportDownloadInFlight ? "true" : "false";
+    }
+    if (reportDownloadLabel) {
+      reportDownloadLabel.textContent = reportDownloadInFlight ? "正在生成报告" : "生成并下载报告";
+    }
+  }
+
+  function reportAllAxisDays() {
+    return buildHeatmapDayAxis(latestCrowdSamples).days || [];
+  }
+
+  function reportDefaultRange() {
+    const axis = selectedVehicleId ? dayAxisForSelectedVehicle() : { days: reportAllAxisDays() };
+    const days = Array.isArray(axis.days) ? axis.days : [];
+    const latest = days.length ? days[days.length - 1].key : dayKeyFromDate(new Date());
+    const latestMs = dayKeyToMs(latest) ?? dayKeyToMs(dayKeyFromDate(new Date()));
+    const start = latestMs == null ? latest : dayKeyFromMs(latestMs - 6 * DAY_MS);
+    return {
+      start,
+      end: latest
+    };
+  }
+
+  function syncReportDateInputs(force) {
+    if (!reportStartInput || !reportEndInput) return;
+    const range = reportDefaultRange();
+    if (force || !reportStartInput.value) reportStartInput.value = range.start;
+    if (force || !reportEndInput.value) reportEndInput.value = range.end;
+    reportStartInput.max = reportEndInput.value || range.end;
+    reportEndInput.min = reportStartInput.value || range.start;
+  }
+
+  function syncReportVehicleOptions() {
+    if (!reportVehicleSelect) return;
+    reportVehicleSelect.textContent = selectedVehicleId ? `当前车辆：${selectedVehicleId}` : "请先在上方选择车辆";
+  }
+
+  function syncReportDefaults(options) {
+    syncReportVehicleOptions();
+    syncReportDateInputs(options?.forceDates === true);
+  }
+
   function ensureSelectedDay(axis) {
     const days = Array.isArray(axis && axis.days) ? axis.days : [];
     if (!days.length) {
@@ -2375,6 +2434,7 @@
         ensureVehicleOption(selectedVehicleId);
         crowdVehicleSelect.value = selectedVehicleId;
       }
+      syncReportDefaults();
       renderHistoryDetail();
       setVehicleSummary(selectedVehicleId ? `${selectedVehicleId} · 人流热力数据` : "暂无车辆列表。");
       return selectedVehicleId;
@@ -2393,6 +2453,7 @@
     }
     crowdVehicleSelect.value = nextVehicleId;
     selectedVehicleId = nextVehicleId;
+    syncReportDefaults();
     return nextVehicleId;
   }
 
@@ -2624,6 +2685,7 @@
         if (crowdVehicleSelect) crowdVehicleSelect.value = defaultVehicleId;
       }
     }
+    syncReportDefaults({ forceVehicle: true, forceDates: !reportStartInput?.value || !reportEndInput?.value });
     renderCurrentCrowdView();
   }
 
@@ -2704,6 +2766,80 @@
     }
   }
 
+  function filenameFromDisposition(disposition, fallback) {
+    const value = String(disposition || "");
+    const utfMatch = value.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utfMatch) {
+      try {
+        return decodeURIComponent(utfMatch[1].trim().replace(/^"|"$/g, "")) || fallback;
+      } catch (_error) {
+        return fallback;
+      }
+    }
+    const plainMatch = value.match(/filename="?([^";]+)"?/i);
+    return plainMatch ? plainMatch[1] : fallback;
+  }
+
+  async function downloadCrowdReportPdf() {
+    if (!authenticated || busy || reportDownloadInFlight) return;
+    const vehicleId = String(selectedVehicleId || crowdVehicleSelect?.value || "").trim();
+    const startDate = String(reportStartInput?.value || "").trim();
+    const endDate = String(reportEndInput?.value || "").trim();
+    if (!vehicleId) {
+      setReportStatus("请先在上方选择车辆。");
+      return;
+    }
+    if (!startDate || !endDate) {
+      setReportStatus("请选择开始日期和结束日期。");
+      return;
+    }
+    if (startDate > endDate) {
+      setReportStatus("开始日期不能晚于结束日期。");
+      return;
+    }
+    setReportLoading(true);
+    setReportStatus(`${vehicleId} · ${startDate} 至 ${endDate} 报告生成中。`);
+    try {
+      const query = new URLSearchParams({
+        vehicle_id: vehicleId,
+        start_date: startDate,
+        end_date: endDate
+      });
+      const response = await fetch(`${CROWD_REPORT_PDF_URL}?${query.toString()}`, {
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/pdf"
+        }
+      });
+      if (!response.ok) {
+        let message = `http_${response.status}`;
+        try {
+          const payload = await response.json();
+          message = payload.detail || payload.error || message;
+        } catch (_error) {
+          // Keep the HTTP status when the response is not JSON.
+        }
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const fallbackName = `park-crowd-${vehicleId}-${startDate}-${endDate}.pdf`;
+      const filename = filenameFromDisposition(response.headers.get("content-disposition"), fallbackName);
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 5000);
+      setReportStatus(`${vehicleId} · ${startDate} 至 ${endDate} 报告已生成。`);
+    } catch (error) {
+      setReportStatus(`报告生成失败：${error.message || "-"}`);
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
   async function init() {
     setBusy(true);
     try {
@@ -2762,6 +2898,21 @@
       selectedSampleId = "";
       renderCurrentCrowdView();
     });
+  }
+  if (reportStartInput) {
+    reportStartInput.addEventListener("change", () => {
+      if (reportEndInput) reportEndInput.min = reportStartInput.value || "";
+      setReportStatus("日期范围已更新。");
+    });
+  }
+  if (reportEndInput) {
+    reportEndInput.addEventListener("change", () => {
+      if (reportStartInput) reportStartInput.max = reportEndInput.value || "";
+      setReportStatus("日期范围已更新。");
+    });
+  }
+  if (reportDownloadBtn) {
+    reportDownloadBtn.addEventListener("click", downloadCrowdReportPdf);
   }
   if (collectorRefreshBtn) {
     collectorRefreshBtn.addEventListener("click", async () => {

@@ -1169,6 +1169,8 @@ module.exports = function registerParkPcmRoutes(app, options) {
   );
   const snapshotPath = path.join(runtimeRoot, 'last-snapshot.json');
   const reportStatePath = path.join(runtimeRoot, 'report-state.json');
+  const reportPdfRoot = path.join(runtimeRoot, 'report-pdf');
+  const reportPdfRendererPath = path.join(rootDir, 'scripts', 'render_park_crowd_report_pdf.py');
   const crowdFramesRoot = path.join(runtimeRoot, 'crowd-frames');
   const crowdRedactedFramesRoot = path.join(runtimeRoot, 'crowd-frames-redacted');
   const crowdRedactionPersonModelPath = path.resolve(
@@ -3361,6 +3363,528 @@ module.exports = function registerParkPcmRoutes(app, options) {
     } catch (_error) {
       return [];
     }
+  }
+
+  function normalizeReportDateKey(value, fallback) {
+    const raw = String(value || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+    if (raw) {
+      const parsed = new Date(raw);
+      if (!Number.isNaN(parsed.getTime())) return crowdDayKey(parsed);
+    }
+    return fallback || '';
+  }
+
+  function compareDayKeys(left, right) {
+    return String(left || '').localeCompare(String(right || ''));
+  }
+
+  function normalizeCrowdReportParams(params) {
+    const vehicleId = String(params?.vehicle_id || params?.vehicleId || '').trim();
+    if (!vehicleId) {
+      const error = new Error('vehicle_id_required');
+      error.status = 400;
+      throw error;
+    }
+    const todayKey = crowdDayKey(new Date());
+    let endDate = normalizeReportDateKey(params?.end_date || params?.endDate, todayKey);
+    let startDate = normalizeReportDateKey(params?.start_date || params?.startDate, '');
+    if (!startDate) {
+      const endMs = crowdDayKeyToUtcMs(endDate) || crowdDayKeyToUtcMs(todayKey);
+      startDate = crowdDayKeyFromUtcMs(endMs - 6 * 24 * 60 * 60 * 1000);
+    }
+    const startMs = crowdDayKeyToUtcMs(startDate);
+    const endMs = crowdDayKeyToUtcMs(endDate);
+    if (startMs == null || endMs == null) {
+      const error = new Error('invalid_date_range');
+      error.status = 400;
+      throw error;
+    }
+    if (startMs > endMs) {
+      const error = new Error('start_date_after_end_date');
+      error.status = 400;
+      throw error;
+    }
+    const maxDays = 31;
+    const dayCount = Math.round((endMs - startMs) / (24 * 60 * 60 * 1000)) + 1;
+    if (dayCount > maxDays) {
+      const error = new Error(`date_range_too_large_max_${maxDays}_days`);
+      error.status = 400;
+      throw error;
+    }
+    return {
+      vehicle_id: vehicleId,
+      start_date: startDate,
+      end_date: endDate,
+      day_count: dayCount
+    };
+  }
+
+  function reportSampleDayKey(sample) {
+    const ms = Number(sample?.collected_at_ms || Date.parse(sample?.collected_at || ''));
+    if (Number.isFinite(ms)) return crowdDayKey(new Date(ms));
+    const frame = Array.isArray(sample?.frames) ? sample.frames.find((item) => item?.image_path) : null;
+    const match = String(frame?.image_path || '').match(/^(\d{4})(\d{2})(\d{2})\//);
+    return match ? `${match[1]}-${match[2]}-${match[3]}` : '';
+  }
+
+  function reportPeopleCount(sample) {
+    const direct = Number(sample?.analysis?.people_count);
+    if (Number.isFinite(direct)) return direct;
+    const counts = (Array.isArray(sample?.frames) ? sample.frames : [])
+      .map((frame) => Number(frame?.analysis?.people_count))
+      .filter((value) => Number.isFinite(value));
+    if (!counts.length) return null;
+    return counts.reduce((sum, value) => sum + value, 0);
+  }
+
+  function reportFeatureCountMap(sample, key) {
+    const analysis = sample?.analysis && typeof sample.analysis === 'object' ? sample.analysis : {};
+    return analysis[key] && typeof analysis[key] === 'object' ? analysis[key] : {};
+  }
+
+  function addReportCount(target, key, value) {
+    const normalizedKey = String(key || '').trim();
+    const count = Number(value);
+    if (!normalizedKey || !Number.isFinite(count) || count <= 0) return;
+    target[normalizedKey] = (target[normalizedKey] || 0) + count;
+  }
+
+  function reportHasKnownFeatureValue(map) {
+    return Object.entries(map || {}).some(([key, value]) => key !== 'unknown' && Number(value) > 0);
+  }
+
+  function derivedReportAgeStageMap(sample) {
+    const direct = reportFeatureCountMap(sample, 'age_stage_groups');
+    if (reportHasKnownFeatureValue(direct)) return direct;
+    const legacy = reportFeatureCountMap(sample, 'age_groups');
+    const result = {};
+    addReportCount(result, 'junior', (legacy.child || 0) + (legacy.teenager || 0));
+    addReportCount(result, 'youth', legacy.adult);
+    addReportCount(result, 'senior', legacy.elderly);
+    addReportCount(result, 'unknown', legacy.unknown);
+    return result;
+  }
+
+  function derivedReportGenderMap(sample) {
+    const direct = reportFeatureCountMap(sample, 'gender_groups');
+    if (reportHasKnownFeatureValue(direct)) return direct;
+    const mix = reportFeatureCountMap(sample, 'gender_mix');
+    const result = {};
+    addReportCount(result, 'male', mix.male || mix.man || mix.men);
+    addReportCount(result, 'female', mix.female || mix.woman || mix.women);
+    addReportCount(result, 'unknown', mix.unknown);
+    return result;
+  }
+
+  function derivedReportPersonAttributeMap(sample) {
+    const direct = reportFeatureCountMap(sample, 'person_attributes');
+    if (reportHasKnownFeatureValue(direct)) return direct;
+    const roles = reportFeatureCountMap(sample, 'role_types');
+    const groups = reportFeatureCountMap(sample, 'group_types');
+    const result = {};
+    addReportCount(result, 'visitor', roles.visitor);
+    addReportCount(result, 'staff', roles.staff);
+    addReportCount(result, 'security', roles.security);
+    addReportCount(result, 'cleaner', roles.cleaner);
+    addReportCount(result, 'delivery', roles.delivery);
+    addReportCount(result, 'maintenance', roles.maintenance);
+    addReportCount(result, 'vendor', roles.vendor);
+    addReportCount(result, 'student', roles.student);
+    addReportCount(result, 'family', groups.family_parent_child);
+    addReportCount(result, 'couple', groups.pair);
+    addReportCount(result, 'unknown', roles.unknown || groups.unknown);
+    return result;
+  }
+
+  function reportAttentionMap(sample) {
+    const stageMap = derivedReportAgeStageMap(sample);
+    const mobility = reportFeatureCountMap(sample, 'mobility_types');
+    const result = {};
+    addReportCount(result, 'child', stageMap.junior);
+    addReportCount(result, 'elderly', stageMap.senior);
+    ['wheelchair', 'cane_or_walker', 'stroller', 'assisted_walking', 'slow_moving'].forEach((key) => {
+      addReportCount(result, key, mobility[key]);
+    });
+    return result;
+  }
+
+  function addReportFeatureMap(target, source, options) {
+    const includeUnknown = options?.include_unknown === true;
+    Object.entries(source || {}).forEach(([key, value]) => {
+      if (!includeUnknown && key === 'unknown') return;
+      addReportCount(target, key, value);
+    });
+  }
+
+  function sortedReportFeatureRows(map, labels, limit) {
+    return Object.entries(map || {})
+      .map(([key, value]) => ({ key, label: labels[key] || key, value: Number(value) || 0 }))
+      .filter((row) => row.value > 0)
+      .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label, 'zh-CN'))
+      .slice(0, limit || 12);
+  }
+
+  function reportTopLabel(rows, fallback) {
+    const row = Array.isArray(rows) && rows.length ? rows[0] : null;
+    return row ? row.label : fallback;
+  }
+
+  function reportTopShare(rows) {
+    const total = (Array.isArray(rows) ? rows : [])
+      .reduce((sum, row) => sum + (Number(row.value) || 0), 0);
+    if (!total || !Array.isArray(rows) || !rows.length) return '';
+    return `${Math.round((Number(rows[0].value) || 0) * 100 / total)}%`;
+  }
+
+  function reportFramePeopleCount(frame) {
+    const direct = Number(frame?.analysis?.people_count);
+    return Number.isFinite(direct) ? direct : null;
+  }
+
+  function reportSceneTagsFrom(item) {
+    const tags = item?.analysis?.scene_tags;
+    return Array.isArray(tags) ? tags.map((tag) => String(tag || '').trim()).filter(Boolean) : [];
+  }
+
+  function reportSampleSceneTags(sample) {
+    const tags = new Set(reportSceneTagsFrom(sample));
+    (Array.isArray(sample?.frames) ? sample.frames : []).forEach((frame) => {
+      reportSceneTagsFrom(frame).forEach((tag) => tags.add(tag));
+    });
+    return [...tags].slice(0, 6);
+  }
+
+  function reportCleanNote(value) {
+    return String(value || '')
+      .replace(/\s+/g, ' ')
+      .replace(/[。；;,\s]+$/g, '')
+      .slice(0, 120);
+  }
+
+  function reportPhotoCaption(sample, frame) {
+    const people = reportFramePeopleCount(frame) ?? reportPeopleCount(sample);
+    const tags = [...new Set([...reportSceneTagsFrom(frame), ...reportSampleSceneTags(sample)])].slice(0, 3);
+    const note = reportCleanNote(frame?.analysis?.note || sample?.analysis?.note);
+    const parts = [];
+    if (people != null) parts.push(`画面识别约 ${people} 人`);
+    if (tags.length) parts.push(tags.join('、'));
+    if (note && !/无可见人员/.test(note)) parts.push(note);
+    return parts.length ? `${parts.join('，')}。` : '代表性巡逻画面，已做人脸脱敏处理。';
+  }
+
+  async function readReportRedactedImageDataUri(imagePath) {
+    const targetPath = await ensureRedactedCrowdFrame(imagePath);
+    const buffer = await fsp.readFile(targetPath);
+    return `data:${imageMimeFromPath(targetPath)};base64,${buffer.toString('base64')}`;
+  }
+
+  async function buildReportRepresentativeImages(samples) {
+    const candidates = [];
+    const seen = new Set();
+    const ordered = [...(Array.isArray(samples) ? samples : [])]
+      .sort((left, right) => (Number(reportPeopleCount(right)) || 0) - (Number(reportPeopleCount(left)) || 0));
+    ordered.forEach((sample) => {
+      const frames = [...(Array.isArray(sample?.frames) ? sample.frames : [])]
+        .filter((frame) => String(frame?.image_path || '').trim())
+        .sort((left, right) => (Number(reportFramePeopleCount(right)) || 0) - (Number(reportFramePeopleCount(left)) || 0));
+      frames.forEach((frame) => {
+        const imagePath = String(frame.image_path || '').trim();
+        if (!imagePath || seen.has(imagePath)) return;
+        seen.add(imagePath);
+        candidates.push({ sample, frame, image_path: imagePath });
+      });
+    });
+
+    const result = [];
+    for (const item of candidates) {
+      if (result.length >= 2) break;
+      try {
+        const imageDataUri = await readReportRedactedImageDataUri(item.image_path);
+        result.push({
+          sample_id: item.sample.sample_id || '',
+          camera_id: item.frame.camera_id || '',
+          collected_at: item.sample.collected_at || '',
+          people_count: reportFramePeopleCount(item.frame) ?? reportPeopleCount(item.sample),
+          scene_tags: [...new Set([...reportSceneTagsFrom(item.frame), ...reportSampleSceneTags(item.sample)])].slice(0, 4),
+          caption: reportPhotoCaption(item.sample, item.frame),
+          image_data_uri: imageDataUri
+        });
+      } catch (_error) {
+        // Skip missing historical frames; the report still renders with the remaining visual material.
+      }
+    }
+    return result;
+  }
+
+  function buildReportHeatmapPoints(samples) {
+    const rows = (Array.isArray(samples) ? samples : [])
+      .map((sample) => {
+        const position = sample?.position || {};
+        const lng = numberValue(position.gaode_longitude ?? position.longitude);
+        const lat = numberValue(position.gaode_latitude ?? position.latitude);
+        const count = Number(reportPeopleCount(sample)) || 0;
+        return { lng, lat, count };
+      })
+      .filter((row) => Number.isFinite(row.lng) && Number.isFinite(row.lat) && row.count > 0)
+      .sort((left, right) => right.count - left.count);
+    const maxPoints = 260;
+    return rows.slice(0, maxPoints);
+  }
+
+  function buildReportInsights(range, totals, daySeries, featureRows) {
+    const activeDays = daySeries.filter((day) => Number(day.people_total) > 0);
+    const peakDay = [...daySeries].sort((left, right) => (Number(right.people_total) || 0) - (Number(left.people_total) || 0))[0] || null;
+    const avgPeople = activeDays.length ? Math.round((Number(totals.people_total) || 0) / activeDays.length) : 0;
+    const attr = featureRows.person_attributes || [];
+    const stage = featureRows.age_stage_groups || [];
+    const attention = featureRows.attention_signals || [];
+    return [
+      `本期 ${range.start_date} 至 ${range.end_date} 共形成 ${totals.sample_count} 条巡逻人流记录，识别人数 ${totals.people_total} 人。`,
+      peakDay && Number(peakDay.people_total) > 0
+        ? `峰值出现在 ${peakDay.key}，当日累计 ${peakDay.people_total} 人，单点峰值 ${peakDay.max_people} 人。`
+        : '本期未形成明显人流高峰。',
+      activeDays.length
+        ? `有客流的日期 ${activeDays.length} 天，活跃日均约 ${avgPeople} 人，适合关注高峰日的现场秩序和服务引导。`
+        : '本期客流活跃度较低，可作为低峰时段参考。',
+      attr.length || stage.length
+        ? `客群以${reportTopLabel(attr, reportTopLabel(stage, '常规访客'))}为主${reportTopShare(attr) ? `，占比约 ${reportTopShare(attr)}` : ''}。`
+        : '画像结构仍在积累，可结合后续巡逻数据持续观察。',
+      attention.length
+        ? `关照线索中${reportTopLabel(attention, '重点关照')}最突出，建议在高峰点位加强巡查和提示。`
+        : '本期未出现明显关照线索。'
+    ].filter(Boolean);
+  }
+
+  const reportFeatureLabels = {
+    age_stage_groups: {
+      junior: '青少年',
+      youth: '青年',
+      middle: '中年',
+      senior: '长者',
+      unknown: '未判断'
+    },
+    gender_groups: {
+      male: '男',
+      female: '女',
+      unknown: '未判断'
+    },
+    person_attributes: {
+      visitor: '普通游客',
+      business: '商务人士',
+      couple: '情侣',
+      family: '家庭',
+      staff: '园区工作人员',
+      security: '安保人员',
+      cleaner: '保洁人员',
+      delivery: '配送人员',
+      maintenance: '维修施工',
+      vendor: '商户摊位',
+      student: '学生群体',
+      unknown: '未判断'
+    },
+    mobility_types: {
+      wheelchair: '轮椅',
+      cane_or_walker: '拐杖/助行器',
+      stroller: '婴儿车',
+      assisted_walking: '被搀扶',
+      slow_moving: '行动缓慢',
+      large_baggage: '大件行李',
+      unknown: '行动特征不明'
+    },
+    activity_types: {
+      walking: '通行',
+      standing: '停留',
+      sitting_or_resting: '休息',
+      queueing: '排队',
+      gathering: '聚集',
+      running: '跑步',
+      cycling: '骑行',
+      scooter_or_ebike: '电动车/滑板车',
+      taking_photo: '拍照',
+      shopping_or_pickup: '购物/取餐',
+      crossing_road: '过路',
+      unknown: '行为不明'
+    },
+    attention_signals: {
+      child: '低龄关照',
+      elderly: '长者关照',
+      wheelchair: '轮椅',
+      cane_or_walker: '拐杖/助行器',
+      stroller: '婴儿车',
+      assisted_walking: '被搀扶',
+      slow_moving: '行动缓慢'
+    }
+  };
+
+  function buildReportDaySeries(range, samples) {
+    const startMs = crowdDayKeyToUtcMs(range.start_date);
+    const days = [];
+    for (let index = 0; index < range.day_count; index += 1) {
+      const key = crowdDayKeyFromUtcMs(startMs + index * 24 * 60 * 60 * 1000);
+      days.push({
+        key,
+        sample_count: 0,
+        recognized_count: 0,
+        people_total: 0,
+        heat_point_count: 0,
+        max_people: 0,
+        frame_count: 0,
+        image_bytes: 0
+      });
+    }
+    const byKey = new Map(days.map((day) => [day.key, day]));
+    samples.forEach((sample) => {
+      const key = reportSampleDayKey(sample);
+      const day = byKey.get(key);
+      if (!day) return;
+      const people = reportPeopleCount(sample);
+      day.sample_count += 1;
+      day.frame_count += Number(sample.frame_count) || 0;
+      day.image_bytes += Number(sample.total_image_bytes) || 0;
+      if (people != null) {
+        day.recognized_count += 1;
+        day.people_total += Number(people) || 0;
+        if (Number(people) > 0) day.heat_point_count += 1;
+        day.max_people = Math.max(day.max_people, Number(people) || 0);
+      }
+    });
+    return days;
+  }
+
+  function compactReportSample(sample) {
+    const people = reportPeopleCount(sample);
+    const position = sample?.position || {};
+    return {
+      sample_id: sample.sample_id || null,
+      collected_at: sample.collected_at || null,
+      day_key: reportSampleDayKey(sample),
+      people_count: people,
+      frame_count: Number(sample.frame_count) || 0,
+      total_image_bytes: Number(sample.total_image_bytes) || 0,
+      position: {
+        gaode_longitude: numberValue(position.gaode_longitude),
+        gaode_latitude: numberValue(position.gaode_latitude)
+      }
+    };
+  }
+
+  async function buildCrowdRangeReportPayload(range, samples) {
+    const totals = {
+      sample_count: samples.length,
+      frame_count: samples.reduce((sum, sample) => sum + (Number(sample.frame_count) || 0), 0),
+      image_bytes: samples.reduce((sum, sample) => sum + (Number(sample.total_image_bytes) || 0), 0),
+      recognized_count: 0,
+      people_total: 0,
+      heat_point_count: 0,
+      max_people: 0
+    };
+    const features = {
+      age_stage_groups: {},
+      gender_groups: {},
+      person_attributes: {},
+      mobility_types: {},
+      activity_types: {},
+      attention_signals: {}
+    };
+    samples.forEach((sample) => {
+      const people = reportPeopleCount(sample);
+      if (people != null) {
+        totals.recognized_count += 1;
+        totals.people_total += Number(people) || 0;
+        if (Number(people) > 0) totals.heat_point_count += 1;
+        totals.max_people = Math.max(totals.max_people, Number(people) || 0);
+      }
+      addReportFeatureMap(features.age_stage_groups, derivedReportAgeStageMap(sample));
+      addReportFeatureMap(features.gender_groups, derivedReportGenderMap(sample));
+      addReportFeatureMap(features.person_attributes, derivedReportPersonAttributeMap(sample));
+      addReportFeatureMap(features.mobility_types, reportFeatureCountMap(sample, 'mobility_types'));
+      addReportFeatureMap(features.activity_types, reportFeatureCountMap(sample, 'activity_types'));
+      addReportFeatureMap(features.attention_signals, reportAttentionMap(sample));
+    });
+    const featureRows = {};
+    Object.entries(features).forEach(([key, value]) => {
+      const limit = ['age_stage_groups', 'gender_groups', 'person_attributes', 'attention_signals'].includes(key) ? 6 : 8;
+      featureRows[key] = sortedReportFeatureRows(value, reportFeatureLabels[key] || {}, limit);
+    });
+    const orderedSamples = [...samples].sort((left, right) => {
+      const leftPeople = reportPeopleCount(left);
+      const rightPeople = reportPeopleCount(right);
+      return (Number(rightPeople) || 0) - (Number(leftPeople) || 0) ||
+        Number(right.collected_at_ms || Date.parse(right.collected_at || '')) -
+          Number(left.collected_at_ms || Date.parse(left.collected_at || ''));
+    });
+    const daySeries = buildReportDaySeries(range, samples);
+    const representativeImages = await buildReportRepresentativeImages(orderedSamples);
+    return {
+      ok: true,
+      title: '园区人流报告',
+      generated_at: nowIso(),
+      vehicle_id: range.vehicle_id,
+      start_date: range.start_date,
+      end_date: range.end_date,
+      day_count: range.day_count,
+      totals,
+      day_series: daySeries,
+      features: featureRows,
+      insights: buildReportInsights(range, totals, daySeries, featureRows),
+      heatmap_points: buildReportHeatmapPoints(samples),
+      representative_images: representativeImages,
+      analysis_model: crowdAnalysisModel,
+      top_samples: orderedSamples.slice(0, 12).map(compactReportSample),
+      disclaimer: '人流画像为视觉模型基于巡逻画面的自动预测结果，仅供园区运营参考，不代表真实客流或个体事实；页面展示图片已做人脸脱敏处理，不做人脸身份识别。'
+    };
+  }
+
+  async function readCrowdSamplesForReport(range) {
+    const rawSamples = await readCrowdSampleLogForAxis({
+      vehicle_id: range.vehicle_id,
+      source: ''
+    });
+    const filtered = rawSamples.filter((sample) => {
+      if (!sample || sample.skipped) return false;
+      const key = reportSampleDayKey(sample);
+      return key && compareDayKeys(key, range.start_date) >= 0 && compareDayKeys(key, range.end_date) <= 0;
+    });
+    const storedSamples = await filterSamplesWithStoredCrowdImages(filtered);
+    const analysisState = await readCrowdAnalysisState();
+    return storedSamples.map((sample) => mergeCrowdAnalysisIntoSample(sample, analysisState));
+  }
+
+  async function renderCrowdRangeReportPdf(payload) {
+    await fsp.mkdir(reportPdfRoot, { recursive: true });
+    const stamp = `${dateStampCompact(new Date())}_${timeStampCompact(new Date())}_${crypto.randomBytes(4).toString('hex')}`;
+    const safeVehicle = sanitizeName(payload.vehicle_id, 'vehicle');
+    const inputPath = path.join(reportPdfRoot, `park_crowd_report_${safeVehicle}_${stamp}.json`);
+    const outputPath = path.join(reportPdfRoot, `park_crowd_report_${safeVehicle}_${stamp}.pdf`);
+    await fsp.writeFile(inputPath, JSON.stringify(payload), 'utf8');
+    try {
+      await execFileAsync(
+        process.env.PARK_CROWD_REPORT_PYTHON || 'python3',
+        [reportPdfRendererPath, inputPath, outputPath],
+        { timeout: 60000, maxBuffer: 1024 * 1024 }
+      );
+      const stat = await fsp.stat(outputPath);
+      if (!stat.isFile() || stat.size <= 0) {
+        throw new Error('pdf_output_empty');
+      }
+      return outputPath;
+    } finally {
+      fsp.unlink(inputPath).catch(() => {});
+    }
+  }
+
+  async function buildCrowdRangeReportPdf(params) {
+    const range = normalizeCrowdReportParams(params);
+    const samples = await readCrowdSamplesForReport(range);
+    const payload = await buildCrowdRangeReportPayload(range, samples);
+    const pdfPath = await renderCrowdRangeReportPdf(payload);
+    return {
+      payload,
+      pdf_path: pdfPath,
+      file_name: `park-crowd-${sanitizeName(range.vehicle_id, 'vehicle')}-${range.start_date}-${range.end_date}.pdf`
+    };
   }
 
   function buildCrowdSampleDayAxis(samples) {
@@ -5715,6 +6239,34 @@ print(len(faces))
       return res.status(error.status || 502).json({
         ok: false,
         error: error.message || 'park_pcm_crowd_samples_failed'
+      });
+    }
+  });
+
+  app.get('/api/park-pcm/crowd/report/pdf', requirePermission('vehicle:read'), async (req, res) => {
+    let pdfPath = '';
+    try {
+      const report = await buildCrowdRangeReportPdf(req.query || {});
+      pdfPath = report.pdf_path;
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.download(pdfPath, report.file_name, (error) => {
+        if (error && !res.headersSent) {
+          res.status(error.status || 502).json({
+            ok: false,
+            error: error.message || 'park_crowd_report_download_failed'
+          });
+        }
+        if (pdfPath) {
+          fsp.unlink(pdfPath).catch(() => {});
+        }
+      });
+    } catch (error) {
+      if (pdfPath) {
+        fsp.unlink(pdfPath).catch(() => {});
+      }
+      return res.status(error.status || 502).json({
+        ok: false,
+        error: error.message || 'park_crowd_report_pdf_failed'
       });
     }
   });

@@ -21,6 +21,29 @@
     <p class="park-pcm-vehicle-summary" data-park-pcm-vehicle-summary>选择车辆后显示该车的人流热力和现场图片。</p>
   </section>
 
+  <section class="park-pcm-band park-pcm-report-bar">
+    <div>
+      <p class="section-kicker">PDF REPORT</p>
+      <h2>报告下载</h2>
+    </div>
+    <div class="park-pcm-report-form">
+      <p class="park-pcm-report-vehicle" data-park-pcm-report-vehicle>跟随上方所选车辆</p>
+      <label>
+        <span>开始日期</span>
+        <input type="date" data-park-pcm-report-start />
+      </label>
+      <label>
+        <span>结束日期</span>
+        <input type="date" data-park-pcm-report-end />
+      </label>
+      <button type="button" class="park-pcm-button park-pcm-report-download" data-park-pcm-report-download>
+        <span class="park-pcm-spinner" aria-hidden="true"></span>
+        <span data-park-pcm-report-download-label>生成并下载报告</span>
+      </button>
+      <p data-park-pcm-report-status>选择日期范围后生成报告。</p>
+    </div>
+  </section>
+
   <section class="park-pcm-band park-pcm-map-band">
     <div class="park-pcm-band-head">
       <div>
@@ -230,6 +253,93 @@
     margin: 0;
     color: #b8c7da;
     line-height: 1.5;
+  }
+
+  .park-pcm-report-bar {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.28fr) minmax(0, 1fr);
+    gap: 16px;
+    align-items: end;
+  }
+
+  .park-pcm-report-form {
+    display: grid;
+    grid-template-columns: minmax(190px, 1fr) minmax(150px, 0.75fr) minmax(150px, 0.75fr) auto;
+    gap: 10px;
+    align-items: end;
+  }
+
+  .park-pcm-report-vehicle {
+    align-self: stretch;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    border: 1px solid rgba(20, 184, 166, 0.34);
+    background: rgba(20, 184, 166, 0.11);
+    color: #ccfbf1;
+    font-weight: 800;
+  }
+
+  .park-pcm-report-form label {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    color: #dbeafe;
+    font-size: 0.82rem;
+    font-weight: 800;
+  }
+
+  .park-pcm-report-form select,
+  .park-pcm-report-form input {
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: rgba(2, 6, 23, 0.52);
+    color: #f8fafc;
+    padding: 0 10px;
+  }
+
+  .park-pcm-report-form p {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: #b8c7da;
+    line-height: 1.5;
+  }
+
+  .park-pcm-report-form .park-pcm-report-vehicle {
+    grid-column: auto;
+    margin: 0;
+    line-height: 1.2;
+  }
+
+  .park-pcm-report-download {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    white-space: nowrap;
+  }
+
+  .park-pcm-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.38);
+    border-top-color: #ffffff;
+    display: none;
+    animation: parkPcmSpin 0.8s linear infinite;
+  }
+
+  .park-pcm-report-download[data-loading="true"] .park-pcm-spinner {
+    display: inline-block;
+  }
+
+  @keyframes parkPcmSpin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .park-pcm-layout {
@@ -1325,6 +1435,14 @@
       grid-template-columns: 1fr;
     }
 
+    .park-pcm-report-bar {
+      grid-template-columns: 1fr;
+    }
+
+    .park-pcm-report-form {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .park-pcm-map-band {
       min-height: 520px;
     }
@@ -1384,6 +1502,10 @@
   }
 
   @media (max-width: 560px) {
+    .park-pcm-report-form {
+      grid-template-columns: 1fr;
+    }
+
     .park-pcm-detail-grid {
       grid-template-columns: 1fr;
     }

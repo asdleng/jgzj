@@ -134,6 +134,108 @@ const agentRules = [
       </article>
     ))}
   </div>
+  <section class="cloud-ops-test-fleet-spine-shell" aria-labelledby="fleet-spine-title">
+    <div class="cloud-ops-test-panel-head">
+      <div>
+        <h2 id="fleet-spine-title">车队状态脊柱</h2>
+        <p>每个信号格代表一台真实车辆；点击只切换上下文，不触发车端工具。</p>
+      </div>
+      <span data-role="fleet-spine-count">等待车辆</span>
+    </div>
+    <div class="cloud-ops-test-fleet-spine" data-role="fleet-spine">
+      <p class="cloud-ops-test-empty">等待车辆状态信号...</p>
+    </div>
+  </section>
+
+
+  <aside class="cloud-ops-test-agent-rail" data-role="agent-rail" aria-label="智能体运维常驻侧边栏">
+    <button class="cloud-ops-test-agent-tab" type="button" data-action="agent-toggle" aria-expanded="false" aria-controls="cloud-ops-agent-panel">
+      <span class="cloud-ops-test-agent-tab-dot" aria-hidden="true"></span>
+      <strong>AI</strong>
+      <small>智能体</small>
+    </button>
+    <div class="cloud-ops-test-agent-panel" id="cloud-ops-agent-panel">
+      <div class="cloud-ops-test-agent-panel-head">
+        <div>
+          <p class="cloud-ops-test-kicker">AGENT COPILOT · READ ONLY</p>
+          <h2>智能体运维</h2>
+          <p>常驻只读诊断参谋：随时提问，但不会自动调用车辆工具。</p>
+        </div>
+        <button class="cloud-ops-test-agent-pin" type="button" data-action="agent-pin" aria-pressed="false">固定</button>
+      </div>
+
+      <div class="cloud-ops-test-agent-mini-grid">
+        <article>
+          <span>状态</span>
+          <strong data-role="agent-status">读取中</strong>
+          <small data-role="agent-status-note">检查服务端配置</small>
+        </article>
+        <article>
+          <span>模型</span>
+          <strong data-role="agent-model">--</strong>
+          <small data-role="agent-route">7791 / JGZJ / subapi</small>
+        </article>
+        <article>
+          <span>Codex</span>
+          <strong data-role="agent-codex">检查中</strong>
+          <small data-role="agent-codex-note">本机 App Server</small>
+        </article>
+        <article>
+          <span>车队</span>
+          <strong data-role="agent-fleet">--</strong>
+          <small data-role="agent-fleet-note">真实车辆缓存</small>
+        </article>
+      </div>
+
+      <div class="cloud-ops-test-agent-context-bar">
+        <span data-role="agent-context">上下文：当前车辆 --，车队 -- 台。</span>
+        <span data-role="agent-latency">等待输入</span>
+      </div>
+
+      <div class="cloud-ops-test-agent-messages" data-role="agent-messages">
+        <div class="cloud-ops-test-agent-message is-agent">
+          <strong>云端智能运维智能体</strong>
+          <p>我现在按只读参谋模式工作：可以结合真实车辆缓存分析停车、定位、规划、控制、通信类问题；不会自动控车。</p>
+        </div>
+      </div>
+      <textarea
+        class="cloud-ops-test-agent-input"
+        data-role="agent-input"
+        rows="4"
+        placeholder="例如：分析当前车辆为什么停车；或：把需关注车辆按优先级排序。"
+      ></textarea>
+      <div class="cloud-ops-test-agent-toolbar">
+        <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-send">
+          <strong>发送</strong>
+          <span>只读分析</span>
+        </button>
+        <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-current">
+          <strong>分析当前车辆</strong>
+          <span>车辆上下文</span>
+        </button>
+        <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-deep-diagnose">
+          <strong>深度诊断</strong>
+          <span>WebSocket + SSH</span>
+        </button>
+        <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-stops">
+          <strong>分析停车车辆</strong>
+          <span>停车/阻断入口</span>
+        </button>
+      </div>
+      <details class="cloud-ops-test-disclosure">
+        <summary>最近智能体记录与安全审计</summary>
+        <div class="cloud-ops-test-agent-history" data-role="agent-history">
+          <p class="cloud-ops-test-empty">读取历史中...</p>
+        </div>
+        <p class="cloud-ops-test-agent-history-count">历史：<span data-role="agent-history-count">--</span></p>
+        <pre class="cloud-ops-test-json cloud-ops-test-json--compact" data-role="agent-audit">自动调用清单：/api/cloud-ops/vehicles-lite、/api/cloud-ops-agent/status、/api/cloud-ops-agent/history
+禁止自动调用：/api/cloud-ops/execute、tool-list、vehicle_detail
+智能体对话：必须用户点击发送；后端只调用 subapi 兼容模型接口
+控制类动作：未绑定执行</pre>
+      </details>
+      <p class="cloud-ops-test-agent-safe-copy">只读诊断参谋：不调用车辆工具，不写参数，不重启服务，不下发任务。</p>
+    </div>
+  </aside>
 
   <div class="cloud-ops-test-layout">
     <nav class="cloud-ops-test-tabs" aria-label="云端智能运维测试子页面">
@@ -202,8 +304,10 @@ const agentRules = [
           </div>
         </section>
 
-        <div class="cloud-ops-test-table-shell cloud-ops-test-table-shell--fleet">
-          <table class="cloud-ops-test-table cloud-ops-test-fleet-table">
+        <details class="cloud-ops-test-disclosure cloud-ops-test-disclosure--fleet">
+          <summary>展开完整车辆明细表（ROS、资源、原始链路字段）</summary>
+          <div class="cloud-ops-test-table-shell cloud-ops-test-table-shell--fleet">
+            <table class="cloud-ops-test-table cloud-ops-test-fleet-table">
             <thead>
               <tr>
                 <th>车辆</th>
@@ -218,19 +322,23 @@ const agentRules = [
             <tbody data-role="vehicle-table-body">
               <tr><td colspan="7">等待真实车辆信息...</td></tr>
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+        </details>
 
-        <div class="cloud-ops-test-table-shell">
-          <table class="cloud-ops-test-table">
+        <details class="cloud-ops-test-disclosure">
+          <summary>展开事件入口说明</summary>
+          <div class="cloud-ops-test-table-shell">
+            <table class="cloud-ops-test-table">
             <thead><tr><th>事件入口</th><th>真实数据来源</th><th>当前页面处理</th></tr></thead>
             <tbody>
               <tr><td>车辆离线/遥测过期</td><td>云端车辆列表 last_seen</td><td>页面端标记“遥测过期”，后续进入通信故障诊断。</td></tr>
               <tr><td>自动驾驶停止</td><td>需要任务状态 + 位移历史</td><td>当前仅展示诊断入口，后续接 fleet aggregator。</td></tr>
               <tr><td>定位不可靠</td><td>status.localization 点击后返回</td><td>用户点击后读真实结果，不自动查车。</td></tr>
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+        </details>
       </section>
 
       <section id="cloud-ops-test-status" class="cloud-ops-test-page" data-active="false">
@@ -289,7 +397,11 @@ const agentRules = [
             <h3>真实检查结果</h3>
             <span data-role="last-tool-label">等待点击</span>
           </div>
-          <pre class="cloud-ops-test-json" data-role="tool-result">选择车辆后点击上方只读工具，这里显示真实返回。</pre>
+          <div class="cloud-ops-test-result-summary" data-role="tool-summary">选择车辆后点击上方只读工具，这里先显示摘要；完整返回默认折叠。</div>
+          <details class="cloud-ops-test-disclosure">
+            <summary>展开原始返回 JSON</summary>
+            <pre class="cloud-ops-test-json" data-role="tool-result">选择车辆后点击上方只读工具，这里显示真实返回。</pre>
+          </details>
         </section>
       </section>
 
@@ -334,108 +446,38 @@ const agentRules = [
       <section id="cloud-ops-test-agent" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head">
           <p class="cloud-ops-test-kicker">AGENT OPS</p>
-          <h2>智能体运维：接入 7791 / subapi 中转链路的只读诊断参谋</h2>
-          <p>这里的智能体只读取车辆缓存和用户输入做分析建议，不会自动调用车端工具；写参数、重启、任务重发必须人工确认。</p>
+          <h2>智能体运维：主入口已移到右侧常驻侧边栏</h2>
+          <p>这个页面保留为智能体模式说明和规则边界。实际对话框现在常驻在页面右侧，切换子页面、选择车辆或展开详情都不会自动发起对话。</p>
         </div>
 
-        <div class="cloud-ops-test-agent-status-grid">
-          <article class="cloud-ops-test-agent-status-card">
-            <span>智能体状态</span>
-            <strong data-role="agent-status">读取中</strong>
-            <small data-role="agent-status-note">检查服务端配置</small>
+        <div class="cloud-ops-test-card-grid cloud-ops-test-agent-explain-grid">
+          <article class="cloud-ops-test-card">
+            <h3>常驻侧边栏</h3>
+            <p>桌面端右侧窄栏常驻，悬停或键盘聚焦时展开；点击“固定”后占位显示。移动端作为底部抽屉使用。</p>
           </article>
-          <article class="cloud-ops-test-agent-status-card">
-            <span>模型链路</span>
-            <strong data-role="agent-model">--</strong>
-            <small data-role="agent-route">7791 / JGZJ / subapi</small>
+          <article class="cloud-ops-test-card">
+            <h3>只读参谋</h3>
+            <p>智能体可读取车辆缓存和用户提供的问题做归纳，不自动调用车端工具，不写参数，不重启，不下发任务。</p>
           </article>
-          <article class="cloud-ops-test-agent-status-card">
-            <span>Codex 部署</span>
-            <strong data-role="agent-codex">检查中</strong>
-            <small data-role="agent-codex-note">本机 App Server</small>
-          </article>
-          <article class="cloud-ops-test-agent-status-card">
-            <span>监控范围</span>
-            <strong data-role="agent-fleet">--</strong>
-            <small data-role="agent-fleet-note">真实车辆缓存</small>
+          <article class="cloud-ops-test-card">
+            <h3>上下文同步</h3>
+            <p>选择车辆只更新智能体上下文 chip；只有点击发送、分析当前车辆、深度诊断等按钮才会请求智能体接口。</p>
           </article>
         </div>
 
-        <div class="cloud-ops-test-agent-layout">
-          <section class="cloud-ops-test-agent-chat">
-            <div class="cloud-ops-test-panel-head">
-              <div>
-                <h3>智能体对话</h3>
-                <p data-role="agent-context">上下文：当前车辆 --，车队 -- 台。</p>
-              </div>
-              <span data-role="agent-latency">等待输入</span>
-            </div>
-            <div class="cloud-ops-test-agent-messages" data-role="agent-messages">
-              <div class="cloud-ops-test-agent-message is-agent">
-                <strong>云端智能运维智能体</strong>
-                <p>我现在按只读参谋模式工作：可以结合真实车辆缓存分析停车、定位、规划、控制、通信类问题；不会自动控车。</p>
-              </div>
-            </div>
-            <textarea
-              class="cloud-ops-test-agent-input"
-              data-role="agent-input"
-              rows="4"
-              placeholder="例如：分析当前车辆为什么可能自动驾驶停止；或者：把停车待确认车辆按故障优先级排一下。"
-            ></textarea>
-            <div class="cloud-ops-test-agent-toolbar">
-              <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-send">
-                <strong>发送</strong>
-                <span>只读分析</span>
-              </button>
-              <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-current">
-                <strong>分析当前车辆</strong>
-                <span>车辆上下文</span>
-              </button>
-              <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-deep-diagnose">
-                <strong>深度诊断</strong>
-                <span>WebSocket + SSH</span>
-              </button>
-              <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-stops">
-                <strong>分析停车车辆</strong>
-                <span>停车/阻断入口</span>
-              </button>
-            </div>
-          </section>
-
-          <aside class="cloud-ops-test-agent-side">
-            <section class="cloud-ops-test-panel">
-              <div class="cloud-ops-test-panel-head">
-                <h3>最近智能体记录</h3>
-                <span data-role="agent-history-count">--</span>
-              </div>
-              <div class="cloud-ops-test-agent-history" data-role="agent-history">
-                <p class="cloud-ops-test-empty">读取历史中...</p>
-              </div>
-            </section>
-
-            <section class="cloud-ops-test-panel">
-              <div class="cloud-ops-test-panel-head">
-                <h3>规则边界</h3>
-                <span>当前版本</span>
-              </div>
-              <div class="cloud-ops-test-table-shell cloud-ops-test-table-shell--compact">
-                <table class="cloud-ops-test-table">
-                  <thead><tr><th>规则</th><th>触发条件</th><th>处理边界</th></tr></thead>
-                  <tbody>{agentRules.map((row) => <tr>{row.map((cell) => <td>{cell}</td>)}</tr>)}</tbody>
-                </table>
-              </div>
-            </section>
-          </aside>
-        </div>
-
-        <section class="cloud-ops-test-panel cloud-ops-test-panel--result">
-          <div class="cloud-ops-test-panel-head"><h3>页面安全审计</h3><span>当前版本</span></div>
-          <pre class="cloud-ops-test-json" data-role="agent-audit">自动调用清单：/api/cloud-ops/vehicles-lite、/api/cloud-ops-agent/status、/api/cloud-ops-agent/history
-禁止自动调用：/api/cloud-ops/execute、tool-list、vehicle_detail
-智能体对话：必须用户点击发送；后端只调用 subapi 兼容模型接口
-控制类动作：未绑定执行</pre>
+        <section class="cloud-ops-test-panel">
+          <div class="cloud-ops-test-panel-head">
+            <h3>规则边界</h3>
+            <span>当前版本</span>
+          </div>
+          <div class="cloud-ops-test-table-shell cloud-ops-test-table-shell--compact">
+            <table class="cloud-ops-test-table">
+              <thead><tr><th>规则</th><th>触发条件</th><th>处理边界</th></tr></thead>
+              <tbody>{agentRules.map((row) => <tr>{row.map((cell) => <td>{cell}</td>)}</tr>)}</tbody>
+            </table>
+          </div>
         </section>
-      </section>
+      </section>      </section>
     </div>
   </div>
 </section>
@@ -482,6 +524,12 @@ const agentRules = [
     const statusNode = shell.querySelector('[data-role="status"]');
     const vehicleSelect = shell.querySelector('[data-role="vehicle-select"]');
     const vehicleList = shell.querySelector('[data-role="vehicle-list"]');
+    const fleetSpine = shell.querySelector('[data-role="fleet-spine"]');
+    const fleetSpineCount = shell.querySelector('[data-role="fleet-spine-count"]');
+    const agentRail = shell.querySelector('[data-role="agent-rail"]');
+    const agentToggle = shell.querySelector('[data-action="agent-toggle"]');
+    const agentPin = shell.querySelector('[data-action="agent-pin"]');
+    const toolSummary = shell.querySelector('[data-role="tool-summary"]');
     const vehicleCount = shell.querySelector('[data-role="vehicle-count"]');
     const vehicleTableBody = shell.querySelector('[data-role="vehicle-table-body"]');
     const stopFaultCount = shell.querySelector('[data-role="stop-fault-count"]');
@@ -759,6 +807,7 @@ const agentRules = [
         : vehicleIdOf(vehicles[0] || {});
       syncSelectedVehicleUi();
       renderSummary();
+      renderFleetSpine();
       if (options.silent !== true) {
         setStatus(`已选择 ${currentVehicleId || "车辆"}，未执行任何车端工具。`, "ok");
       }
@@ -790,6 +839,39 @@ const agentRules = [
       ].map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`).join("");
     };
 
+    const renderFleetSpine = () => {
+      if (fleetSpineCount) fleetSpineCount.textContent = vehicles.length ? `${vehicles.length} 台信号` : "等待车辆";
+      if (!fleetSpine) return;
+      if (!vehicles.length) {
+        fleetSpine.innerHTML = '<p class="cloud-ops-test-empty">没有读取到车辆信号。</p>';
+        return;
+      }
+      const sorted = sortVehiclesByAttention(vehicles);
+      fleetSpine.innerHTML = sorted.map((vehicle) => {
+        const vid = vehicleIdOf(vehicle);
+        const diag = stopDiagnosisOf(vehicle);
+        const health = vehicleHealthOf(vehicle);
+        const tone = diag.tone === "danger" || diag.tone === "warn" ? diag.tone : health.tone;
+        const label = diag.tone === "danger" || diag.tone === "warn" ? diag.label : health.label;
+        return `<button type="button" class="cloud-ops-test-signal-cell is-${escapeHtml(tone)}${vid === selectedVehicleId() ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}" title="${escapeHtml(vid)} · ${escapeHtml(label)} · ${escapeHtml(formatAge(lastSeenOf(vehicle)))}">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(vid || "未知")}</strong>
+        </button>`;
+      }).join("");
+    };
+
+    const sortVehiclesByAttention = (items) => {
+      const rank = (vehicle) => {
+        const diag = stopDiagnosisOf(vehicle);
+        if (diag.tone === "danger") return 0;
+        if (diag.label === "疑似停车故障" || diag.tone === "warn") return 1;
+        if (diag.label === "停止待确认") return 2;
+        if (isStale(vehicle)) return 3;
+        return 4;
+      };
+      return [...items].sort((a, b) => rank(a) - rank(b) || vehicleIdOf(a).localeCompare(vehicleIdOf(b)));
+    };
+
     const renderVehicles = () => {
       if (vehicleCount) vehicleCount.textContent = `${vehicles.length} 台`;
       if (!vehicleList) return;
@@ -797,7 +879,8 @@ const agentRules = [
         vehicleList.innerHTML = '<p class="cloud-ops-test-empty">没有读取到车辆，或当前账号未授权。</p>';
         return;
       }
-      vehicleList.innerHTML = vehicles.map((vehicle) => {
+      const sortedVehicles = sortVehiclesByAttention(vehicles);
+      vehicleList.innerHTML = sortedVehicles.map((vehicle) => {
         const vid = vehicleIdOf(vehicle);
         const health = vehicleHealthOf(vehicle);
         const stopDiag = stopDiagnosisOf(vehicle);
@@ -1171,6 +1254,7 @@ const agentRules = [
         if (lastRefresh) lastRefresh.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
         if (apiNote) apiNote.textContent = payload.note || "只读车辆注册表";
         renderVehicleOptions();
+        renderFleetSpine();
         renderVehicles();
         renderStopFaultMonitor();
         renderVehicleTable();
@@ -1181,6 +1265,7 @@ const agentRules = [
         vehicles = [];
         currentVehicleId = "";
         renderVehicleOptions();
+        renderFleetSpine();
         renderVehicles();
         renderStopFaultMonitor();
         renderVehicleTable();
@@ -1205,6 +1290,7 @@ const agentRules = [
         return;
       }
       if (lastToolLabel) lastToolLabel.textContent = `${vehicleId} · ${toolName}`;
+      if (toolSummary) toolSummary.textContent = `正在对 ${vehicleId} 执行只读检查：${toolName}`;
       if (toolResult) toolResult.textContent = "正在执行只读检查...";
       setStatus(`点击触发只读工具：${toolName}`, "loading");
       try {
@@ -1234,11 +1320,36 @@ const agentRules = [
           payload = await response.json().catch(() => ({}));
           if (!response.ok || payload?.ok === false) throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
         }
+        const okText = payload?.ok === false ? "返回异常" : "返回成功";
+        if (toolSummary) toolSummary.textContent = `${okText}：${vehicleId} · ${toolName}。完整 JSON 已折叠，可展开查看。`;
         if (toolResult) toolResult.textContent = JSON.stringify(payload, null, 2);
         setStatus(`只读检查完成：${toolName}`, "ok");
       } catch (error) {
+        if (toolSummary) toolSummary.textContent = `只读检查失败：${error?.message || "未知错误"}`;
         if (toolResult) toolResult.textContent = `执行失败：${error?.message || "未知错误"}`;
         setStatus(`只读检查失败：${error?.message || "未知错误"}`, "error");
+      }
+    };
+
+    const setAgentRailOpen = (open) => {
+      if (!agentRail) return;
+      agentRail.classList.toggle("is-open", Boolean(open));
+      agentToggle?.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    const setAgentPinned = (pinned) => {
+      if (!agentRail) return;
+      agentRail.classList.toggle("is-pinned", Boolean(pinned));
+      shell.classList.toggle("has-agent-pinned", Boolean(pinned));
+      agentPin?.setAttribute("aria-pressed", pinned ? "true" : "false");
+      if (agentPin) agentPin.textContent = pinned ? "取消固定" : "固定";
+      setAgentRailOpen(Boolean(pinned));
+      try { localStorage.setItem("cloudOpsTestAgentPinned", pinned ? "1" : "0"); } catch (_error) {}
+    };
+    const restoreAgentPinned = () => {
+      try {
+        setAgentPinned(localStorage.getItem("cloudOpsTestAgentPinned") === "1");
+      } catch (_error) {
+        setAgentPinned(false);
       }
     };
 
@@ -1257,6 +1368,10 @@ const agentRules = [
         loadVehicles();
       } else if (action === "readonly-tool") {
         runReadOnlyTool(actionButton);
+      } else if (action === "agent-toggle") {
+        setAgentRailOpen(!agentRail?.classList.contains("is-open"));
+      } else if (action === "agent-pin") {
+        setAgentPinned(!agentRail?.classList.contains("is-pinned"));
       } else if (action === "agent-send") {
         sendAgentMessage(agentInput?.value || "");
       } else if (action === "agent-analyze-current") {
@@ -1276,7 +1391,23 @@ const agentRules = [
         sendAgentMessage(agentInput.value || "");
       }
     });
+    agentRail?.addEventListener("mouseenter", () => setAgentRailOpen(true));
+    agentRail?.addEventListener("mouseleave", () => {
+      if (!agentRail.classList.contains("is-pinned") && !agentRail.matches(":focus-within")) setAgentRailOpen(false);
+    });
+    agentRail?.addEventListener("focusin", () => setAgentRailOpen(true));
+    agentRail?.addEventListener("focusout", () => {
+      window.setTimeout(() => {
+        if (!agentRail.classList.contains("is-pinned") && !agentRail.matches(":focus-within") && !agentRail.matches(":hover")) setAgentRailOpen(false);
+      }, 80);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && agentRail && !agentRail.classList.contains("is-pinned")) {
+        setAgentRailOpen(false);
+      }
+    });
 
+    restoreAgentPinned();
     loadVehicles();
     loadAgentStatus();
     loadAgentHistory();
