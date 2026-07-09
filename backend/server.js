@@ -241,6 +241,19 @@ const lidarRelocalizationMinConfidence = Number(
 const lidarRelocalizationMapUploadBaseUrl = String(
   process.env.LIDAR_RELOCALIZATION_MAP_UPLOAD_BASE_URL || 'http://100.118.150.2:19080'
 ).replace(/\/+$/, '');
+const lidarRelocalizationVisualizationMapMaxPoints = toFiniteInteger(
+  process.env.LIDAR_RELOCALIZATION_VIS_MAP_MAX_POINTS,
+  2600,
+  { min: 200, max: 12000 }
+);
+const lidarRelocalizationVisualizationQueryMaxPoints = toFiniteInteger(
+  process.env.LIDAR_RELOCALIZATION_VIS_QUERY_MAX_POINTS,
+  2600,
+  { min: 200, max: 12000 }
+);
+const lidarRelocalizationVisualizationCropRadiusM = Number(
+  process.env.LIDAR_RELOCALIZATION_VIS_CROP_RADIUS_M || 90
+);
 const cloudOpsRouteCatalogCache = new Map();
 const cloudOpsAudioAlsaCache = new Map();
 const projectRoot = path.resolve(__dirname, '..');
@@ -6985,6 +6998,422 @@ function buildLidarRelocReferenceCheck(capturePose, coarsePose) {
   };
 }
 
+function decodeLidarRelocCapturePoints(capture) {
+  const pointcloud = getLidarRelocPointcloudPayload(capture);
+  if (
+    !pointcloud ||
+    pointcloud.encoding !== 'float32_xyz_zlib_base64' ||
+    typeof pointcloud.points_base64 !== 'string'
+  ) {
+    throw new Error('capture_pointcloud_missing');
+  }
+
+  const raw = zlib.inflateSync(Buffer.from(pointcloud.points_base64, 'base64'));
+  if (raw.length < 12 || raw.length % 12 !== 0) {
+    throw new Error('capture_pointcloud_bad_float32_xyz_payload');
+  }
+
+  const points = [];
+  for (let offset = 0; offset + 12 <= raw.length; offset += 12) {
+    const x = raw.readFloatLE(offset);
+    const y = raw.readFloatLE(offset + 4);
+    const z = raw.readFloatLE(offset + 8);
+    if (![x, y, z].every(Number.isFinite)) {
+      continue;
+    }
+    points.push([x, y, z]);
+  }
+  return points;
+}
+
+function decimateLidarRelocPoints(points, maxPoints) {
+  if (!Array.isArray(points) || points.length <= maxPoints) {
+    return Array.isArray(points) ? points : [];
+  }
+  const stride = Math.max(1, Math.ceil(points.length / maxPoints));
+  const output = [];
+  for (let index = 0; index < points.length && output.length < maxPoints; index += stride) {
+    output.push(points[index]);
+  }
+  return output;
+}
+
+function reservoirPushLidarRelocPoint(points, point, seen, maxPoints) {
+  if (points.length < maxPoints) {
+    points.push(point);
+    return;
+  }
+  const next = (Math.imul(seen + 1, 1664525) + 1013904223) >>> 0;
+  const slot = next % Math.max(1, seen + 1);
+  if (slot < maxPoints) {
+    points[slot] = point;
+  }
+}
+
+function transformLidarRelocLocalPoints(points, pose, maxPoints) {
+  const normalizedPose = normalizeLidarRelocPose(pose);
+  if (!normalizedPose || !Number.isFinite(Number(normalizedPose.x)) || !Number.isFinite(Number(normalizedPose.y))) {
+    return [];
+  }
+  const yaw = Number(normalizedPose.yaw ?? normalizedPose.heading ?? 0);
+  const cosYaw = Math.cos(yaw);
+  const sinYaw = Math.sin(yaw);
+  const sampled = decimateLidarRelocPoints(points, maxPoints);
+  const output = [];
+  for (const point of sampled) {
+    if (!Array.isArray(point) || point.length < 2) {
+      continue;
+    }
+    const x = Number(point[0]);
+    const y = Number(point[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    output.push([
+      Number((Number(normalizedPose.x) + x * cosYaw - y * sinYaw).toFixed(3)),
+      Number((Number(normalizedPose.y) + x * sinYaw + y * cosYaw).toFixed(3))
+    ]);
+  }
+  return output;
+}
+
+function parseLidarRelocPcdHeader(headerText) {
+  const lines = String(headerText || '').split(/\r?\n/);
+  const header = {};
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+    const [key, ...rest] = trimmed.split(/\s+/);
+    if (!key) {
+      continue;
+    }
+    header[key.toUpperCase()] = rest;
+  }
+  const fields = header.FIELDS || [];
+  const sizes = (header.SIZE || []).map((value) => Number(value));
+  const types = header.TYPE || [];
+  const counts = (header.COUNT || fields.map(() => '1')).map((value) => Number(value) || 1);
+  const points = Number((header.POINTS || [header.WIDTH?.[0] || 0])[0]) || 0;
+  const data = String((header.DATA || [''])[0] || '').toLowerCase();
+  let offset = 0;
+  const fieldInfo = new Map();
+  fields.forEach((field, index) => {
+    const size = sizes[index] || 4;
+    const count = counts[index] || 1;
+    fieldInfo.set(field, {
+      offset,
+      size,
+      type: String(types[index] || 'F').toUpperCase(),
+      count
+    });
+    offset += size * count;
+  });
+  return {
+    fields,
+    fieldInfo,
+    pointStride: offset,
+    points,
+    data
+  };
+}
+
+function readLidarRelocPcdField(buffer, recordOffset, field) {
+  const offset = recordOffset + field.offset;
+  if (field.type === 'F' && field.size === 4) {
+    return buffer.readFloatLE(offset);
+  }
+  if (field.type === 'F' && field.size === 8) {
+    return buffer.readDoubleLE(offset);
+  }
+  if (field.type === 'I' && field.size === 4) {
+    return buffer.readInt32LE(offset);
+  }
+  if (field.type === 'U' && field.size === 4) {
+    return buffer.readUInt32LE(offset);
+  }
+  if (field.type === 'I' && field.size === 2) {
+    return buffer.readInt16LE(offset);
+  }
+  if (field.type === 'U' && field.size === 2) {
+    return buffer.readUInt16LE(offset);
+  }
+  if (field.type === 'I' && field.size === 1) {
+    return buffer.readInt8(offset);
+  }
+  if (field.type === 'U' && field.size === 1) {
+    return buffer.readUInt8(offset);
+  }
+  return NaN;
+}
+
+async function readLidarRelocPcdPreviewPoints(pcdPath, options = {}) {
+  const maxPoints = toFiniteInteger(options.max_points, lidarRelocalizationVisualizationMapMaxPoints, {
+    min: 100,
+    max: 20000
+  });
+  const center = normalizeLidarRelocPose(options.center) || null;
+  const cropRadius = Number.isFinite(Number(options.crop_radius_m))
+    ? Math.max(1, Number(options.crop_radius_m))
+    : lidarRelocalizationVisualizationCropRadiusM;
+  const cropRadiusSq = cropRadius * cropRadius;
+  const file = await fs.open(pcdPath, 'r');
+  try {
+    const stat = await file.stat();
+    let headerBuffer = Buffer.alloc(8192);
+    let headerBytes = 0;
+    let dataOffset = -1;
+    let headerText = '';
+    while (headerBytes < 1024 * 1024) {
+      if (headerBytes >= headerBuffer.length) {
+        const next = Buffer.alloc(headerBuffer.length * 2);
+        headerBuffer.copy(next, 0, 0, headerBytes);
+        headerBuffer = next;
+      }
+      const read = await file.read(headerBuffer, headerBytes, headerBuffer.length - headerBytes, headerBytes);
+      if (!read.bytesRead) {
+        break;
+      }
+      headerBytes += read.bytesRead;
+      const current = headerBuffer.subarray(0, headerBytes).toString('latin1');
+      const match = current.match(/\nDATA\s+([^\r\n]+)\r?\n/i);
+      if (match) {
+        dataOffset = Buffer.byteLength(current.slice(0, match.index + match[0].length), 'latin1');
+        headerText = current.slice(0, match.index + match[0].length);
+        break;
+      }
+    }
+    if (dataOffset < 0) {
+      throw new Error('pcd_data_header_missing');
+    }
+    const header = parseLidarRelocPcdHeader(headerText);
+    if (header.data !== 'binary') {
+      throw new Error(`pcd_data_${header.data || 'unknown'}_not_supported_for_preview`);
+    }
+    const xField = header.fieldInfo.get('x');
+    const yField = header.fieldInfo.get('y');
+    const zField = header.fieldInfo.get('z');
+    if (!xField || !yField || !header.pointStride) {
+      throw new Error('pcd_xyz_fields_missing');
+    }
+
+    const totalRecords = Math.max(
+      0,
+      Math.min(header.points || Number.MAX_SAFE_INTEGER, Math.floor((stat.size - dataOffset) / header.pointStride))
+    );
+    if (!totalRecords) {
+      return {
+        points: [],
+        sampled_records: 0,
+        point_count: 0,
+        crop_radius_m: cropRadius
+      };
+    }
+
+    const targetInspected = Math.max(maxPoints * 180, 250000);
+    const sampleStride = Math.max(1, Math.floor(totalRecords / targetInspected));
+    const recordsPerChunk = Math.max(1, Math.floor((2 * 1024 * 1024) / header.pointStride));
+    const chunk = Buffer.alloc(recordsPerChunk * header.pointStride);
+    const points = [];
+    let accepted = 0;
+    let inspected = 0;
+
+    for (let recordStart = 0; recordStart < totalRecords; recordStart += recordsPerChunk) {
+      const recordCount = Math.min(recordsPerChunk, totalRecords - recordStart);
+      const bytesToRead = recordCount * header.pointStride;
+      const read = await file.read(chunk, 0, bytesToRead, dataOffset + recordStart * header.pointStride);
+      if (!read.bytesRead) {
+        break;
+      }
+      const recordsRead = Math.floor(read.bytesRead / header.pointStride);
+      const firstOffset = (sampleStride - (recordStart % sampleStride)) % sampleStride;
+      for (let recordIndex = firstOffset; recordIndex < recordsRead; recordIndex += sampleStride) {
+        const recordOffset = recordIndex * header.pointStride;
+        const x = readLidarRelocPcdField(chunk, recordOffset, xField);
+        const y = readLidarRelocPcdField(chunk, recordOffset, yField);
+        const z = zField ? readLidarRelocPcdField(chunk, recordOffset, zField) : 0;
+        inspected += 1;
+        if (![x, y].every(Number.isFinite)) {
+          continue;
+        }
+        if (center && Number.isFinite(Number(center.x)) && Number.isFinite(Number(center.y))) {
+          const dx = x - Number(center.x);
+          const dy = y - Number(center.y);
+          if (dx * dx + dy * dy > cropRadiusSq) {
+            continue;
+          }
+        }
+        if (zField && !Number.isFinite(z)) {
+          continue;
+        }
+        accepted += 1;
+        reservoirPushLidarRelocPoint(points, [Number(x.toFixed(3)), Number(y.toFixed(3))], accepted, maxPoints);
+      }
+    }
+
+    return {
+      points,
+      sampled_records: inspected,
+      accepted_records: accepted,
+      point_count: totalRecords,
+      sample_stride: sampleStride,
+      crop_radius_m: cropRadius
+    };
+  } finally {
+    await file.close();
+  }
+}
+
+function updateLidarRelocBounds(bounds, points) {
+  if (!Array.isArray(points)) {
+    return;
+  }
+  for (const point of points) {
+    if (!Array.isArray(point) || point.length < 2) {
+      continue;
+    }
+    const x = Number(point[0]);
+    const y = Number(point[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    bounds.min_x = Math.min(bounds.min_x, x);
+    bounds.max_x = Math.max(bounds.max_x, x);
+    bounds.min_y = Math.min(bounds.min_y, y);
+    bounds.max_y = Math.max(bounds.max_y, y);
+  }
+}
+
+function updateLidarRelocBoundsPose(bounds, pose) {
+  const normalizedPose = normalizeLidarRelocPose(pose);
+  if (!normalizedPose || !Number.isFinite(Number(normalizedPose.x)) || !Number.isFinite(Number(normalizedPose.y))) {
+    return;
+  }
+  updateLidarRelocBounds(bounds, [[Number(normalizedPose.x), Number(normalizedPose.y)]]);
+}
+
+function finalizeLidarRelocBounds(bounds, center, radius) {
+  const normalizedCenter = normalizeLidarRelocPose(center);
+  if (
+    !Number.isFinite(bounds.min_x) ||
+    !Number.isFinite(bounds.max_x) ||
+    !Number.isFinite(bounds.min_y) ||
+    !Number.isFinite(bounds.max_y)
+  ) {
+    const x = Number(normalizedCenter?.x || 0);
+    const y = Number(normalizedCenter?.y || 0);
+    const fallbackRadius = Number.isFinite(Number(radius)) ? Number(radius) : 50;
+    return {
+      min_x: Number((x - fallbackRadius).toFixed(2)),
+      max_x: Number((x + fallbackRadius).toFixed(2)),
+      min_y: Number((y - fallbackRadius).toFixed(2)),
+      max_y: Number((y + fallbackRadius).toFixed(2))
+    };
+  }
+  const spanX = Math.max(1, bounds.max_x - bounds.min_x);
+  const spanY = Math.max(1, bounds.max_y - bounds.min_y);
+  const pad = Math.max(8, Math.min(30, Math.max(spanX, spanY) * 0.08));
+  return {
+    min_x: Number((bounds.min_x - pad).toFixed(2)),
+    max_x: Number((bounds.max_x + pad).toFixed(2)),
+    min_y: Number((bounds.min_y - pad).toFixed(2)),
+    max_y: Number((bounds.max_y + pad).toFixed(2))
+  };
+}
+
+async function buildLidarRelocVisualization(vehicleId, mapPath, capture, result, coarsePose, rawCoarsePose) {
+  const startedAt = Date.now();
+  const capturePose = normalizeLidarRelocPose(capture?.result?.pose || capture?.result?.localization);
+  const finalCoarsePose = normalizeLidarRelocPose(coarsePose) || null;
+  const rawPose = normalizeLidarRelocPose(rawCoarsePose) || null;
+  const centerPose = finalCoarsePose || rawPose || capturePose;
+  const errors = [];
+  let queryLocal = [];
+  try {
+    queryLocal = decodeLidarRelocCapturePoints(capture);
+  } catch (error) {
+    errors.push(`capture:${error?.message || 'decode_failed'}`);
+  }
+
+  let mapPreview = {
+    points: [],
+    point_count: null,
+    sampled_records: 0,
+    accepted_records: 0,
+    crop_radius_m: lidarRelocalizationVisualizationCropRadiusM
+  };
+  if (mapPath && fsSync.existsSync(mapPath)) {
+    try {
+      mapPreview = await readLidarRelocPcdPreviewPoints(mapPath, {
+        center: centerPose,
+        crop_radius_m: lidarRelocalizationVisualizationCropRadiusM,
+        max_points: lidarRelocalizationVisualizationMapMaxPoints
+      });
+    } catch (error) {
+      errors.push(`map:${error?.message || 'preview_failed'}`);
+    }
+  } else {
+    errors.push('map:global_map_missing');
+  }
+
+  const queryPrior = transformLidarRelocLocalPoints(
+    queryLocal,
+    capturePose,
+    lidarRelocalizationVisualizationQueryMaxPoints
+  );
+  const queryCoarse = transformLidarRelocLocalPoints(
+    queryLocal,
+    finalCoarsePose || rawPose || capturePose,
+    lidarRelocalizationVisualizationQueryMaxPoints
+  );
+  const candidates = Array.isArray(result?.candidates)
+    ? result.candidates
+        .map((candidate) => extractLidarRelocCandidatePose(candidate, rawPose || finalCoarsePose || capturePose))
+        .filter(Boolean)
+        .slice(0, 12)
+    : [];
+  const bounds = {
+    min_x: Number.POSITIVE_INFINITY,
+    max_x: Number.NEGATIVE_INFINITY,
+    min_y: Number.POSITIVE_INFINITY,
+    max_y: Number.NEGATIVE_INFINITY
+  };
+  updateLidarRelocBounds(bounds, mapPreview.points);
+  updateLidarRelocBounds(bounds, queryPrior);
+  updateLidarRelocBounds(bounds, queryCoarse);
+  updateLidarRelocBoundsPose(bounds, capturePose);
+  updateLidarRelocBoundsPose(bounds, finalCoarsePose || rawPose);
+  candidates.forEach((candidate) => updateLidarRelocBoundsPose(bounds, candidate));
+
+  return {
+    vehicle_id: vehicleId,
+    generated_at: new Date().toISOString(),
+    bounds: finalizeLidarRelocBounds(bounds, centerPose, mapPreview.crop_radius_m),
+    map_points: mapPreview.points,
+    query_points_prior: queryPrior,
+    query_points_coarse: queryCoarse,
+    poses: {
+      prior: capturePose,
+      coarse: finalCoarsePose || rawPose || null,
+      raw_coarse: rawPose || null,
+      candidates
+    },
+    meta: {
+      map_path: mapPath || null,
+      map_total_points: mapPreview.point_count,
+      map_sampled_records: mapPreview.sampled_records,
+      map_accepted_records: mapPreview.accepted_records,
+      map_sample_stride: mapPreview.sample_stride,
+      crop_radius_m: mapPreview.crop_radius_m,
+      query_total_points: queryLocal.length,
+      query_rendered_points: queryCoarse.length,
+      elapsed_ms: Date.now() - startedAt,
+      errors
+    }
+  };
+}
+
 async function writeLidarRelocCapturePcd(capturePath) {
   const text = await fs.readFile(capturePath, 'utf8');
   const capture = parseJsonField(text, null);
@@ -13222,6 +13651,33 @@ app.post(
           const rawCoarsePose =
             normalizeLidarRelocPose(result?.bevplace_coarse_pose || rawResult?.coarse_pose || rawResult?.pose || rawResult) ||
             coarsePose;
+          const visualization = await buildLidarRelocVisualization(
+            vehicleId,
+            mapSync.map.path,
+            capture,
+            result,
+            coarsePose,
+            rawCoarsePose
+          ).catch((error) => ({
+            vehicle_id: vehicleId,
+            generated_at: new Date().toISOString(),
+            bounds: null,
+            map_points: [],
+            query_points_prior: [],
+            query_points_coarse: [],
+            poses: {
+              prior: normalizeLidarRelocPose(capture.result?.pose || capture.result?.localization),
+              coarse: coarsePose,
+              raw_coarse: rawCoarsePose,
+              candidates: []
+            },
+            meta: {
+              error: error?.message || 'visualization_failed'
+            }
+          }));
+          if (result && typeof result === 'object') {
+            result.visualization = visualization;
+          }
           const confidence = readLidarRelocNumber(result?.confidence, result?.score, result?.best_score);
           const method = String(result?.method || '').trim();
           const isLegacyLocalBev = method === 'server_bev_prior_refine';
@@ -13276,6 +13732,7 @@ app.post(
             selected_candidate: result?.selected_candidate || null,
             ndt_selector: result?.ndt_selector || null,
             reference_check: referenceCheck,
+            visualization,
             capture: {
               captured_at: capture.captured_at,
               tool_name: capture.tool_name,

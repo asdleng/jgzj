@@ -539,6 +539,7 @@
       const payload = error.payload || {};
       setStatus(error.message || "推理失败", error.status === 501 ? "error" : "error");
       setResultState(payload.phase || "推理失败", "error");
+      renderVisualization(payload);
       if (resultNode) {
         if (payload?.ndt_selector || payload?.reference_check || payload?.raw_coarse_pose || Array.isArray(payload?.candidates)) {
           renderInferResult(payload);
