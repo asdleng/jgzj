@@ -8070,3 +8070,15 @@ body.yolo-review-is-panning {
       "status";
   }
 }
+
+
+/* Cloud Ops Test top spacing refinement. */
+.cloud-ops-test-main {
+  padding-top: 46px !important;
+}
+
+@media (max-width: 720px) {
+  .cloud-ops-test-main {
+    padding-top: 38px !important;
+  }
+}
