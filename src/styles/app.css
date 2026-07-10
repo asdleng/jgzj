@@ -8315,3 +8315,131 @@ body.yolo-review-is-panning {
     max-height: var(--cloud-ops-test-agent-max-height, calc(100vh - 180px)) !important;
   }
 }
+
+
+/* Cloud Ops Test purpose-driven check summaries. */
+.cloud-ops-test-command-button em {
+  color: #bbf7d0;
+  font-size: 0.72rem;
+  font-style: normal;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-result-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.cloud-ops-test-result-summary[data-tone="warn"] {
+  border-color: rgba(251, 191, 36, 0.34);
+  background: rgba(69, 26, 3, 0.18);
+  color: #fde68a;
+}
+
+.cloud-ops-test-result-summary strong {
+  color: #f8fafc;
+  font-size: 1rem;
+}
+
+.cloud-ops-test-result-summary p,
+.cloud-ops-test-result-summary ul {
+  margin: 0;
+}
+
+.cloud-ops-test-result-summary ul {
+  display: grid;
+  gap: 5px;
+  padding-left: 18px;
+  color: #cbd5e1;
+}
+
+.cloud-ops-test-result-kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.cloud-ops-test-result-kv div {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(71, 85, 105, 0.46);
+  background: rgba(2, 6, 23, 0.42);
+}
+
+.cloud-ops-test-result-kv dt,
+.cloud-ops-test-result-kv dd {
+  margin: 0;
+}
+
+.cloud-ops-test-result-kv dt {
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.cloud-ops-test-result-kv dd {
+  color: #f8fafc;
+  font-size: 0.9rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+
+/* Cloud Ops Test status checks split layout. */
+.cloud-ops-test-status-split {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(480px, 1.1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.cloud-ops-test-status-left {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.cloud-ops-test-command-grid--core {
+  grid-template-columns: 1fr;
+}
+
+.cloud-ops-test-command-grid--core .cloud-ops-test-command-button {
+  min-height: 96px;
+}
+
+.cloud-ops-test-command-grid--blocked {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin: 0 12px 12px;
+}
+
+.cloud-ops-test-disabled-disclosure {
+  background: rgba(15, 23, 42, 0.34);
+}
+
+.cloud-ops-test-sticky-result {
+  position: sticky;
+  top: 96px;
+  align-self: start;
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+}
+
+.cloud-ops-test-sticky-result .cloud-ops-test-json {
+  min-height: 260px;
+  max-height: 42vh;
+}
+
+@media (max-width: 1180px) {
+  .cloud-ops-test-status-split {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-ops-test-sticky-result {
+    position: static;
+    max-height: none;
+  }
+}

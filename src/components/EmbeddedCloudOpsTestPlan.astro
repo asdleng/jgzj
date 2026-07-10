@@ -16,13 +16,13 @@ const tabs = [
 
 const readOnlyToolGroups = [
   {
-    title: "核心诊断：5 个一键检查",
+    title: "核心诊断：按运维目的检查",
     tools: [
-      { label: "一键健康检查", tool: "health.autodrive_check", desc: "定位、规划、底盘、阻断条件综合只读检查", timeout: 35 },
-      { label: "车辆详情", tool: "vehicle_detail", desc: "读取云端车辆详情、身份、连接和遥测摘要", action: "vehicle_detail" },
-      { label: "综合快照", tool: "combined.snapshot", desc: "合并健康快照、系统快照、整车快照，减少重复入口", action: "combined_snapshot", timeout: 35 },
-      { label: "主控探测", tool: "network.master_probe", desc: "media 到主控网络/SSH/ROS 入口探测", args: { include_ssh: true }, timeout: 25 },
-      { label: "ROS 总览", tool: "ros.overview", desc: "ROS 节点、topic、service 概览", timeout: 30 }
+      { label: "车辆当前状态", tool: "vehicle.current_state", desc: "看车辆是否在线、速度/模式/安全状态是否正常", action: "vehicle_detail", purpose: "回答：这台车现在是什么状态？" },
+      { label: "当前任务/导航", tool: "task.navigation_context", desc: "合并 routing、planning、路线列表，判断是否有任务或导航上下文", action: "task_context", timeout: 35, purpose: "回答：这台车现在有没有任务，为什么停着？" },
+      { label: "自动驾驶健康", tool: "health.autodrive_check", desc: "定位、规划、底盘、阻断条件综合只读检查", timeout: 35, purpose: "回答：自动驾驶是否具备运行条件？" },
+      { label: "云端通信链路", tool: "communication.cloud_vehicle", desc: "合并云端连通、主控链路、ROS 入口探测", action: "communication_check", timeout: 30, purpose: "回答：云端、media、主控、ROS 链路是否通？" },
+      { label: "系统资源快照", tool: "system.snapshot", desc: "CPU、内存、磁盘、温度和关键进程资源", args: { include_processes: true }, timeout: 30, purpose: "回答：车辆电脑资源是否异常？" }
     ]
   }
 ];
@@ -326,61 +326,67 @@ const agentRules = [
           <p>只读检查按钮已经接到真实接口；控制、重启、写参数、任务重发先展示但禁用。</p>
         </div>
 
-        {readOnlyToolGroups.map((group) => (
-          <section class="cloud-ops-test-tool-group">
-            <div class="cloud-ops-test-tool-group-head">
-              <h3>{group.title}</h3>
-              <span>点击执行只读接口</span>
-            </div>
-            <div class="cloud-ops-test-command-grid">
-              {group.tools.map((item) => (
-                <button
-                  class="cloud-ops-test-command-button"
-                  type="button"
-                  data-action="readonly-tool"
-                  data-tool={item.tool}
-                  data-tool-action={"action" in item ? item.action : "tool_call"}
-                  data-tool-args={JSON.stringify("args" in item ? item.args : {})}
-                  data-timeout-s={String("timeout" in item ? item.timeout : 30)}
-                >
-                  <strong>{item.label}</strong>
-                  <span>{item.tool}</span>
-                  <small>{item.desc}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-        ))}
+        <div class="cloud-ops-test-status-split">
+          <div class="cloud-ops-test-status-left">
+            {readOnlyToolGroups.map((group) => (
+              <section class="cloud-ops-test-tool-group">
+                <div class="cloud-ops-test-tool-group-head">
+                  <h3>{group.title}</h3>
+                  <span>点击后右侧立即显示结果</span>
+                </div>
+                <div class="cloud-ops-test-command-grid cloud-ops-test-command-grid--core">
+                  {group.tools.map((item) => (
+                    <button
+                      class="cloud-ops-test-command-button"
+                      type="button"
+                      data-action="readonly-tool"
+                      data-tool={item.tool}
+                      data-tool-action={"action" in item ? item.action : "tool_call"}
+                      data-tool-args={JSON.stringify("args" in item ? item.args : {})}
+                      data-timeout-s={String("timeout" in item ? item.timeout : 30)}
+                      data-purpose={"purpose" in item ? item.purpose : ""}
+                    >
+                      <strong>{item.label}</strong>
+                      <span>{item.tool}</span>
+                      <small>{item.desc}</small>
+                      {"purpose" in item && <em>{item.purpose}</em>}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
 
-        {blockedActionGroups.map((group) => (
-          <section class="cloud-ops-test-tool-group is-disabled">
-            <div class="cloud-ops-test-tool-group-head">
-              <h3>{group.title}</h3>
-              <span>当前只做界面，不绑定执行</span>
-            </div>
-            <div class="cloud-ops-test-command-grid">
-              {group.actions.map(([label, tool, desc]) => (
-                <button class="cloud-ops-test-command-button is-disabled" type="button" disabled>
-                  <strong>{label}</strong>
-                  <span>{tool}</span>
-                  <small>{desc}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-        ))}
-
-        <section class="cloud-ops-test-panel cloud-ops-test-panel--result">
-          <div class="cloud-ops-test-panel-head">
-            <h3>真实检查结果</h3>
-            <span data-role="last-tool-label">等待点击</span>
+            {blockedActionGroups.map((group) => (
+              <details class="cloud-ops-test-disclosure cloud-ops-test-disabled-disclosure">
+                <summary>{group.title}：禁用动作说明</summary>
+                <div class="cloud-ops-test-command-grid cloud-ops-test-command-grid--blocked">
+                  {group.actions.map(([label, tool, desc]) => (
+                    <button class="cloud-ops-test-command-button is-disabled" type="button" disabled>
+                      <strong>{label}</strong>
+                      <span>{tool}</span>
+                      <small>{desc}</small>
+                    </button>
+                  ))}
+                </div>
+              </details>
+            ))}
           </div>
-          <div class="cloud-ops-test-result-summary" data-role="tool-summary">选择车辆后点击上方只读工具，这里先显示摘要；完整返回默认折叠。</div>
-          <details class="cloud-ops-test-disclosure">
-            <summary>展开原始返回 JSON</summary>
-            <pre class="cloud-ops-test-json" data-role="tool-result">选择车辆后点击上方只读工具，这里显示真实返回。</pre>
-          </details>
-        </section>
+
+          <section class="cloud-ops-test-panel cloud-ops-test-panel--result cloud-ops-test-sticky-result">
+            <div class="cloud-ops-test-panel-head">
+              <div>
+                <h3>查询结果</h3>
+                <p>点击左侧任一核心检查后，结果会在这里更新。</p>
+              </div>
+              <span data-role="last-tool-label">等待点击</span>
+            </div>
+            <div class="cloud-ops-test-result-summary" data-role="tool-summary">选择车辆后点击左侧核心诊断按钮，这里会立即显示直观摘要；完整返回默认折叠。</div>
+            <details class="cloud-ops-test-disclosure">
+              <summary>展开原始返回 JSON</summary>
+              <pre class="cloud-ops-test-json" data-role="tool-result">选择车辆后点击左侧只读工具，这里显示真实返回。</pre>
+            </details>
+          </section>
+        </div>
       </section>
 
       <section id="cloud-ops-test-params" class="cloud-ops-test-page" data-active="false">
@@ -477,6 +483,9 @@ const agentRules = [
       "tool_list",
       "vehicle_detail",
       "combined.snapshot",
+      "vehicle.current_state",
+      "task.navigation_context",
+      "communication.cloud_vehicle",
       "health.snapshot",
       "network.cloud_probe",
       "network.master_probe",
@@ -1251,6 +1260,110 @@ const agentRules = [
       }
     };
 
+    const extractNestedValues = (value, max = 200) => {
+      const found = [];
+      const walk = (node, prefix = "") => {
+        if (found.length >= max || node === null || node === undefined) return;
+        if (typeof node !== "object") {
+          found.push([prefix, node]);
+          return;
+        }
+        if (Array.isArray(node)) {
+          node.slice(0, 8).forEach((item, index) => walk(item, `${prefix}[${index}]`));
+          return;
+        }
+        Object.entries(node).forEach(([key, child]) => {
+          const next = prefix ? `${prefix}.${key}` : key;
+          if (/password|token|secret|key/i.test(next)) return;
+          walk(child, next);
+        });
+      };
+      walk(value);
+      return found;
+    };
+
+    const findFirstByKey = (payload, names) => {
+      const wanted = new Set(names.map((name) => String(name).toLowerCase()));
+      for (const [path, value] of extractNestedValues(payload)) {
+        const tail = String(path || "").split(".").pop().replace(/\[\d+\]$/, "").toLowerCase();
+        if (wanted.has(tail) && value !== null && value !== undefined && value !== "") return value;
+      }
+      return undefined;
+    };
+
+    const resultLine = (label, value) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(displayValue(value))}</dd></div>`;
+
+    const summarizeCombinedResults = (payload) => {
+      const results = Array.isArray(payload?.results) ? payload.results : [];
+      const okCount = results.filter((item) => item.ok).length;
+      const lines = results.map((item) => `${item.label || item.tool_name}: ${item.ok ? "正常返回" : "返回异常"}`);
+      return {
+        title: payload?.ok === false ? "综合检查存在异常返回" : "综合检查已完成",
+        tone: payload?.ok === false ? "warn" : "ok",
+        lines: [`${okCount}/${results.length} 个子检查正常返回`, ...lines],
+        kv: []
+      };
+    };
+
+    const summarizeToolPayload = (toolName, payload, vehicleId) => {
+      const normalizedTool = String(toolName || "");
+      if (normalizedTool === "task.navigation_context" || normalizedTool === "communication.cloud_vehicle" || normalizedTool === "combined.snapshot") {
+        return summarizeCombinedResults(payload);
+      }
+      const ok = payload?.ok !== false;
+      const status = findFirstByKey(payload, ["status", "state", "health", "result", "summary"]);
+      const speed = findFirstByKey(payload, ["speed_kph", "speed", "vehicle_speed", "localization_speed_mps"]);
+      const mode = findFirstByKey(payload, ["running_mode", "mode", "planner_state"]);
+      const masterPing = findFirstByKey(payload, ["master_ping_ok", "ping_ok", "master_ok"]);
+      const rosOk = findFirstByKey(payload, ["telemetry_master_ros_ok", "ros_ok", "master_ros_ok"]);
+      const cpu = findFirstByKey(payload, ["cpu_percent", "cpu"]);
+      const memory = findFirstByKey(payload, ["memory_percent", "memory"]);
+      const disk = findFirstByKey(payload, ["disk_percent", "disk"]);
+      const emergency = findFirstByKey(payload, ["emergency_stop_pressed", "emergency_stop"]);
+      const collision = findFirstByKey(payload, ["collision_stop"]);
+      const titleByTool = {
+        "vehicle.current_state": "车辆当前状态摘要",
+        "vehicle_detail": "车辆详情摘要",
+        "health.autodrive_check": "自动驾驶健康摘要",
+        "system.snapshot": "系统资源摘要",
+        "ros.overview": "ROS 总览摘要",
+        "network.master_probe": "主控链路摘要"
+      };
+      const kv = [];
+      kv.push(["车辆", vehicleId]);
+      if (speed !== undefined) kv.push(["速度", speed]);
+      if (mode !== undefined) kv.push(["模式/状态", mode]);
+      if (masterPing !== undefined) kv.push(["主控链路", boolText(masterPing, "可达", "不可达")]);
+      if (rosOk !== undefined) kv.push(["ROS", boolText(rosOk, "正常", "异常")]);
+      if (emergency !== undefined) kv.push(["急停", boolText(emergency, "触发", "未触发")]);
+      if (collision !== undefined) kv.push(["碰撞停", boolText(collision, "触发", "未触发")]);
+      if (cpu !== undefined) kv.push(["CPU", cpu]);
+      if (memory !== undefined) kv.push(["内存", memory]);
+      if (disk !== undefined) kv.push(["磁盘", disk]);
+      const lines = [];
+      if (status !== undefined) lines.push(`返回状态：${displayValue(status)}`);
+      lines.push(ok ? "接口正常返回，下面是根据返回字段提取的关键结果。" : "接口返回异常，请展开原始 JSON 查看错误详情。");
+      return {
+        title: titleByTool[normalizedTool] || `${normalizedTool} 检查摘要`,
+        tone: ok ? "ok" : "warn",
+        lines,
+        kv
+      };
+    };
+
+    const renderToolSummary = (toolName, payload, vehicleId) => {
+      if (!toolSummary) return;
+      const summary = summarizeToolPayload(toolName, payload, vehicleId);
+      const kvHtml = summary.kv?.length
+        ? `<dl class="cloud-ops-test-result-kv">${summary.kv.map(([k, v]) => resultLine(k, v)).join("")}</dl>`
+        : "";
+      const lineHtml = summary.lines?.length
+        ? `<ul>${summary.lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`
+        : "";
+      toolSummary.innerHTML = `<strong>${escapeHtml(summary.title)}</strong>${kvHtml}${lineHtml}<p>完整原始返回已折叠在下方，需要排障时再展开。</p>`;
+      toolSummary.dataset.tone = summary.tone || "ok";
+    };
+
     const runReadOnlyTool = async (button) => {
       const toolName = String(button?.dataset?.tool || "").trim();
       const toolAction = String(button?.dataset?.toolAction || "tool_call").trim();
@@ -1272,7 +1385,43 @@ const agentRules = [
       setStatus(`点击触发只读工具：${toolName}`, "loading");
       try {
         let payload;
-        if (toolAction === "combined_snapshot" || toolName === "combined.snapshot") {
+        if (toolAction === "task_context" || toolName === "task.navigation_context") {
+          const contextTools = [
+            { tool_name: "status.routing", label: "Routing 状态", args: {} },
+            { tool_name: "status.planning", label: "Planning 状态", args: {} },
+            { tool_name: "route.list", label: "路线列表", args: {} }
+          ];
+          const results = [];
+          for (const item of contextTools) {
+            const response = await fetch(EXECUTE_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Accept: "application/json" },
+              credentials: "same-origin",
+              body: JSON.stringify({ action: "tool_call", vehicle_id: vehicleId, tool_name: item.tool_name, args: item.args, timeout_s, request_id: `cloud-ops-test-task-${item.tool_name}-${Date.now()}` })
+            });
+            const data = await response.json().catch(() => ({}));
+            results.push({ label: item.label, tool_name: item.tool_name, ok: response.ok && data?.ok !== false, response: data });
+          }
+          payload = { ok: results.every((item) => item.ok), vehicle_id: vehicleId, tool_name: "task.navigation_context", description: "Routing + Planning + 路线列表的任务/导航上下文", results };
+        } else if (toolAction === "communication_check" || toolName === "communication.cloud_vehicle") {
+          const communicationTools = [
+            { tool_name: "network.cloud_probe", label: "云端连通", args: {} },
+            { tool_name: "network.master_probe", label: "主控探测", args: { include_ssh: true } },
+            { tool_name: "ros.overview", label: "ROS 总览", args: {} }
+          ];
+          const results = [];
+          for (const item of communicationTools) {
+            const response = await fetch(EXECUTE_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Accept: "application/json" },
+              credentials: "same-origin",
+              body: JSON.stringify({ action: "tool_call", vehicle_id: vehicleId, tool_name: item.tool_name, args: item.args, timeout_s, request_id: `cloud-ops-test-comm-${item.tool_name}-${Date.now()}` })
+            });
+            const data = await response.json().catch(() => ({}));
+            results.push({ label: item.label, tool_name: item.tool_name, ok: response.ok && data?.ok !== false, response: data });
+          }
+          payload = { ok: results.every((item) => item.ok), vehicle_id: vehicleId, tool_name: "communication.cloud_vehicle", description: "云端 + 主控 + ROS 链路综合只读结果", results };
+        } else if (toolAction === "combined_snapshot" || toolName === "combined.snapshot") {
           const snapshotTools = [
             { tool_name: "health.snapshot", label: "健康快照", args: {} },
             { tool_name: "system.snapshot", label: "系统快照", args: { include_processes: true } },
@@ -1328,8 +1477,7 @@ const agentRules = [
           payload = await response.json().catch(() => ({}));
           if (!response.ok || payload?.ok === false) throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
         }
-        const okText = payload?.ok === false ? "返回异常" : "返回成功";
-        if (toolSummary) toolSummary.textContent = `${okText}：${vehicleId} · ${toolName}。完整 JSON 已折叠，可展开查看。`;
+        renderToolSummary(toolName, payload, vehicleId);
         if (toolResult) toolResult.textContent = JSON.stringify(payload, null, 2);
         setStatus(`只读检查完成：${toolName}`, "ok");
       } catch (error) {
