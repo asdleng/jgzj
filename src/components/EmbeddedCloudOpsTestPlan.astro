@@ -16,36 +16,13 @@ const tabs = [
 
 const readOnlyToolGroups = [
   {
-    title: "核心诊断",
+    title: "核心诊断：5 个一键检查",
     tools: [
-      { label: "关键节点", tool: "status.key_nodes", desc: "自动驾驶关键节点在线状态", timeout: 35 },
-      { label: "一键健康检查", tool: "health.autodrive_check", desc: "定位/规划/底盘综合只读检查", timeout: 35 },
-      { label: "单车详情", tool: "vehicle_detail", desc: "读取云端车辆详情和遥测快照", action: "vehicle_detail" },
-      { label: "工具列表", tool: "tool_list", desc: "查看当前车辆 auto_ad_ai 工具能力", action: "tool_list", timeout: 35 },
-      { label: "健康快照", tool: "health.snapshot", desc: "车端资源、ROS、主控状态快照", timeout: 30 },
-      { label: "云端连通", tool: "network.cloud_probe", desc: "车端到云端链路检查", timeout: 30 },
-      { label: "主控探测", tool: "network.master_probe", desc: "media 到主控网络/SSH 探测", args: { include_ssh: true }, timeout: 25 },
-      { label: "ROS 总览", tool: "ros.overview", desc: "ROS 节点、topic、service 概览", timeout: 30 },
-      { label: "系统快照", tool: "system.snapshot", desc: "CPU/内存/磁盘/温度和进程", args: { include_processes: true }, timeout: 30 },
-      { label: "整车快照", tool: "vehicle.snapshot", desc: "车辆运行状态和 topic 样本", args: { include_topic_samples: true }, timeout: 25 }
-    ]
-  },
-  {
-    title: "感知 / 定位 / 规划",
-    tools: [
-      { label: "相机状态", tool: "status.camera", desc: "相机在线、频率和图像链路", args: { include_rate: true, sample_seconds: 1.0 }, timeout: 30 },
-      { label: "上传链路", tool: "camera.upload_chain", desc: "相机上传链路状态", timeout: 35 },
-      { label: "AI检测配置", tool: "ai_detection.config", desc: "AI 检测开关和模型配置", timeout: 30 },
-      { label: "AI检测图片", tool: "ai_detection.images", desc: "最近检测图片列表", args: { limit: 6 }, timeout: 35 },
-      { label: "地图查看", tool: "map.preview", desc: "当前地图预览图", args: { image_size: 1024, include_base64: true }, timeout: 40 },
-      { label: "定位状态", tool: "status.localization", desc: "location_topic_、NDT、融合状态", timeout: 30 },
-      { label: "底盘 CAN", tool: "status.can", desc: "速度、档位、底盘反馈", timeout: 30 },
-      { label: "车身状态", tool: "status.body_control", desc: "灯光、广告屏反馈状态", timeout: 30 },
-      { label: "规划状态", tool: "status.planning", desc: "planning 输出和阻塞状态", timeout: 30 },
-      { label: "Routing 状态", tool: "status.routing", desc: "route/task 是否正常", timeout: 30 },
-      { label: "障碍处理", tool: "status.obstacle_processor", desc: "障碍物处理链路", timeout: 30 },
-      { label: "障碍俯视图", tool: "obstacle.preview", desc: "融合障碍物俯视预览", args: { topic: "/fusion/objects", range_m: 15, image_size: 768, save_file: true, include_base64: true }, timeout: 40 },
-      { label: "路线列表", tool: "route.list", desc: "车端可用巡逻路线", timeout: 30 }
+      { label: "一键健康检查", tool: "health.autodrive_check", desc: "定位、规划、底盘、阻断条件综合只读检查", timeout: 35 },
+      { label: "车辆详情", tool: "vehicle_detail", desc: "读取云端车辆详情、身份、连接和遥测摘要", action: "vehicle_detail" },
+      { label: "综合快照", tool: "combined.snapshot", desc: "合并健康快照、系统快照、整车快照，减少重复入口", action: "combined_snapshot", timeout: 35 },
+      { label: "主控探测", tool: "network.master_probe", desc: "media 到主控网络/SSH/ROS 入口探测", args: { include_ssh: true }, timeout: 25 },
+      { label: "ROS 总览", tool: "ros.overview", desc: "ROS 节点、topic、service 概览", timeout: 30 }
     ]
   }
 ];
@@ -135,15 +112,15 @@ const agentRules = [
   <aside class="cloud-ops-test-agent-rail" data-role="agent-rail" aria-label="智能体运维常驻侧边栏">
     <button class="cloud-ops-test-agent-tab" type="button" data-action="agent-toggle" aria-expanded="false" aria-controls="cloud-ops-agent-panel">
       <span class="cloud-ops-test-agent-tab-dot" aria-hidden="true"></span>
-      <strong>AI</strong>
-      <small>智能体</small>
+      <span class="cloud-ops-test-agent-logo" aria-hidden="true"><i></i><b></b></span>
+      <strong>山海智枢</strong>
     </button>
     <div class="cloud-ops-test-agent-panel" id="cloud-ops-agent-panel">
       <div class="cloud-ops-test-agent-panel-head">
         <div>
-          <p class="cloud-ops-test-kicker">AGENT COPILOT · READ ONLY</p>
-          <h2>智能体运维</h2>
-          <p>常驻只读诊断参谋：随时提问，但不会自动调用车辆工具。</p>
+          <p class="cloud-ops-test-kicker">SHANHAI OPS · READ ONLY</p>
+          <h2>山海智枢</h2>
+          <p>常驻只读运维参谋：随时提问，但不会自动调用车辆工具。</p>
         </div>
         <button class="cloud-ops-test-agent-pin" type="button" data-action="agent-pin" aria-pressed="false">固定</button>
       </div>
@@ -178,7 +155,7 @@ const agentRules = [
 
       <div class="cloud-ops-test-agent-messages" data-role="agent-messages">
         <div class="cloud-ops-test-agent-message is-agent">
-          <strong>云端智能运维智能体</strong>
+          <strong>山海智枢</strong>
           <p>我现在按只读参谋模式工作：可以结合真实车辆缓存分析停车、定位、规划、控制、通信类问题；不会自动控车。</p>
         </div>
       </div>
@@ -252,7 +229,7 @@ const agentRules = [
               <span data-role="vehicle-count">--</span>
             </div>
             <div class="cloud-ops-test-list-controls">
-              <button class="cloud-ops-test-command-button is-primary" type="button" data-action="refresh-vehicles">刷新车辆列表</button>
+              <button class="cloud-ops-test-command-button is-primary" type="button" data-action="refresh-vehicles">刷新列表</button>
               <label class="cloud-ops-test-select-field">
                 当前车辆
                 <select data-role="vehicle-select">
@@ -266,11 +243,6 @@ const agentRules = [
                   <option value="id">按车辆编号</option>
                 </select>
               </label>
-              <div class="cloud-ops-test-selected-strip">
-                <span>已选</span>
-                <strong data-role="selected-vehicle-title">--</strong>
-                <small>切换车辆只更新上下文，不会自动执行车端工具。</small>
-              </div>
               <p class="cloud-ops-test-status" data-role="status">只读初始化中...</p>
             </div>
             <div class="cloud-ops-test-api-strip">
@@ -452,8 +424,8 @@ const agentRules = [
       <section id="cloud-ops-test-agent" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head">
           <p class="cloud-ops-test-kicker">AGENT OPS</p>
-          <h2>智能体运维：主入口已移到右侧常驻侧边栏</h2>
-          <p>这个页面保留为智能体模式说明和规则边界。实际对话框现在常驻在页面右侧，切换子页面、选择车辆或展开详情都不会自动发起对话。</p>
+          <h2>山海智枢：主入口已移到右侧常驻侧边栏</h2>
+          <p>这个页面保留为智能体模式说明和规则边界。山海智枢现在常驻在页面右侧，切换子页面、选择车辆或展开详情都不会自动发起对话。</p>
         </div>
 
         <div class="cloud-ops-test-card-grid cloud-ops-test-agent-explain-grid">
@@ -504,6 +476,7 @@ const agentRules = [
       "health.autodrive_check",
       "tool_list",
       "vehicle_detail",
+      "combined.snapshot",
       "health.snapshot",
       "network.cloud_probe",
       "network.master_probe",
@@ -1123,7 +1096,7 @@ const agentRules = [
       if (!agentMessages) return;
       const node = document.createElement("div");
       node.className = `cloud-ops-test-agent-message is-${role}`;
-      const title = role === "user" ? "运维人员" : (role === "error" ? "接口错误" : "云端智能运维智能体");
+      const title = role === "user" ? "运维人员" : (role === "error" ? "接口错误" : "山海智枢");
       node.innerHTML = `<strong>${escapeHtml(title)}</strong><p>${escapeHtml(text || "")}</p>${meta ? `<small>${escapeHtml(meta)}</small>` : ""}`;
       agentMessages.appendChild(node);
       agentMessages.scrollTop = agentMessages.scrollHeight;
@@ -1299,7 +1272,38 @@ const agentRules = [
       setStatus(`点击触发只读工具：${toolName}`, "loading");
       try {
         let payload;
-        if (toolAction === "tool_list" || toolName === "tool_list") {
+        if (toolAction === "combined_snapshot" || toolName === "combined.snapshot") {
+          const snapshotTools = [
+            { tool_name: "health.snapshot", label: "健康快照", args: {} },
+            { tool_name: "system.snapshot", label: "系统快照", args: { include_processes: true } },
+            { tool_name: "vehicle.snapshot", label: "整车快照", args: { include_topic_samples: true } }
+          ];
+          const results = [];
+          for (const item of snapshotTools) {
+            const response = await fetch(EXECUTE_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Accept: "application/json" },
+              credentials: "same-origin",
+              body: JSON.stringify({
+                action: "tool_call",
+                vehicle_id: vehicleId,
+                tool_name: item.tool_name,
+                args: item.args,
+                timeout_s,
+                request_id: `cloud-ops-test-combined-${item.tool_name}-${Date.now()}`
+              })
+            });
+            const data = await response.json().catch(() => ({}));
+            results.push({ label: item.label, tool_name: item.tool_name, ok: response.ok && data?.ok !== false, response: data });
+          }
+          payload = {
+            ok: results.every((item) => item.ok),
+            vehicle_id: vehicleId,
+            tool_name: "combined.snapshot",
+            description: "健康快照 + 系统快照 + 整车快照的合并只读结果",
+            results
+          };
+        } else if (toolAction === "tool_list" || toolName === "tool_list") {
           const response = await fetch(`/api/cloud-ops/vehicles/${encodeURIComponent(vehicleId)}/tool-list?timeout_s=${encodeURIComponent(timeout_s)}`, { headers: { Accept: "application/json" }, credentials: "same-origin" });
           payload = await response.json().catch(() => ({}));
           if (!response.ok || payload?.ok === false) throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
@@ -1355,6 +1359,13 @@ const agentRules = [
       } catch (_error) {
         setAgentPinned(false);
       }
+    };
+    const alignAgentRailToHero = () => {
+      const hero = shell.querySelector(".cloud-ops-test-topbar");
+      if (!hero || !agentRail) return;
+      const top = Math.max(0, Math.round(hero.getBoundingClientRect().top + 56));
+      agentRail.style.setProperty("--cloud-ops-test-agent-top", `${top}px`);
+      agentRail.style.setProperty("--cloud-ops-test-agent-max-height", `calc(100vh - ${top + 20}px)`);
     };
 
     tabs.forEach((tab) => tab.addEventListener("click", () => setActive(tab.dataset.target)));
@@ -1417,6 +1428,8 @@ const agentRules = [
       }
     });
 
+    alignAgentRailToHero();
+    window.addEventListener("resize", alignAgentRailToHero);
     restoreAgentPinned();
     loadVehicles();
     loadAgentStatus();
