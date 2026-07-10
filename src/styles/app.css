@@ -2240,6 +2240,99 @@
   font-weight: 900;
 }
 
+.cloud-ops-test-tool-group-head > div {
+  display: grid;
+  gap: 4px;
+}
+
+.cloud-ops-test-tool-group-head p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.cloud-ops-test-tool-group--core {
+  border-color: rgba(103, 232, 249, 0.34);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(14, 165, 233, 0.14), transparent 34%),
+    rgba(2, 6, 23, 0.5);
+}
+
+.cloud-ops-test-command-button--core {
+  min-height: 118px;
+  border-color: rgba(103, 232, 249, 0.48);
+  background:
+    linear-gradient(135deg, rgba(8, 47, 73, 0.52), rgba(15, 23, 42, 0.9)),
+    radial-gradient(circle at 100% 0%, rgba(34, 211, 238, 0.2), transparent 44%);
+}
+
+.cloud-ops-test-command-button--core strong {
+  font-size: 1rem;
+}
+
+.cloud-ops-test-command-button--core em {
+  color: #bae6fd;
+  font-size: 0.74rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.cloud-ops-test-specialist-disclosure {
+  border-color: rgba(148, 163, 184, 0.38);
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.cloud-ops-test-specialist-disclosure > summary,
+.cloud-ops-test-specialist-group > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cloud-ops-test-specialist-disclosure > summary span,
+.cloud-ops-test-specialist-group > summary span {
+  color: #f8fafc;
+  font-weight: 900;
+}
+
+.cloud-ops-test-specialist-disclosure > summary small,
+.cloud-ops-test-specialist-group > summary small {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.cloud-ops-test-specialist-stack {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.cloud-ops-test-specialist-group {
+  border: 1px solid rgba(71, 85, 105, 0.46);
+  border-radius: 14px;
+  padding: 10px;
+  background: rgba(2, 6, 23, 0.38);
+}
+
+.cloud-ops-test-specialist-group[open] {
+  border-color: rgba(103, 232, 249, 0.28);
+}
+
+.cloud-ops-test-command-grid--specialist {
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  margin-top: 10px;
+}
+
+.cloud-ops-test-command-button--specialist {
+  min-height: 92px;
+  background:
+    linear-gradient(135deg, rgba(15, 23, 42, 0.86), rgba(30, 41, 59, 0.66)),
+    radial-gradient(circle at 100% 0%, rgba(96, 165, 250, 0.12), transparent 42%);
+}
+
 .cloud-ops-test-command-button {
   position: relative;
   min-height: 70px;

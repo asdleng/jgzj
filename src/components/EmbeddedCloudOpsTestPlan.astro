@@ -16,13 +16,66 @@ const tabs = [
 
 const readOnlyToolGroups = [
   {
-    title: "核心诊断：按运维目的检查",
+    title: "核心诊断：5 个大按钮",
     tools: [
       { label: "车辆当前状态", tool: "vehicle.current_state", desc: "看车辆是否在线、速度/模式/安全状态是否正常", action: "vehicle_detail", purpose: "回答：这台车现在是什么状态？" },
-      { label: "当前任务/导航", tool: "task.navigation_context", desc: "合并 routing、planning、路线列表，判断是否有任务或导航上下文", action: "task_context", timeout: 35, purpose: "回答：这台车现在有没有任务，为什么停着？" },
       { label: "自动驾驶健康", tool: "health.autodrive_check", desc: "定位、规划、底盘、阻断条件综合只读检查", timeout: 35, purpose: "回答：自动驾驶是否具备运行条件？" },
-      { label: "云端通信链路", tool: "communication.cloud_vehicle", desc: "合并云端连通、主控链路、ROS 入口探测", action: "communication_check", timeout: 30, purpose: "回答：云端、media、主控、ROS 链路是否通？" },
-      { label: "系统资源快照", tool: "system.snapshot", desc: "CPU、内存、磁盘、温度和关键进程资源", args: { include_processes: true }, timeout: 30, purpose: "回答：车辆电脑资源是否异常？" }
+      { label: "云车通信链路", tool: "communication.cloud_vehicle", desc: "合并云端连通、主控链路、ROS 入口探测", action: "communication_check", timeout: 30, purpose: "回答：云端、media、主控、ROS 链路是否通？" },
+      { label: "主控 / ROS 状态", tool: "ros.overview", desc: "检查 ROS master、topic、node 和服务概览", timeout: 30, purpose: "回答：主控 ROS 环境是否正常？" },
+      { label: "停车 / 不动诊断", tool: "task.navigation_context", desc: "合并 routing、planning、路线、定位和避障上下文", action: "task_context", timeout: 35, purpose: "回答：这台车为什么停着或不动？" }
+    ]
+  }
+];
+
+const specialistDiagnosticGroups = [
+  {
+    title: "感知与相机",
+    desc: "相机、上传链路、AI 检测和障碍物处理。",
+    tools: [
+      { label: "相机状态", tool: "status.camera", desc: "检查相机在线、帧率和基础状态", args: { include_rate: true, sample_seconds: 1 }, timeout: 18 },
+      { label: "上传链路", tool: "camera.upload_chain", desc: "检查图片/视频上传链路", timeout: 25 },
+      { label: "AI检测配置", tool: "ai_detection.config", desc: "查看 AI 检测配置和落盘路径", timeout: 20 },
+      { label: "AI检测图片", tool: "ai_detection.images", desc: "查看最近 AI 检测图片", timeout: 25 },
+      { label: "障碍物处理状态", tool: "status.obstacle_processor", desc: "检查 obstacle processor 心跳和输入", timeout: 25 },
+      { label: "障碍物预览", tool: "obstacle.preview", desc: "查看障碍物俯视预览", timeout: 25 }
+    ]
+  },
+  {
+    title: "定位与地图",
+    desc: "定位可靠性、地图预览和地图版本入口。",
+    tools: [
+      { label: "定位状态", tool: "status.localization", desc: "检查 NDT/ESKF/GPS/IMU 相关状态", timeout: 25 },
+      { label: "地图查看", tool: "map.preview", desc: "只读查看当前地图预览", timeout: 25 }
+    ]
+  },
+  {
+    title: "规划与任务",
+    desc: "规划、Routing 和路线库上下文。",
+    tools: [
+      { label: "规划状态", tool: "status.planning", desc: "检查 planner 状态、轨迹和急停信息", timeout: 25 },
+      { label: "Routing状态", tool: "status.routing", desc: "检查当前 routing、路径选择和路线可用性", timeout: 25 },
+      { label: "路线列表", tool: "route.list", desc: "列出车辆保存路线", timeout: 25 }
+    ]
+  },
+  {
+    title: "底层控制",
+    desc: "CAN、控制链路和车身状态。",
+    tools: [
+      { label: "CAN状态", tool: "status.can", desc: "检查底盘 CAN 和 chassis 状态", timeout: 25 },
+      { label: "控制状态", tool: "status.control", desc: "检查 control 模块和目标速度输出", timeout: 25 },
+      { label: "车身控制状态", tool: "status.body_control", desc: "只读查看灯光、屏幕、车身控制状态", timeout: 25 }
+    ]
+  },
+  {
+    title: "系统与调试",
+    desc: "关键节点、系统资源、原始快照和工具列表。",
+    tools: [
+      { label: "关键节点", tool: "status.key_nodes", desc: "检查关键 ROS 节点在线情况", timeout: 25 },
+      { label: "系统快照", tool: "system.snapshot", desc: "CPU、内存、磁盘、温度和进程", args: { include_processes: true }, timeout: 30 },
+      { label: "车辆快照", tool: "vehicle.snapshot", desc: "整车快照和 topic 采样", args: { include_topic_samples: true }, timeout: 25 },
+      { label: "健康快照", tool: "health.snapshot", desc: "健康状态缓存摘要", timeout: 25 },
+      { label: "车辆详情", tool: "vehicle_detail", desc: "查看 cloud-agent 车辆详情", action: "vehicle_detail", timeout: 20 },
+      { label: "工具列表", tool: "tool_list", desc: "查看该车可用只读工具", action: "tool_list", timeout: 20 }
     ]
   }
 ];
@@ -329,15 +382,18 @@ const agentRules = [
         <div class="cloud-ops-test-status-split">
           <div class="cloud-ops-test-status-left">
             {readOnlyToolGroups.map((group) => (
-              <section class="cloud-ops-test-tool-group">
+              <section class="cloud-ops-test-tool-group cloud-ops-test-tool-group--core">
                 <div class="cloud-ops-test-tool-group-head">
-                  <h3>{group.title}</h3>
-                  <span>点击后右侧立即显示结果</span>
+                  <div>
+                    <h3>{group.title}</h3>
+                    <p>日常运营优先使用这 5 个入口；点击后右侧立即显示结果。</p>
+                  </div>
+                  <span>核心诊断</span>
                 </div>
                 <div class="cloud-ops-test-command-grid cloud-ops-test-command-grid--core">
                   {group.tools.map((item) => (
                     <button
-                      class="cloud-ops-test-command-button"
+                      class="cloud-ops-test-command-button cloud-ops-test-command-button--core"
                       type="button"
                       data-action="readonly-tool"
                       data-tool={item.tool}
@@ -355,6 +411,41 @@ const agentRules = [
                 </div>
               </section>
             ))}
+
+            <details class="cloud-ops-test-disclosure cloud-ops-test-specialist-disclosure">
+              <summary>
+                <span>专项诊断（默认收起）</span>
+                <small>保留感知、定位、规划、控制等模块级只读检查</small>
+              </summary>
+              <div class="cloud-ops-test-specialist-stack">
+                {specialistDiagnosticGroups.map((group) => (
+                  <details class="cloud-ops-test-specialist-group">
+                    <summary>
+                      <span>{group.title}</span>
+                      <small>{group.desc}</small>
+                    </summary>
+                    <div class="cloud-ops-test-command-grid cloud-ops-test-command-grid--specialist">
+                      {group.tools.map((item) => (
+                        <button
+                          class="cloud-ops-test-command-button cloud-ops-test-command-button--specialist"
+                          type="button"
+                          data-action="readonly-tool"
+                          data-tool={item.tool}
+                          data-tool-action={"action" in item ? item.action : "tool_call"}
+                          data-tool-args={JSON.stringify("args" in item ? item.args : {})}
+                          data-timeout-s={String("timeout" in item ? item.timeout : 25)}
+                          data-purpose={"purpose" in item ? item.purpose : ""}
+                        >
+                          <strong>{item.label}</strong>
+                          <span>{item.tool}</span>
+                          <small>{item.desc}</small>
+                        </button>
+                      ))}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </details>
 
             {blockedActionGroups.map((group) => (
               <details class="cloud-ops-test-disclosure cloud-ops-test-disabled-disclosure">
@@ -494,6 +585,7 @@ const agentRules = [
       "status.routing",
       "status.can",
       "status.body_control",
+      "status.control",
       "status.camera",
       "status.obstacle_processor",
       "ros.overview",
@@ -1389,7 +1481,10 @@ const agentRules = [
           const contextTools = [
             { tool_name: "status.routing", label: "Routing 状态", args: {} },
             { tool_name: "status.planning", label: "Planning 状态", args: {} },
-            { tool_name: "route.list", label: "路线列表", args: {} }
+            { tool_name: "route.list", label: "路线列表", args: {} },
+            { tool_name: "status.localization", label: "定位状态", args: {} },
+            { tool_name: "status.can", label: "CAN 状态", args: {} },
+            { tool_name: "status.obstacle_processor", label: "障碍物处理", args: {} }
           ];
           const results = [];
           for (const item of contextTools) {
@@ -1402,7 +1497,7 @@ const agentRules = [
             const data = await response.json().catch(() => ({}));
             results.push({ label: item.label, tool_name: item.tool_name, ok: response.ok && data?.ok !== false, response: data });
           }
-          payload = { ok: results.every((item) => item.ok), vehicle_id: vehicleId, tool_name: "task.navigation_context", description: "Routing + Planning + 路线列表的任务/导航上下文", results };
+          payload = { ok: results.every((item) => item.ok), vehicle_id: vehicleId, tool_name: "task.navigation_context", description: "Routing + Planning + 路线列表 + 定位/CAN/障碍物处理的停车/不动诊断上下文", results };
         } else if (toolAction === "communication_check" || toolName === "communication.cloud_vehicle") {
           const communicationTools = [
             { tool_name: "network.cloud_probe", label: "云端连通", args: {} },
