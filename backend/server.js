@@ -23,6 +23,7 @@ const registerThreeDgsRoutes = require('./three-dgs');
 const registerCrowdCpmRoutes = require('./crowd-cpm');
 const registerParkPcmRoutes = require('./park-pcm');
 const registerOneApiProxyRoutes = require('./one-api-proxy');
+const { registerMapPackageUploadRoutes } = require('./map-package-upload');
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -162,6 +163,10 @@ const lidarRelocalizationRoot = path.resolve(
 const lidarRelocalizationVehicleMapRoot = path.resolve(
   process.env.LIDAR_RELOCALIZATION_VEHICLE_MAP_ROOT ||
     path.join(lidarRelocalizationRoot, 'vehicle_maps')
+);
+const mapPackageUploadRoot = path.resolve(
+  process.env.MAP_PACKAGE_UPLOAD_ROOT ||
+    path.join(lidarRelocalizationRoot, 'map_uploads')
 );
 const lidarRelocalizationCaptureRoot = path.resolve(
   process.env.LIDAR_RELOCALIZATION_CAPTURE_ROOT ||
@@ -12497,6 +12502,34 @@ function classifyOperationAuditRequest(req) {
     };
   }
 
+  const mapUploadMatch = requestPath.match(
+    /^\/api\/map-upload\/([^/]+)\/sessions(?:\/([^/]+))?(?:\/(finalize|sync))?/
+  );
+  if (mapUploadMatch && ['POST', 'PUT', 'DELETE'].includes(method)) {
+    const uploadId = mapUploadMatch[2] || null;
+    const isChunk = requestPath.includes('/chunks/');
+    return {
+      category: 'map_editor',
+      action: isChunk
+        ? 'map_upload.chunk'
+        : mapUploadMatch[3]
+          ? `map_upload.${mapUploadMatch[3]}`
+          : method === 'DELETE'
+            ? 'map_upload.cancel'
+            : 'map_upload.create',
+      target_type: 'vehicle_map',
+      target_id: uploadId || mapUploadMatch[1],
+      vehicle_id: mapUploadMatch[1],
+      permission: 'vehicle:path:write',
+      detail: isChunk
+        ? {
+            upload_id: uploadId,
+            content_length: Number(req.get('content-length') || 0)
+          }
+        : auditBodySummary(req)
+    };
+  }
+
   const mapProxyMatch = requestPath.match(/^\/vehicles\/([^/]+)\/map-editor(?:\/.*)?$/);
   if (mapProxyMatch && method === 'POST') {
     return {
@@ -15568,6 +15601,11 @@ registerParkPcmRoutes(app, {
 registerOneApiProxyRoutes(app, {
   rootDir: path.resolve(__dirname, '..'),
   statusAuthMiddleware: authStore.requirePermission('ai:chat')
+});
+registerMapPackageUploadRoutes(app, {
+  requirePermission: (permission) => authStore.requirePermission(permission),
+  uploadRoot: mapPackageUploadRoot,
+  vehicleMapRoot: lidarRelocalizationVehicleMapRoot
 });
 
 function loginRedirectUrl(req) {

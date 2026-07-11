@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "express": "^4.19.2",
-    "nodemailer": "^6.10.1"
+    "nodemailer": "^6.10.1",
+    "yaml": "^2.5.1"
   }
 }

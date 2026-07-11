@@ -70,6 +70,49 @@ import SiteLayout from "../../components/SiteLayout.astro";
             </article>
           </div>
 
+          <section class="map-upload-panel" aria-labelledby="map-upload-title">
+            <div class="map-upload-head">
+              <div>
+                <p class="map-upload-kicker">MAP PACKAGE</p>
+                <h3 id="map-upload-title">服务器地图包</h3>
+              </div>
+              <p id="map-upload-status" class="map-upload-status" data-state="idle">等待选择 PCD 和 config.yaml</p>
+            </div>
+
+            <div class="map-upload-files">
+              <div class="map-upload-file">
+                <span class="map-upload-file-type">PCD</span>
+                <span id="map-upload-pcd-name" class="map-upload-file-name">未选择地图点云</span>
+                <button id="map-upload-pcd-select" class="map-editor-button" type="button">选择地图</button>
+                <input id="map-upload-pcd-input" type="file" accept=".pcd" hidden />
+              </div>
+              <div class="map-upload-file">
+                <span class="map-upload-file-type">YAML</span>
+                <span id="map-upload-config-name" class="map-upload-file-name">未选择 config.yaml</span>
+                <button id="map-upload-config-select" class="map-editor-button" type="button">选择配置</button>
+                <input id="map-upload-config-input" type="file" accept=".yaml" hidden />
+              </div>
+            </div>
+
+            <div class="map-upload-progress-shell">
+              <progress id="map-upload-progress" class="map-upload-progress" max="100" value="0"></progress>
+              <span id="map-upload-progress-label">0%</span>
+            </div>
+
+            <div class="map-upload-actions">
+              <button id="map-upload-start" class="map-editor-button map-editor-button--primary" type="button" disabled>
+                上传地图
+              </button>
+              <button id="map-upload-sync" class="map-editor-button" type="button" disabled>
+                同步到服务器
+              </button>
+              <button id="map-upload-cancel" class="map-editor-button map-editor-button--danger" type="button" disabled>
+                取消上传
+              </button>
+              <p id="map-upload-meta" class="map-upload-meta">尚无已校验地图包</p>
+            </div>
+          </section>
+
           <div id="map-editor-frame-shell" class="map-editor-frame-shell" data-state="empty">
             <div id="map-editor-placeholder" class="map-editor-placeholder">
               <p class="map-editor-placeholder-kicker">MAP EDITOR</p>
@@ -106,6 +149,28 @@ import SiteLayout from "../../components/SiteLayout.astro";
       const frameShell = document.getElementById("map-editor-frame-shell");
       const frame = document.getElementById("map-editor-frame");
       const placeholder = document.getElementById("map-editor-placeholder");
+      const uploadStatus = document.getElementById("map-upload-status");
+      const uploadPcdInput = document.getElementById("map-upload-pcd-input");
+      const uploadConfigInput = document.getElementById("map-upload-config-input");
+      const uploadPcdSelect = document.getElementById("map-upload-pcd-select");
+      const uploadConfigSelect = document.getElementById("map-upload-config-select");
+      const uploadPcdName = document.getElementById("map-upload-pcd-name");
+      const uploadConfigName = document.getElementById("map-upload-config-name");
+      const uploadStart = document.getElementById("map-upload-start");
+      const uploadSync = document.getElementById("map-upload-sync");
+      const uploadCancel = document.getElementById("map-upload-cancel");
+      const uploadProgress = document.getElementById("map-upload-progress");
+      const uploadProgressLabel = document.getElementById("map-upload-progress-label");
+      const uploadMeta = document.getElementById("map-upload-meta");
+
+      const mapUploadState = {
+        pcdFile: null,
+        configFile: null,
+        session: null,
+        busy: false,
+        abortController: null,
+        uploadedBytes: 0
+      };
 
       const setStatus = (text, state = "idle") => {
         if (inlineStatus) {
@@ -122,6 +187,104 @@ import SiteLayout from "../../components/SiteLayout.astro";
 
       const selectedVehicleId = () => String(vehicleSelect?.value || "").trim();
 
+      const formatBytes = (bytes) => {
+        const value = Number(bytes || 0);
+        if (!Number.isFinite(value) || value < 0) return "--";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let current = value;
+        let unit = 0;
+        while (current >= 1024 && unit < units.length - 1) {
+          current /= 1024;
+          unit += 1;
+        }
+        const digits = unit === 0 || current >= 100 ? 0 : current >= 10 ? 1 : 2;
+        return `${current.toFixed(digits)} ${units[unit]}`;
+      };
+
+      const setUploadStatus = (text, state = "idle") => {
+        if (!uploadStatus) return;
+        uploadStatus.textContent = text;
+        uploadStatus.dataset.state = state;
+      };
+
+      const uploadStorageKey = (vehicleId) => `jgzj-map-upload:${vehicleId}`;
+
+      const setUploadProgress = (completedBytes, totalBytes) => {
+        const percent = totalBytes > 0 ? Math.min(100, (completedBytes / totalBytes) * 100) : 0;
+        if (uploadProgress) uploadProgress.value = percent;
+        if (uploadProgressLabel) {
+          uploadProgressLabel.textContent = `${percent.toFixed(percent >= 10 ? 0 : 1)}% · ${formatBytes(completedBytes)} / ${formatBytes(totalBytes)}`;
+        }
+      };
+
+      const sessionTotalBytes = (session) =>
+        Number(session?.files?.pcd?.size_bytes || 0) + Number(session?.files?.config?.size_bytes || 0);
+
+      const rangesToSet = (ranges) => {
+        const values = new Set();
+        (Array.isArray(ranges) ? ranges : []).forEach((range) => {
+          const start = Number(range?.[0]);
+          const end = Number(range?.[1]);
+          if (!Number.isInteger(start) || !Number.isInteger(end) || end < start) return;
+          for (let index = start; index <= end; index += 1) values.add(index);
+        });
+        return values;
+      };
+
+      const receivedBytesForSession = (session) =>
+        Number(session?.files?.pcd?.received_bytes || 0) +
+        Number(session?.files?.config?.received_bytes || 0);
+
+      const renderMapUploadSession = () => {
+        const session = mapUploadState.session;
+        const vehicleId = selectedVehicleId();
+        const ready = session?.status === "ready";
+        const synced = session?.status === "synced";
+        const hasBothFiles = Boolean(mapUploadState.pcdFile && mapUploadState.configFile);
+
+        if (uploadPcdName) {
+          uploadPcdName.textContent = mapUploadState.pcdFile
+            ? `${mapUploadState.pcdFile.name} · ${formatBytes(mapUploadState.pcdFile.size)}`
+            : session?.files?.pcd?.name
+              ? `${session.files.pcd.name} · ${formatBytes(session.files.pcd.size_bytes)}`
+              : "未选择地图点云";
+        }
+        if (uploadConfigName) {
+          uploadConfigName.textContent = mapUploadState.configFile
+            ? `${mapUploadState.configFile.name} · ${formatBytes(mapUploadState.configFile.size)}`
+            : session?.files?.config?.name
+              ? `${session.files.config.name} · ${formatBytes(session.files.config.size_bytes)}`
+              : "未选择 config.yaml";
+        }
+
+        if (uploadStart) uploadStart.disabled = mapUploadState.busy || !vehicleId || !hasBothFiles || ready || synced;
+        if (uploadSync) uploadSync.disabled = mapUploadState.busy || !vehicleId || !ready;
+        if (uploadCancel) uploadCancel.disabled = mapUploadState.busy ? false : !session;
+        [uploadPcdSelect, uploadConfigSelect].forEach((button) => {
+          if (button) button.disabled = mapUploadState.busy;
+        });
+
+        const totalBytes = sessionTotalBytes(session) ||
+          Number(mapUploadState.pcdFile?.size || 0) +
+          Number(mapUploadState.configFile?.size || 0);
+        const completedBytes = synced || ready
+          ? totalBytes
+          : Math.max(mapUploadState.uploadedBytes, receivedBytesForSession(session));
+        setUploadProgress(completedBytes, totalBytes);
+
+        if (uploadMeta) {
+          if (session?.origin) {
+            const pointCount = Number(session?.pointcloud?.point_count || 0);
+            uploadMeta.textContent =
+              `首帧 ${session.origin.latitude.toFixed(8)}, ${session.origin.longitude.toFixed(8)}` +
+              `${pointCount ? ` · ${pointCount.toLocaleString()} pts` : ""}` +
+              `${session.backup_path ? " · 已备份旧地图" : ""}`;
+          } else {
+            uploadMeta.textContent = "尚无已校验地图包";
+          }
+        }
+      };
+
       const apiJson = async (url, options = {}) => {
         const response = await fetch(url, {
           headers: {
@@ -135,6 +298,273 @@ import SiteLayout from "../../components/SiteLayout.astro";
           throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
         }
         return payload;
+      };
+
+      const mapUploadApi = (suffix = "") => {
+        const vehicleId = selectedVehicleId();
+        if (!vehicleId) throw new Error("请先选择车辆");
+        return `/api/map-upload/${encodeURIComponent(vehicleId)}${suffix}`;
+      };
+
+      const loadUploadSession = async (uploadId) => {
+        if (!uploadId) return null;
+        const payload = await apiJson(
+          mapUploadApi(`/sessions/${encodeURIComponent(uploadId)}`),
+          { method: "GET" }
+        );
+        mapUploadState.session = payload.session || null;
+        mapUploadState.uploadedBytes = receivedBytesForSession(mapUploadState.session);
+        renderMapUploadSession();
+        return mapUploadState.session;
+      };
+
+      const restoreUploadSession = async () => {
+        mapUploadState.pcdFile = null;
+        mapUploadState.configFile = null;
+        mapUploadState.session = null;
+        mapUploadState.uploadedBytes = 0;
+        renderMapUploadSession();
+        const vehicleId = selectedVehicleId();
+        if (!vehicleId) return;
+        const uploadId = localStorage.getItem(uploadStorageKey(vehicleId));
+        if (!uploadId) return;
+        try {
+          const session = await loadUploadSession(uploadId);
+          if (session?.status === "ready") {
+            setUploadStatus("地图包已校验，可同步到服务器", "ok");
+          } else if (session?.status === "synced") {
+            setUploadStatus("地图包已同步到服务器", "ok");
+          } else {
+            setUploadStatus("检测到未完成上传，请重新选择同一组文件继续", "loading");
+          }
+        } catch (_error) {
+          localStorage.removeItem(uploadStorageKey(vehicleId));
+          mapUploadState.session = null;
+          renderMapUploadSession();
+        }
+      };
+
+      const selectMapFile = (kind, file) => {
+        if (!file) return;
+        if (kind === "pcd" && !file.name.toLowerCase().endsWith(".pcd")) {
+          setUploadStatus("地图文件必须是 .pcd", "error");
+          return;
+        }
+        if (kind === "config" && file.name.toLowerCase() !== "config.yaml") {
+          setUploadStatus("配置文件必须命名为 config.yaml", "error");
+          return;
+        }
+        mapUploadState[kind === "pcd" ? "pcdFile" : "configFile"] = file;
+        if (mapUploadState.session?.status !== "uploading") {
+          const vehicleId = selectedVehicleId();
+          if (vehicleId) localStorage.removeItem(uploadStorageKey(vehicleId));
+          mapUploadState.session = null;
+          mapUploadState.uploadedBytes = 0;
+        }
+        setUploadStatus(
+          mapUploadState.pcdFile && mapUploadState.configFile
+            ? "两个文件已就绪"
+            : "还需选择另一个文件",
+          mapUploadState.pcdFile && mapUploadState.configFile ? "ok" : "idle"
+        );
+        renderMapUploadSession();
+      };
+
+      const createUploadSession = async () => {
+        const payload = await apiJson(mapUploadApi("/sessions"), {
+          method: "POST",
+          body: JSON.stringify({
+            files: {
+              pcd: {
+                name: mapUploadState.pcdFile.name,
+                size_bytes: mapUploadState.pcdFile.size,
+                client_modified_ms: mapUploadState.pcdFile.lastModified
+              },
+              config: {
+                name: mapUploadState.configFile.name,
+                size_bytes: mapUploadState.configFile.size,
+                client_modified_ms: mapUploadState.configFile.lastModified
+              }
+            }
+          })
+        });
+        mapUploadState.session = payload.session;
+        localStorage.setItem(
+          uploadStorageKey(selectedVehicleId()),
+          mapUploadState.session.upload_id
+        );
+        return mapUploadState.session;
+      };
+
+      const uploadOneChunk = async (kind, file, chunkIndex, chunkSize, signal) => {
+        const start = chunkIndex * chunkSize;
+        const body = file.slice(start, Math.min(file.size, start + chunkSize));
+        const url = mapUploadApi(
+          `/sessions/${encodeURIComponent(mapUploadState.session.upload_id)}` +
+          `/files/${kind}/chunks/${chunkIndex}`
+        );
+        let lastError;
+        for (let attempt = 1; attempt <= 4; attempt += 1) {
+          try {
+            const response = await fetch(url, {
+              method: "PUT",
+              headers: {
+                Accept: "application/json",
+                "Content-Type": "application/octet-stream",
+                "Content-Range": `bytes ${start}-${start + body.size - 1}/${file.size}`
+              },
+              body,
+              signal
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload?.ok === false) {
+              throw new Error(payload?.detail || `HTTP ${response.status}`);
+            }
+            return body.size;
+          } catch (error) {
+            if (signal.aborted) throw error;
+            lastError = error;
+            if (attempt < 4) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 600));
+            }
+          }
+        }
+        throw lastError || new Error("分块上传失败");
+      };
+
+      const uploadFileChunks = async (kind, file, signal) => {
+        const session = mapUploadState.session;
+        const fileState = session.files[kind];
+        const chunkSize = Number(session.chunk_size_bytes);
+        const received = rangesToSet(fileState.received_ranges);
+        const queue = [];
+        for (let index = 0; index < fileState.total_chunks; index += 1) {
+          if (!received.has(index)) queue.push(index);
+        }
+        let cursor = 0;
+        const worker = async () => {
+          while (cursor < queue.length) {
+            const queueIndex = cursor;
+            cursor += 1;
+            const chunkIndex = queue[queueIndex];
+            const uploaded = await uploadOneChunk(kind, file, chunkIndex, chunkSize, signal);
+            mapUploadState.uploadedBytes += uploaded;
+            setUploadProgress(mapUploadState.uploadedBytes, sessionTotalBytes(session));
+          }
+        };
+        const workers = Array.from(
+          { length: Math.min(kind === "pcd" ? 3 : 1, Math.max(1, queue.length)) },
+          worker
+        );
+        await Promise.all(workers);
+      };
+
+      const startMapUpload = async () => {
+        if (!mapUploadState.pcdFile || !mapUploadState.configFile) {
+          setUploadStatus("必须同时选择 PCD 和 config.yaml", "error");
+          return;
+        }
+        mapUploadState.busy = true;
+        mapUploadState.abortController = new AbortController();
+        setUploadStatus("正在建立地图上传任务...", "loading");
+        renderMapUploadSession();
+        try {
+          let session = mapUploadState.session;
+          const sameFiles =
+            session?.status === "uploading" &&
+            session.files?.pcd?.size_bytes === mapUploadState.pcdFile.size &&
+            session.files?.config?.size_bytes === mapUploadState.configFile.size &&
+            session.files?.pcd?.name === mapUploadState.pcdFile.name &&
+            session.files?.config?.name === mapUploadState.configFile.name &&
+            session.files?.pcd?.client_modified_ms === mapUploadState.pcdFile.lastModified &&
+            session.files?.config?.client_modified_ms === mapUploadState.configFile.lastModified;
+          if (!sameFiles) {
+            session = await createUploadSession();
+          } else {
+            session = await loadUploadSession(session.upload_id);
+          }
+          mapUploadState.uploadedBytes = receivedBytesForSession(session);
+          setUploadStatus("正在分块上传地图包...", "loading");
+          await Promise.all([
+            uploadFileChunks("pcd", mapUploadState.pcdFile, mapUploadState.abortController.signal),
+            uploadFileChunks("config", mapUploadState.configFile, mapUploadState.abortController.signal)
+          ]);
+          setUploadStatus("上传完成，服务器正在校验...", "loading");
+          const payload = await apiJson(
+            mapUploadApi(`/sessions/${encodeURIComponent(session.upload_id)}/finalize`),
+            { method: "POST" }
+          );
+          mapUploadState.session = payload.session;
+          mapUploadState.uploadedBytes = sessionTotalBytes(payload.session);
+          setUploadStatus("地图包已校验，可同步到服务器", "ok");
+        } catch (error) {
+          if (mapUploadState.abortController?.signal.aborted) {
+            setUploadStatus("上传已取消", "idle");
+          } else {
+            setUploadStatus(`上传失败：${error.message}，可再次点击上传重试`, "error");
+            if (mapUploadState.session?.upload_id) {
+              await loadUploadSession(mapUploadState.session.upload_id).catch(() => {});
+            }
+          }
+        } finally {
+          mapUploadState.busy = false;
+          mapUploadState.abortController = null;
+          renderMapUploadSession();
+        }
+      };
+
+      const syncMapToServer = async () => {
+        const session = mapUploadState.session;
+        const vehicleId = selectedVehicleId();
+        if (!session || session.status !== "ready" || !vehicleId) return;
+        const origin = session.origin
+          ? `${session.origin.latitude.toFixed(8)}, ${session.origin.longitude.toFixed(8)}`
+          : "--";
+        if (!window.confirm(`同步地图到服务器车辆目录 ${vehicleId}？\n首帧经纬度：${origin}\n旧地图会先备份。`)) {
+          return;
+        }
+        mapUploadState.busy = true;
+        setUploadStatus("正在同步到服务器...", "loading");
+        renderMapUploadSession();
+        try {
+          const payload = await apiJson(
+            mapUploadApi(`/sessions/${encodeURIComponent(session.upload_id)}/sync`),
+            { method: "POST" }
+          );
+          mapUploadState.session = payload.session;
+          setUploadStatus("地图包已同步到服务器", "ok");
+        } catch (error) {
+          setUploadStatus(`同步失败：${error.message}`, "error");
+        } finally {
+          mapUploadState.busy = false;
+          renderMapUploadSession();
+        }
+      };
+
+      const cancelMapUpload = async () => {
+        mapUploadState.abortController?.abort();
+        const session = mapUploadState.session;
+        const vehicleId = selectedVehicleId();
+        mapUploadState.busy = true;
+        renderMapUploadSession();
+        try {
+          if (session?.upload_id) {
+            await apiJson(
+              mapUploadApi(`/sessions/${encodeURIComponent(session.upload_id)}`),
+              { method: "DELETE" }
+            );
+          }
+        } catch (error) {
+          setUploadStatus(`取消失败：${error.message}`, "error");
+          return;
+        } finally {
+          mapUploadState.busy = false;
+        }
+        if (vehicleId) localStorage.removeItem(uploadStorageKey(vehicleId));
+        mapUploadState.session = null;
+        mapUploadState.uploadedBytes = 0;
+        setUploadStatus("上传已取消", "idle");
+        renderMapUploadSession();
       };
 
       const setFrameVisible = (visible) => {
@@ -181,6 +611,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
             }
           }
           setStatus(vehicles.length ? `已加载 ${vehicles.length} 台在线车辆` : "暂无在线车辆", vehicles.length ? "ok" : "error");
+          await restoreUploadSession();
         } catch (error) {
           setStatus(`车辆加载失败：${error.message}`, "error");
         } finally {
@@ -262,9 +693,17 @@ import SiteLayout from "../../components/SiteLayout.astro";
       startBtn?.addEventListener("click", startEditor);
       statusBtn?.addEventListener("click", checkStatus);
       stopBtn?.addEventListener("click", stopEditor);
-      vehicleSelect?.addEventListener("change", () => {
+      uploadPcdSelect?.addEventListener("click", () => uploadPcdInput?.click());
+      uploadConfigSelect?.addEventListener("click", () => uploadConfigInput?.click());
+      uploadPcdInput?.addEventListener("change", () => selectMapFile("pcd", uploadPcdInput.files?.[0]));
+      uploadConfigInput?.addEventListener("change", () => selectMapFile("config", uploadConfigInput.files?.[0]));
+      uploadStart?.addEventListener("click", startMapUpload);
+      uploadSync?.addEventListener("click", syncMapToServer);
+      uploadCancel?.addEventListener("click", cancelMapUpload);
+      vehicleSelect?.addEventListener("change", async () => {
         if (frame) frame.removeAttribute("src");
         setFrameVisible(false);
+        await restoreUploadSession();
         checkStatus();
       });
 
