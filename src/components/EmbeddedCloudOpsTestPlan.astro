@@ -237,10 +237,14 @@ const agentRules = [
           <option value="">加载车辆中...</option>
         </select>
       </label>
-      <div class="cloud-ops-test-vehicle-picker-list" data-role="vehicle-picker-list">
-        <p class="cloud-ops-test-empty">等待车辆列表...</p>
+      <div class="cloud-ops-test-vehicle-picker-list-head">
+        <span>当前异常车辆</span>
+        <small>正常车辆请使用上方快速选择</small>
       </div>
-      <p class="cloud-ops-test-vehicle-picker-note">当前车辆上下文对车辆总览、状态检查、参数设置、地图管理和智能体运维全局生效。切换车辆本身不会执行任何操作。</p>
+      <div class="cloud-ops-test-vehicle-picker-list" data-role="vehicle-picker-list">
+        <p class="cloud-ops-test-empty">等待异常车辆判断...</p>
+      </div>
+      <p class="cloud-ops-test-vehicle-picker-note">下方列表只显示当前异常车辆；快速选择保留全部车辆。当前车辆上下文对所有功能模块全局生效，切换车辆本身不会执行任何操作。</p>
     </aside>
 
     <nav class="cloud-ops-test-tabs" aria-label="云端智能运维测试子页面">
@@ -1028,16 +1032,18 @@ const agentRules = [
       }
       vehicleSelect.value = currentVehicleId;
       if (vehiclePickerList) {
-        vehiclePickerList.innerHTML = sortVehiclesById(vehicles).map((vehicle) => {
-          const vid = vehicleIdOf(vehicle);
-          const faults = vehicleFaultsOf(vehicle);
-          const tone = faults.length ? faultToneOf(faults) : "ok";
-          const label = faults.length ? `${faults.length} 项异常` : "正常";
-          return `<button type="button" class="cloud-ops-test-vehicle-picker-item is-${escapeHtml(tone)}${vid === selectedVehicleId() ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
-            <strong>${escapeHtml(vid || "未知车辆")}</strong>
-            <span>${escapeHtml(label)}</span>
-          </button>`;
-        }).join("");
+        const abnormalVehicles = sortVehiclesById(vehicles).filter((vehicle) => vehicleFaultsOf(vehicle).length > 0);
+        vehiclePickerList.innerHTML = abnormalVehicles.length
+          ? abnormalVehicles.map((vehicle) => {
+              const vid = vehicleIdOf(vehicle);
+              const faults = vehicleFaultsOf(vehicle);
+              const tone = faultToneOf(faults);
+              return `<button type="button" class="cloud-ops-test-vehicle-picker-item is-${escapeHtml(tone)}${vid === selectedVehicleId() ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
+                <strong>${escapeHtml(vid || "未知车辆")}</strong>
+                <span>${escapeHtml(`${faults.length} 项异常`)}</span>
+              </button>`;
+            }).join("")
+          : '<p class="cloud-ops-test-empty">当前没有发现异常车辆。其他车辆可通过上方快速选择切换。</p>';
       }
       syncSelectedVehicleUi();
       renderSummary();

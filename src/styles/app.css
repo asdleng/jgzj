@@ -8921,3 +8921,30 @@ body.yolo-review-is-panning {
     max-height: 260px;
   }
 }
+
+/* Global picker: the button rail shows abnormal vehicles only; the select keeps the full fleet. */
+.cloud-ops-test-vehicle-picker-list-head {
+  display: grid;
+  gap: 3px;
+  padding-top: 2px;
+  border-top: 1px solid rgba(71, 85, 105, 0.42);
+}
+
+.cloud-ops-test-vehicle-picker-list-head span {
+  padding-top: 9px;
+  color: #f8fafc;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.cloud-ops-test-vehicle-picker-list-head small {
+  color: #64748b;
+  font-size: 0.66rem;
+  line-height: 1.4;
+}
+
+.cloud-ops-test-vehicle-picker-list .cloud-ops-test-empty {
+  margin: 0;
+  padding: 12px 8px;
+  line-height: 1.5;
+}
