@@ -1,13 +1,6 @@
 ---
-const fleetStats = [
-  { key: "online", label: "在线车辆", value: "--", note: "last_seen 5 分钟内" },
-  { key: "tool", label: "工具可用", value: "--", note: "按 tool_count 判断" },
-  { key: "stale", label: "遥测过期", value: "--", note: "按 last_seen 粗略判断" },
-  { key: "stop", label: "停车故障", value: "--", note: "疑似停车/安全阻断" }
-];
-
 const tabs = [
-  { id: "overview", label: "车辆总览", eyebrow: "发现故障", desc: "真实车辆列表 + 故障入口" },
+  { id: "overview", label: "车辆总览", eyebrow: "发现故障", desc: "仅显示异常车辆和故障" },
   { id: "status", label: "车辆状态检查", eyebrow: "人工确认", desc: "点击后只读检查" },
   { id: "params", label: "参数设置", eyebrow: "安全变更", desc: "当前先展示 Schema" },
   { id: "map", label: "地图管理", eyebrow: "地图路径", desc: "只展示入口和状态" },
@@ -139,28 +132,6 @@ const agentRules = [
     <span>禁用：重启、写参数、任务重发、灯光/车身控制</span>
   </div>
 
-  <div class="cloud-ops-test-stats">
-    {fleetStats.map((item) => (
-      <article class="cloud-ops-test-stat" data-stat={item.key}>
-        <span>{item.label}</span>
-        <strong>{item.value}</strong>
-        <p>{item.note}</p>
-      </article>
-    ))}
-  </div>
-  <section class="cloud-ops-test-fleet-spine-shell" aria-labelledby="fleet-spine-title">
-    <div class="cloud-ops-test-panel-head">
-      <div>
-        <h2 id="fleet-spine-title">车队状态脊柱</h2>
-        <p>每个信号格代表一台真实车辆；点击只切换上下文，不触发车端工具。</p>
-      </div>
-      <span data-role="fleet-spine-count">等待车辆</span>
-    </div>
-    <div class="cloud-ops-test-fleet-spine" data-role="fleet-spine">
-      <p class="cloud-ops-test-empty">等待车辆状态信号...</p>
-    </div>
-  </section>
-
 
   <aside class="cloud-ops-test-agent-rail" data-role="agent-rail" aria-label="智能体运维常驻侧边栏">
     <button class="cloud-ops-test-agent-tab" type="button" data-action="agent-toggle" aria-expanded="false" aria-controls="cloud-ops-agent-panel">
@@ -270,106 +241,32 @@ const agentRules = [
     <div class="cloud-ops-test-pages">
       <section id="cloud-ops-test-overview" class="cloud-ops-test-page" data-active="true">
         <div class="cloud-ops-test-page-head">
-          <p class="cloud-ops-test-kicker">FLEET OVERVIEW</p>
-          <h2>车辆总览：先看真实在线车辆，再进入故障判断</h2>
-          <p>车辆列表来自真实云端接口。故障判断目前先做页面端粗略归类，后续再迁移成后端 fleet fault aggregator。</p>
+          <p class="cloud-ops-test-kicker">FAULT OVERVIEW</p>
+          <h2>车辆状态总览：只显示异常车辆</h2>
+          <p>基于云端只读缓存筛选通信、主控 / ROS、安全阻断、定位、规划停车和资源异常；正常车辆不在此处显示。</p>
         </div>
 
-        <div class="cloud-ops-test-workbench cloud-ops-test-workbench--overview">
-          <section class="cloud-ops-test-panel cloud-ops-test-panel--wide">
-            <div class="cloud-ops-test-panel-head">
-              <h3>真实车辆列表</h3>
-              <span data-role="vehicle-count">--</span>
-            </div>
-            <div class="cloud-ops-test-list-controls">
-              <button class="cloud-ops-test-command-button is-primary" type="button" data-action="refresh-vehicles">刷新列表</button>
-              <label class="cloud-ops-test-select-field">
-                当前车辆
-                <select data-role="vehicle-select">
-                  <option value="">加载车辆中...</option>
-                </select>
-              </label>
-              <label class="cloud-ops-test-select-field">
-                列表排序
-                <select data-role="vehicle-sort-select">
-                  <option value="status">按车辆状态：异常在前</option>
-                  <option value="id">按车辆编号</option>
-                </select>
-              </label>
-              <p class="cloud-ops-test-status" data-role="status">只读初始化中...</p>
-            </div>
-            <div class="cloud-ops-test-api-strip">
-              <span>接口 <strong data-role="interface-source">--</strong></span>
-              <span>刷新 <strong data-role="last-refresh">--</strong></span>
-              <span data-role="api-note">只读车辆注册表</span>
-            </div>
-            <div class="cloud-ops-test-vehicle-list" data-role="vehicle-list">
-              <p class="cloud-ops-test-empty">等待车辆列表...</p>
-            </div>
-          </section>
-
-          <section class="cloud-ops-test-panel">
-            <div class="cloud-ops-test-panel-head">
-              <h3>选中车辆摘要</h3>
-              <span data-role="selected-vehicle-chip">未选择</span>
-            </div>
-            <dl class="cloud-ops-test-kv" data-role="vehicle-summary">
-              <div><dt>车辆</dt><dd>--</dd></div>
-              <div><dt>工具数</dt><dd>--</dd></div>
-              <div><dt>最近在线</dt><dd>--</dd></div>
-              <div><dt>状态判断</dt><dd>--</dd></div>
-            </dl>
-          </section>
-        </div>
-
-        <section class="cloud-ops-test-stop-monitor">
+        <section class="cloud-ops-test-panel cloud-ops-test-abnormal-panel">
           <div class="cloud-ops-test-panel-head">
             <div>
-              <h3>自动驾驶停止故障监控</h3>
-              <p>先用真实缓存做入口预判；最终故障必须接任务状态和 60 秒位移历史后确认。</p>
+              <h3>异常车辆与故障</h3>
+              <p>点击异常车辆只切换当前车辆上下文，不会自动调用车端工具。</p>
             </div>
-            <span data-role="stop-fault-count">--</span>
+            <span data-role="vehicle-count">--</span>
           </div>
-          <div class="cloud-ops-test-stop-grid" data-role="stop-fault-list">
-            <p class="cloud-ops-test-empty">等待车辆停止故障判断...</p>
+          <div class="cloud-ops-test-list-controls cloud-ops-test-list-controls--abnormal">
+            <button class="cloud-ops-test-command-button is-primary" type="button" data-action="refresh-vehicles">刷新异常状态</button>
+            <p class="cloud-ops-test-status" data-role="status">只读初始化中...</p>
+          </div>
+          <div class="cloud-ops-test-api-strip">
+            <span>接口 <strong data-role="interface-source">--</strong></span>
+            <span>刷新 <strong data-role="last-refresh">--</strong></span>
+            <span data-role="api-note">只读车辆注册表</span>
+          </div>
+          <div class="cloud-ops-test-vehicle-list cloud-ops-test-abnormal-list" data-role="vehicle-list">
+            <p class="cloud-ops-test-empty">等待异常车辆判断...</p>
           </div>
         </section>
-
-        <details class="cloud-ops-test-disclosure cloud-ops-test-disclosure--fleet">
-          <summary>展开完整车辆明细表（ROS、资源、原始链路字段）</summary>
-          <div class="cloud-ops-test-table-shell cloud-ops-test-table-shell--fleet">
-            <table class="cloud-ops-test-table cloud-ops-test-fleet-table">
-            <thead>
-              <tr>
-                <th>车辆</th>
-                <th>自动驾驶停止</th>
-                <th>真实身份</th>
-                <th>车端链路</th>
-                <th>主控/ROS</th>
-                <th>资源</th>
-                <th>最近状态</th>
-              </tr>
-            </thead>
-            <tbody data-role="vehicle-table-body">
-              <tr><td colspan="7">等待真实车辆信息...</td></tr>
-            </tbody>
-            </table>
-          </div>
-        </details>
-
-        <details class="cloud-ops-test-disclosure">
-          <summary>展开事件入口说明</summary>
-          <div class="cloud-ops-test-table-shell">
-            <table class="cloud-ops-test-table">
-            <thead><tr><th>事件入口</th><th>真实数据来源</th><th>当前页面处理</th></tr></thead>
-            <tbody>
-              <tr><td>车辆离线/遥测过期</td><td>云端车辆列表 last_seen</td><td>页面端标记“遥测过期”，后续进入通信故障诊断。</td></tr>
-              <tr><td>自动驾驶停止</td><td>需要任务状态 + 位移历史</td><td>当前仅展示诊断入口，后续接 fleet aggregator。</td></tr>
-              <tr><td>定位不可靠</td><td>status.localization 点击后返回</td><td>用户点击后读真实结果，不自动查车。</td></tr>
-            </tbody>
-            </table>
-          </div>
-        </details>
       </section>
 
       <section id="cloud-ops-test-status" class="cloud-ops-test-page" data-active="false">
@@ -381,36 +278,58 @@ const agentRules = [
 
         <div class="cloud-ops-test-status-split">
           <div class="cloud-ops-test-status-left">
-            {readOnlyToolGroups.map((group) => (
-              <section class="cloud-ops-test-tool-group cloud-ops-test-tool-group--core">
-                <div class="cloud-ops-test-tool-group-head">
-                  <div>
-                    <h3>{group.title}</h3>
-                    <p>日常运营优先使用这 5 个入口；点击后右侧立即显示结果。</p>
+            <div class="cloud-ops-test-core-layout">
+              {readOnlyToolGroups.map((group) => (
+                <section class="cloud-ops-test-tool-group cloud-ops-test-tool-group--core">
+                  <div class="cloud-ops-test-tool-group-head">
+                    <div>
+                      <h3>{group.title}</h3>
+                      <p>日常运营优先使用这 5 个入口；可随时在右侧切换车辆。</p>
+                    </div>
+                    <span>核心诊断</span>
                   </div>
-                  <span>核心诊断</span>
+                  <div class="cloud-ops-test-command-grid cloud-ops-test-command-grid--core">
+                    {group.tools.map((item) => (
+                      <button
+                        class="cloud-ops-test-command-button cloud-ops-test-command-button--core"
+                        type="button"
+                        data-action="readonly-tool"
+                        data-tool={item.tool}
+                        data-tool-action={"action" in item ? item.action : "tool_call"}
+                        data-tool-args={JSON.stringify("args" in item ? item.args : {})}
+                        data-timeout-s={String("timeout" in item ? item.timeout : 30)}
+                        data-purpose={"purpose" in item ? item.purpose : ""}
+                      >
+                        <strong>{item.label}</strong>
+                        <span>{item.tool}</span>
+                        <small>{item.desc}</small>
+                        {"purpose" in item && <em>{item.purpose}</em>}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+
+              <aside class="cloud-ops-test-vehicle-picker-rail" aria-label="车辆选择">
+                <div class="cloud-ops-test-vehicle-picker-head">
+                  <div>
+                    <span>车辆选择</span>
+                    <strong data-role="selected-vehicle-title">--</strong>
+                  </div>
+                  <button type="button" data-action="refresh-vehicles">刷新</button>
                 </div>
-                <div class="cloud-ops-test-command-grid cloud-ops-test-command-grid--core">
-                  {group.tools.map((item) => (
-                    <button
-                      class="cloud-ops-test-command-button cloud-ops-test-command-button--core"
-                      type="button"
-                      data-action="readonly-tool"
-                      data-tool={item.tool}
-                      data-tool-action={"action" in item ? item.action : "tool_call"}
-                      data-tool-args={JSON.stringify("args" in item ? item.args : {})}
-                      data-timeout-s={String("timeout" in item ? item.timeout : 30)}
-                      data-purpose={"purpose" in item ? item.purpose : ""}
-                    >
-                      <strong>{item.label}</strong>
-                      <span>{item.tool}</span>
-                      <small>{item.desc}</small>
-                      {"purpose" in item && <em>{item.purpose}</em>}
-                    </button>
-                  ))}
+                <label class="cloud-ops-test-select-field cloud-ops-test-vehicle-picker-select">
+                  快速选择
+                  <select data-role="vehicle-select">
+                    <option value="">加载车辆中...</option>
+                  </select>
+                </label>
+                <div class="cloud-ops-test-vehicle-picker-list" data-role="vehicle-picker-list">
+                  <p class="cloud-ops-test-empty">等待车辆列表...</p>
                 </div>
-              </section>
-            ))}
+                <p class="cloud-ops-test-vehicle-picker-note">切换车辆不会执行诊断；点击左侧按钮后才发起只读检查。</p>
+              </aside>
+            </div>
 
             <details class="cloud-ops-test-disclosure cloud-ops-test-specialist-disclosure">
               <summary>
@@ -605,6 +524,7 @@ const agentRules = [
     const vehicleSelect = shell.querySelector('[data-role="vehicle-select"]');
     const vehicleSortSelect = shell.querySelector('[data-role="vehicle-sort-select"]');
     const vehicleList = shell.querySelector('[data-role="vehicle-list"]');
+    const vehiclePickerList = shell.querySelector('[data-role="vehicle-picker-list"]');
     const fleetSpine = shell.querySelector('[data-role="fleet-spine"]');
     const fleetSpineCount = shell.querySelector('[data-role="fleet-spine-count"]');
     const agentRail = shell.querySelector('[data-role="agent-rail"]');
@@ -836,6 +756,31 @@ const agentRules = [
         next: "需接任务状态、路线进度和位移历史。"
       };
     };
+    const vehicleFaultsOf = (vehicle) => {
+      const faults = [];
+      const add = (label, reason, tone = "warn") => {
+        if (!faults.some((item) => item.label === label)) faults.push({ label, reason, tone });
+      };
+      if (isStale(vehicle)) add("遥测过期", `最近状态：${formatAge(lastSeenOf(vehicle))}。`, "warn");
+      if (vehicle?.master_ping_ok === false) add("主控不可达", "media 到主控网络探测失败。", "danger");
+      if (vehicle?.telemetry_master_ros_ok === false) add("ROS 链路异常", "主控 ROS 状态不可用。", "danger");
+      if (vehicle?.has_heartbeat === false) add("车辆无心跳", "云端缓存未收到车辆心跳。", "warn");
+      if (vehicle?.has_telemetry === false) add("遥测缺失", "云端缓存没有 telemetry 数据。", "warn");
+      if (vehicle?.has_snapshot === false) add("状态快照缺失", "云端缓存没有车辆状态快照。", "warn");
+      const stopDiag = stopDiagnosisOf(vehicle);
+      if ((stopDiag.tone === "danger" || stopDiag.tone === "warn") && !["通信过期", "主控链路异常"].includes(stopDiag.label)) {
+        add(stopDiag.label, stopDiag.reason, stopDiag.tone);
+      }
+      const cpu = finiteNumber(vehicle?.cpu_percent);
+      const memory = finiteNumber(vehicle?.memory_percent);
+      const disk = finiteNumber(vehicle?.disk_percent);
+      if (Number.isFinite(cpu) && cpu >= 90) add("CPU 负载过高", `CPU ${percentText(cpu)}。`, "warn");
+      if (Number.isFinite(memory) && memory >= 90) add("内存占用过高", `内存 ${percentText(memory)}。`, "warn");
+      if (Number.isFinite(disk) && disk >= 90) add("磁盘占用过高", `磁盘 ${percentText(disk)}。`, "warn");
+      return faults;
+    };
+    const faultToneOf = (faults) => faults.some((item) => item.tone === "danger") ? "danger" : "warn";
+
     const renderPill = (label, tone = "neutral") => (
       `<span class="cloud-ops-test-pill is-${escapeHtml(tone)}">${escapeHtml(label)}</span>`
     );
@@ -957,27 +902,28 @@ const agentRules = [
     const sortVehiclesForList = (items) => vehicleSortMode === "id" ? sortVehiclesById(items) : sortVehiclesByAttention(items);
 
     const renderVehicles = () => {
-      if (vehicleCount) vehicleCount.textContent = `${vehicles.length} 台`;
+      const abnormalVehicles = sortVehiclesForList(vehicles).filter((vehicle) => vehicleFaultsOf(vehicle).length > 0);
+      if (vehicleCount) vehicleCount.textContent = `${abnormalVehicles.length} 台异常`;
       if (!vehicleList) return;
       if (!vehicles.length) {
         vehicleList.innerHTML = '<p class="cloud-ops-test-empty">没有读取到车辆，或当前账号未授权。</p>';
         return;
       }
-      const sortedVehicles = sortVehiclesForList(vehicles);
-      vehicleList.innerHTML = sortedVehicles.map((vehicle) => {
+      if (!abnormalVehicles.length) {
+        vehicleList.innerHTML = '<div class="cloud-ops-test-all-clear"><strong>当前没有发现异常车辆</strong><span>已读取的车辆均未触发页面端异常规则。</span></div>';
+        return;
+      }
+      vehicleList.innerHTML = abnormalVehicles.map((vehicle) => {
         const vid = vehicleIdOf(vehicle);
-        const health = vehicleHealthOf(vehicle);
-        const stopDiag = stopDiagnosisOf(vehicle);
-        const toolCount = toolCountOf(vehicle);
-        const host = vehicle?.hostname || vehicle?.host || "";
+        const faults = vehicleFaultsOf(vehicle);
+        const tone = faultToneOf(faults);
         const selected = vid === selectedVehicleId();
-        const rowTone = stopDiag.tone === "danger" || stopDiag.tone === "warn" ? stopDiag.tone : health.tone;
-        return `<button type="button" class="cloud-ops-test-vehicle-row is-${escapeHtml(rowTone)}${selected ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}" title="${escapeHtml(`${vid} · ${stopDiag.label} · ${stopDiag.reason}`)}">
-          <span class="cloud-ops-test-severity">${escapeHtml(health.label)}</span>
+        const faultHtml = faults.map((fault) => `<li class="is-${escapeHtml(fault.tone)}"><strong>${escapeHtml(fault.label)}</strong><span>${escapeHtml(fault.reason)}</span></li>`).join("");
+        return `<button type="button" class="cloud-ops-test-vehicle-row cloud-ops-test-abnormal-card is-${escapeHtml(tone)}${selected ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
+          <span class="cloud-ops-test-severity">${escapeHtml(tone === "danger" ? "严重异常" : "需要关注")}</span>
           <strong class="cloud-ops-test-vehicle-id">${escapeHtml(vid || "未知车辆")}</strong>
-          <span class="cloud-ops-test-stop-inline is-${escapeHtml(stopDiag.tone)}">${escapeHtml(stopDiag.label)}</span>
-          <span class="cloud-ops-test-vehicle-meta">${escapeHtml(host || "无主机名")} · media ${escapeHtml(displayValue(vehicle?.local_primary_ip))} · master ${escapeHtml(boolText(vehicle?.master_ping_ok, "可达", "不可达"))} · speed ${escapeHtml(numberText(vehicle?.speed_kph))} km/h · ${escapeHtml(formatAge(lastSeenOf(vehicle)))} · tools ${escapeHtml(toolCount || "?")}</span>
-          <span class="cloud-ops-test-vehicle-reason">${escapeHtml(stopDiag.reason)}</span>
+          <span class="cloud-ops-test-vehicle-meta">${escapeHtml(displayValue(vehicle?.hostname, "无主机名"))} · 最近状态 ${escapeHtml(formatAge(lastSeenOf(vehicle)))}</span>
+          <ul class="cloud-ops-test-fault-list">${faultHtml}</ul>
         </button>`;
       }).join("");
     };
@@ -1062,6 +1008,7 @@ const agentRules = [
       vehicleSelect.innerHTML = "";
       if (!vehicles.length) {
         vehicleSelect.innerHTML = '<option value="">暂无车辆</option>';
+        if (vehiclePickerList) vehiclePickerList.innerHTML = '<p class="cloud-ops-test-empty">暂无车辆</p>';
         renderSummary();
         return;
       }
@@ -1079,6 +1026,18 @@ const agentRules = [
         currentVehicleId = vehicleIdOf(vehicles[0]);
       }
       vehicleSelect.value = currentVehicleId;
+      if (vehiclePickerList) {
+        vehiclePickerList.innerHTML = sortVehiclesById(vehicles).map((vehicle) => {
+          const vid = vehicleIdOf(vehicle);
+          const faults = vehicleFaultsOf(vehicle);
+          const tone = faults.length ? faultToneOf(faults) : "ok";
+          const label = faults.length ? `${faults.length} 项异常` : "正常";
+          return `<button type="button" class="cloud-ops-test-vehicle-picker-item is-${escapeHtml(tone)}${vid === selectedVehicleId() ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
+            <strong>${escapeHtml(vid || "未知车辆")}</strong>
+            <span>${escapeHtml(label)}</span>
+          </button>`;
+        }).join("");
+      }
       syncSelectedVehicleUi();
       renderSummary();
       updateAgentContext();
