@@ -79,7 +79,38 @@ test('chunk upload retries, finalizes both files, and backs up on sync', async (
     requirePermission: () => (_req, _res, next) => next(),
     uploadRoot,
     vehicleMapRoot,
-    chunkSizeBytes: 64
+    chunkSizeBytes: 64,
+    executeVehicleTool: async (requestedVehicleId, toolName, args, timeoutS) => {
+      assert.equal(requestedVehicleId, vehicleId);
+      assert.equal(toolName, 'map.pointcloud.install');
+      assert.equal(args.confirm, true);
+      assert.equal(args.pcd_sha256, createdPcdSha);
+      assert.equal(args.config_sha256, createdConfigSha);
+      assert.equal(args.insecure_tls, true);
+      assert.equal(timeoutS, 1800);
+      const pcdResponse = await fetch(args.pcd_url);
+      const configResponse = await fetch(args.config_url);
+      assert.equal(pcdResponse.status, 200);
+      assert.equal(configResponse.status, 200);
+      assert.deepEqual(Buffer.from(await pcdResponse.arrayBuffer()), pcd);
+      assert.deepEqual(Buffer.from(await configResponse.arrayBuffer()), config);
+      return {
+        ok: true,
+        endpoint: 'fake-cloud-agent',
+        request: { request_id: 'fake-install-request' },
+        result: {
+          installed: true,
+          destination: {
+            map_path: '/home/nvidia/workspace/devel/config/auto_ad_localization/map/GlobalMap.pcd',
+            config_path: '/home/nvidia/workspace/devel/config/auto_ad_localization/map/config.yaml'
+          },
+          master_install: {
+            backup_path: '/home/nvidia/workspace/devel/config/auto_ad_localization/map/.backups/fake'
+          }
+        }
+      };
+    },
+    vehicleDownloadInsecureTls: true
   });
   const server = await new Promise((resolve) => {
     const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
@@ -90,6 +121,8 @@ test('chunk upload retries, finalizes both files, and backs up on sync', async (
     'VERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\nWIDTH 1\nHEIGHT 1\nPOINTS 1\nDATA ascii\n0 0 0\n'
   );
   const config = Buffer.from('STARTPOINT_LAT: 22.51016874\nSTARTPOINT_LNG: 114.03539280\n');
+  let createdPcdSha = '';
+  let createdConfigSha = '';
 
   const requestJson = async (url, options = {}) => {
     const response = await fetch(`${baseUrl}${url}`, options);
@@ -167,6 +200,8 @@ test('chunk upload retries, finalizes both files, and backs up on sync', async (
     assert.equal(finalized.payload.session.status, 'ready');
     assert.equal(finalized.payload.session.origin.latitude, 22.51016874);
     assert.match(finalized.payload.session.files.pcd.sha256, /^[a-f0-9]{64}$/);
+    createdPcdSha = finalized.payload.session.files.pcd.sha256;
+    createdConfigSha = finalized.payload.session.files.config.sha256;
 
     const destinationDir = path.join(vehicleMapRoot, vehicleId);
     await fs.mkdir(destinationDir, { recursive: true });
@@ -179,6 +214,9 @@ test('chunk upload retries, finalizes both files, and backs up on sync', async (
     );
     assert.equal(synced.response.status, 200);
     assert.equal(synced.payload.session.status, 'synced');
+    assert.equal(synced.payload.session.consistent, true);
+    assert.ok(synced.payload.session.server_synced_at);
+    assert.ok(synced.payload.session.vehicle_synced_at);
     assert.deepEqual(await fs.readFile(path.join(destinationDir, 'GlobalMap.pcd')), pcd);
     assert.deepEqual(await fs.readFile(path.join(destinationDir, 'config.yaml')), config);
     assert.ok(synced.payload.session.backup_path);

@@ -74,7 +74,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
             <div class="map-upload-head">
               <div>
                 <p class="map-upload-kicker">MAP PACKAGE</p>
-                <h3 id="map-upload-title">服务器地图包</h3>
+                <h3 id="map-upload-title">服务器与车辆地图包</h3>
               </div>
               <p id="map-upload-status" class="map-upload-status" data-state="idle">等待选择 PCD 和 config.yaml</p>
             </div>
@@ -104,7 +104,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
                 上传地图
               </button>
               <button id="map-upload-sync" class="map-editor-button" type="button" disabled>
-                同步到服务器
+                同步到服务器和车辆
               </button>
               <button id="map-upload-cancel" class="map-editor-button map-editor-button--danger" type="button" disabled>
                 取消上传
@@ -239,6 +239,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
         const session = mapUploadState.session;
         const vehicleId = selectedVehicleId();
         const ready = session?.status === "ready";
+        const serverSynced = session?.status === "server_synced";
         const synced = session?.status === "synced";
         const hasBothFiles = Boolean(mapUploadState.pcdFile && mapUploadState.configFile);
 
@@ -257,8 +258,8 @@ import SiteLayout from "../../components/SiteLayout.astro";
               : "未选择 config.yaml";
         }
 
-        if (uploadStart) uploadStart.disabled = mapUploadState.busy || !vehicleId || !hasBothFiles || ready || synced;
-        if (uploadSync) uploadSync.disabled = mapUploadState.busy || !vehicleId || !ready;
+        if (uploadStart) uploadStart.disabled = mapUploadState.busy || !vehicleId || !hasBothFiles || ready || serverSynced || synced;
+        if (uploadSync) uploadSync.disabled = mapUploadState.busy || !vehicleId || !(ready || serverSynced);
         if (uploadCancel) uploadCancel.disabled = mapUploadState.busy ? false : !session;
         [uploadPcdSelect, uploadConfigSelect].forEach((button) => {
           if (button) button.disabled = mapUploadState.busy;
@@ -267,7 +268,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
         const totalBytes = sessionTotalBytes(session) ||
           Number(mapUploadState.pcdFile?.size || 0) +
           Number(mapUploadState.configFile?.size || 0);
-        const completedBytes = synced || ready
+        const completedBytes = synced || serverSynced || ready
           ? totalBytes
           : Math.max(mapUploadState.uploadedBytes, receivedBytesForSession(session));
         setUploadProgress(completedBytes, totalBytes);
@@ -278,6 +279,9 @@ import SiteLayout from "../../components/SiteLayout.astro";
             uploadMeta.textContent =
               `首帧 ${session.origin.latitude.toFixed(8)}, ${session.origin.longitude.toFixed(8)}` +
               `${pointCount ? ` · ${pointCount.toLocaleString()} pts` : ""}` +
+              `${session.server_synced_at ? " · 服务器已同步" : ""}` +
+              `${session.vehicle_synced_at ? " · 车辆已同步" : ""}` +
+              `${session.vehicle_sync_error ? " · 车辆未同步" : ""}` +
               `${session.backup_path ? " · 已备份旧地图" : ""}`;
           } else {
             uploadMeta.textContent = "尚无已校验地图包";
@@ -295,7 +299,10 @@ import SiteLayout from "../../components/SiteLayout.astro";
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload?.ok === false) {
-          throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+          const error = new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+          error.payload = payload;
+          error.status = response.status;
+          throw error;
         }
         return payload;
       };
@@ -331,9 +338,11 @@ import SiteLayout from "../../components/SiteLayout.astro";
         try {
           const session = await loadUploadSession(uploadId);
           if (session?.status === "ready") {
-            setUploadStatus("地图包已校验，可同步到服务器", "ok");
+            setUploadStatus("地图包已校验，可同步到服务器和车辆", "ok");
+          } else if (session?.status === "server_synced") {
+            setUploadStatus("服务器已同步，车辆未同步，可重试", "error");
           } else if (session?.status === "synced") {
-            setUploadStatus("地图包已同步到服务器", "ok");
+            setUploadStatus("服务器和车辆地图已一致", "ok");
           } else {
             setUploadStatus("检测到未完成上传，请重新选择同一组文件继续", "loading");
           }
@@ -496,7 +505,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
           );
           mapUploadState.session = payload.session;
           mapUploadState.uploadedBytes = sessionTotalBytes(payload.session);
-          setUploadStatus("地图包已校验，可同步到服务器", "ok");
+          setUploadStatus("地图包已校验，可同步到服务器和车辆", "ok");
         } catch (error) {
           if (mapUploadState.abortController?.signal.aborted) {
             setUploadStatus("上传已取消", "idle");
@@ -516,15 +525,15 @@ import SiteLayout from "../../components/SiteLayout.astro";
       const syncMapToServer = async () => {
         const session = mapUploadState.session;
         const vehicleId = selectedVehicleId();
-        if (!session || session.status !== "ready" || !vehicleId) return;
+        if (!session || !["ready", "server_synced"].includes(session.status) || !vehicleId) return;
         const origin = session.origin
           ? `${session.origin.latitude.toFixed(8)}, ${session.origin.longitude.toFixed(8)}`
           : "--";
-        if (!window.confirm(`同步地图到服务器车辆目录 ${vehicleId}？\n首帧经纬度：${origin}\n旧地图会先备份。`)) {
+        if (!window.confirm(`同步地图到服务器并覆盖车辆 ${vehicleId} 的主控地图？\n首帧经纬度：${origin}\n旧地图会先备份。`)) {
           return;
         }
         mapUploadState.busy = true;
-        setUploadStatus("正在同步到服务器...", "loading");
+        setUploadStatus("正在同步到服务器和车辆...", "loading");
         renderMapUploadSession();
         try {
           const payload = await apiJson(
@@ -532,8 +541,16 @@ import SiteLayout from "../../components/SiteLayout.astro";
             { method: "POST" }
           );
           mapUploadState.session = payload.session;
-          setUploadStatus("地图包已同步到服务器", "ok");
+          setUploadStatus(
+            payload.session?.status === "synced"
+              ? "服务器和车辆地图已一致"
+              : "服务器已同步，车辆仍未同步",
+            payload.session?.status === "synced" ? "ok" : "error"
+          );
         } catch (error) {
+          if (error.payload?.session) {
+            mapUploadState.session = error.payload.session;
+          }
           setUploadStatus(`同步失败：${error.message}`, "error");
         } finally {
           mapUploadState.busy = false;

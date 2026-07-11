@@ -6864,6 +6864,83 @@ async function executeLidarRelocTool(vehicleId, toolName, args = {}, timeout_s =
   );
 }
 
+async function executeMapPackageVehicleTool(vehicleId, toolName, args = {}, timeout_s = 1800) {
+  const normalizedVehicleId = String(vehicleId || '').trim();
+  const normalizedToolName = String(toolName || '').trim();
+  const timeoutS = toFiniteInteger(timeout_s, 1800, { min: 30, max: 3600 });
+  const requestId = `map-package-${normalizedToolName.replace(/\W+/g, '-')}-${Date.now().toString(36)}`;
+  if (!normalizedVehicleId || !normalizedToolName) {
+    return {
+      ok: false,
+      action: 'tool_call',
+      endpoint: null,
+      request: null,
+      error: 'vehicle_id_or_tool_name_required',
+      detail: 'vehicle_id_or_tool_name_required'
+    };
+  }
+  const requestBody = {
+    args: normalizeCloudOpsArgs(args),
+    timeout_s: timeoutS,
+    request_id: requestId
+  };
+  try {
+    const result = await fetchCloudAgentJson(
+      `/api/vehicles/${encodeURIComponent(normalizedVehicleId)}/tools/${encodeURIComponent(normalizedToolName)}`,
+      {
+        method: 'POST',
+        body: requestBody,
+        timeoutMs: Math.max(30000, Math.ceil(timeoutS * 1000) + 30000)
+      }
+    );
+    const responseOk = result?.data?.response?.ok;
+    if (responseOk === false) {
+      return {
+        ok: false,
+        action: 'tool_call',
+        endpoint: result.url,
+        request: {
+          vehicle_id: normalizedVehicleId,
+          tool_name: normalizedToolName,
+          timeout_s: timeoutS,
+          request_id: requestId
+        },
+        error: 'cloud_tool_failed',
+        detail: result?.data?.response?.error || `${normalizedToolName}_failed`,
+        payload: result.data
+      };
+    }
+    return {
+      ok: true,
+      action: 'tool_call',
+      endpoint: result.url,
+      request: {
+        vehicle_id: normalizedVehicleId,
+        tool_name: normalizedToolName,
+        timeout_s: timeoutS,
+        request_id: requestId
+      },
+      data: result.data,
+      result: result?.data?.response?.result || result?.data?.result || null
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      action: 'tool_call',
+      endpoint: error.endpoint || null,
+      request: {
+        vehicle_id: normalizedVehicleId,
+        tool_name: normalizedToolName,
+        timeout_s: timeoutS,
+        request_id: requestId
+      },
+      error: error.status ? `http_${error.status}` : 'cloud_agent_request_failed',
+      detail: error.message,
+      payload: error.payload || null
+    };
+  }
+}
+
 function getLidarRelocRemoteMapSize(mapPointcloud, mapInfo) {
   return readLidarRelocNumber(
     mapPointcloud?.size_bytes,
@@ -15605,7 +15682,16 @@ registerOneApiProxyRoutes(app, {
 registerMapPackageUploadRoutes(app, {
   requirePermission: (permission) => authStore.requirePermission(permission),
   uploadRoot: mapPackageUploadRoot,
-  vehicleMapRoot: lidarRelocalizationVehicleMapRoot
+  vehicleMapRoot: lidarRelocalizationVehicleMapRoot,
+  publicBaseUrl: publicSiteBaseUrl,
+  downloadBaseUrl: process.env.MAP_PACKAGE_DOWNLOAD_BASE_URL || '',
+  executeVehicleTool: executeMapPackageVehicleTool,
+  vehicleInstallTimeoutS: Number(process.env.MAP_PACKAGE_VEHICLE_INSTALL_TIMEOUT_S || 1800),
+  vehicleDownloadInsecureTls: ['1', 'true', 'yes'].includes(
+    String(process.env.MAP_PACKAGE_VEHICLE_DOWNLOAD_INSECURE_TLS || '')
+      .trim()
+      .toLowerCase()
+  )
 });
 
 function loginRedirectUrl(req) {

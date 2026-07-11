@@ -1,6 +1,5 @@
 const crypto = require('crypto');
 const fs = require('fs/promises');
-const fsSync = require('fs');
 const path = require('path');
 
 let yaml = null;
@@ -14,6 +13,7 @@ const DEFAULT_CHUNK_SIZE_BYTES = 768 * 1024;
 const DEFAULT_MAX_PCD_BYTES = 40 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_CONFIG_BYTES = 2 * 1024 * 1024;
 const SESSION_TTL_MS = 48 * 60 * 60 * 1000;
+const DOWNLOAD_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 const PCD_HEADER_MAX_BYTES = 256 * 1024;
 const sessionLocks = new Map();
 
@@ -34,6 +34,17 @@ function toPositiveInteger(value) {
 
 function isoNow() {
   return new Date().toISOString();
+}
+
+function statusHasCompleteFiles(status) {
+  return ['ready', 'server_synced', 'synced'].includes(String(status || ''));
+}
+
+function effectiveSessionStatus(session) {
+  if (session?.status === 'synced' && !session.vehicle_synced_at) {
+    return 'server_synced';
+  }
+  return session?.status;
 }
 
 function sessionPath(uploadRoot, vehicleId, uploadId) {
@@ -192,10 +203,11 @@ function compactChunkRanges(indexes) {
 }
 
 async function publicSession(uploadRoot, session) {
+  const status = effectiveSessionStatus(session);
   const files = {};
   for (const kind of ['pcd', 'config']) {
     const definition = session.files[kind];
-    const complete = session.status === 'ready' || session.status === 'synced';
+    const complete = statusHasCompleteFiles(status);
     const received = complete
       ? Array.from({ length: definition.total_chunks }, (_value, index) => index)
       : await listReceivedChunks(uploadRoot, session, kind);
@@ -221,15 +233,21 @@ async function publicSession(uploadRoot, session) {
   return {
     upload_id: session.upload_id,
     vehicle_id: session.vehicle_id,
-    status: session.status,
+    status,
     chunk_size_bytes: session.chunk_size_bytes,
     created_at: session.created_at,
     updated_at: session.updated_at,
     files,
     origin: session.origin || null,
     pointcloud: session.pointcloud || null,
+    server_synced_at: session.server_synced_at || session.synced_at || null,
+    vehicle_synced_at: session.vehicle_synced_at || null,
     synced_at: session.synced_at || null,
-    backup_path: session.backup_path || null
+    backup_path: session.backup_path || null,
+    destination_path: session.destination_path || null,
+    vehicle_install: session.vehicle_install || null,
+    vehicle_sync_error: session.vehicle_sync_error || null,
+    consistent: status === 'synced' && Boolean(session.vehicle_synced_at)
   };
 }
 
@@ -501,11 +519,83 @@ async function syncReadySession(uploadRoot, vehicleMapRoot, session) {
   }
 }
 
+function ensureDownloadToken(session) {
+  const expiresAt = Date.parse(session.download_token_expires_at || '');
+  if (
+    session.download_token &&
+    Number.isFinite(expiresAt) &&
+    expiresAt > Date.now() + 5 * 60 * 1000
+  ) {
+    return session.download_token;
+  }
+  session.download_token = crypto.randomBytes(24).toString('base64url');
+  session.download_token_expires_at = new Date(Date.now() + DOWNLOAD_TOKEN_TTL_MS).toISOString();
+  return session.download_token;
+}
+
+function downloadBaseUrlForRequest(req, options) {
+  const configured = String(options.downloadBaseUrl || '').trim();
+  if (configured) {
+    return configured.replace(/\/+$/, '');
+  }
+  if (typeof options.publicBaseUrl === 'function') {
+    const value = String(options.publicBaseUrl(req) || '').trim();
+    if (value) {
+      return value.replace(/\/+$/, '');
+    }
+  }
+  const host = req.get('x-forwarded-host') || req.get('host') || '';
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+  return `${proto}://${host}`.replace(/\/+$/, '');
+}
+
+function sessionDownloadUrl(req, options, session, kind) {
+  const url = new URL(
+    `/api/map-upload/${encodeURIComponent(session.vehicle_id)}` +
+      `/sessions/${encodeURIComponent(session.upload_id)}` +
+      `/download/${encodeURIComponent(kind)}`,
+    downloadBaseUrlForRequest(req, options)
+  );
+  url.searchParams.set('token', session.download_token);
+  return url.toString();
+}
+
+function extractVehicleToolResult(execution) {
+  return (
+    execution?.result ||
+    execution?.data?.response?.result ||
+    execution?.data?.result ||
+    execution?.payload?.response?.result ||
+    null
+  );
+}
+
+function compactVehicleInstall(execution) {
+  const result = extractVehicleToolResult(execution);
+  return {
+    ok: Boolean(execution?.ok),
+    endpoint: execution?.endpoint || null,
+    request_id: execution?.request?.request_id || execution?.request_id || null,
+    installed: Boolean(result?.installed),
+    destination: result?.destination || null,
+    backup_path: result?.master_install?.backup_path || result?.backup_path || null,
+    detail: execution?.detail || execution?.error || null,
+    result
+  };
+}
+
 function errorResponse(res, error, fallback) {
-  return res.status(error.status || 500).json({
+  const payload = {
     ok: false,
     detail: error.message || fallback
-  });
+  };
+  if (error.session) {
+    payload.session = error.session;
+  }
+  if (error.code) {
+    payload.error = error.code;
+  }
+  return res.status(error.status || 500).json(payload);
 }
 
 function registerMapPackageUploadRoutes(app, options = {}) {
@@ -518,6 +608,9 @@ function registerMapPackageUploadRoutes(app, options = {}) {
   const chunkSizeBytes = Number(options.chunkSizeBytes || DEFAULT_CHUNK_SIZE_BYTES);
   const maxPcdBytes = Number(options.maxPcdBytes || DEFAULT_MAX_PCD_BYTES);
   const maxConfigBytes = Number(options.maxConfigBytes || DEFAULT_MAX_CONFIG_BYTES);
+  const vehicleInstallTimeoutS = Number(options.vehicleInstallTimeoutS || 1800);
+  const vehicleDownloadInsecureTls = Boolean(options.vehicleDownloadInsecureTls);
+  const executeVehicleTool = options.executeVehicleTool;
   const writePermission = requirePermission('vehicle:path:write');
 
   app.post('/api/map-upload/:vehicleId/sessions', writePermission, async (req, res) => {
@@ -695,17 +788,85 @@ function registerMapPackageUploadRoutes(app, options = {}) {
     try {
       const session = await withSessionLock(`${vehicleId}:${uploadId}`, async () => {
         const current = await readSession(uploadRoot, vehicleId, uploadId);
+        if (current.status === 'synced' && !current.vehicle_synced_at) {
+          current.status = 'server_synced';
+        }
         if (current.status === 'synced') {
           return current;
         }
-        if (current.status !== 'ready') {
+        if (!['ready', 'server_synced'].includes(current.status)) {
           throw Object.assign(new Error('地图包尚未完成上传和校验'), { status: 409 });
         }
-        const synced = await syncReadySession(uploadRoot, vehicleMapRoot, current);
+        if (current.status === 'ready') {
+          const synced = await syncReadySession(uploadRoot, vehicleMapRoot, current);
+          current.status = 'server_synced';
+          current.server_synced_at = isoNow();
+          current.destination_path = synced.destination_path;
+          current.backup_path = synced.backup_path;
+          current.vehicle_sync_error = null;
+          current.updated_at = current.server_synced_at;
+          ensureDownloadToken(current);
+          await writeJsonAtomic(metadataPath(uploadRoot, vehicleId, uploadId), current);
+        } else {
+          ensureDownloadToken(current);
+          current.updated_at = isoNow();
+          await writeJsonAtomic(metadataPath(uploadRoot, vehicleId, uploadId), current);
+        }
+
+        if (typeof executeVehicleTool !== 'function') {
+          current.vehicle_sync_error = 'vehicle_map_install_executor_missing';
+          current.updated_at = isoNow();
+          await writeJsonAtomic(metadataPath(uploadRoot, vehicleId, uploadId), current);
+          throw Object.assign(new Error('服务器缺少车辆地图安装执行器，当前只同步到了服务器'), {
+            status: 501,
+            code: 'vehicle_map_install_executor_missing',
+            session: await publicSession(uploadRoot, current)
+          });
+        }
+
+        const pcdUrl = sessionDownloadUrl(req, options, current, 'pcd');
+        const configUrl = sessionDownloadUrl(req, options, current, 'config');
+        const installArgs = {
+          pcd_url: pcdUrl,
+          config_url: configUrl,
+          pcd_size_bytes: current.files.pcd.size_bytes,
+          config_size_bytes: current.files.config.size_bytes,
+          pcd_sha256: current.files.pcd.sha256,
+          config_sha256: current.files.config.sha256,
+          upload_id: current.upload_id,
+          backup: true,
+          cleanup: true,
+          confirm: true,
+          download_timeout_s: vehicleInstallTimeoutS,
+          copy_timeout_s: vehicleInstallTimeoutS,
+          install_timeout_s: Math.min(900, vehicleInstallTimeoutS),
+          max_retries: 8,
+          insecure_tls: vehicleDownloadInsecureTls
+        };
+        const execution = await executeVehicleTool(
+          current.vehicle_id,
+          'map.pointcloud.install',
+          installArgs,
+          vehicleInstallTimeoutS
+        );
+        if (!execution?.ok) {
+          current.vehicle_sync_error =
+            execution?.detail || execution?.error || 'vehicle_map_install_failed';
+          current.vehicle_install = compactVehicleInstall(execution);
+          current.updated_at = isoNow();
+          await writeJsonAtomic(metadataPath(uploadRoot, vehicleId, uploadId), current);
+          throw Object.assign(new Error(`车辆地图安装失败：${current.vehicle_sync_error}`), {
+            status: 502,
+            code: 'vehicle_map_install_failed',
+            session: await publicSession(uploadRoot, current)
+          });
+        }
+
         current.status = 'synced';
-        current.synced_at = isoNow();
-        current.destination_path = synced.destination_path;
-        current.backup_path = synced.backup_path;
+        current.vehicle_synced_at = isoNow();
+        current.synced_at = current.vehicle_synced_at;
+        current.vehicle_sync_error = null;
+        current.vehicle_install = compactVehicleInstall(execution);
         current.updated_at = current.synced_at;
         await writeJsonAtomic(metadataPath(uploadRoot, vehicleId, uploadId), current);
         return current;
@@ -713,10 +874,55 @@ function registerMapPackageUploadRoutes(app, options = {}) {
       return res.json({
         ok: true,
         destination_path: session.destination_path,
+        vehicle_install: session.vehicle_install || null,
         session: await publicSession(uploadRoot, session)
       });
     } catch (error) {
       return errorResponse(res, error, 'map_upload_sync_failed');
+    }
+  });
+
+  app.get('/api/map-upload/:vehicleId/sessions/:uploadId/download/:kind', async (req, res) => {
+    const vehicleId = normalizeVehicleId(req.params?.vehicleId);
+    const uploadId = normalizeUploadId(req.params?.uploadId);
+    const kind = String(req.params?.kind || '').toLowerCase();
+    if (!vehicleId || !uploadId || !['pcd', 'config'].includes(kind)) {
+      return res.status(400).json({ ok: false, detail: 'invalid_map_upload_download' });
+    }
+    try {
+      const session = await readSession(uploadRoot, vehicleId, uploadId);
+      const expectedToken = String(session.download_token || '');
+      const token = String(req.query?.token || '');
+      const expiresAt = Date.parse(session.download_token_expires_at || '');
+      if (
+        !expectedToken ||
+        !token ||
+        expectedToken.length !== token.length ||
+        !crypto.timingSafeEqual(Buffer.from(expectedToken), Buffer.from(token)) ||
+        !Number.isFinite(expiresAt) ||
+        expiresAt <= Date.now()
+      ) {
+        return res.status(403).json({ ok: false, detail: 'map_upload_download_token_invalid' });
+      }
+      if (!statusHasCompleteFiles(session.status)) {
+        return res.status(409).json({ ok: false, detail: 'map_upload_files_not_ready' });
+      }
+      const fileName = kind === 'pcd' ? 'GlobalMap.pcd' : 'config.yaml';
+      const filePath = path.resolve(sessionPath(uploadRoot, vehicleId, uploadId), 'files', fileName);
+      const allowedRoot = path.resolve(sessionPath(uploadRoot, vehicleId, uploadId), 'files');
+      if (!filePath.startsWith(`${allowedRoot}${path.sep}`)) {
+        return res.status(400).json({ ok: false, detail: 'invalid_map_upload_file_path' });
+      }
+      const stat = await fs.stat(filePath);
+      res.setHeader('Content-Type', kind === 'pcd' ? 'application/octet-stream' : 'application/x-yaml');
+      res.setHeader('Content-Length', String(stat.size));
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      return res.sendFile(filePath);
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return res.status(404).json({ ok: false, detail: 'map_upload_file_not_found' });
+      }
+      return errorResponse(res, error, 'map_upload_download_failed');
     }
   });
 
