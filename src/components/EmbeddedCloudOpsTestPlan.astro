@@ -223,6 +223,26 @@ const agentRules = [
   </aside>
 
   <div class="cloud-ops-test-layout">
+    <aside class="cloud-ops-test-vehicle-picker-rail cloud-ops-test-vehicle-picker-rail--global" aria-label="全局车辆选择">
+      <div class="cloud-ops-test-vehicle-picker-head">
+        <div>
+          <span>全局车辆选择</span>
+          <strong data-role="selected-vehicle-title">--</strong>
+        </div>
+        <button type="button" data-action="refresh-vehicles">刷新</button>
+      </div>
+      <label class="cloud-ops-test-select-field cloud-ops-test-vehicle-picker-select">
+        快速选择
+        <select data-role="vehicle-select">
+          <option value="">加载车辆中...</option>
+        </select>
+      </label>
+      <div class="cloud-ops-test-vehicle-picker-list" data-role="vehicle-picker-list">
+        <p class="cloud-ops-test-empty">等待车辆列表...</p>
+      </div>
+      <p class="cloud-ops-test-vehicle-picker-note">当前车辆上下文对车辆总览、状态检查、参数设置、地图管理和智能体运维全局生效。切换车辆本身不会执行任何操作。</p>
+    </aside>
+
     <nav class="cloud-ops-test-tabs" aria-label="云端智能运维测试子页面">
       {tabs.map((tab, index) => (
         <button type="button" class:list={{ "is-active": index === 0 }} data-target={`cloud-ops-test-${tab.id}`}>
@@ -284,7 +304,7 @@ const agentRules = [
                   <div class="cloud-ops-test-tool-group-head">
                     <div>
                       <h3>{group.title}</h3>
-                      <p>日常运营优先使用这 5 个入口；可随时在右侧切换车辆。</p>
+                      <p>日常运营优先使用这 5 个入口；当前车辆可在网页最左侧全局切换。</p>
                     </div>
                     <span>核心诊断</span>
                   </div>
@@ -310,25 +330,6 @@ const agentRules = [
                 </section>
               ))}
 
-              <aside class="cloud-ops-test-vehicle-picker-rail" aria-label="车辆选择">
-                <div class="cloud-ops-test-vehicle-picker-head">
-                  <div>
-                    <span>车辆选择</span>
-                    <strong data-role="selected-vehicle-title">--</strong>
-                  </div>
-                  <button type="button" data-action="refresh-vehicles">刷新</button>
-                </div>
-                <label class="cloud-ops-test-select-field cloud-ops-test-vehicle-picker-select">
-                  快速选择
-                  <select data-role="vehicle-select">
-                    <option value="">加载车辆中...</option>
-                  </select>
-                </label>
-                <div class="cloud-ops-test-vehicle-picker-list" data-role="vehicle-picker-list">
-                  <p class="cloud-ops-test-empty">等待车辆列表...</p>
-                </div>
-                <p class="cloud-ops-test-vehicle-picker-note">切换车辆不会执行诊断；点击左侧按钮后才发起只读检查。</p>
-              </aside>
             </div>
 
             <details class="cloud-ops-test-disclosure cloud-ops-test-specialist-disclosure">
