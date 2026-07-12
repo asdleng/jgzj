@@ -7759,6 +7759,10 @@ body.yolo-review-is-panning {
   gap: 10px;
 }
 
+.cloud-ops-test-agent-panel-head > div {
+  min-width: 0;
+}
+
 .cloud-ops-test-agent-panel-head h2 {
   margin: 3px 0 0;
   color: #f8fafc;
@@ -7773,8 +7777,12 @@ body.yolo-review-is-panning {
 }
 
 .cloud-ops-test-agent-pin {
+  min-width: max-content;
   min-height: 34px;
+  flex-shrink: 0;
   padding: 0 10px;
+  white-space: nowrap;
+  word-break: keep-all;
   border-radius: 999px;
   border: 1px solid rgba(103, 232, 249, 0.38);
   background: rgba(8, 47, 73, 0.62);
@@ -8348,14 +8356,11 @@ body.yolo-review-is-panning {
 }
 
 
-/* Cloud Ops Test Shanhai overlay mode: unpinned floats above content; pinned reserves side rail. */
+/* Cloud Ops Test Shanhai overlay mode: expanded and pinned states float above content without reflow. */
 @media (min-width: 1101px) {
-  .cloud-ops-test-shell {
-    padding-right: 0 !important;
-  }
-
+  .cloud-ops-test-shell,
   .cloud-ops-test-shell.has-agent-pinned {
-    padding-right: calc(var(--ops-rail-width) + 14px) !important;
+    padding-right: 0 !important;
   }
 
   .cloud-ops-test-agent-rail {
@@ -9266,4 +9271,99 @@ body.yolo-review-is-panning {
   .cloud-ops-param-schedule-list > div { grid-template-columns: 1fr 1fr; }
   .cloud-ops-param-schedule-list > div strong { grid-column: 1 / -1; }
   .cloud-ops-param-schedule-list > div span { display: none; }
+}
+
+/* Cloud Ops Test: keep the Agent Ops page entry synchronized with the persistent rail. */
+.cloud-ops-agent-page-entry {
+  display: grid;
+  gap: 13px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid rgba(103, 232, 249, 0.28);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 92% 0%, rgba(34, 211, 238, 0.12), transparent 34%),
+    linear-gradient(145deg, rgba(8, 47, 73, 0.3), rgba(2, 6, 23, 0.76));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.cloud-ops-agent-page-entry-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.cloud-ops-agent-page-entry-head span,
+.cloud-ops-agent-page-entry-head h3,
+.cloud-ops-agent-page-entry-head p { margin: 0; }
+.cloud-ops-agent-page-entry-head > div:first-child > span { color: #22d3ee; font-size: 0.66rem; font-weight: 900; letter-spacing: 0.13em; }
+.cloud-ops-agent-page-entry-head h3 { margin: 4px 0 5px; color: #f8fafc; font-size: 1.12rem; }
+.cloud-ops-agent-page-entry-head p { color: #94a3b8; font-size: 0.76rem; line-height: 1.45; }
+
+.cloud-ops-agent-page-entry-state {
+  display: grid;
+  gap: 3px;
+  min-width: 150px;
+  padding: 9px 11px;
+  border: 1px solid rgba(34, 197, 94, 0.24);
+  border-radius: 11px;
+  background: rgba(20, 83, 45, 0.14);
+}
+.cloud-ops-agent-page-entry-state span { color: #86efac; font-size: 0.65rem; font-weight: 800; }
+.cloud-ops-agent-page-entry-state strong { color: #f0fdf4; font-size: 0.88rem; }
+.cloud-ops-agent-page-entry-state small { color: #94a3b8; font-size: 0.66rem; overflow-wrap: anywhere; }
+
+.cloud-ops-agent-page-messages {
+  min-height: 190px;
+  max-height: 330px;
+  padding: 12px;
+  border: 1px solid rgba(71, 85, 105, 0.42);
+  border-radius: 13px;
+  background: rgba(2, 6, 23, 0.48);
+}
+
+.cloud-ops-agent-page-input { min-height: 92px; resize: vertical; }
+
+.cloud-ops-agent-page-toolbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.cloud-ops-agent-page-rail-actions {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 9px;
+  align-items: center;
+  padding-top: 11px;
+  border-top: 1px solid rgba(71, 85, 105, 0.38);
+}
+
+.cloud-ops-agent-page-rail-actions button {
+  min-width: max-content;
+  min-height: 38px;
+  flex-shrink: 0;
+  padding: 8px 12px;
+  white-space: nowrap;
+  word-break: keep-all;
+  border: 1px solid rgba(103, 232, 249, 0.28);
+  border-radius: 9px;
+  color: #cffafe;
+  background: rgba(8, 47, 73, 0.42);
+  font-weight: 800;
+  cursor: pointer;
+}
+.cloud-ops-agent-page-rail-actions button:hover { border-color: rgba(103, 232, 249, 0.56); background: rgba(8, 145, 178, 0.22); }
+.cloud-ops-agent-page-rail-actions span { color: #64748b; font-size: 0.68rem; line-height: 1.4; }
+
+@media (max-width: 1050px) {
+  .cloud-ops-agent-page-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .cloud-ops-agent-page-entry-head,
+  .cloud-ops-agent-page-rail-actions { display: grid; grid-template-columns: 1fr; }
+  .cloud-ops-agent-page-entry-state { min-width: 0; }
+  .cloud-ops-agent-page-toolbar { grid-template-columns: 1fr; }
 }

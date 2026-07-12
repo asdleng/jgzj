@@ -520,10 +520,52 @@ const agentRules = [
 
       <section id="cloud-ops-test-agent" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head">
-          <p class="cloud-ops-test-kicker">AGENT OPS</p>
-          <h2>山海智枢：主入口已移到右侧常驻侧边栏</h2>
-          <p>这个页面保留为智能体模式说明和规则边界。山海智枢现在常驻在页面右侧，切换子页面、选择车辆或展开详情都不会自动发起对话。</p>
+          <p class="cloud-ops-test-kicker">AGENT OPS · SYNCHRONIZED</p>
+          <h2>山海智枢：页面入口与右侧常驻侧边栏同步</h2>
+          <p>智能体运维页面继续保留完整入口，并与右侧侧边栏共享当前车辆、输入内容、对话消息和服务状态。任何入口都必须由用户主动点击后才会发起只读分析。</p>
         </div>
+
+        <section class="cloud-ops-agent-page-entry">
+          <div class="cloud-ops-agent-page-entry-head">
+            <div>
+              <span>SHANHAI OPS</span>
+              <h3>智能体运维工作台</h3>
+              <p data-role="agent-page-context">当前车辆 -- · 只读运维参谋</p>
+            </div>
+            <div class="cloud-ops-agent-page-entry-state">
+              <span>服务状态</span>
+              <strong data-role="agent-page-status">读取中</strong>
+              <small data-role="agent-page-model">模型 --</small>
+            </div>
+          </div>
+
+          <div class="cloud-ops-agent-page-messages cloud-ops-test-agent-messages" data-role="agent-page-messages" aria-live="polite">
+            <div class="cloud-ops-test-agent-message is-agent">
+              <strong>山海智枢</strong>
+              <p>我现在按只读参谋模式工作：可以结合真实车辆缓存分析停车、定位、规划、控制、通信类问题；不会自动控车。</p>
+            </div>
+          </div>
+
+          <textarea
+            class="cloud-ops-test-agent-input cloud-ops-agent-page-input"
+            data-role="agent-page-input"
+            rows="4"
+            placeholder="例如：分析当前车辆为什么停车；或：把需关注车辆按优先级排序。"
+          ></textarea>
+
+          <div class="cloud-ops-agent-page-toolbar">
+            <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-page-send"><strong>发送问题</strong><span>同步到侧边栏对话</span></button>
+            <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-current"><strong>分析当前车辆</strong><span>使用全局车辆上下文</span></button>
+            <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-deep-diagnose"><strong>深度诊断</strong><span>WebSocket + 只读 SSH</span></button>
+            <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-stops"><strong>分析停车车辆</strong><span>停车 / 阻断入口</span></button>
+          </div>
+
+          <div class="cloud-ops-agent-page-rail-actions">
+            <button type="button" data-action="agent-page-open" data-role="agent-page-open-label">展开右侧侧边栏</button>
+            <button type="button" data-action="agent-page-pin" data-role="agent-page-pin-label">固定右侧侧边栏</button>
+            <span>两处入口共享同一会话，不会重复发起请求。</span>
+          </div>
+        </section>
 
         <div class="cloud-ops-test-card-grid cloud-ops-test-agent-explain-grid">
           <article class="cloud-ops-test-card">
@@ -639,6 +681,13 @@ const agentRules = [
     const agentHistory = shell.querySelector('[data-role="agent-history"]');
     const agentHistoryCount = shell.querySelector('[data-role="agent-history-count"]');
     const agentAudit = shell.querySelector('[data-role="agent-audit"]');
+    const agentPageStatus = shell.querySelector('[data-role="agent-page-status"]');
+    const agentPageModel = shell.querySelector('[data-role="agent-page-model"]');
+    const agentPageContext = shell.querySelector('[data-role="agent-page-context"]');
+    const agentPageMessages = shell.querySelector('[data-role="agent-page-messages"]');
+    const agentPageInput = shell.querySelector('[data-role="agent-page-input"]');
+    const agentPageOpenLabel = shell.querySelector('[data-role="agent-page-open-label"]');
+    const agentPagePinLabel = shell.querySelector('[data-role="agent-page-pin-label"]');
     const paramVehicle = shell.querySelector('[data-role="param-vehicle"]');
     const paramChangedCount = shell.querySelector('[data-role="param-changed-count"]');
     const paramChangedBadge = shell.querySelector('[data-role="param-changed-badge"]');
@@ -1235,18 +1284,23 @@ const agentRules = [
       const stopDiagnoses = vehicles.map(stopDiagnosisOf);
       const concern = stopDiagnoses.filter((diag) => diag.tone === "danger" || diag.label === "疑似停车故障").length;
       const pending = stopDiagnoses.filter((diag) => diag.label === "停止待确认").length;
-      agentContext.textContent = `上下文：当前车辆 ${vehicle ? vehicleIdOf(vehicle) : "--"}，车队 ${vehicles.length} 台，疑似/阻断 ${concern} 台，停止待确认 ${pending} 台。`;
+      const contextText = `上下文：当前车辆 ${vehicle ? vehicleIdOf(vehicle) : "--"}，车队 ${vehicles.length} 台，疑似/阻断 ${concern} 台，停止待确认 ${pending} 台。`;
+      agentContext.textContent = contextText;
+      if (agentPageContext) agentPageContext.textContent = contextText;
     };
 
     const setAgentStatusCard = (payload) => {
       agentCanChat = Boolean(payload?.can_chat);
-      if (agentStatus) agentStatus.textContent = payload?.can_chat ? "可对话" : (payload?.enabled ? "待配置" : "已禁用");
+      const statusText = payload?.can_chat ? "可对话" : (payload?.enabled ? "待配置" : "已禁用");
+      if (agentStatus) agentStatus.textContent = statusText;
+      if (agentPageStatus) agentPageStatus.textContent = statusText;
       if (agentStatusNote) {
         agentStatusNote.textContent = payload?.can_chat
           ? "服务端 key 已配置"
           : (payload?.missing_config?.length ? `缺少 ${payload.missing_config.join(", ")}` : "服务端未启用");
       }
       if (agentModel) agentModel.textContent = payload?.model || "--";
+      if (agentPageModel) agentPageModel.textContent = `模型 ${payload?.model || "--"}`;
       if (agentRoute) agentRoute.textContent = payload?.upstream_base_url || "JGZJ / subapi";
       const codex = payload?.codex || {};
       if (agentCodex) agentCodex.textContent = codex?.deployed ? "已部署" : "未就绪";
@@ -1283,6 +1337,7 @@ const agentRules = [
       } catch (error) {
         agentCanChat = false;
         if (agentStatus) agentStatus.textContent = "状态异常";
+        if (agentPageStatus) agentPageStatus.textContent = "状态异常";
         if (agentStatusNote) agentStatusNote.textContent = error?.message || "读取失败";
         if (agentModel) agentModel.textContent = "--";
         if (agentCodex) agentCodex.textContent = "未知";
@@ -1324,6 +1379,12 @@ const agentRules = [
       }
     };
 
+    const syncAgentMessageViews = () => {
+      if (!agentMessages || !agentPageMessages) return;
+      agentPageMessages.innerHTML = agentMessages.innerHTML;
+      agentPageMessages.scrollTop = agentPageMessages.scrollHeight;
+    };
+
     const appendAgentMessage = (role, text, meta = "") => {
       if (!agentMessages) return;
       const node = document.createElement("div");
@@ -1332,6 +1393,7 @@ const agentRules = [
       node.innerHTML = `<strong>${escapeHtml(title)}</strong><p>${escapeHtml(text || "")}</p>${meta ? `<small>${escapeHtml(meta)}</small>` : ""}`;
       agentMessages.appendChild(node);
       agentMessages.scrollTop = agentMessages.scrollHeight;
+      syncAgentMessageViews();
     };
 
     const sendAgentMessage = async (message) => {
@@ -1348,6 +1410,7 @@ const agentRules = [
       const vehicleId = selectedVehicleId();
       appendAgentMessage("user", text, vehicleId ? `车辆 ${vehicleId}` : "全局上下文");
       if (agentInput) agentInput.value = "";
+      if (agentPageInput) agentPageInput.value = "";
       if (agentLatency) agentLatency.textContent = "分析中...";
       setStatus("智能体只读分析中，不执行车端工具。", "loading");
       try {
@@ -1390,7 +1453,7 @@ const agentRules = [
     const deepDiagnoseCurrentVehicle = async () => {
       const vehicle = selectedVehicle();
       const vehicleId = vehicleIdOf(vehicle);
-      const question = String(agentInput?.value || "").trim() || `请深度诊断 ${vehicleId} 车辆现在状态如何，有没有故障或潜在问题。`;
+      const question = String(agentPageInput?.value || agentInput?.value || "").trim() || `请深度诊断 ${vehicleId} 车辆现在状态如何，有没有故障或潜在问题。`;
       if (!vehicleId) {
         setStatus("请先选择车辆", "error");
         return;
@@ -1402,6 +1465,7 @@ const agentRules = [
       }
       appendAgentMessage("user", question, `深度诊断车辆 ${vehicleId}`);
       if (agentInput) agentInput.value = "";
+      if (agentPageInput) agentPageInput.value = "";
       if (agentLatency) agentLatency.textContent = "深度诊断中...";
       if (toolResult) toolResult.textContent = "正在执行 WebSocket 只读工具和 SSH 只读巡检...";
       setStatus("深度诊断中：优先 auto_ad_ai WebSocket，只读 SSH 作为补充。", "loading");
@@ -1717,6 +1781,7 @@ const agentRules = [
       if (!agentRail) return;
       agentRail.classList.toggle("is-open", Boolean(open));
       agentToggle?.setAttribute("aria-expanded", open ? "true" : "false");
+      if (agentPageOpenLabel) agentPageOpenLabel.textContent = open ? "收起右侧侧边栏" : "展开右侧侧边栏";
     };
     const setAgentPinned = (pinned) => {
       if (!agentRail) return;
@@ -1724,6 +1789,7 @@ const agentRules = [
       shell.classList.toggle("has-agent-pinned", Boolean(pinned));
       agentPin?.setAttribute("aria-pressed", pinned ? "true" : "false");
       if (agentPin) agentPin.textContent = pinned ? "取消固定" : "固定";
+      if (agentPagePinLabel) agentPagePinLabel.textContent = pinned ? "取消固定侧边栏" : "固定右侧侧边栏";
       setAgentRailOpen(Boolean(pinned));
       try { localStorage.setItem("cloudOpsTestAgentPinned", pinned ? "1" : "0"); } catch (_error) {}
     };
@@ -1767,7 +1833,13 @@ const agentRules = [
       } else if (action === "agent-pin") {
         setAgentPinned(!agentRail?.classList.contains("is-pinned"));
       } else if (action === "agent-send") {
-        sendAgentMessage(agentInput?.value || "");
+        sendAgentMessage(agentInput?.value || agentPageInput?.value || "");
+      } else if (action === "agent-page-send") {
+        sendAgentMessage(agentPageInput?.value || agentInput?.value || "");
+      } else if (action === "agent-page-open") {
+        setAgentRailOpen(!agentRail?.classList.contains("is-open"));
+      } else if (action === "agent-page-pin") {
+        setAgentPinned(!agentRail?.classList.contains("is-pinned"));
       } else if (action === "agent-analyze-current") {
         analyzeCurrentVehicle();
       } else if (action === "agent-deep-diagnose") {
@@ -1794,10 +1866,21 @@ const agentRules = [
       renderVehicleTable();
       setStatus(vehicleSortMode === "id" ? "车辆列表已按车辆编号排序。" : "车辆列表已按状态排序：异常在前，正常在后。", "ok");
     });
+    const syncAgentInputs = (source, target) => {
+      if (source && target && target.value !== source.value) target.value = source.value;
+    };
+    agentInput?.addEventListener("input", () => syncAgentInputs(agentInput, agentPageInput));
+    agentPageInput?.addEventListener("input", () => syncAgentInputs(agentPageInput, agentInput));
     agentInput?.addEventListener("keydown", (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         event.preventDefault();
         sendAgentMessage(agentInput.value || "");
+      }
+    });
+    agentPageInput?.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        sendAgentMessage(agentPageInput.value || "");
       }
     });
     agentRail?.addEventListener("mouseenter", () => setAgentRailOpen(true));
@@ -1821,6 +1904,7 @@ const agentRules = [
     restoreAgentPinned();
     setParamDomain("control");
     renderParamDraft();
+    syncAgentMessageViews();
     loadVehicles();
     loadAgentStatus();
     loadAgentHistory();
