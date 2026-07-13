@@ -288,7 +288,25 @@ const cloudOpsAgentBaseUrl = normalizeCloudOpsAgentBaseUrl(
 );
 const cloudOpsAgentApiKey =
   process.env.CLOUD_OPS_AGENT_API_KEY || process.env.CLOUD_OPS_AGENT_SUBAPI_KEY || '';
-const cloudOpsAgentModel = process.env.CLOUD_OPS_AGENT_MODEL || 'gpt-4.1';
+const cloudOpsAgentDefaultModels = Object.freeze([
+  'gpt-5.4-mini',
+  'gpt-5.4',
+  'gpt-5.5',
+  'gpt-5.6',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra'
+]);
+const cloudOpsAgentConfiguredModels = String(process.env.CLOUD_OPS_AGENT_ALLOWED_MODELS || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
+const cloudOpsAgentAllowedModels = Array.from(new Set(
+  cloudOpsAgentConfiguredModels.length ? cloudOpsAgentConfiguredModels : cloudOpsAgentDefaultModels
+));
+const cloudOpsAgentModel = process.env.CLOUD_OPS_AGENT_MODEL || 'gpt-5.6-terra';
+if (!cloudOpsAgentAllowedModels.includes(cloudOpsAgentModel)) {
+  cloudOpsAgentAllowedModels.unshift(cloudOpsAgentModel);
+}
 const cloudOpsAgentTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_TIMEOUT_MS || 120000);
 const cloudOpsAgentMaxContextVehicles = Number(process.env.CLOUD_OPS_AGENT_MAX_CONTEXT_VEHICLES || 30);
 const cloudOpsCodexHost = process.env.CLOUD_OPS_CODEX_HOST || '127.0.0.1';
@@ -1190,6 +1208,21 @@ function cloudOpsAgentChatUrl() {
 
 function cloudOpsAgentConfigured() {
   return Boolean(cloudOpsAgentApiKey && cloudOpsAgentApiKey.trim());
+}
+
+function resolveCloudOpsAgentModel(requestedModel) {
+  const normalized = String(requestedModel || '').trim();
+  if (!normalized) {
+    return cloudOpsAgentModel;
+  }
+  if (!cloudOpsAgentAllowedModels.includes(normalized)) {
+    const error = new Error(`unsupported_cloud_ops_agent_model: ${normalized}`);
+    error.status = 400;
+    error.code = 'unsupported_cloud_ops_agent_model';
+    error.allowed_models = cloudOpsAgentAllowedModels;
+    throw error;
+  }
+  return normalized;
 }
 
 async function getCloudOpsCodexDeploymentStatus() {
@@ -6412,7 +6445,7 @@ async function runCloudOpsSshReadOnlyProbe(target) {
   }
 }
 
-async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, includeSsh = true }) {
+async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, includeSsh = true, model }) {
   if (!cloudOpsAgentEnabled) {
     const error = new Error('cloud_ops_agent_disabled');
     error.status = 503;
@@ -6425,6 +6458,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
     throw error;
   }
 
+  const selectedModel = resolveCloudOpsAgentModel(model);
   const startedAt = Date.now();
   const vehicles = await listCloudAgentVehicles().catch(() => []);
   const resolvedVehicleId = vehicleId || inferVehicleIdFromMessage(question, vehicles);
@@ -6504,7 +6538,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
   };
 
   const payload = {
-    model: cloudOpsAgentModel,
+    model: selectedModel,
     messages: [
       { role: 'system', content: buildCloudOpsAgentSystemPrompt() },
       { role: 'user', content: buildCloudOpsDeepDiagnosePrompt(question, evidence) }
@@ -6529,7 +6563,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
     return {
       ok: true,
       answer: '深度诊断证据已采集，但模型链路调用失败；请查看 evidence 字段中的 WebSocket/SSH 只读结果。',
-      model: cloudOpsAgentModel,
+      model: selectedModel,
       latency_ms: Date.now() - startedAt,
       model_error: error?.message || 'cloud_ops_agent_request_failed',
       evidence
@@ -6542,7 +6576,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
     return {
       ok: true,
       answer: '深度诊断证据已采集，但模型没有返回可用诊断；请查看 evidence 字段中的 WebSocket/SSH 只读结果。',
-      model: cloudOpsAgentModel,
+      model: selectedModel,
       latency_ms: Date.now() - startedAt,
       model_error: responsePayload?.error?.message || normalizeReply(text) || `HTTP ${upstreamResponse.status}`,
       evidence
@@ -6552,7 +6586,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
   return {
     ok: true,
     answer: extractCloudOpsAgentAnswer(responsePayload) || '模型没有返回有效文本。',
-    model: responsePayload?.model || cloudOpsAgentModel,
+    model: responsePayload?.model || selectedModel,
     latency_ms: Date.now() - startedAt,
     mode: 'deep_diagnosis_read_only',
     evidence,
@@ -6560,7 +6594,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
   };
 }
 
-async function runCloudOpsAgentChatCompletion({ message, vehicleId }) {
+async function runCloudOpsAgentChatCompletion({ message, vehicleId, model }) {
   if (!cloudOpsAgentEnabled) {
     const error = new Error('cloud_ops_agent_disabled');
     error.status = 503;
@@ -6573,6 +6607,7 @@ async function runCloudOpsAgentChatCompletion({ message, vehicleId }) {
     throw error;
   }
 
+  const selectedModel = resolveCloudOpsAgentModel(model);
   const startedAt = Date.now();
   const allVehicles = await listCloudOpsAgentVehicleSummaries().catch(() => []);
   const selectedVehicle = vehicleId
@@ -6594,7 +6629,7 @@ async function runCloudOpsAgentChatCompletion({ message, vehicleId }) {
     fleet: summarizeCloudOpsAgentFleet(allVehicles)
   };
   const payload = {
-    model: cloudOpsAgentModel,
+    model: selectedModel,
     messages: [
       { role: 'system', content: buildCloudOpsAgentSystemPrompt() },
       { role: 'user', content: buildCloudOpsAgentUserPrompt(message, context) }
@@ -6640,7 +6675,7 @@ async function runCloudOpsAgentChatCompletion({ message, vehicleId }) {
   const answer = extractCloudOpsAgentAnswer(responsePayload);
   return {
     answer: answer || '模型没有返回有效文本。',
-    model: responsePayload?.model || cloudOpsAgentModel,
+    model: responsePayload?.model || selectedModel,
     latency_ms: Date.now() - startedAt,
     context: {
       selected_vehicle_id: vehicleId || null,
@@ -13453,6 +13488,8 @@ app.get('/api/cloud-ops-agent/status', authStore.requirePermission('vehicle:read
     public_entry_hint: '7791 -> JGZJ -> /api/cloud-ops-agent/*',
     upstream_base_url: publicCloudOpsAgentBaseLabel(),
     model: cloudOpsAgentModel,
+    default_model: cloudOpsAgentModel,
+    available_models: cloudOpsAgentAllowedModels,
     mode: 'advisory_read_only',
     can_chat: cloudOpsAgentEnabled && configured,
     codex: codexDeployment,
@@ -13507,6 +13544,7 @@ app.post('/api/cloud-ops-agent/diagnose', authStore.requirePermission('vehicle:r
   const question = normalizeReply(req.body?.question || req.body?.message || '');
   const vehicleId = String(req.body?.vehicle_id || '').trim().slice(0, 80);
   const includeSsh = req.body?.include_ssh !== false;
+  const requestedModel = String(req.body?.model || '').trim().slice(0, 120);
   if (!question) {
     return res.status(400).json({
       ok: false,
@@ -13528,7 +13566,8 @@ app.post('/api/cloud-ops-agent/diagnose', authStore.requirePermission('vehicle:r
       question,
       vehicleId,
       actor,
-      includeSsh
+      includeSsh,
+      model: requestedModel
     });
     const historyRecord = cloudOpsAgentHistoryRecord({
       ok: true,
@@ -13568,7 +13607,8 @@ app.post('/api/cloud-ops-agent/diagnose', authStore.requirePermission('vehicle:r
       detail: error?.message || 'cloud_ops_agent_diagnose_failed',
       provider: 'subapi_openai_compatible',
       mode: 'deep_diagnosis_read_only',
-      configured: cloudOpsAgentConfigured()
+      configured: cloudOpsAgentConfigured(),
+      allowed_models: error?.allowed_models || cloudOpsAgentAllowedModels
     });
   }
 });
@@ -13576,6 +13616,7 @@ app.post('/api/cloud-ops-agent/diagnose', authStore.requirePermission('vehicle:r
 app.post('/api/cloud-ops-agent/chat', authStore.requirePermission('vehicle:read'), async (req, res) => {
   const message = normalizeReply(req.body?.message || '');
   const vehicleId = String(req.body?.vehicle_id || '').trim().slice(0, 80);
+  const requestedModel = String(req.body?.model || '').trim().slice(0, 120);
   if (!message) {
     return res.status(400).json({
       ok: false,
@@ -13593,7 +13634,7 @@ app.post('/api/cloud-ops-agent/chat', authStore.requirePermission('vehicle:read'
 
   const actor = req.jgzjAuth?.user?.username || null;
   try {
-    const result = await runCloudOpsAgentChatCompletion({ message, vehicleId });
+    const result = await runCloudOpsAgentChatCompletion({ message, vehicleId, model: requestedModel });
     const historyRecord = cloudOpsAgentHistoryRecord({
       ok: true,
       actor,
@@ -13631,7 +13672,8 @@ app.post('/api/cloud-ops-agent/chat', authStore.requirePermission('vehicle:read'
       detail: error?.message || 'cloud_ops_agent_chat_failed',
       provider: 'subapi_openai_compatible',
       mode: 'advisory_read_only',
-      configured: cloudOpsAgentConfigured()
+      configured: cloudOpsAgentConfigured(),
+      allowed_models: error?.allowed_models || cloudOpsAgentAllowedModels
     });
   }
 });

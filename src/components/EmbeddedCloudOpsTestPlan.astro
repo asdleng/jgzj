@@ -164,6 +164,19 @@ const agentRules = [
         </article>
       </div>
 
+      <div class="cloud-ops-test-agent-model-control">
+        <label for="cloud-ops-agent-model-select">推理模型</label>
+        <select id="cloud-ops-agent-model-select" data-role="agent-model-select" aria-label="选择山海智枢推理模型">
+          <option value="gpt-5.6-terra" selected>GPT-5.6 Terra</option>
+          <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+          <option value="gpt-5.6">GPT-5.6</option>
+          <option value="gpt-5.5">GPT-5.5</option>
+          <option value="gpt-5.4">GPT-5.4</option>
+          <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+        </select>
+        <small data-role="agent-model-note">默认使用 GPT-5.6 Terra，可按任务手动切换。</small>
+      </div>
+
       <div class="cloud-ops-test-agent-context-bar">
         <span data-role="agent-context">上下文：当前车辆 --，车队 -- 台。</span>
         <span data-role="agent-latency">等待输入</span>
@@ -539,6 +552,19 @@ const agentRules = [
             </div>
           </div>
 
+          <div class="cloud-ops-test-agent-model-control is-page">
+            <label for="cloud-ops-agent-page-model-select">本次分析模型</label>
+            <select id="cloud-ops-agent-page-model-select" data-role="agent-model-select" aria-label="选择智能体运维分析模型">
+              <option value="gpt-5.6-terra" selected>GPT-5.6 Terra</option>
+              <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+              <option value="gpt-5.6">GPT-5.6</option>
+              <option value="gpt-5.5">GPT-5.5</option>
+              <option value="gpt-5.4">GPT-5.4</option>
+              <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+            </select>
+            <small>两个入口同步，切换后只影响后续请求。</small>
+          </div>
+
           <div class="cloud-ops-agent-page-messages cloud-ops-test-agent-messages" data-role="agent-page-messages" aria-live="polite">
             <div class="cloud-ops-test-agent-message is-agent">
               <strong>山海智枢</strong>
@@ -669,6 +695,8 @@ const agentRules = [
     const agentStatus = shell.querySelector('[data-role="agent-status"]');
     const agentStatusNote = shell.querySelector('[data-role="agent-status-note"]');
     const agentModel = shell.querySelector('[data-role="agent-model"]');
+    const agentModelSelects = [...shell.querySelectorAll('[data-role="agent-model-select"]')];
+    const agentModelNote = shell.querySelector('[data-role="agent-model-note"]');
     const agentRoute = shell.querySelector('[data-role="agent-route"]');
     const agentCodex = shell.querySelector('[data-role="agent-codex"]');
     const agentCodexNote = shell.querySelector('[data-role="agent-codex-note"]');
@@ -701,6 +729,9 @@ const agentRules = [
     let currentVehicleId = "";
     let vehicleSortMode = "status";
     let agentCanChat = false;
+    let agentDefaultModel = "gpt-5.6-terra";
+    let agentAvailableModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
+    const agentModelStorageKey = "cloudOpsTestAgentModel";
 
     const paramInputValue = (input) => input.type === "checkbox" ? String(input.checked) : String(input.value || "");
     const paramValueText = (input, value) => {
@@ -1289,6 +1320,51 @@ const agentRules = [
       if (agentPageContext) agentPageContext.textContent = contextText;
     };
 
+    const agentModelLabel = (model) => String(model || "")
+      .replace(/^gpt-/i, "GPT-")
+      .replace(/-terra$/i, " Terra")
+      .replace(/-sol$/i, " Sol")
+      .replace(/-mini$/i, " Mini");
+
+    const selectedAgentModel = () => {
+      const selected = String(agentModelSelects[0]?.value || "").trim();
+      return agentAvailableModels.includes(selected) ? selected : agentDefaultModel;
+    };
+
+    const setAgentModelSelection = (model, persist = false) => {
+      const next = agentAvailableModels.includes(model) ? model : agentDefaultModel;
+      agentModelSelects.forEach((select) => { select.value = next; });
+      if (agentModel) agentModel.textContent = next || "--";
+      if (agentPageModel) agentPageModel.textContent = `模型 ${next || "--"}`;
+      if (agentModelNote) agentModelNote.textContent = `当前 ${agentModelLabel(next)} · 服务端默认 ${agentModelLabel(agentDefaultModel)}`;
+      if (persist) {
+        try { localStorage.setItem(agentModelStorageKey, next); } catch (_error) {}
+      }
+      return next;
+    };
+
+    const configureAgentModelSelectors = (payload) => {
+      const models = Array.isArray(payload?.available_models)
+        ? payload.available_models.map((item) => String(item || "").trim()).filter(Boolean)
+        : [];
+      agentAvailableModels = models.length ? [...new Set(models)] : agentAvailableModels;
+      agentDefaultModel = String(payload?.default_model || payload?.model || agentDefaultModel).trim();
+      if (!agentAvailableModels.includes(agentDefaultModel)) agentAvailableModels.unshift(agentDefaultModel);
+      agentModelSelects.forEach((select) => {
+        const fragment = document.createDocumentFragment();
+        agentAvailableModels.forEach((model) => {
+          const option = document.createElement("option");
+          option.value = model;
+          option.textContent = agentModelLabel(model);
+          fragment.appendChild(option);
+        });
+        select.replaceChildren(fragment);
+      });
+      let stored = "";
+      try { stored = localStorage.getItem(agentModelStorageKey) || ""; } catch (_error) {}
+      setAgentModelSelection(agentAvailableModels.includes(stored) ? stored : agentDefaultModel);
+    };
+
     const setAgentStatusCard = (payload) => {
       agentCanChat = Boolean(payload?.can_chat);
       const statusText = payload?.can_chat ? "可对话" : (payload?.enabled ? "待配置" : "已禁用");
@@ -1299,8 +1375,7 @@ const agentRules = [
           ? "服务端 key 已配置"
           : (payload?.missing_config?.length ? `缺少 ${payload.missing_config.join(", ")}` : "服务端未启用");
       }
-      if (agentModel) agentModel.textContent = payload?.model || "--";
-      if (agentPageModel) agentPageModel.textContent = `模型 ${payload?.model || "--"}`;
+      configureAgentModelSelectors(payload);
       if (agentRoute) agentRoute.textContent = payload?.upstream_base_url || "JGZJ / subapi";
       const codex = payload?.codex || {};
       if (agentCodex) agentCodex.textContent = codex?.deployed ? "已部署" : "未就绪";
@@ -1421,7 +1496,8 @@ const agentRules = [
           body: JSON.stringify({
             message: text,
             vehicle_id: vehicleId,
-            include_fleet_context: true
+            include_fleet_context: true,
+            model: selectedAgentModel()
           })
         });
         const payload = await response.json().catch(() => ({}));
@@ -1477,7 +1553,8 @@ const agentRules = [
           body: JSON.stringify({
             vehicle_id: vehicleId,
             question,
-            include_ssh: true
+            include_ssh: true,
+            model: selectedAgentModel()
           })
         });
         const payload = await response.json().catch(() => ({}));
@@ -1871,6 +1948,12 @@ const agentRules = [
     };
     agentInput?.addEventListener("input", () => syncAgentInputs(agentInput, agentPageInput));
     agentPageInput?.addEventListener("input", () => syncAgentInputs(agentPageInput, agentInput));
+    agentModelSelects.forEach((select) => {
+      select.addEventListener("change", () => {
+        const model = setAgentModelSelection(select.value, true);
+        setStatus(`山海智枢后续请求将使用 ${agentModelLabel(model)}。`, "ok");
+      });
+    });
     agentInput?.addEventListener("keydown", (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         event.preventDefault();
@@ -1883,7 +1966,7 @@ const agentRules = [
         sendAgentMessage(agentPageInput.value || "");
       }
     });
-    agentRail?.addEventListener("mouseenter", () => setAgentRailOpen(true));
+    agentToggle?.addEventListener("mouseenter", () => setAgentRailOpen(true));
     agentRail?.addEventListener("mouseleave", () => {
       if (!agentRail.classList.contains("is-pinned") && !agentRail.matches(":focus-within")) setAgentRailOpen(false);
     });

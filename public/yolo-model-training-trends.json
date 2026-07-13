@@ -1,6 +1,6 @@
 {
   "schema": "jgzj_yolo_training_trends.v1",
-  "updated_at": "2026-07-13T12:35:00.197947+08:00",
+  "updated_at": "2026-07-13T13:05:00.821041+08:00",
   "training_trends": {
     "person_yolo": [
       {
@@ -673,15 +673,15 @@
   },
   "monitor_status": {
     "a100_host": "192.168.80.49",
-    "collected_at": 1783917323.430346,
+    "collected_at": 1783919123.6656191,
     "tmux": [
       "qwen36-labeler-gpu4: 1 windows (created Thu Jun 25 09:16:46 2026)",
       "qwen36mmvllm: 1 windows (created Fri Jun 19 11:03:38 2026)",
       "qwen36vllm: 1 windows (created Fri Jun 19 11:02:12 2026)"
     ],
     "gpus": [
-      "0, 75849, 81920, 0, 25",
-      "1, 72751, 81920, 0, 28",
+      "0, 75849, 81920, 0, 24",
+      "1, 72751, 81920, 0, 26",
       "2, 17362, 81920, 0, 24",
       "3, 0, 81920, 0, 24",
       "4, 74441, 81920, 100, 54",
@@ -712,8 +712,8 @@
       "download_file": "person_yolo_best.pt",
       "weight_sha256": "52dd83595f6e163cd0cc35a2f5e1f460dea73504351faa8013f22560e31126e1",
       "weight_size_bytes": 20282309,
-      "deployed_at": "2026-07-13T12:34:56.380523+08:00",
-      "updated_at": "2026-07-13T12:34:56.380563+08:00",
+      "deployed_at": "2026-07-13T13:04:56.384052+08:00",
+      "updated_at": "2026-07-13T13:04:56.384093+08:00",
       "training_trends": [
         {
           "day": "2026-06-23",
@@ -950,7 +950,7 @@
       "download_file": "vehicle_yolo_best.pt",
       "weight_sha256": "7cf7a94d8f978bc5b4168b763e57f3b8e9aa328315fc468ca43062fcad6f6486",
       "weight_size_bytes": 19152090,
-      "updated_at": "2026-07-13T12:34:56.415887+08:00",
+      "updated_at": "2026-07-13T13:04:56.420656+08:00",
       "note": "车辆识别：2026-07-04 使用 20260703 车端可靠自采框增量微调；同一新混合数据集上优于旧 yolo11s（旧 test P/R/mAP50/mAP50-95=0.678/0.792/0.797/0.722，新=0.659/0.838/0.815/0.727），优先保召回。",
       "training_trends": [
         {
@@ -1167,8 +1167,8 @@
       "download_file": "pet_yolo_best.pt",
       "weight_sha256": "60e57fd4e89815dfea297aa683a520bd31b7af15e47bfea67a8b4b8e670a8fbe",
       "weight_size_bytes": 18909978,
-      "deployed_at": "2026-07-13T12:35:00.063483+08:00",
-      "updated_at": "2026-07-13T12:35:00.063516+08:00",
+      "deployed_at": "2026-07-13T13:05:00.197211+08:00",
+      "updated_at": "2026-07-13T13:05:00.197248+08:00",
       "training_trends": [
         {
           "day": "2026-06-23",
@@ -1249,7 +1249,7 @@
       "download_file": "phone_yolo_best.pt",
       "weight_sha256": "ac674ecddb3e55acf84a8b09e2c3d0041a607550cbed9df8edf867ef331ba3b6",
       "weight_size_bytes": 6240874,
-      "updated_at": "2026-07-13T12:35:00.076353+08:00",
+      "updated_at": "2026-07-13T13:05:00.413474+08:00",
       "note": "手机识别当前作为拆分模型使用；public-data 微调结果只进入每日指标，不自动覆盖线上权重。",
       "training_trends": [
         {
@@ -1319,7 +1319,7 @@
       "download_file": "trash_yolo_best.pt",
       "weight_sha256": "ac93669d6e9905e3034b52a51282c57fbb5e89ecba828c3ca681ed2444bdbb7c",
       "weight_size_bytes": 6230435,
-      "updated_at": "2026-07-13T12:35:00.091485+08:00",
+      "updated_at": "2026-07-13T13:05:00.503094+08:00",
       "note": "小垃圾细类：bottle / box / paper / bag；2026-06-27 server-proxy GPU2 重训，按独立 test 稳定性选用 yolov8n。",
       "training_trends": [
         {
@@ -1359,7 +1359,7 @@
       "download_file": "stall_yolo_best.pt",
       "weight_sha256": "cd6b6a93f1ac3bbe752df8639c3701b3149fc94e419a85d0980b72045c076378",
       "weight_size_bytes": 6255658,
-      "updated_at": "2026-07-13T12:35:00.103862+08:00",
+      "updated_at": "2026-07-13T13:05:00.557757+08:00",
       "note": "摆摊识别当前作为拆分模型使用；public-data 微调结果只进入每日指标，不自动覆盖线上权重。",
       "training_trends": [
         {
@@ -1425,7 +1425,7 @@
       "download_file": "fire_smoke_yolo_fire_other_edge_remaining_gpu2_20260713.pt",
       "weight_sha256": "b6488e0b0d344588c5f3edc0afacfe152d08e79d23ddb62ab7cb3a0f6154796f",
       "weight_size_bytes": 18903763,
-      "updated_at": "2026-07-13T12:35:00.140560+08:00",
+      "updated_at": "2026-07-13T13:05:00.664977+08:00",
       "note": "2026-07-13 基于当前 yolo12s 火源烟雾权重，先用 fire_other_edge 固定抽样 12000 条微调 3 epoch，再用剩余 47914 条在物理 GPU 2 续训 1 epoch；指标为原始 fire_other_edge test split，P/R 较上一轮提升。",
       "training_trends": [
         {
@@ -1536,7 +1536,7 @@
       "download_file": "person_behavior_cls_best.pt",
       "weight_sha256": "f76af5d93f784d694ee89e7a040b9e26943cdcc2722a1d7b353b2ed1c60b94ac",
       "weight_size_bytes": 2967041,
-      "updated_at": "2026-07-13T12:35:00.149903+08:00",
+      "updated_at": "2026-07-13T13:05:00.678185+08:00",
       "note": "二阶段人员行为分类：other / phone_use / smoking；用于人员ROI分类。",
       "training_trends": []
     },
@@ -1563,7 +1563,7 @@
       "download_file": "license_plate_yolo_best.pt",
       "weight_sha256": "cefdd65e6a44e2490a146f6897d55491e38085ee9b4f9aa410a09b02a56106c3",
       "weight_size_bytes": 6229859,
-      "updated_at": "2026-07-13T12:35:00.162370+08:00",
+      "updated_at": "2026-07-13T13:05:00.691394+08:00",
       "note": "中国车牌检测：CCPD2020 绿牌数据训练；工作台车牌识别链路为车辆YOLO -> 车牌YOLO -> OCR。",
       "training_trends": []
     },
@@ -1590,7 +1590,7 @@
       "download_file": "fishing_rod_yolo_best.pt",
       "weight_sha256": "14bdee0fc98f24e15f76159d1da535a00a8be0782e22f9205c65a4b8081933e2",
       "weight_size_bytes": 19245523,
-      "updated_at": "2026-07-13T12:35:00.197893+08:00",
+      "updated_at": "2026-07-13T13:05:00.820968+08:00",
       "note": "钓鱼杆种子模型：Objects365/LVIS公开鱼竿框 + 现场钓鱼NO负样本；需结合人员检测与水边ROI规则使用。",
       "training_trends": []
     }

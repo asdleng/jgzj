@@ -8378,9 +8378,12 @@ body.yolo-review-is-panning {
     pointer-events: none;
   }
 
-  .cloud-ops-test-agent-rail:not(.is-pinned) .cloud-ops-test-agent-tab,
-  .cloud-ops-test-agent-rail:not(.is-pinned) .cloud-ops-test-agent-panel {
+  .cloud-ops-test-agent-rail:not(.is-pinned) .cloud-ops-test-agent-tab {
     pointer-events: auto;
+  }
+
+  .cloud-ops-test-agent-rail:not(.is-open):not(.is-pinned):not(:focus-within) .cloud-ops-test-agent-panel {
+    pointer-events: none;
   }
 
   .cloud-ops-test-agent-rail:not(.is-pinned) .cloud-ops-test-agent-panel {
@@ -9366,4 +9369,72 @@ body.yolo-review-is-panning {
   .cloud-ops-agent-page-rail-actions { display: grid; grid-template-columns: 1fr; }
   .cloud-ops-agent-page-entry-state { min-width: 0; }
   .cloud-ops-agent-page-toolbar { grid-template-columns: 1fr; }
+}
+
+
+/* Cloud Ops Test: synchronized, server-whitelisted model selection for Shanhai Ops. */
+.cloud-ops-test-agent-model-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(103, 232, 249, 0.22);
+  border-radius: 13px;
+  background: rgba(8, 47, 73, 0.24);
+}
+
+.cloud-ops-test-agent-model-control label {
+  color: #a5f3fc;
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.cloud-ops-test-agent-model-control select {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 30px 6px 10px;
+  border: 1px solid rgba(103, 232, 249, 0.38);
+  border-radius: 9px;
+  outline: none;
+  color: #ecfeff;
+  background: rgba(2, 6, 23, 0.88);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cloud-ops-test-agent-model-control select:focus {
+  border-color: #22d3ee;
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12);
+}
+
+.cloud-ops-test-agent-model-control small {
+  grid-column: 1 / -1;
+  color: #94a3b8;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.cloud-ops-test-agent-model-control.is-page {
+  grid-template-columns: 120px minmax(220px, 360px) minmax(0, 1fr);
+}
+
+.cloud-ops-test-agent-model-control.is-page small {
+  grid-column: auto;
+}
+
+@media (max-width: 700px) {
+  .cloud-ops-test-agent-model-control,
+  .cloud-ops-test-agent-model-control.is-page {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-ops-test-agent-model-control small,
+  .cloud-ops-test-agent-model-control.is-page small {
+    grid-column: auto;
+  }
 }
