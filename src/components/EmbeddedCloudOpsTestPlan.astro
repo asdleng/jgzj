@@ -134,9 +134,9 @@ const agentRules = [
     <div class="cloud-ops-test-agent-panel" id="cloud-ops-agent-panel">
       <div class="cloud-ops-test-agent-panel-head">
         <div>
-          <p class="cloud-ops-test-kicker">SHANHAI OPS · READ ONLY</p>
+          <p class="cloud-ops-test-kicker">GENERAL AI · CLOUD OPS</p>
           <h2>山海智枢</h2>
-          <p>常驻只读运维参谋：随时提问，但不会自动调用车辆工具。</p>
+          <p>通用 AI 对话与车辆云端运维合一：可以自然闲聊，也能结合真实车辆上下文进行只读诊断。</p>
         </div>
         <button class="cloud-ops-test-agent-pin" type="button" data-action="agent-pin" aria-pressed="false">固定</button>
       </div>
@@ -177,6 +177,16 @@ const agentRules = [
         <small data-role="agent-model-note">默认使用 GPT-5.6 Terra，可按任务手动切换。</small>
       </div>
 
+      <div class="cloud-ops-test-agent-model-control">
+        <label for="cloud-ops-agent-mode-select">对话模式</label>
+        <select id="cloud-ops-agent-mode-select" data-role="agent-mode-select" aria-label="选择山海智枢对话模式">
+          <option value="auto" selected>智能判断</option>
+          <option value="general">通用对话</option>
+          <option value="cloud_ops">车辆运维</option>
+        </select>
+        <small>智能判断会区分闲聊与运维问题；也可以手动强制指定。</small>
+      </div>
+
       <div class="cloud-ops-test-agent-context-bar">
         <span data-role="agent-context">上下文：当前车辆 --，车队 -- 台。</span>
         <span data-role="agent-latency">等待输入</span>
@@ -185,19 +195,19 @@ const agentRules = [
       <div class="cloud-ops-test-agent-messages" data-role="agent-messages">
         <div class="cloud-ops-test-agent-message is-agent">
           <strong>山海智枢</strong>
-          <p>我现在按只读参谋模式工作：可以结合真实车辆缓存分析停车、定位、规划、控制、通信类问题；不会自动控车。</p>
+          <p>你好，我是山海智枢。你可以像使用通用 AI 助手一样和我闲聊、写作或讨论技术问题，也可以让我结合当前车辆做云端运维分析；涉及控车和变更时仍需人工确认。</p>
         </div>
       </div>
       <textarea
         class="cloud-ops-test-agent-input"
         data-role="agent-input"
         rows="4"
-        placeholder="例如：分析当前车辆为什么停车；或：把需关注车辆按优先级排序。"
+        placeholder="可以直接闲聊或提问；例如：帮我整理一段文字，或分析当前车辆为什么停车。"
       ></textarea>
       <div class="cloud-ops-test-agent-toolbar">
         <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-send">
           <strong>发送</strong>
-          <span>只读分析</span>
+          <span>通用对话 / 运维分析</span>
         </button>
         <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-current">
           <strong>分析当前车辆</strong>
@@ -534,8 +544,8 @@ const agentRules = [
       <section id="cloud-ops-test-agent" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head">
           <p class="cloud-ops-test-kicker">AGENT OPS · SYNCHRONIZED</p>
-          <h2>山海智枢：页面入口与右侧常驻侧边栏同步</h2>
-          <p>智能体运维页面继续保留完整入口，并与右侧侧边栏共享当前车辆、输入内容、对话消息和服务状态。任何入口都必须由用户主动点击后才会发起只读分析。</p>
+          <h2>山海智枢：通用对话与车辆运维一体化</h2>
+          <p>页面入口与右侧侧边栏共享模型、对话模式、当前车辆和多轮会话。普通问题按通用 AI 助手自然回答；车辆问题可自动识别并使用真实运维上下文。</p>
         </div>
 
         <section class="cloud-ops-agent-page-entry">
@@ -543,7 +553,7 @@ const agentRules = [
             <div>
               <span>SHANHAI OPS</span>
               <h3>智能体运维工作台</h3>
-              <p data-role="agent-page-context">当前车辆 -- · 只读运维参谋</p>
+              <p data-role="agent-page-context">当前车辆 -- · 通用对话 + 只读运维</p>
             </div>
             <div class="cloud-ops-agent-page-entry-state">
               <span>服务状态</span>
@@ -565,10 +575,20 @@ const agentRules = [
             <small>两个入口同步，切换后只影响后续请求。</small>
           </div>
 
+          <div class="cloud-ops-test-agent-model-control is-page">
+            <label for="cloud-ops-agent-page-mode-select">对话模式</label>
+            <select id="cloud-ops-agent-page-mode-select" data-role="agent-mode-select" aria-label="选择山海智枢对话模式">
+              <option value="auto" selected>智能判断</option>
+              <option value="general">通用对话</option>
+              <option value="cloud_ops">车辆运维</option>
+            </select>
+            <small>闲聊默认不带车辆数据，运维问题自动使用当前车辆与异常车队上下文。</small>
+          </div>
+
           <div class="cloud-ops-agent-page-messages cloud-ops-test-agent-messages" data-role="agent-page-messages" aria-live="polite">
             <div class="cloud-ops-test-agent-message is-agent">
               <strong>山海智枢</strong>
-              <p>我现在按只读参谋模式工作：可以结合真实车辆缓存分析停车、定位、规划、控制、通信类问题；不会自动控车。</p>
+              <p>你好，我是山海智枢。你可以像使用通用 AI 助手一样和我闲聊、写作或讨论技术问题，也可以让我结合当前车辆做云端运维分析；涉及控车和变更时仍需人工确认。</p>
             </div>
           </div>
 
@@ -576,7 +596,7 @@ const agentRules = [
             class="cloud-ops-test-agent-input cloud-ops-agent-page-input"
             data-role="agent-page-input"
             rows="4"
-            placeholder="例如：分析当前车辆为什么停车；或：把需关注车辆按优先级排序。"
+            placeholder="可以直接闲聊或提问；例如：帮我整理一段文字，或分析当前车辆为什么停车。"
           ></textarea>
 
           <div class="cloud-ops-agent-page-toolbar">
@@ -600,7 +620,7 @@ const agentRules = [
           </article>
           <article class="cloud-ops-test-card">
             <h3>只读参谋</h3>
-            <p>智能体可读取车辆缓存和用户提供的问题做归纳，不自动调用车端工具，不写参数，不重启，不下发任务。</p>
+            <p>普通聊天不加载车辆数据；识别为运维问题后才注入车辆缓存。诊断保持只读，不写参数、不重启、不下发任务。</p>
           </article>
           <article class="cloud-ops-test-card">
             <h3>上下文同步</h3>
@@ -696,6 +716,7 @@ const agentRules = [
     const agentStatusNote = shell.querySelector('[data-role="agent-status-note"]');
     const agentModel = shell.querySelector('[data-role="agent-model"]');
     const agentModelSelects = [...shell.querySelectorAll('[data-role="agent-model-select"]')];
+    const agentModeSelects = [...shell.querySelectorAll('[data-role="agent-mode-select"]')];
     const agentModelNote = shell.querySelector('[data-role="agent-model-note"]');
     const agentRoute = shell.querySelector('[data-role="agent-route"]');
     const agentCodex = shell.querySelector('[data-role="agent-codex"]');
@@ -732,6 +753,8 @@ const agentRules = [
     let agentDefaultModel = "gpt-5.6-terra";
     let agentAvailableModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
     const agentModelStorageKey = "cloudOpsTestAgentModel";
+    const agentModeStorageKey = "cloudOpsTestAgentMode";
+    const agentConversationHistory = [];
 
     const paramInputValue = (input) => input.type === "checkbox" ? String(input.checked) : String(input.value || "");
     const paramValueText = (input, value) => {
@@ -1365,6 +1388,34 @@ const agentRules = [
       setAgentModelSelection(agentAvailableModels.includes(stored) ? stored : agentDefaultModel);
     };
 
+    const agentModeLabel = (mode) => ({
+      auto: "智能判断",
+      general: "通用对话",
+      cloud_ops: "车辆运维",
+      general_chat: "通用对话",
+      cloud_ops_advisory: "车辆运维"
+    }[String(mode || "")] || "智能判断");
+
+    const selectedAgentMode = () => {
+      const selected = String(agentModeSelects[0]?.value || "auto").trim();
+      return ["auto", "general", "cloud_ops"].includes(selected) ? selected : "auto";
+    };
+
+    const setAgentModeSelection = (mode, persist = false) => {
+      const next = ["auto", "general", "cloud_ops"].includes(mode) ? mode : "auto";
+      agentModeSelects.forEach((select) => { select.value = next; });
+      if (persist) {
+        try { localStorage.setItem(agentModeStorageKey, next); } catch (_error) {}
+      }
+      return next;
+    };
+
+    const restoreAgentModeSelection = () => {
+      let stored = "";
+      try { stored = localStorage.getItem(agentModeStorageKey) || ""; } catch (_error) {}
+      setAgentModeSelection(stored || "auto");
+    };
+
     const setAgentStatusCard = (payload) => {
       agentCanChat = Boolean(payload?.can_chat);
       const statusText = payload?.can_chat ? "可对话" : (payload?.enabled ? "待配置" : "已禁用");
@@ -1464,7 +1515,7 @@ const agentRules = [
       if (!agentMessages) return;
       const node = document.createElement("div");
       node.className = `cloud-ops-test-agent-message is-${role}`;
-      const title = role === "user" ? "运维人员" : (role === "error" ? "接口错误" : "山海智枢");
+      const title = role === "user" ? "你" : (role === "error" ? "接口错误" : "山海智枢");
       node.innerHTML = `<strong>${escapeHtml(title)}</strong><p>${escapeHtml(text || "")}</p>${meta ? `<small>${escapeHtml(meta)}</small>` : ""}`;
       agentMessages.appendChild(node);
       agentMessages.scrollTop = agentMessages.scrollHeight;
@@ -1483,11 +1534,14 @@ const agentRules = [
         return;
       }
       const vehicleId = selectedVehicleId();
-      appendAgentMessage("user", text, vehicleId ? `车辆 ${vehicleId}` : "全局上下文");
+      const requestedMode = selectedAgentMode();
+      const priorHistory = agentConversationHistory.slice(-12);
+      appendAgentMessage("user", text, agentModeLabel(requestedMode));
+      agentConversationHistory.push({ role: "user", content: text });
       if (agentInput) agentInput.value = "";
       if (agentPageInput) agentPageInput.value = "";
-      if (agentLatency) agentLatency.textContent = "分析中...";
-      setStatus("智能体只读分析中，不执行车端工具。", "loading");
+      if (agentLatency) agentLatency.textContent = "思考中...";
+      setStatus("山海智枢正在理解问题并生成回复。", "loading");
       try {
         const response = await fetch(AGENT_CHAT_URL, {
           method: "POST",
@@ -1496,17 +1550,21 @@ const agentRules = [
           body: JSON.stringify({
             message: text,
             vehicle_id: vehicleId,
-            include_fleet_context: true,
-            model: selectedAgentModel()
+            include_fleet_context: requestedMode !== "general",
+            model: selectedAgentModel(),
+            mode: requestedMode,
+            history: priorHistory
           })
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload?.ok === false) {
           throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
         }
-        appendAgentMessage("agent", payload.answer || "模型没有返回文本。", `${payload.model || "--"} · ${payload.latency_ms || "--"}ms · ${payload.mode || "只读"}`);
+        const answer = payload.answer || "模型没有返回文本。";
+        agentConversationHistory.push({ role: "assistant", content: answer });
+        appendAgentMessage("agent", answer, `${payload.model || "--"} · ${payload.latency_ms || "--"}ms · ${agentModeLabel(payload.mode)}`);
         if (agentLatency) agentLatency.textContent = `${payload.latency_ms || "--"} ms`;
-        setStatus("智能体分析完成。未执行任何车端工具。", "ok");
+        setStatus(payload.mode === "general_chat" ? "通用对话回复完成。" : "车辆运维分析完成，未执行任何车端变更。", "ok");
         loadAgentHistory();
       } catch (error) {
         appendAgentMessage("error", error?.message || "智能体调用失败");
@@ -1540,6 +1598,7 @@ const agentRules = [
         return;
       }
       appendAgentMessage("user", question, `深度诊断车辆 ${vehicleId}`);
+      agentConversationHistory.push({ role: "user", content: question });
       if (agentInput) agentInput.value = "";
       if (agentPageInput) agentPageInput.value = "";
       if (agentLatency) agentLatency.textContent = "深度诊断中...";
@@ -1561,7 +1620,9 @@ const agentRules = [
         if (!response.ok || payload?.ok === false) {
           throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
         }
-        appendAgentMessage("agent", payload.answer || "深度诊断没有返回文本。", `${payload.model || "--"} · ${payload.latency_ms || "--"}ms · ${payload.mode || "深度诊断"}`);
+        const diagnosisAnswer = payload.answer || "深度诊断没有返回文本。";
+        agentConversationHistory.push({ role: "assistant", content: diagnosisAnswer });
+        appendAgentMessage("agent", diagnosisAnswer, `${payload.model || "--"} · ${payload.latency_ms || "--"}ms · ${payload.mode || "深度诊断"}`);
         if (toolResult) {
           toolResult.textContent = JSON.stringify({
             audit_id: payload.audit_id,
@@ -1954,6 +2015,12 @@ const agentRules = [
         setStatus(`山海智枢后续请求将使用 ${agentModelLabel(model)}。`, "ok");
       });
     });
+    agentModeSelects.forEach((select) => {
+      select.addEventListener("change", () => {
+        const mode = setAgentModeSelection(select.value, true);
+        setStatus(`山海智枢后续请求将使用“${agentModeLabel(mode)}”模式。`, "ok");
+      });
+    });
     agentInput?.addEventListener("keydown", (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         event.preventDefault();
@@ -1985,6 +2052,7 @@ const agentRules = [
     alignAgentRailToHero();
     window.addEventListener("resize", alignAgentRailToHero);
     restoreAgentPinned();
+    restoreAgentModeSelection();
     setParamDomain("control");
     renderParamDraft();
     syncAgentMessageViews();
