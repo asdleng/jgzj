@@ -315,6 +315,8 @@ const cloudOpsCodexBin = process.env.CLOUD_OPS_CODEX_BIN || '/home/admin1/.local
 const cloudOpsCodexStatusTimeoutMs = Number(process.env.CLOUD_OPS_CODEX_STATUS_TIMEOUT_MS || 1500);
 const cloudOpsAgentDiagnoseToolTimeoutS = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_TOOL_TIMEOUT_S || 18);
 const cloudOpsAgentDiagnoseSshTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_SSH_TIMEOUT_MS || 8000);
+const cloudOpsAgentDiagnoseModelTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_MODEL_TIMEOUT_MS || 25000);
+const cloudOpsAgentDiagnoseConcurrency = Math.min(8, Math.max(1, Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_CONCURRENCY || 5) || 5));
 const cloudOpsAgentDiagnoseSshKey = process.env.CLOUD_OPS_AGENT_DIAGNOSE_SSH_KEY || '/home/admin1/.ssh/jgzj_vehicle_diag_ed25519';
 const cloudOpsAgentDiagnoseMaxEvidenceChars = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_MAX_EVIDENCE_CHARS || 26000);
 const cloudOpsAgentHistoryPath = path.resolve(
@@ -6542,29 +6544,52 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
   const rawVehicle = findCloudOpsVehicleRaw(resolvedVehicleId, vehicles);
   const summary = rawVehicle ? makeCloudOpsAgentVehicleSummary(rawVehicle) : null;
   const fleet = summarizeCloudOpsAgentFleet(dedupeCloudOpsAgentVehicles(vehicles).map(makeCloudOpsAgentVehicleSummary));
-  const toolResults = [];
-  for (const tool of cloudOpsAgentReadOnlyDiagnosticTools()) {
-    const plan = validateCloudOpsPlan({
-      action: tool.action,
-      vehicle_id: resolvedVehicleId,
-      tool_name: tool.tool_name || '',
-      args: tool.args || {},
-      timeout_s: Math.min(120, Math.max(3, Number(tool.timeout_s || cloudOpsAgentDiagnoseToolTimeoutS) || cloudOpsAgentDiagnoseToolTimeoutS)),
-      reason: `deep diagnose ${resolvedVehicleId} ${tool.label || tool.tool_name || tool.action}`
-    });
-    if (!plan) {
-      toolResults.push({ ok: false, label: tool.label, action: tool.action, tool_name: tool.tool_name, detail: 'invalid_plan' });
-      continue;
+  const diagnosticTools = cloudOpsAgentReadOnlyDiagnosticTools();
+  const toolResults = new Array(diagnosticTools.length);
+  let nextToolIndex = 0;
+  const runDiagnosticToolWorker = async () => {
+    while (nextToolIndex < diagnosticTools.length) {
+      const toolIndex = nextToolIndex;
+      nextToolIndex += 1;
+      const tool = diagnosticTools[toolIndex];
+      const plan = validateCloudOpsPlan({
+        action: tool.action,
+        vehicle_id: resolvedVehicleId,
+        tool_name: tool.tool_name || '',
+        args: tool.args || {},
+        timeout_s: Math.min(120, Math.max(3, Number(tool.timeout_s || cloudOpsAgentDiagnoseToolTimeoutS) || cloudOpsAgentDiagnoseToolTimeoutS)),
+        reason: `deep diagnose ${resolvedVehicleId} ${tool.label || tool.tool_name || tool.action}`
+      });
+      if (!plan) {
+        toolResults[toolIndex] = { ok: false, label: tool.label, action: tool.action, tool_name: tool.tool_name, detail: 'invalid_plan' };
+        continue;
+      }
+      try {
+        const execution = await executeCloudOpsAction(plan, vehicles);
+        toolResults[toolIndex] = {
+          ok: execution.ok,
+          label: tool.label,
+          action: plan.action,
+          tool_name: plan.tool_name || null,
+          execution: compactCloudOpsExecutionForDiagnosis({ ...tool, execution }, 4500)
+        };
+      } catch (error) {
+        toolResults[toolIndex] = {
+          ok: false,
+          label: tool.label,
+          action: plan.action,
+          tool_name: plan.tool_name || null,
+          detail: error?.message || 'diagnostic_tool_failed'
+        };
+      }
     }
-    const execution = await executeCloudOpsAction(plan, vehicles);
-    toolResults.push({
-      ok: execution.ok,
-      label: tool.label,
-      action: plan.action,
-      tool_name: plan.tool_name || null,
-      execution: compactCloudOpsExecutionForDiagnosis({ ...tool, execution }, 4500)
-    });
-  }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(cloudOpsAgentDiagnoseConcurrency, diagnosticTools.length) },
+      () => runDiagnosticToolWorker()
+    )
+  );
 
   const sshTargets = [];
   const mediaTailscaleIp = extractCloudOpsVehicleTailscaleIp(rawVehicle);
@@ -6574,10 +6599,9 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
   if (includeSsh && String(process.env.CLOUD_OPS_DIAGNOSE_INCLUDE_CLOUD_SSH || 'true').toLowerCase() !== 'false') {
     sshTargets.push({ kind: 'cloud', host: '127.0.0.1', user: process.env.USER || 'admin1' });
   }
-  const sshResults = [];
-  for (const target of sshTargets) {
-    sshResults.push(await runCloudOpsSshReadOnlyProbe(target));
-  }
+  const sshResults = await Promise.all(
+    sshTargets.map((target) => runCloudOpsSshReadOnlyProbe(target))
+  );
 
   const evidence = {
     vehicle_id: resolvedVehicleId,
@@ -6628,7 +6652,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
         Authorization: `Bearer ${cloudOpsAgentApiKey}`
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(cloudOpsAgentTimeoutMs)
+      signal: AbortSignal.timeout(Math.min(cloudOpsAgentTimeoutMs, cloudOpsAgentDiagnoseModelTimeoutMs))
     });
   } catch (error) {
     return {

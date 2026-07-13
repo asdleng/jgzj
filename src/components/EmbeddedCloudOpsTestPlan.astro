@@ -164,19 +164,6 @@ const agentRules = [
         </article>
       </div>
 
-      <div class="cloud-ops-test-agent-model-control">
-        <label for="cloud-ops-agent-model-select">推理模型</label>
-        <select id="cloud-ops-agent-model-select" data-role="agent-model-select" aria-label="选择山海智枢推理模型">
-          <option value="gpt-5.6-terra" selected>GPT-5.6 Terra</option>
-          <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
-          <option value="gpt-5.6">GPT-5.6</option>
-          <option value="gpt-5.5">GPT-5.5</option>
-          <option value="gpt-5.4">GPT-5.4</option>
-          <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
-        </select>
-        <small data-role="agent-model-note">默认使用 GPT-5.6 Terra，可按任务手动切换。</small>
-      </div>
-
       <div class="cloud-ops-test-agent-context-bar">
         <span data-role="agent-context">上下文：一体化 AI · 在消息中点名车辆即可读取对应缓存。</span>
         <span data-role="agent-latency">等待输入</span>
@@ -188,25 +175,39 @@ const agentRules = [
           <p>你好，我是山海智枢。你可以直接和我对话，也可以在问题中写明车辆编号、车牌或 VIN，我会读取对应车辆缓存进行云端运维分析；不需要提前选择车辆。涉及控车和变更时仍需人工确认。</p>
         </div>
       </div>
-      <textarea
-        class="cloud-ops-test-agent-input"
-        data-role="agent-input"
-        rows="4"
-        placeholder="直接提问即可；需要查车时请写明车辆编号，例如：分析 BIT-0001 为什么停车。"
-      ></textarea>
-      <div class="cloud-ops-test-agent-toolbar">
-        <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-send">
-          <strong>发送</strong>
-          <span>一体化对话与运维</span>
-        </button>
-        <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-deep-diagnose">
-          <strong>深度诊断</strong>
-          <span>问题中写明车号</span>
-        </button>
-        <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-stops">
-          <strong>分析停车车辆</strong>
-          <span>停车/阻断入口</span>
-        </button>
+      <div class="cloud-ops-agent-composer" data-role="agent-composer">
+        <textarea
+          class="cloud-ops-test-agent-input"
+          data-role="agent-input"
+          rows="3"
+          placeholder="直接提问；需要查车或深度诊断时，请在消息中写明车辆编号、车牌或 VIN。"
+        ></textarea>
+        <div class="cloud-ops-agent-composer-footer">
+          <div class="cloud-ops-agent-composer-options">
+            <label class="cloud-ops-agent-composer-select">
+              <span>权限</span>
+              <select data-role="agent-permission-select" aria-label="选择山海智枢访问权限">
+                <option value="read_only" selected>只读访问</option>
+                <option value="diagnose_read_only">深度诊断（只读）</option>
+              </select>
+            </label>
+            <label class="cloud-ops-agent-composer-select">
+              <span>模型</span>
+              <select data-role="agent-model-select" aria-label="选择山海智枢推理模型">
+                <option value="gpt-5.6-terra" selected>GPT-5.6 Terra</option>
+                <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+                <option value="gpt-5.6">GPT-5.6</option>
+                <option value="gpt-5.5">GPT-5.5</option>
+                <option value="gpt-5.4">GPT-5.4</option>
+                <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+              </select>
+            </label>
+          </div>
+          <span class="cloud-ops-agent-composer-hint">Enter 发送 · Shift+Enter 换行</span>
+          <button class="cloud-ops-agent-composer-send" type="button" data-action="agent-send" aria-label="发送消息" title="发送消息">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+          </button>
+        </div>
       </div>
       <details class="cloud-ops-test-disclosure">
         <summary>最近智能体记录与安全审计</summary>
@@ -219,7 +220,7 @@ const agentRules = [
 智能体对话：必须用户点击发送；后端只调用 subapi 兼容模型接口
 控制类动作：未绑定执行</pre>
       </details>
-      <p class="cloud-ops-test-agent-safe-copy">只读诊断参谋：不调用车辆工具，不写参数，不重启服务，不下发任务。</p>
+      <p class="cloud-ops-test-agent-safe-copy">只读安全边界：普通对话读取车辆缓存；选择“深度诊断（只读）”后才调用只读巡检工具。始终禁止写参数、重启服务、控车和任务重发。</p>
     </div>
   </aside>
 
@@ -548,19 +549,6 @@ const agentRules = [
             </div>
           </div>
 
-          <div class="cloud-ops-test-agent-model-control is-page">
-            <label for="cloud-ops-agent-page-model-select">本次分析模型</label>
-            <select id="cloud-ops-agent-page-model-select" data-role="agent-model-select" aria-label="选择智能体运维分析模型">
-              <option value="gpt-5.6-terra" selected>GPT-5.6 Terra</option>
-              <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
-              <option value="gpt-5.6">GPT-5.6</option>
-              <option value="gpt-5.5">GPT-5.5</option>
-              <option value="gpt-5.4">GPT-5.4</option>
-              <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
-            </select>
-            <small>两个入口同步，切换后只影响后续请求。</small>
-          </div>
-
           <div class="cloud-ops-agent-page-messages cloud-ops-test-agent-messages" data-role="agent-page-messages" aria-live="polite">
             <div class="cloud-ops-test-agent-message is-agent">
               <strong>山海智枢</strong>
@@ -568,23 +556,45 @@ const agentRules = [
             </div>
           </div>
 
-          <textarea
-            class="cloud-ops-test-agent-input cloud-ops-agent-page-input"
-            data-role="agent-page-input"
-            rows="4"
-            placeholder="直接提问即可；需要查车时请写明车辆编号，例如：分析 BIT-0001 为什么停车。"
-          ></textarea>
-
-          <div class="cloud-ops-agent-page-toolbar">
-            <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-page-send"><strong>发送问题</strong><span>同步到侧边栏对话</span></button>
-            <button class="cloud-ops-test-command-button is-primary" type="button" data-action="agent-deep-diagnose"><strong>深度诊断</strong><span>问题中写明车号</span></button>
-            <button class="cloud-ops-test-command-button" type="button" data-action="agent-analyze-stops"><strong>分析停车车辆</strong><span>停车 / 阻断入口</span></button>
+          <div class="cloud-ops-agent-composer is-page" data-role="agent-composer">
+            <textarea
+              class="cloud-ops-test-agent-input cloud-ops-agent-page-input"
+              data-role="agent-page-input"
+              rows="4"
+              placeholder="向山海智枢发送消息；需要查车或深度诊断时，请在消息中写明车辆编号、车牌或 VIN。"
+            ></textarea>
+            <div class="cloud-ops-agent-composer-footer">
+              <div class="cloud-ops-agent-composer-options">
+                <label class="cloud-ops-agent-composer-select">
+                  <span>权限</span>
+                  <select data-role="agent-permission-select" aria-label="选择智能体运维访问权限">
+                    <option value="read_only" selected>只读访问</option>
+                    <option value="diagnose_read_only">深度诊断（只读）</option>
+                  </select>
+                </label>
+                <label class="cloud-ops-agent-composer-select">
+                  <span>模型</span>
+                  <select data-role="agent-model-select" aria-label="选择智能体运维分析模型">
+                    <option value="gpt-5.6-terra" selected>GPT-5.6 Terra</option>
+                    <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+                    <option value="gpt-5.6">GPT-5.6</option>
+                    <option value="gpt-5.5">GPT-5.5</option>
+                    <option value="gpt-5.4">GPT-5.4</option>
+                    <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+                  </select>
+                </label>
+              </div>
+              <span class="cloud-ops-agent-composer-hint">Enter 发送 · Shift+Enter 换行</span>
+              <button class="cloud-ops-agent-composer-send" type="button" data-action="agent-send" aria-label="发送消息" title="发送消息">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+              </button>
+            </div>
           </div>
 
           <div class="cloud-ops-agent-page-rail-actions">
             <button type="button" data-action="agent-page-open" data-role="agent-page-open-label">展开右侧侧边栏</button>
             <button type="button" data-action="agent-page-pin" data-role="agent-page-pin-label">固定右侧侧边栏</button>
-            <span>两处入口共享同一会话，不会重复发起请求。</span>
+            <span>两处入口共享同一会话，权限、模型和输入内容保持同步。</span>
           </div>
         </section>
 
@@ -691,6 +701,9 @@ const agentRules = [
     const agentStatusNote = shell.querySelector('[data-role="agent-status-note"]');
     const agentModel = shell.querySelector('[data-role="agent-model"]');
     const agentModelSelects = [...shell.querySelectorAll('[data-role="agent-model-select"]')];
+    const agentPermissionSelects = [...shell.querySelectorAll('[data-role="agent-permission-select"]')];
+    const agentSendButtons = [...shell.querySelectorAll('[data-action="agent-send"]')];
+    const agentComposers = [...shell.querySelectorAll('[data-role="agent-composer"]')];
     const agentModelNote = shell.querySelector('[data-role="agent-model-note"]');
     const agentRoute = shell.querySelector('[data-role="agent-route"]');
     const agentCodex = shell.querySelector('[data-role="agent-codex"]');
@@ -727,7 +740,9 @@ const agentRules = [
     let agentDefaultModel = "gpt-5.6-terra";
     let agentAvailableModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
     const agentModelStorageKey = "cloudOpsTestAgentModel";
+    const agentPermissionStorageKey = "cloudOpsTestAgentPermission";
     const agentConversationHistory = [];
+    let agentRequestInFlight = false;
 
     const paramInputValue = (input) => input.type === "checkbox" ? String(input.checked) : String(input.value || "");
     const paramValueText = (input, value) => {
@@ -1357,7 +1372,46 @@ const agentRules = [
       setAgentModelSelection(agentAvailableModels.includes(stored) ? stored : agentDefaultModel);
     };
 
-    const agentModeLabel = () => "一体化智能运维";
+    const agentPermissionLabel = (permission = selectedAgentPermission()) => (
+      permission === "diagnose_read_only" ? "深度诊断（只读）" : "只读访问"
+    );
+
+    const selectedAgentPermission = () => {
+      const selected = String(agentPermissionSelects[0]?.value || "").trim();
+      return selected === "diagnose_read_only" ? selected : "read_only";
+    };
+
+    const setAgentPermissionSelection = (permission, persist = false) => {
+      const next = permission === "diagnose_read_only" ? permission : "read_only";
+      agentPermissionSelects.forEach((select) => { select.value = next; });
+      if (persist) {
+        try { localStorage.setItem(agentPermissionStorageKey, next); } catch (_error) {}
+      }
+      return next;
+    };
+
+    const restoreAgentPermissionSelection = () => {
+      let stored = "";
+      try { stored = localStorage.getItem(agentPermissionStorageKey) || ""; } catch (_error) {}
+      setAgentPermissionSelection(stored);
+    };
+
+    const setAgentComposerBusy = (busy) => {
+      agentRequestInFlight = Boolean(busy);
+      agentSendButtons.forEach((button) => {
+        button.disabled = agentRequestInFlight;
+        button.setAttribute("aria-busy", agentRequestInFlight ? "true" : "false");
+      });
+      agentComposers.forEach((composer) => composer.classList.toggle("is-busy", agentRequestInFlight));
+    };
+
+    const resizeAgentInput = (input) => {
+      if (!input) return;
+      input.style.height = "auto";
+      input.style.height = `${Math.min(Math.max(input.scrollHeight, 74), 220)}px`;
+    };
+
+    const agentModeLabel = () => agentPermissionLabel();
 
     const setAgentStatusCard = (payload) => {
       agentCanChat = Boolean(payload?.can_chat);
@@ -1465,53 +1519,6 @@ const agentRules = [
       syncAgentMessageViews();
     };
 
-    const sendAgentMessage = async (message) => {
-      const text = String(message || "").trim();
-      if (!text) {
-        setStatus("请输入智能体问题", "error");
-        return;
-      }
-      if (!agentCanChat) {
-        appendAgentMessage("error", "智能体模型链路还没有配置服务端 subapi key，不能发起对话。");
-        setStatus("智能体未配置 CLOUD_OPS_AGENT_API_KEY", "error");
-        return;
-      }
-      const priorHistory = agentConversationHistory.slice(-12);
-      appendAgentMessage("user", text, agentModeLabel());
-      agentConversationHistory.push({ role: "user", content: text });
-      if (agentInput) agentInput.value = "";
-      if (agentPageInput) agentPageInput.value = "";
-      if (agentLatency) agentLatency.textContent = "思考中...";
-      setStatus("山海智枢正在理解问题并生成回复。", "loading");
-      try {
-        const response = await fetch(AGENT_CHAT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({
-            message: text,
-            model: selectedAgentModel(),
-            history: priorHistory
-          })
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload?.ok === false) {
-          throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
-        }
-        const answer = payload.answer || "模型没有返回文本。";
-        agentConversationHistory.push({ role: "assistant", content: answer });
-        appendAgentMessage("agent", answer, `${payload.model || "--"} · ${payload.latency_ms || "--"}ms · 一体化智能运维`);
-        if (agentLatency) agentLatency.textContent = `${payload.latency_ms || "--"} ms`;
-        setStatus("山海智枢回复完成；如涉及车辆，仅进行了只读分析。", "ok");
-        loadAgentHistory();
-      } catch (error) {
-        appendAgentMessage("error", error?.message || "智能体调用失败");
-        if (agentLatency) agentLatency.textContent = "调用失败";
-        setStatus(`智能体调用失败：${error?.message || "未知错误"}`, "error");
-        loadAgentHistory();
-      }
-    };
-
     const agentVehicleIdFromText = (text) => {
       const normalized = String(text || "").toLowerCase();
       for (const vehicle of vehicles) {
@@ -1525,45 +1532,81 @@ const agentRules = [
       return "";
     };
 
-    const deepDiagnoseMentionedVehicle = async () => {
-      const question = String(agentPageInput?.value || agentInput?.value || "").trim();
-      const vehicleId = agentVehicleIdFromText(question);
-      if (!question || !vehicleId) {
-        setStatus("请先在问题中写明要深度诊断的车辆编号、车牌或 VIN。", "error");
+    const sendAgentMessage = async (message) => {
+      const text = String(message || "").trim();
+      const permission = selectedAgentPermission();
+      const permissionLabel = agentPermissionLabel(permission);
+      if (!text) {
+        setStatus("请输入智能体问题", "error");
+        return;
+      }
+      if (agentRequestInFlight) {
+        setStatus("山海智枢正在处理上一条消息，请稍候。", "loading");
         return;
       }
       if (!agentCanChat) {
-        appendAgentMessage("error", "智能体模型链路还没有配置服务端 subapi key，不能发起深度诊断。");
+        appendAgentMessage("error", "智能体模型链路还没有配置服务端 subapi key，不能发起对话。");
         setStatus("智能体未配置 CLOUD_OPS_AGENT_API_KEY", "error");
         return;
       }
-      appendAgentMessage("user", question, `深度诊断车辆 ${vehicleId}`);
-      agentConversationHistory.push({ role: "user", content: question });
-      if (agentInput) agentInput.value = "";
-      if (agentPageInput) agentPageInput.value = "";
-      if (agentLatency) agentLatency.textContent = "深度诊断中...";
-      if (toolResult) toolResult.textContent = "正在执行 WebSocket 只读工具和 SSH 只读巡检...";
-      setStatus("深度诊断中：优先 auto_ad_ai WebSocket，只读 SSH 作为补充。", "loading");
+
+      const isDiagnosis = permission === "diagnose_read_only";
+      const vehicleId = isDiagnosis ? agentVehicleIdFromText(text) : "";
+      if (isDiagnosis && !vehicleId) {
+        appendAgentMessage("error", "深度诊断需要在消息中明确写出一辆车的车辆编号、车牌或 VIN。", permissionLabel);
+        setStatus("请在问题中写明要深度诊断的车辆编号、车牌或 VIN。", "error");
+        return;
+      }
+
+      const priorHistory = agentConversationHistory.slice(-12);
+      appendAgentMessage("user", text, isDiagnosis ? `${permissionLabel} · ${vehicleId}` : permissionLabel);
+      agentConversationHistory.push({ role: "user", content: text });
+      if (agentInput) {
+        agentInput.value = "";
+        resizeAgentInput(agentInput);
+      }
+      if (agentPageInput) {
+        agentPageInput.value = "";
+        resizeAgentInput(agentPageInput);
+      }
+      if (agentLatency) agentLatency.textContent = isDiagnosis ? "深度诊断中..." : "思考中...";
+      if (isDiagnosis && toolResult) toolResult.textContent = "正在执行 WebSocket 只读工具和 SSH 只读巡检...";
+      setStatus(
+        isDiagnosis
+          ? "深度诊断中：优先 auto_ad_ai WebSocket，只读 SSH 作为补充。"
+          : "山海智枢正在理解问题并生成回复。",
+        "loading"
+      );
+      setAgentComposerBusy(true);
+
       try {
-        const response = await fetch(AGENT_DIAGNOSE_URL, {
+        const response = await fetch(isDiagnosis ? AGENT_DIAGNOSE_URL : AGENT_CHAT_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({
+          body: JSON.stringify(isDiagnosis ? {
             vehicle_id: vehicleId,
-            question,
+            question: text,
             include_ssh: true,
             model: selectedAgentModel()
+          } : {
+            message: text,
+            model: selectedAgentModel(),
+            history: priorHistory
           })
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload?.ok === false) {
           throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
         }
-        const diagnosisAnswer = payload.answer || "深度诊断没有返回文本。";
-        agentConversationHistory.push({ role: "assistant", content: diagnosisAnswer });
-        appendAgentMessage("agent", diagnosisAnswer, `${payload.model || "--"} · ${payload.latency_ms || "--"}ms · ${payload.mode || "深度诊断"}`);
-        if (toolResult) {
+        const answer = payload.answer || (isDiagnosis ? "深度诊断没有返回文本。" : "模型没有返回文本。");
+        agentConversationHistory.push({ role: "assistant", content: answer });
+        appendAgentMessage(
+          "agent",
+          answer,
+          `${agentModelLabel(payload.model || selectedAgentModel())} · ${payload.latency_ms || "--"}ms · ${permissionLabel}`
+        );
+        if (isDiagnosis && toolResult) {
           toolResult.textContent = JSON.stringify({
             audit_id: payload.audit_id,
             mode: payload.mode,
@@ -1571,25 +1614,22 @@ const agentRules = [
           }, null, 2);
         }
         if (agentLatency) agentLatency.textContent = `${payload.latency_ms || "--"} ms`;
-        setStatus("深度诊断完成。未执行重启、控车、写参数或任务重发。", "ok");
+        setStatus(
+          isDiagnosis
+            ? "深度诊断完成。未执行重启、控车、写参数或任务重发。"
+            : "山海智枢回复完成；如涉及车辆，仅进行了只读分析。",
+          "ok"
+        );
         loadAgentHistory();
       } catch (error) {
-        appendAgentMessage("error", error?.message || "深度诊断调用失败");
-        if (agentLatency) agentLatency.textContent = "诊断失败";
-        if (toolResult) toolResult.textContent = `深度诊断失败：${error?.message || "未知错误"}`;
-        setStatus(`深度诊断失败：${error?.message || "未知错误"}`, "error");
+        appendAgentMessage("error", error?.message || (isDiagnosis ? "深度诊断调用失败" : "智能体调用失败"), permissionLabel);
+        if (agentLatency) agentLatency.textContent = isDiagnosis ? "诊断失败" : "调用失败";
+        if (isDiagnosis && toolResult) toolResult.textContent = `深度诊断失败：${error?.message || "未知错误"}`;
+        setStatus(`${isDiagnosis ? "深度诊断" : "智能体调用"}失败：${error?.message || "未知错误"}`, "error");
         loadAgentHistory();
+      } finally {
+        setAgentComposerBusy(false);
       }
-    };
-
-    const analyzeStopVehicles = () => {
-      const diagnosed = vehicles.map((vehicle) => ({ vehicle, diag: stopDiagnosisOf(vehicle) }));
-      const targets = diagnosed
-        .filter((item) => item.diag.tone === "danger" || item.diag.tone === "warn" || item.diag.label === "停止待确认")
-        .slice(0, 12)
-        .map((item) => `${vehicleIdOf(item.vehicle)}:${item.diag.label}`)
-        .join("，");
-      sendAgentMessage(`请分析当前车队里的自动驾驶停止/停车待确认车辆，按故障优先级排序，并给出下一步只读诊断建议。候选车辆：${targets || "当前页面未发现明显候选"}`);
     };
 
     const loadVehicles = async () => {
@@ -1911,17 +1951,12 @@ const agentRules = [
       } else if (action === "agent-pin") {
         setAgentPinned(!agentRail?.classList.contains("is-pinned"));
       } else if (action === "agent-send") {
-        sendAgentMessage(agentInput?.value || agentPageInput?.value || "");
-      } else if (action === "agent-page-send") {
-        sendAgentMessage(agentPageInput?.value || agentInput?.value || "");
+        const composerInput = actionButton.closest('[data-role="agent-composer"]')?.querySelector("textarea");
+        sendAgentMessage(composerInput?.value || agentInput?.value || agentPageInput?.value || "");
       } else if (action === "agent-page-open") {
         setAgentRailOpen(!agentRail?.classList.contains("is-open"));
       } else if (action === "agent-page-pin") {
         setAgentPinned(!agentRail?.classList.contains("is-pinned"));
-      } else if (action === "agent-deep-diagnose") {
-        deepDiagnoseMentionedVehicle();
-      } else if (action === "agent-analyze-stops") {
-        analyzeStopVehicles();
       } else if (action === "param-save-draft") {
         saveParamDraft();
       } else if (action === "param-reset-draft") {
@@ -1943,7 +1978,11 @@ const agentRules = [
       setStatus(vehicleSortMode === "id" ? "车辆列表已按车辆编号排序。" : "车辆列表已按状态排序：异常在前，正常在后。", "ok");
     });
     const syncAgentInputs = (source, target) => {
-      if (source && target && target.value !== source.value) target.value = source.value;
+      if (source && target && target.value !== source.value) {
+        target.value = source.value;
+        resizeAgentInput(target);
+      }
+      resizeAgentInput(source);
     };
     agentInput?.addEventListener("input", () => syncAgentInputs(agentInput, agentPageInput));
     agentPageInput?.addEventListener("input", () => syncAgentInputs(agentPageInput, agentInput));
@@ -1953,18 +1992,20 @@ const agentRules = [
         setStatus(`山海智枢后续请求将使用 ${agentModelLabel(model)}。`, "ok");
       });
     });
-    agentInput?.addEventListener("keydown", (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-        event.preventDefault();
-        sendAgentMessage(agentInput.value || "");
-      }
+    agentPermissionSelects.forEach((select) => {
+      select.addEventListener("change", () => {
+        const permission = setAgentPermissionSelection(select.value, true);
+        setStatus(`山海智枢后续请求将使用${agentPermissionLabel(permission)}权限。`, "ok");
+      });
     });
-    agentPageInput?.addEventListener("keydown", (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    const handleAgentComposerKeydown = (event, input) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
         event.preventDefault();
-        sendAgentMessage(agentPageInput.value || "");
+        sendAgentMessage(input?.value || "");
       }
-    });
+    };
+    agentInput?.addEventListener("keydown", (event) => handleAgentComposerKeydown(event, agentInput));
+    agentPageInput?.addEventListener("keydown", (event) => handleAgentComposerKeydown(event, agentPageInput));
     agentToggle?.addEventListener("mouseenter", () => setAgentRailOpen(true));
     agentRail?.addEventListener("mouseleave", () => {
       if (!agentRail.classList.contains("is-pinned") && !agentRail.matches(":focus-within")) setAgentRailOpen(false);
@@ -1984,6 +2025,9 @@ const agentRules = [
     alignAgentRailToHero();
     window.addEventListener("resize", alignAgentRailToHero);
     restoreAgentPinned();
+    restoreAgentPermissionSelection();
+    resizeAgentInput(agentInput);
+    resizeAgentInput(agentPageInput);
     setParamDomain("control");
     renderParamDraft();
     syncAgentMessageViews();
