@@ -185,19 +185,19 @@ TARGETS = {
     },
     "fire_smoke_yolo": {
         "title": "火源烟雾",
-        "local_weight": str(RUNTIME_ROOT / "weights" / "fire_smoke_yolo_fire_other_edge_remaining_gpu2_20260713.pt"),
-        "download_file": "fire_smoke_yolo_fire_other_edge_remaining_gpu2_20260713.pt",
+        "local_weight": str(RUNTIME_ROOT / "weights" / "fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt"),
+        "download_file": "fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
         "static_only": True,
         "static_status": "trained",
-        "static_model_family": "yolo12s_fire_other_edge_remaining_gpu2",
+        "static_model_family": "yolo12s_fire_other_edge_full_continue3_gpu2",
         "static_metric_source": "fire_other_edge_test",
-        "static_source_run": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_remaining_gpu2_20260713_1052",
-        "static_best_weight": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_remaining_gpu2_20260713_1052/weights/best.pt",
+        "static_source_run": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713",
+        "static_best_weight": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
         "static_metrics": {
-            "test_precision": 0.6764,
-            "test_recall": 0.5256,
-            "test_map50": 0.5910,
-            "test_map50_95": 0.3543,
+            "test_precision": 0.7109,
+            "test_recall": 0.5492,
+            "test_map50": 0.6270,
+            "test_map50_95": 0.3828,
         },
         "static_training_trends": [
             {
@@ -241,9 +241,51 @@ TARGETS = {
                 "source_run": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_remaining_gpu2_20260713_1052",
                 "best_weight": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_remaining_gpu2_20260713_1052/weights/best.pt",
                 "run_count": 1,
+            },
+            {
+                "day": "2026-07-13",
+                "task_id": "fire_smoke_yolo",
+                "model_family": "yolo12s_fire_other_edge_full_continue2_gpu2",
+                "status": "completed",
+                "metric_source": "fire_other_edge_test",
+                "score": 0.37996,
+                "test_precision": 0.71055,
+                "test_recall": 0.54557,
+                "test_map50": 0.62105,
+                "test_map50_95": 0.37996,
+                "val_precision": 0.69413,
+                "val_recall": 0.57524,
+                "val_map50": 0.64968,
+                "val_map50_95": 0.39921,
+                "started_at": "2026-07-13T12:57:59.173750+08:00",
+                "finished_at": "2026-07-13T13:53:06.340402+08:00",
+                "source_run": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue2_gpu2_20260713",
+                "best_weight": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue2_gpu2_20260713/weights/best.pt",
+                "run_count": 1,
+            },
+            {
+                "day": "2026-07-13",
+                "task_id": "fire_smoke_yolo",
+                "model_family": "yolo12s_fire_other_edge_full_continue3_gpu2",
+                "status": "completed",
+                "metric_source": "fire_other_edge_test",
+                "score": 0.38278,
+                "test_precision": 0.71087,
+                "test_recall": 0.54916,
+                "test_map50": 0.62700,
+                "test_map50_95": 0.38278,
+                "val_precision": 0.69279,
+                "val_recall": 0.58326,
+                "val_map50": 0.65531,
+                "val_map50_95": 0.40205,
+                "started_at": "2026-07-13T13:58:18.521402+08:00",
+                "finished_at": "2026-07-13T14:37:21.680289+08:00",
+                "source_run": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713",
+                "best_weight": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+                "run_count": 1,
             }
         ],
-        "static_note": "2026-07-13 基于当前 yolo12s 火源烟雾权重，先用 fire_other_edge 固定抽样 12000 条微调 3 epoch，再用剩余 47914 条在物理 GPU 2 续训 1 epoch；指标为原始 fire_other_edge test split，P/R 较上一轮提升。",
+        "static_note": "2026-07-13 基于当前 yolo12s 火源烟雾权重，先用 fire_other_edge 固定抽样 12000 条微调 3 epoch，再用剩余 47914 条续训 1 epoch，随后用完整 fire_other_edge train 低学习率续训 3 epoch；指标为原始 fire_other_edge test split。",
         "roots": [
             "/home/sari/jgzj_yolo_runs_new_arch",
             "/home/sari/jgzj_yolo_runs_new_arch_parallel",
@@ -879,7 +921,7 @@ def monitor_once():
             if key not in seen:
                 rows.append(row)
                 seen.add(key)
-        rows.sort(key=lambda row: (str(row.get("day") or ""), str(row.get("model_family") or "")))
+        rows.sort(key=lambda row: (str(row.get("day") or ""), str(row.get("finished_at") or ""), str(row.get("model_family") or "")))
         training_trends[task_id] = rows
     for entry in entries:
         task_id = entry.get("task_id")
