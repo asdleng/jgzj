@@ -315,8 +315,8 @@ const cloudOpsCodexBin = process.env.CLOUD_OPS_CODEX_BIN || '/home/admin1/.local
 const cloudOpsCodexStatusTimeoutMs = Number(process.env.CLOUD_OPS_CODEX_STATUS_TIMEOUT_MS || 1500);
 const cloudOpsAgentDiagnoseToolTimeoutS = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_TOOL_TIMEOUT_S || 18);
 const cloudOpsAgentDiagnoseSshTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_SSH_TIMEOUT_MS || 8000);
-const cloudOpsAgentDiagnoseModelTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_MODEL_TIMEOUT_MS || 25000);
-const cloudOpsAgentDiagnoseConcurrency = Math.min(8, Math.max(1, Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_CONCURRENCY || 5) || 5));
+const cloudOpsAgentDiagnoseModelTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_MODEL_TIMEOUT_MS || 60000);
+const cloudOpsAgentDiagnoseConcurrency = Math.min(8, Math.max(1, Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_CONCURRENCY || 8) || 8));
 const cloudOpsAgentDiagnoseSshKey = process.env.CLOUD_OPS_AGENT_DIAGNOSE_SSH_KEY || '/home/admin1/.ssh/jgzj_vehicle_diag_ed25519';
 const cloudOpsAgentDiagnoseMaxEvidenceChars = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_MAX_EVIDENCE_CHARS || 26000);
 const cloudOpsAgentHistoryPath = path.resolve(
@@ -6518,7 +6518,60 @@ async function runCloudOpsSshReadOnlyProbe(target) {
   }
 }
 
-async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, includeSsh = true, model }) {
+function shouldRunCloudOpsAgentDeepDiagnosis(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+  return /(深度诊断|诊断|排查|故障|异常|状态检查|检查(?:一下)?(?:车辆)?状态|为什么|无法|不能|不工作|掉线|离线|停车|停止|定位|规划|routing|control|控制|底盘|感知|相机|通信|ros|节点|任务失败|任务异常|卡住|阻塞)/i.test(text);
+}
+
+function cloudOpsAgentProgress(onProgress, event) {
+  if (typeof onProgress !== 'function') return;
+  try {
+    onProgress({
+      at: new Date().toISOString(),
+      ...event
+    });
+  } catch (_error) {
+    // Progress reporting must never interrupt the read-only diagnosis itself.
+  }
+}
+
+function buildCloudOpsEvidenceFallbackAnswer(evidence, modelError = '') {
+  const vehicleId = String(evidence?.vehicle_id || '目标车辆');
+  const websocketTools = Array.isArray(evidence?.websocket_tools) ? evidence.websocket_tools : [];
+  const successfulTools = websocketTools.filter((item) => item?.ok);
+  const failedTools = websocketTools.filter((item) => !item?.ok);
+  const sshResults = Array.isArray(evidence?.ssh?.results) ? evidence.ssh.results : [];
+  const successfulSsh = sshResults.filter((item) => item?.ok);
+  const failedSsh = sshResults.filter((item) => !item?.ok);
+  const summary = evidence?.selected_vehicle_cache || {};
+  const cacheSignals = [
+    summary.last_seen ? `最近上报 ${summary.last_seen}` : '',
+    typeof summary.master_ping_ok === 'boolean' ? `主控连通 ${summary.master_ping_ok ? '正常' : '异常'}` : '',
+    typeof summary.localization_reliable === 'boolean' ? `定位 ${summary.localization_reliable ? '可靠' : '不可靠'}` : '',
+    summary.planner_state ? `规划状态 ${summary.planner_state}` : '',
+    typeof summary.ready_for_autodrive === 'boolean' ? `自动驾驶就绪 ${summary.ready_for_autodrive ? '是' : '否'}` : '',
+    summary.blocker_count != null && Number.isFinite(Number(summary.blocker_count)) ? `阻断项 ${Number(summary.blocker_count)}` : '',
+    summary.warning_count != null && Number.isFinite(Number(summary.warning_count)) ? `告警项 ${Number(summary.warning_count)}` : ''
+  ].filter(Boolean);
+  const failedLabels = failedTools
+    .slice(0, 8)
+    .map((item) => item?.label || item?.tool_name || item?.action)
+    .filter(Boolean);
+  const modelReason = /timeout|abort/i.test(String(modelError || ''))
+    ? '模型总结超过本次等待上限'
+    : '模型总结链路暂时不可用';
+  return [
+    `已完成 ${vehicleId} 的只读诊断证据采集；${modelReason}，下面先返回可审计的系统摘要。`,
+    cacheSignals.length ? `车辆缓存：${cacheSignals.join('；')}。` : '车辆缓存：已读取，但关键状态字段不足，暂不能直接判定具体故障。',
+    `WebSocket 只读检查：${successfulTools.length}/${websocketTools.length} 项成功${failedLabels.length ? `；未成功项：${failedLabels.join('、')}` : ''}。`,
+    `SSH 只读巡检：${successfulSsh.length}/${sshResults.length} 个目标成功${failedSsh.length ? `；${failedSsh.length} 个目标未完成` : ''}。`,
+    '由于模型没有完成综合推理，本次结果只代表证据采集状态，不据此直接执行重启、控车、参数写入或任务重发。',
+    '可以直接继续追问“根据刚才证据继续分析”，系统会保留车辆上下文并再次生成结论。'
+  ].join('\n');
+}
+
+async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, includeSsh = true, model, onProgress }) {
   if (!cloudOpsAgentEnabled) {
     const error = new Error('cloud_ops_agent_disabled');
     error.status = 503;
@@ -6533,6 +6586,13 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
 
   const selectedModel = resolveCloudOpsAgentModel(model);
   const startedAt = Date.now();
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'understand',
+    status: 'running',
+    title: '正在理解请求',
+    detail: '识别车辆与诊断范围',
+    elapsed_ms: 0
+  });
   const vehicles = await listCloudAgentVehicles().catch(() => []);
   const resolvedVehicleId = vehicleId || inferVehicleIdFromMessage(question, vehicles);
   if (!resolvedVehicleId) {
@@ -6544,9 +6604,42 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
   const rawVehicle = findCloudOpsVehicleRaw(resolvedVehicleId, vehicles);
   const summary = rawVehicle ? makeCloudOpsAgentVehicleSummary(rawVehicle) : null;
   const fleet = summarizeCloudOpsAgentFleet(dedupeCloudOpsAgentVehicles(vehicles).map(makeCloudOpsAgentVehicleSummary));
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'vehicle',
+    status: 'completed',
+    title: `已识别车辆 ${resolvedVehicleId}`,
+    detail: rawVehicle ? '已读取车辆注册缓存与最近状态' : '车辆编号已识别，但注册缓存暂未命中',
+    vehicle_id: resolvedVehicleId,
+    elapsed_ms: Date.now() - startedAt
+  });
   const diagnosticTools = cloudOpsAgentReadOnlyDiagnosticTools();
+  const toolsStartedAt = Date.now();
+  let completedToolCount = 0;
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'tools',
+    status: 'running',
+    title: '正在执行车辆只读检查',
+    detail: `WebSocket 工具 0/${diagnosticTools.length}`,
+    completed: 0,
+    total: diagnosticTools.length,
+    elapsed_ms: Date.now() - startedAt
+  });
   const toolResults = new Array(diagnosticTools.length);
   let nextToolIndex = 0;
+  const reportToolCompletion = (tool, result) => {
+    completedToolCount += 1;
+    cloudOpsAgentProgress(onProgress, {
+      stage: 'tools',
+      status: completedToolCount >= diagnosticTools.length ? 'completed' : 'running',
+      title: completedToolCount >= diagnosticTools.length ? '车辆只读检查已完成' : '正在执行车辆只读检查',
+      detail: `${tool?.label || tool?.tool_name || tool?.action || '检查项'} · ${result?.ok ? '完成' : '未成功'} · ${completedToolCount}/${diagnosticTools.length}`,
+      completed: completedToolCount,
+      total: diagnosticTools.length,
+      tool: tool?.tool_name || tool?.action || null,
+      tool_ok: Boolean(result?.ok),
+      elapsed_ms: Date.now() - startedAt
+    });
+  };
   const runDiagnosticToolWorker = async () => {
     while (nextToolIndex < diagnosticTools.length) {
       const toolIndex = nextToolIndex;
@@ -6562,6 +6655,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
       });
       if (!plan) {
         toolResults[toolIndex] = { ok: false, label: tool.label, action: tool.action, tool_name: tool.tool_name, detail: 'invalid_plan' };
+        reportToolCompletion(tool, toolResults[toolIndex]);
         continue;
       }
       try {
@@ -6573,6 +6667,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
           tool_name: plan.tool_name || null,
           execution: compactCloudOpsExecutionForDiagnosis({ ...tool, execution }, 4500)
         };
+        reportToolCompletion(tool, toolResults[toolIndex]);
       } catch (error) {
         toolResults[toolIndex] = {
           ok: false,
@@ -6581,6 +6676,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
           tool_name: plan.tool_name || null,
           detail: error?.message || 'diagnostic_tool_failed'
         };
+        reportToolCompletion(tool, toolResults[toolIndex]);
       }
     }
   };
@@ -6590,6 +6686,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
       () => runDiagnosticToolWorker()
     )
   );
+  const toolsElapsedMs = Date.now() - toolsStartedAt;
 
   const sshTargets = [];
   const mediaTailscaleIp = extractCloudOpsVehicleTailscaleIp(rawVehicle);
@@ -6599,9 +6696,28 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
   if (includeSsh && String(process.env.CLOUD_OPS_DIAGNOSE_INCLUDE_CLOUD_SSH || 'true').toLowerCase() !== 'false') {
     sshTargets.push({ kind: 'cloud', host: '127.0.0.1', user: process.env.USER || 'admin1' });
   }
+  const sshStartedAt = Date.now();
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'ssh',
+    status: sshTargets.length ? 'running' : 'skipped',
+    title: sshTargets.length ? '正在补充 SSH 只读巡检' : '无需补充 SSH 巡检',
+    detail: sshTargets.length ? `${sshTargets.length} 个只读目标` : '未发现可用 SSH 目标',
+    total: sshTargets.length,
+    elapsed_ms: Date.now() - startedAt
+  });
   const sshResults = await Promise.all(
     sshTargets.map((target) => runCloudOpsSshReadOnlyProbe(target))
   );
+  const sshElapsedMs = Date.now() - sshStartedAt;
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'ssh',
+    status: 'completed',
+    title: 'SSH 只读巡检已完成',
+    detail: `${sshResults.filter((item) => item?.ok).length}/${sshResults.length} 个目标成功`,
+    completed: sshResults.length,
+    total: sshResults.length,
+    elapsed_ms: Date.now() - startedAt
+  });
 
   const evidence = {
     vehicle_id: resolvedVehicleId,
@@ -6642,6 +6758,14 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
     stream: false
   };
 
+  const modelStartedAt = Date.now();
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'model',
+    status: 'running',
+    title: `正在调用 ${selectedModel}`,
+    detail: '根据已采集证据生成综合结论',
+    elapsed_ms: Date.now() - startedAt
+  });
   let upstreamResponse;
   try {
     upstreamResponse = await fetch(cloudOpsAgentChatUrl(), {
@@ -6655,12 +6779,28 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
       signal: AbortSignal.timeout(Math.min(cloudOpsAgentTimeoutMs, cloudOpsAgentDiagnoseModelTimeoutMs))
     });
   } catch (error) {
+    const modelError = error?.message || 'cloud_ops_agent_request_failed';
+    cloudOpsAgentProgress(onProgress, {
+      stage: 'model',
+      status: 'warning',
+      title: '模型总结未完成',
+      detail: /timeout|abort/i.test(modelError) ? '已达到模型等待上限，返回证据摘要' : '模型链路暂时不可用，返回证据摘要',
+      elapsed_ms: Date.now() - startedAt
+    });
     return {
       ok: true,
-      answer: '深度诊断证据已采集，但模型链路调用失败；请查看 evidence 字段中的 WebSocket/SSH 只读结果。',
+      answer: buildCloudOpsEvidenceFallbackAnswer(evidence, modelError),
       model: selectedModel,
       latency_ms: Date.now() - startedAt,
-      model_error: error?.message || 'cloud_ops_agent_request_failed',
+      model_error: modelError,
+      mode: 'integrated_ai_ops',
+      run_kind: 'vehicle_diagnosis',
+      timings: {
+        tools_ms: toolsElapsedMs,
+        ssh_ms: sshElapsedMs,
+        model_ms: Date.now() - modelStartedAt,
+        total_ms: Date.now() - startedAt
+      },
       evidence
     };
   }
@@ -6668,28 +6808,59 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
   const text = await upstreamResponse.text();
   const responsePayload = parseJsonField(text, null);
   if (!upstreamResponse.ok) {
+    const modelError = responsePayload?.error?.message || normalizeReply(text) || `HTTP ${upstreamResponse.status}`;
+    cloudOpsAgentProgress(onProgress, {
+      stage: 'model',
+      status: 'warning',
+      title: '模型总结返回异常',
+      detail: `上游 HTTP ${upstreamResponse.status}，返回证据摘要`,
+      elapsed_ms: Date.now() - startedAt
+    });
     return {
       ok: true,
-      answer: '深度诊断证据已采集，但模型没有返回可用诊断；请查看 evidence 字段中的 WebSocket/SSH 只读结果。',
+      answer: buildCloudOpsEvidenceFallbackAnswer(evidence, modelError),
       model: selectedModel,
       latency_ms: Date.now() - startedAt,
-      model_error: responsePayload?.error?.message || normalizeReply(text) || `HTTP ${upstreamResponse.status}`,
+      model_error: modelError,
+      mode: 'integrated_ai_ops',
+      run_kind: 'vehicle_diagnosis',
+      timings: {
+        tools_ms: toolsElapsedMs,
+        ssh_ms: sshElapsedMs,
+        model_ms: Date.now() - modelStartedAt,
+        total_ms: Date.now() - startedAt
+      },
       evidence
     };
   }
 
+  const answer = extractCloudOpsAgentAnswer(responsePayload) || '模型没有返回有效文本。';
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'model',
+    status: 'completed',
+    title: '综合结论已生成',
+    detail: `${responsePayload?.model || selectedModel} 已完成证据分析`,
+    elapsed_ms: Date.now() - startedAt
+  });
   return {
     ok: true,
-    answer: extractCloudOpsAgentAnswer(responsePayload) || '模型没有返回有效文本。',
+    answer,
     model: responsePayload?.model || selectedModel,
     latency_ms: Date.now() - startedAt,
-    mode: 'deep_diagnosis_read_only',
+    mode: 'integrated_ai_ops',
+    run_kind: 'vehicle_diagnosis',
+    timings: {
+      tools_ms: toolsElapsedMs,
+      ssh_ms: sshElapsedMs,
+      model_ms: Date.now() - modelStartedAt,
+      total_ms: Date.now() - startedAt
+    },
     evidence,
     usage: responsePayload?.usage || null
   };
 }
 
-async function runCloudOpsAgentChatCompletion({ message, model, history }) {
+async function runCloudOpsAgentChatCompletion({ message, model, history, onProgress }) {
   if (!cloudOpsAgentEnabled) {
     const error = new Error('cloud_ops_agent_disabled');
     error.status = 503;
@@ -6704,6 +6875,13 @@ async function runCloudOpsAgentChatCompletion({ message, model, history }) {
 
   const selectedModel = resolveCloudOpsAgentModel(model);
   const startedAt = Date.now();
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'understand',
+    status: 'running',
+    title: '正在理解请求',
+    detail: '判断是否需要车辆上下文',
+    elapsed_ms: 0
+  });
   const conversationHistory = normalizeCloudOpsAgentConversationHistory(history);
   const allVehicles = await listCloudOpsAgentVehicleSummaries().catch(() => []);
   const mentionedVehicles = findCloudOpsAgentMentionedVehicles(message, conversationHistory, allVehicles);
@@ -6741,6 +6919,15 @@ async function runCloudOpsAgentChatCompletion({ message, model, history }) {
     fleet: fleetQuery ? summarizeCloudOpsAgentFleet(allVehicles) : null
   };
 
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'context',
+    status: 'completed',
+    title: mentionedVehicleIds.length ? `已读取 ${mentionedVehicleIds.join('、')} 上下文` : '已准备对话上下文',
+    detail: mentionedVehicleIds.length ? '使用消息中点名车辆的真实缓存' : '当前问题无需预先绑定车辆',
+    vehicle_ids: mentionedVehicleIds,
+    elapsed_ms: Date.now() - startedAt
+  });
+
   const payload = {
     model: selectedModel,
     messages: [
@@ -6752,6 +6939,13 @@ async function runCloudOpsAgentChatCompletion({ message, model, history }) {
     stream: false
   };
 
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'model',
+    status: 'running',
+    title: `正在调用 ${selectedModel}`,
+    detail: '生成回复',
+    elapsed_ms: Date.now() - startedAt
+  });
   let upstreamResponse;
   try {
     upstreamResponse = await fetch(cloudOpsAgentChatUrl(), {
@@ -6787,11 +6981,19 @@ async function runCloudOpsAgentChatCompletion({ message, model, history }) {
   }
 
   const answer = extractCloudOpsAgentAnswer(responsePayload);
+  cloudOpsAgentProgress(onProgress, {
+    stage: 'model',
+    status: 'completed',
+    title: '回复已生成',
+    detail: responsePayload?.model || selectedModel,
+    elapsed_ms: Date.now() - startedAt
+  });
   return {
     answer: answer || '模型没有返回有效文本。',
     model: responsePayload?.model || selectedModel,
     latency_ms: Date.now() - startedAt,
     mode: 'integrated_ai_ops',
+    run_kind: 'conversation',
     context: {
       mentioned_vehicle_ids: mentionedVehicleIds,
       unmatched_vehicle_tokens: unmatchedVehicleTokens,
@@ -13652,6 +13854,135 @@ app.get('/api/cloud-ops-agent/history', authStore.requirePermission('vehicle:rea
       ok: false,
       detail: error?.message || 'cloud_ops_agent_history_failed'
     });
+  }
+});
+
+app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read'), async (req, res) => {
+  const message = normalizeReply(req.body?.message || req.body?.question || '');
+  const requestedModel = String(req.body?.model || '').trim().slice(0, 120);
+  const conversationHistory = req.body?.history;
+  if (!message) {
+    return res.status(400).json({ ok: false, error: 'message_required', detail: 'message is required.' });
+  }
+  if (message.length > 6000) {
+    return res.status(400).json({ ok: false, error: 'message_too_long', detail: 'message must be <= 6000 characters.' });
+  }
+
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+  res.setTimeout?.(0);
+
+  const startedAt = Date.now();
+  let responseClosed = false;
+  res.on('close', () => { responseClosed = true; });
+  const sendEvent = (event, data) => {
+    if (responseClosed || res.writableEnded) return;
+    res.write(`event: ${event}\ndata: ${JSON.stringify(sanitizeCloudOpsPayload(data))}\n\n`);
+    res.flush?.();
+  };
+  sendEvent('start', {
+    ok: true,
+    mode: 'integrated_ai_ops',
+    model: resolveCloudOpsAgentModel(requestedModel),
+    title: '山海智枢已开始处理',
+    elapsed_ms: 0
+  });
+  const heartbeat = setInterval(() => {
+    sendEvent('heartbeat', { elapsed_ms: Date.now() - startedAt });
+  }, 5000);
+  heartbeat.unref?.();
+
+  const actor = req.jgzjAuth?.user?.username || null;
+  try {
+    const normalizedHistory = normalizeCloudOpsAgentConversationHistory(conversationHistory);
+    const vehicles = await listCloudAgentVehicles().catch(() => []);
+    const mentionedVehicles = findCloudOpsAgentMentionedVehicles(message, normalizedHistory, vehicles);
+    const vehicleId = mentionedVehicles.length ? getCloudOpsVehicleId(mentionedVehicles[0]) : '';
+    const diagnosisRequested = shouldRunCloudOpsAgentDeepDiagnosis(message);
+    const runDiagnosis = Boolean(vehicleId && diagnosisRequested);
+
+    sendEvent('progress', {
+      stage: 'intent',
+      status: 'completed',
+      title: runDiagnosis ? `自动进入 ${vehicleId} 车辆诊断` : '自动进入一体化对话',
+      detail: runDiagnosis
+        ? '已识别车辆与诊断意图，将调用只读工具采集证据'
+        : diagnosisRequested && !vehicleId
+          ? '识别到诊断意图但未确定车辆，将通过对话请求补充车辆编号'
+          : vehicleId
+            ? `已识别 ${vehicleId}，按问题需要使用车辆缓存`
+            : '无需预选车辆，直接生成回复',
+      vehicle_id: vehicleId || null,
+      elapsed_ms: Date.now() - startedAt
+    });
+
+    const onProgress = (event) => sendEvent('progress', event);
+    const result = runDiagnosis
+      ? await runCloudOpsAgentDeepDiagnosis({
+          question: message,
+          vehicleId,
+          actor,
+          includeSsh: true,
+          model: requestedModel,
+          onProgress
+        })
+      : await runCloudOpsAgentChatCompletion({
+          message,
+          model: requestedModel,
+          history: normalizedHistory,
+          onProgress
+        });
+
+    const resultVehicleId = result.evidence?.vehicle_id || result.context?.mentioned_vehicle_ids?.[0] || vehicleId || null;
+    const historyRecord = cloudOpsAgentHistoryRecord({
+      ok: true,
+      actor,
+      vehicle_id: resultVehicleId,
+      model: result.model,
+      latency_ms: result.latency_ms,
+      mode: 'integrated_ai_ops',
+      prompt: message,
+      answer: result.answer
+    });
+    await appendCloudOpsAgentHistory(historyRecord).catch((error) => {
+      console.info('cloud_ops_agent_history_write_failed', JSON.stringify({ error: error.message }));
+    });
+    sendEvent('result', {
+      ok: true,
+      provider: 'subapi_openai_compatible',
+      mode: 'integrated_ai_ops',
+      run_kind: result.run_kind || (runDiagnosis ? 'vehicle_diagnosis' : 'conversation'),
+      audit_id: historyRecord.id,
+      ...result,
+      latency_ms: Date.now() - startedAt,
+      evidence: result.evidence ? sanitizeCloudOpsPayload(result.evidence) : undefined
+    });
+  } catch (error) {
+    const status = error?.status && Number.isFinite(Number(error.status)) ? Number(error.status) : 502;
+    await appendCloudOpsAgentHistory({
+      ok: false,
+      actor,
+      vehicle_id: null,
+      model: requestedModel || cloudOpsAgentModel,
+      prompt: message,
+      error: error?.message || 'cloud_ops_agent_run_failed'
+    }).catch((writeError) => {
+      console.info('cloud_ops_agent_history_write_failed', JSON.stringify({ error: writeError.message }));
+    });
+    sendEvent('error', {
+      ok: false,
+      status,
+      error: error?.code || 'cloud_ops_agent_run_failed',
+      detail: error?.message || 'cloud_ops_agent_run_failed',
+      elapsed_ms: Date.now() - startedAt
+    });
+  } finally {
+    clearInterval(heartbeat);
+    if (!responseClosed && !res.writableEnded) res.end();
   }
 });
 

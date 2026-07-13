@@ -9669,3 +9669,194 @@ body.yolo-review-is-panning {
     font-size: 0.61rem;
   }
 }
+
+/* Cloud Ops Test: Codex-like integrated run timeline (auditable stages, not hidden chain-of-thought). */
+.cloud-ops-agent-composer-scope {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 1px solid rgba(71, 85, 105, 0.78);
+  border-radius: 10px;
+  color: #cbd5e1;
+  background: rgba(30, 41, 59, 0.72);
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.cloud-ops-agent-composer-scope i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.11);
+}
+
+.cloud-ops-test-agent-rail .cloud-ops-agent-composer-scope {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.cloud-ops-test-agent-message.is-running {
+  width: min(760px, 100%);
+  border-color: rgba(56, 189, 248, 0.38);
+  background:
+    linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(8, 15, 30, 0.96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.cloud-ops-test-agent-message.is-warning {
+  border-color: rgba(251, 191, 36, 0.42);
+  background: rgba(69, 45, 8, 0.18);
+}
+
+.cloud-ops-agent-run-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.cloud-ops-agent-run-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-ops-agent-run-head time {
+  color: #7dd3fc;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cloud-ops-agent-run-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(125, 211, 252, 0.22);
+  border-top-color: #67e8f9;
+  border-radius: 50%;
+  animation: cloud-ops-agent-spin 780ms linear infinite;
+}
+
+.cloud-ops-test-agent-message:not(.is-running) .cloud-ops-agent-run-spinner {
+  border: 0;
+  background: #34d399;
+  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.11);
+  animation: none;
+}
+
+.cloud-ops-test-agent-message.is-warning .cloud-ops-agent-run-spinner {
+  background: #fbbf24;
+  box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.12);
+}
+
+.cloud-ops-agent-run-trace {
+  overflow: hidden;
+  border: 1px solid rgba(71, 85, 105, 0.54);
+  border-radius: 11px;
+  background: rgba(2, 6, 23, 0.42);
+}
+
+.cloud-ops-agent-run-trace summary {
+  padding: 8px 10px;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cloud-ops-agent-run-trace[open] summary {
+  border-bottom: 1px solid rgba(71, 85, 105, 0.42);
+  color: #cbd5e1;
+}
+
+.cloud-ops-agent-run-trace ol {
+  max-height: 210px;
+  overflow: auto;
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 6px 8px 8px;
+  list-style: none;
+}
+
+.cloud-ops-agent-run-trace li {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  padding: 7px 8px 7px 22px;
+  border-radius: 8px;
+}
+
+.cloud-ops-agent-run-trace li::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 12px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.1);
+}
+
+.cloud-ops-agent-run-trace li.is-completed::before { background: #34d399; }
+.cloud-ops-agent-run-trace li.is-warning::before { background: #fbbf24; }
+.cloud-ops-agent-run-trace li.is-error::before { background: #fb7185; }
+
+.cloud-ops-agent-run-trace li > span {
+  min-width: 0;
+  color: #dbeafe;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-agent-run-trace li > small {
+  grid-column: 1 / -1;
+  color: #64748b;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.cloud-ops-agent-run-trace li > time {
+  color: #64748b;
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cloud-ops-agent-run-head + .cloud-ops-agent-run-trace + [data-role="agent-run-answer"] {
+  padding-top: 2px;
+}
+
+@keyframes cloud-ops-agent-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-ops-agent-run-spinner { animation-duration: 1.8s; }
+}
+
+@media (max-width: 430px) {
+  .cloud-ops-agent-composer-scope {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+  .cloud-ops-agent-run-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .cloud-ops-agent-run-head time {
+    grid-column: 2;
+  }
+}
