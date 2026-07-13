@@ -24,6 +24,7 @@ const registerCrowdCpmRoutes = require('./crowd-cpm');
 const registerParkPcmRoutes = require('./park-pcm');
 const registerOneApiProxyRoutes = require('./one-api-proxy');
 const { registerMapPackageUploadRoutes } = require('./map-package-upload');
+const { registerSemanticAnchorInferRoutes } = require('./semantic-anchor-infer');
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -5645,6 +5646,19 @@ function beginQwen36Request(state) {
     }
   };
 }
+
+registerSemanticAnchorInferRoutes({
+  app,
+  projectRoot,
+  qwen36MmModel,
+  qwen36MmChatUrl,
+  qwen36MmTimeoutMs,
+  qwen36MmMaxImageBytes,
+  qwen36MmProtection,
+  beginQwen36Request,
+  qwen36ProtectionSnapshot,
+  normalizeReply
+});
 
 function attachQwen36Protection(payload = {}) {
   return {
@@ -12459,6 +12473,17 @@ function auditBodySummary(req) {
     };
   }
 
+  if (requestPath === '/api/vehicle-semantic-anchor/infer') {
+    const image = body.image && typeof body.image === 'object' ? body.image : {};
+    return {
+      vehicle_id: String(body.vehicle_id || '').trim(),
+      camera_id: String(body.camera_id || '').trim(),
+      classes: Array.isArray(body.classes) ? body.classes.slice(0, 32) : [],
+      image_mime_type: image.mime_type || null,
+      image_size_bytes: image.data_base64 ? Buffer.byteLength(String(image.data_base64), 'base64') : null
+    };
+  }
+
   if (requestPath === '/api/yolo-model-test') {
     const image = body.image && typeof body.image === 'object' ? body.image : {};
     return {
@@ -12688,6 +12713,18 @@ function classifyOperationAuditRequest(req) {
       action: 'ai.qwen36_mm_check',
       target_type: 'model',
       target_id: qwen36MmModel,
+      permission: 'ai:detect',
+      detail: auditBodySummary(req)
+    };
+  }
+
+  if (requestPath === '/api/vehicle-semantic-anchor/infer' && method === 'POST') {
+    return {
+      category: 'ai',
+      action: 'ai.vehicle_semantic_anchor_infer',
+      target_type: 'model',
+      target_id: qwen36MmModel,
+      vehicle_id: String(req.body?.vehicle_id || '').trim(),
       permission: 'ai:detect',
       detail: auditBodySummary(req)
     };
