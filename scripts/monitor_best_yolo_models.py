@@ -185,18 +185,44 @@ TARGETS = {
     },
     "fire_smoke_yolo": {
         "title": "火源烟雾",
-        "local_weight": str(RUNTIME_ROOT / "weights" / "fire_smoke_yolo_best.pt"),
-        "download_file": "fire_smoke_yolo_best.pt",
+        "local_weight": str(RUNTIME_ROOT / "weights" / "fire_smoke_yolo_fire_other_edge_ft_sample12000_gpu2_20260713.pt"),
+        "download_file": "fire_smoke_yolo_fire_other_edge_ft_sample12000_gpu2_20260713.pt",
         "static_only": True,
-        "static_model_family": "yolo12s",
-        "static_metric_source": "test",
+        "static_status": "trained",
+        "static_model_family": "yolo12s_fire_other_edge_ft_sample12000_gpu2",
+        "static_metric_source": "fire_other_edge_test",
+        "static_source_run": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_ft_sample12000_gpu2_20260713_101414",
+        "static_best_weight": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_ft_sample12000_gpu2_20260713_101414/weights/best.pt",
         "static_metrics": {
-            "test_precision": 0.7672,
-            "test_recall": 0.6831,
-            "test_map50": 0.7361,
-            "test_map50_95": 0.4040,
+            "test_precision": 0.6566,
+            "test_recall": 0.5079,
+            "test_map50": 0.5553,
+            "test_map50_95": 0.3144,
         },
-        "static_note": "烟火已由单独新架构实验选定 yolo12s；不在本监控里用旧 val 口径重选。",
+        "static_training_trends": [
+            {
+                "day": "2026-07-13",
+                "task_id": "fire_smoke_yolo",
+                "model_family": "yolo12s_fire_other_edge_ft_sample12000_gpu2",
+                "status": "completed",
+                "metric_source": "fire_other_edge_test",
+                "score": 0.31436,
+                "test_precision": 0.65657,
+                "test_recall": 0.50785,
+                "test_map50": 0.55532,
+                "test_map50_95": 0.31436,
+                "val_precision": None,
+                "val_recall": None,
+                "val_map50": None,
+                "val_map50_95": None,
+                "started_at": "2026-07-13T10:14:16.922791+08:00",
+                "finished_at": "2026-07-13T10:33:31.142821+08:00",
+                "source_run": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_ft_sample12000_gpu2_20260713_101414",
+                "best_weight": "/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_ft_sample12000_gpu2_20260713_101414/weights/best.pt",
+                "run_count": 1,
+            }
+        ],
+        "static_note": "2026-07-13 基于当前 yolo12s 火源烟雾权重，在 fire_other_edge 固定抽样 12000 条训练样本上使用物理 GPU 2 微调 3 epoch；指标为原始 fire_other_edge test split。",
         "roots": [
             "/home/sari/jgzj_yolo_runs_new_arch",
             "/home/sari/jgzj_yolo_runs_new_arch_parallel",
@@ -760,13 +786,13 @@ def static_entry(task_id, cfg, running=None):
     return {
         "task_id": task_id,
         "title": cfg["title"],
-        "status": running.get("status") if running else ("deployed" if sha else "pending"),
+        "status": running.get("status") if running else (cfg.get("static_status") or ("deployed" if sha else "pending")),
         "model_family": (running.get("model_family") if running else "") or cfg.get("static_model_family") or Path(cfg["local_weight"]).stem,
         "metric_source": (running.get("metric_source") if running else "") or cfg.get("static_metric_source") or "current_workbench_weight",
         "metrics": running_metrics or cfg.get("static_metrics") or {},
         "train_progress": running_progress,
-        "source_run": running.get("source_run") if running else "",
-        "best_weight": running.get("best_weight") if running else "",
+        "source_run": running.get("source_run") if running else cfg.get("static_source_run", ""),
+        "best_weight": running.get("best_weight") if running else cfg.get("static_best_weight", ""),
         "local_weight": cfg["local_weight"],
         "download_file": cfg["download_file"] if sha else "",
         "weight_sha256": sha,
@@ -818,6 +844,22 @@ def monitor_once():
         entries.append(fallback_entry(task_id, cfg, active_running))
 
     training_trends = collected.get("training_trends") or {}
+    for task_id, cfg in TARGETS.items():
+        static_rows = cfg.get("static_training_trends") or []
+        if not static_rows:
+            continue
+        rows = list(training_trends.get(task_id) or [])
+        seen = {
+            (str(row.get("day") or ""), str(row.get("model_family") or ""), str(row.get("source_run") or ""))
+            for row in rows
+        }
+        for row in static_rows:
+            key = (str(row.get("day") or ""), str(row.get("model_family") or ""), str(row.get("source_run") or ""))
+            if key not in seen:
+                rows.append(row)
+                seen.add(key)
+        rows.sort(key=lambda row: (str(row.get("day") or ""), str(row.get("model_family") or "")))
+        training_trends[task_id] = rows
     for entry in entries:
         task_id = entry.get("task_id")
         entry["training_trends"] = training_trends.get(task_id) or []
