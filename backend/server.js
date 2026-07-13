@@ -1073,6 +1073,10 @@ const operationAuditStore = createOperationAuditStore({
 const mailer = createMailer({ rootDir: projectRoot });
 
 app.disable('x-powered-by');
+registerOneApiProxyRoutes(app, {
+  rootDir: path.resolve(__dirname, '..'),
+  statusAuthMiddleware: authStore.requirePermission('ai:chat')
+});
 app.use(express.json({ limit: '16mb' }));
 
 function normalizeReply(text) {
@@ -6349,6 +6353,193 @@ function extractCloudOpsAgentAnswer(payload) {
 }
 
 
+function buildCloudOpsVisibleAnalysisInstruction(kind = 'conversation') {
+  const diagnosis = kind === 'vehicle_diagnosis';
+  return [
+    '',
+    '【可见分析摘要协议】',
+    `在最终回答前，先输出 ${diagnosis ? '3-7' : '1-4'} 条可向用户展示的分析摘要。`,
+    '每条摘要必须独占一行，严格使用：[[ANALYSIS]]标题|||具体内容',
+    '摘要只描述正在核对的真实上下文、证据对比、工具结果和阶段性判断；内容要具体，但不要输出隐藏思维链、逐 token 内心独白或无法审计的推理过程。',
+    diagnosis
+      ? '车辆诊断摘要应尽量覆盖：通信/ROS、定位、规划与任务、控制/底盘、感知以及异常证据之间的交叉核对。'
+      : '普通对话只需给出与问题复杂度相符的简短分析摘要，不要机械套用车辆诊断结构。',
+    '分析摘要结束后，单独输出一行：[[FINAL]]',
+    '从下一行开始输出给用户的最终回答。不要使用代码块包裹这些协议标记。'
+  ].join('\n');
+}
+
+function createCloudOpsVisibleAnalysisCollector(onProgress, startedAt) {
+  let raw = '';
+  let lineBuffer = '';
+  let analysisCount = 0;
+  const emitted = new Set();
+
+  const consumeLine = (line) => {
+    const normalized = String(line || '').trim();
+    const match = normalized.match(/^\[\[ANALYSIS\]\]\s*(.+?)(?:\|\|\|(.*))?$/);
+    if (!match) return;
+    const title = normalizeReply(match[1] || '').slice(0, 160);
+    const detail = normalizeReply(match[2] || '').slice(0, 800);
+    if (!title) return;
+    const key = `${title}\n${detail}`;
+    if (emitted.has(key)) return;
+    emitted.add(key);
+    analysisCount += 1;
+    cloudOpsAgentProgress(onProgress, {
+      stage: 'model_analysis',
+      status: 'running',
+      title: `模型分析 · ${title}`,
+      detail: detail || '正在形成可审计的阶段性判断',
+      tool: `model_analysis_${analysisCount}`,
+      analysis_index: analysisCount,
+      elapsed_ms: Date.now() - startedAt
+    });
+  };
+
+  return {
+    push(delta) {
+      const text = String(delta || '');
+      if (!text) return;
+      raw += text;
+      lineBuffer += text;
+      const lines = lineBuffer.split(/\r?\n/);
+      lineBuffer = lines.pop() || '';
+      lines.forEach(consumeLine);
+    },
+    finish() {
+      if (lineBuffer) consumeLine(lineBuffer);
+      const finalMarker = '[[FINAL]]';
+      const finalIndex = raw.indexOf(finalMarker);
+      let answer = finalIndex >= 0 ? raw.slice(finalIndex + finalMarker.length) : raw;
+      if (finalIndex < 0) {
+        answer = answer
+          .split(/\r?\n/)
+          .filter((line) => !/^\s*\[\[ANALYSIS\]\]/.test(line))
+          .join('\n');
+      }
+      return {
+        answer: normalizeReply(answer),
+        analysis_count: analysisCount
+      };
+    }
+  };
+}
+
+function cloudOpsAgentStreamContent(value) {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return '';
+  return value
+    .map((item) => typeof item === 'string' ? item : (item?.text || item?.content || ''))
+    .filter(Boolean)
+    .join('');
+}
+
+async function readCloudOpsAgentOpenAiStream(stream, onContentDelta) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  let content = '';
+  let model = '';
+  let usage = null;
+  let finishReason = null;
+
+  const consumeBlock = (block) => {
+    const lines = String(block || '')
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      if (line === '[DONE]') continue;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch (_error) {
+        continue;
+      }
+      model = event?.model || model;
+      usage = event?.usage || usage;
+      const choice = Array.isArray(event?.choices) ? event.choices[0] : null;
+      if (!choice) continue;
+      finishReason = choice.finish_reason || finishReason;
+      const deltaText = cloudOpsAgentStreamContent(choice?.delta?.content);
+      const messageText = deltaText ? '' : cloudOpsAgentStreamContent(choice?.message?.content);
+      const text = deltaText || messageText || (typeof choice?.text === 'string' ? choice.text : '');
+      if (!text) continue;
+      content += text;
+      onContentDelta?.(text);
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() || '';
+    blocks.forEach(consumeBlock);
+    if (done) break;
+  }
+  if (buffer.trim()) consumeBlock(buffer);
+  return { content, model, usage, finish_reason: finishReason };
+}
+
+async function requestCloudOpsAgentVisibleCompletion({ payload, timeoutMs, onProgress, startedAt }) {
+  const response = await fetch(cloudOpsAgentChatUrl(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream, application/json',
+      Authorization: `Bearer ${cloudOpsAgentApiKey}`
+    },
+    body: JSON.stringify({ ...payload, stream: true }),
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    const responsePayload = parseJsonField(text, null);
+    const error = new Error(
+      responsePayload?.error?.message ||
+      responsePayload?.message ||
+      responsePayload?.detail ||
+      normalizeReply(text) ||
+      `HTTP ${response.status}`
+    );
+    error.status = response.status;
+    throw error;
+  }
+
+  const collector = createCloudOpsVisibleAnalysisCollector(onProgress, startedAt);
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  let model = '';
+  let usage = null;
+  let rawAnswer = '';
+
+  if (contentType.includes('text/event-stream') && response.body) {
+    const streamed = await readCloudOpsAgentOpenAiStream(response.body, (delta) => collector.push(delta));
+    rawAnswer = streamed.content;
+    model = streamed.model;
+    usage = streamed.usage;
+  } else {
+    const text = await response.text();
+    const responsePayload = parseJsonField(text, null);
+    if (!responsePayload) throw new Error('cloud_ops_agent_invalid_json');
+    rawAnswer = extractCloudOpsAgentAnswer(responsePayload);
+    model = responsePayload?.model || '';
+    usage = responsePayload?.usage || null;
+    collector.push(rawAnswer);
+  }
+
+  const visible = collector.finish();
+  return {
+    answer: visible.answer || normalizeReply(rawAnswer),
+    model,
+    usage,
+    visible_analysis_count: visible.analysis_count
+  };
+}
+
 function cloudOpsAgentReadOnlyDiagnosticTools() {
   return [
     { action: 'vehicle_detail', label: '车辆详情缓存', timeout_s: 15 },
@@ -6752,10 +6943,13 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
     model: selectedModel,
     messages: [
       { role: 'system', content: buildCloudOpsAgentSystemPrompt() },
-      { role: 'user', content: buildCloudOpsDeepDiagnosePrompt(question, evidence) }
+      {
+        role: 'user',
+        content: `${buildCloudOpsDeepDiagnosePrompt(question, evidence)}${buildCloudOpsVisibleAnalysisInstruction('vehicle_diagnosis')}`
+      }
     ],
     temperature: 0.1,
-    stream: false
+    stream: true
   };
 
   const modelStartedAt = Date.now();
@@ -6766,17 +6960,13 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
     detail: '根据已采集证据生成综合结论',
     elapsed_ms: Date.now() - startedAt
   });
-  let upstreamResponse;
+  let completion;
   try {
-    upstreamResponse = await fetch(cloudOpsAgentChatUrl(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization: `Bearer ${cloudOpsAgentApiKey}`
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(Math.min(cloudOpsAgentTimeoutMs, cloudOpsAgentDiagnoseModelTimeoutMs))
+    completion = await requestCloudOpsAgentVisibleCompletion({
+      payload,
+      timeoutMs: Math.min(cloudOpsAgentTimeoutMs, cloudOpsAgentDiagnoseModelTimeoutMs),
+      onProgress,
+      startedAt
     });
   } catch (error) {
     const modelError = error?.message || 'cloud_ops_agent_request_failed';
@@ -6805,47 +6995,18 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
     };
   }
 
-  const text = await upstreamResponse.text();
-  const responsePayload = parseJsonField(text, null);
-  if (!upstreamResponse.ok) {
-    const modelError = responsePayload?.error?.message || normalizeReply(text) || `HTTP ${upstreamResponse.status}`;
-    cloudOpsAgentProgress(onProgress, {
-      stage: 'model',
-      status: 'warning',
-      title: '模型总结返回异常',
-      detail: `上游 HTTP ${upstreamResponse.status}，返回证据摘要`,
-      elapsed_ms: Date.now() - startedAt
-    });
-    return {
-      ok: true,
-      answer: buildCloudOpsEvidenceFallbackAnswer(evidence, modelError),
-      model: selectedModel,
-      latency_ms: Date.now() - startedAt,
-      model_error: modelError,
-      mode: 'integrated_ai_ops',
-      run_kind: 'vehicle_diagnosis',
-      timings: {
-        tools_ms: toolsElapsedMs,
-        ssh_ms: sshElapsedMs,
-        model_ms: Date.now() - modelStartedAt,
-        total_ms: Date.now() - startedAt
-      },
-      evidence
-    };
-  }
-
-  const answer = extractCloudOpsAgentAnswer(responsePayload) || '模型没有返回有效文本。';
+  const answer = completion.answer || '模型没有返回有效文本。';
   cloudOpsAgentProgress(onProgress, {
     stage: 'model',
     status: 'completed',
     title: '综合结论已生成',
-    detail: `${responsePayload?.model || selectedModel} 已完成证据分析`,
+    detail: `${completion.model || selectedModel} 已完成证据分析 · ${completion.visible_analysis_count || 0} 条可见分析摘要`,
     elapsed_ms: Date.now() - startedAt
   });
   return {
     ok: true,
     answer,
-    model: responsePayload?.model || selectedModel,
+    model: completion.model || selectedModel,
     latency_ms: Date.now() - startedAt,
     mode: 'integrated_ai_ops',
     run_kind: 'vehicle_diagnosis',
@@ -6856,7 +7017,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
       total_ms: Date.now() - startedAt
     },
     evidence,
-    usage: responsePayload?.usage || null
+    usage: completion.usage || null
   };
 }
 
@@ -6933,10 +7094,13 @@ async function runCloudOpsAgentChatCompletion({ message, model, history, onProgr
     messages: [
       { role: 'system', content: buildCloudOpsAgentSystemPrompt() },
       ...conversationHistory,
-      { role: 'user', content: buildCloudOpsAgentUnifiedPrompt(message, context) }
+      {
+        role: 'user',
+        content: `${buildCloudOpsAgentUnifiedPrompt(message, context)}${buildCloudOpsVisibleAnalysisInstruction('conversation')}`
+      }
     ],
     temperature: 0.35,
-    stream: false
+    stream: true
   };
 
   cloudOpsAgentProgress(onProgress, {
@@ -6946,51 +7110,31 @@ async function runCloudOpsAgentChatCompletion({ message, model, history, onProgr
     detail: '生成回复',
     elapsed_ms: Date.now() - startedAt
   });
-  let upstreamResponse;
+  let completion;
   try {
-    upstreamResponse = await fetch(cloudOpsAgentChatUrl(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization: `Bearer ${cloudOpsAgentApiKey}`
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(cloudOpsAgentTimeoutMs)
+    completion = await requestCloudOpsAgentVisibleCompletion({
+      payload,
+      timeoutMs: cloudOpsAgentTimeoutMs,
+      onProgress,
+      startedAt
     });
   } catch (error) {
     const wrapped = new Error(`cloud_ops_agent_request_failed: ${error.message}`);
-    wrapped.status = error.name === 'TimeoutError' || error.name === 'AbortError' ? 504 : 502;
+    wrapped.status = error?.status || (error.name === 'TimeoutError' || error.name === 'AbortError' ? 504 : 502);
     throw wrapped;
   }
 
-  const text = await upstreamResponse.text();
-  const responsePayload = parseJsonField(text, null);
-  if (!upstreamResponse.ok) {
-    const detail =
-      responsePayload?.error?.message ||
-      responsePayload?.message ||
-      responsePayload?.detail ||
-      normalizeReply(text) ||
-      `HTTP ${upstreamResponse.status}`;
-    const error = new Error(detail);
-    error.status = upstreamResponse.status >= 400 && upstreamResponse.status < 600
-      ? upstreamResponse.status
-      : 502;
-    throw error;
-  }
-
-  const answer = extractCloudOpsAgentAnswer(responsePayload);
+  const answer = completion.answer;
   cloudOpsAgentProgress(onProgress, {
     stage: 'model',
     status: 'completed',
     title: '回复已生成',
-    detail: responsePayload?.model || selectedModel,
+    detail: `${completion.model || selectedModel} · ${completion.visible_analysis_count || 0} 条可见分析摘要`,
     elapsed_ms: Date.now() - startedAt
   });
   return {
     answer: answer || '模型没有返回有效文本。',
-    model: responsePayload?.model || selectedModel,
+    model: completion.model || selectedModel,
     latency_ms: Date.now() - startedAt,
     mode: 'integrated_ai_ops',
     run_kind: 'conversation',
@@ -7000,7 +7144,7 @@ async function runCloudOpsAgentChatCompletion({ message, model, history, onProgr
       vehicle_count: allVehicles.length,
       fleet_query: fleetQuery
     },
-    usage: responsePayload?.usage || null
+    usage: completion.usage || null
   };
 }
 
@@ -16204,10 +16348,6 @@ registerParkPcmRoutes(app, {
   requirePermission: (permission) => authStore.requirePermission(permission),
   cloudAgentBaseUrl,
   rootDir: path.resolve(__dirname, '..')
-});
-registerOneApiProxyRoutes(app, {
-  rootDir: path.resolve(__dirname, '..'),
-  statusAuthMiddleware: authStore.requirePermission('ai:chat')
 });
 registerMapPackageUploadRoutes(app, {
   requirePermission: (permission) => authStore.requirePermission(permission),

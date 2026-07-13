@@ -12,6 +12,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   'trailer',
   'transfer-encoding',
   'upgrade',
+  'expect',
   'host',
   'content-length'
 ]);
@@ -80,11 +81,8 @@ function makeProxyBody(req) {
     return JSON.stringify(req.body);
   }
 
-  const contentLength = Number.parseInt(String(req.headers['content-length'] || '0'), 10);
-  if (!Number.isFinite(contentLength) || contentLength <= 0) {
-    return undefined;
-  }
-
+  // The /v1 proxy is registered before JSON parsing so large and chunked
+  // request bodies can pass through without being buffered by Express.
   return req;
 }
 

@@ -1537,13 +1537,14 @@ const agentRules = [
         if (title) title.textContent = event.title;
       }
       if (event.stage || event.title) {
-        const stepKey = `${event.stage || "step"}:${event.tool || event.title || ""}:${event.completed ?? ""}:${event.status || ""}`;
+        const stepKey = `${event.stage || "step"}:${event.tool || event.title || ""}:${event.analysis_index ?? event.completed ?? ""}:${event.status || ""}`;
         if (!run.seenSteps.has(stepKey)) {
           run.seenSteps.add(stepKey);
           const list = run.node.querySelector('[data-role="agent-run-steps"]');
           if (list) {
             const item = document.createElement("li");
             item.className = `is-${event.status || "running"}`;
+            if (event.stage === "model_analysis") item.classList.add("is-model-analysis");
             item.innerHTML = `<span>${escapeHtml(event.title || "处理中")}</span>${event.detail ? `<small>${escapeHtml(event.detail)}</small>` : ""}<time>${escapeHtml(formatAgentDuration(elapsedMs))}</time>`;
             list.appendChild(item);
           }
