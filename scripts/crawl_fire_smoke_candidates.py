@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse, urlsplit
 
 import requests
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -130,6 +130,13 @@ def ext_value(metadata: dict, key: str) -> str:
     return clean_text(value)
 
 
+def commons_thumb_url(api_url: str, title: str, width: int) -> str:
+    parts = urlsplit(api_url)
+    file_name = str(title or "").split(":", 1)[-1]
+    query = urlencode({"f": file_name, "w": max(1, int(width))})
+    return f"{parts.scheme}://{parts.netloc}/w/thumb.php?{query}"
+
+
 def commons_candidates(session: requests.Session, config_path: Path, timeout: Tuple[float, float]) -> Iterator[dict]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     api_url = str(config.get("api_url") or "https://commons.wikimedia.org/w/api.php")
@@ -167,9 +174,11 @@ def commons_candidates(session: requests.Session, config_path: Path, timeout: Tu
                     continue
                 info = infos[0]
                 meta = info.get("extmetadata") or {}
+                download_width = int(config.get("download_width") or 1920)
                 yield {
                     "provider": "wikimedia_commons",
-                    "url": str(info.get("thumburl") or info.get("url") or ""),
+                    "url": commons_thumb_url(api_url, page.get("title"), download_width),
+                    "canonical_file_url": str(info.get("url") or ""),
                     "source_page_url": str(info.get("descriptionurl") or ""),
                     "title": clean_text(page.get("title")),
                     "query": query,
@@ -353,6 +362,7 @@ def crawl(args: argparse.Namespace) -> dict:
                 "image": destination.relative_to(output).as_posix(),
                 "source_provider": candidate.get("provider"),
                 "source_file_url": url,
+                "canonical_file_url": candidate.get("canonical_file_url") or url,
                 "source_page_url": candidate.get("source_page_url"),
                 "title": candidate.get("title"),
                 "query": candidate.get("query"),

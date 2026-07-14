@@ -9,7 +9,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from crawl_fire_smoke_candidates import BKTree, dhash64, license_allowed, load_seed_file
+from crawl_fire_smoke_candidates import BKTree, commons_thumb_url, dhash64, license_allowed, load_seed_file
 from label_fire_smoke_candidates_qwen import extract_json, normalize_boxes
 
 
@@ -43,6 +43,16 @@ class FireSmokeWebPipelineTest(unittest.TestCase):
         self.assertTrue(tree.has_within(value, 0))
         self.assertTrue(tree.has_within(value ^ 0b11, 2))
         self.assertFalse(tree.has_within(value ^ ((1 << 20) - 1), 4))
+
+    def test_commons_download_uses_non_cdn_thumb_endpoint(self):
+        url = commons_thumb_url(
+            "https://commons.wikimedia.org/w/api.php",
+            "File:Eastern Market Fire, 4.30.07.jpg",
+            1280,
+        )
+        self.assertTrue(url.startswith("https://commons.wikimedia.org/w/thumb.php?"))
+        self.assertIn("w=1280", url)
+        self.assertNotIn("upload.wikimedia.org", url)
 
     def test_qwen_box_filter_keeps_strong_fire_and_rejects_fog(self):
         boxes = normalize_boxes([
