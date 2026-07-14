@@ -8618,6 +8618,10 @@ body.yolo-review-is-panning {
   object-fit: contain;
 }
 
+.cloud-ops-test-media-card.is-pointcloud-preview img {
+  aspect-ratio: 1 / 1;
+}
+
 .cloud-ops-test-media-card.is-error::after {
   content: "媒体加载失败";
   position: absolute;
