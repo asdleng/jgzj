@@ -92,6 +92,9 @@ function normalizeYoloWebReview(review, manifest) {
 function effectiveYoloWebAuditVerdict(review) {
   const scene = String(review?.scene || '').trim().toLowerCase();
   const quarantineReason = String(review?.quarantine_reason || '').trim();
+  if (scene === 'unusable') {
+    return 'not_applicable';
+  }
   if (scene === 'needs_human' || quarantineReason) {
     return 'needs_human';
   }

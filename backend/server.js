@@ -4629,7 +4629,8 @@ function yoloWebQwenProjection(webReview, dataset) {
     counts[scene] = 1;
   }
   const auditVerdict = normalizeClassToken(effectiveYoloWebAuditVerdict(webReview));
-  const auditStatus = auditVerdict === 'not_run' ? 'not_applicable' : 'done';
+  const auditNotApplicable = ['not_run', 'not_applicable'].includes(auditVerdict);
+  const auditStatus = auditNotApplicable ? 'not_applicable' : 'done';
   const auditReasons = [webReview.quarantine_reason].filter(Boolean);
   return {
     qwen_label_status: 'done',
@@ -4646,13 +4647,13 @@ function yoloWebQwenProjection(webReview, dataset) {
     qwen_quality: webReview.photo_type === 'real_photo' && webReview.domain === 'target' ? 'good' : 'blocked',
     qwen_bbox_status: 'done',
     qwen_bbox_audit_status: auditStatus,
-    qwen_bbox_audit_verdict: auditVerdict === 'not_run' ? '' : auditVerdict,
+    qwen_bbox_audit_verdict: auditNotApplicable ? '' : auditVerdict,
     qwen_bbox_audit_severity: auditVerdict === 'needs_human' ? 'high' : '',
     qwen_bbox_audit_suspicious_count: webReview.quarantine_reason ? 1 : 0,
     qwen_bbox_audit_missing_count: 0,
     qwen_bbox_audit: {
       status: auditStatus,
-      verdict: auditVerdict === 'not_run' ? '' : auditVerdict,
+      verdict: auditNotApplicable ? '' : auditVerdict,
       severity: auditVerdict === 'needs_human' ? 'high' : '',
       reasons: auditReasons,
       suspicious_count: webReview.quarantine_reason ? 1 : 0,

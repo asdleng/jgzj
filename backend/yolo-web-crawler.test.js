@@ -86,4 +86,9 @@ test('deterministic quarantine overrides a raw Qwen pass verdict', () => {
     quarantine_reason: 'positive_in_hard_negative_bucket'
   }), 'needs_human');
   assert.equal(effectiveYoloWebAuditVerdict({ scene: 'positive', audit_verdict: 'pass' }), 'pass');
+  assert.equal(effectiveYoloWebAuditVerdict({
+    scene: 'unusable',
+    audit_verdict: 'not_run',
+    quarantine_reason: 'off_domain_or_non_photo'
+  }), 'not_applicable');
 });
