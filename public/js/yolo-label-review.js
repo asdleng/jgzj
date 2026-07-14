@@ -645,7 +645,8 @@
 
   function datasetLabel(dataset) {
     const profile = dataset.profile || dataset.name || "dataset";
-    const parent = dataset.parent_name && dataset.parent_name !== profile ? ` / ${dataset.parent_name}` : "";
+    const detailName = datasetSourceGroup(dataset) === "web_crawler" ? dataset.name : dataset.parent_name;
+    const parent = detailName && detailName !== profile ? ` / ${detailName}` : "";
     const source = datasetSourceText(dataset);
     return `[${source}] ${profile}${parent} · ${dataset.kind || "dataset"} · ${compactNumber(dataset.total_images)}张`;
   }
@@ -1196,8 +1197,9 @@
       const head = createNode("div", "yolo-review-dataset-card-head");
       const title = createNode("div", "yolo-review-dataset-card-title");
       title.appendChild(createNode("strong", "", dataset.profile || dataset.name || "dataset"));
-      const sourceLine = dataset.parent_name && dataset.parent_name !== dataset.profile
-        ? `${datasetSourceText(dataset)} · ${dataset.parent_name}`
+      const detailName = datasetSourceGroup(dataset) === "web_crawler" ? dataset.name : dataset.parent_name;
+      const sourceLine = detailName && detailName !== dataset.profile
+        ? `${datasetSourceText(dataset)} · ${detailName}`
         : datasetSourceText(dataset);
       title.appendChild(createNode("span", "", sourceLine));
       head.appendChild(title);
