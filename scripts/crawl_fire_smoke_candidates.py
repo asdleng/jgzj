@@ -7,8 +7,10 @@ import html
 import json
 import os
 import re
+import signal
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple
@@ -27,6 +29,30 @@ ALLOWED_LICENSE_RE = re.compile(
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 LANCZOS = getattr(Image, "Resampling", Image).LANCZOS
+
+
+class DownloadDeadlineExceeded(Exception):
+    pass
+
+
+@contextmanager
+def download_deadline(seconds: float):
+    if seconds <= 0 or not hasattr(signal, "setitimer"):
+        yield
+        return
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def handle_timeout(_signum, _frame):
+        raise DownloadDeadlineExceeded(f"download_deadline_exceeded:{seconds:g}s")
+
+    signal.signal(signal.SIGALRM, handle_timeout)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def now_iso() -> str:
@@ -358,22 +384,23 @@ def crawl(args: argparse.Namespace) -> dict:
         raw_path = Path(raw_name)
         normalized_tmp = raw_path.with_suffix(".jpg")
         try:
-            with session.get(url, stream=True, timeout=(args.connect_timeout, args.read_timeout)) as response:
-                response.raise_for_status()
-                content_type = str(response.headers.get("content-type") or "").lower()
-                url_suffix = Path(urlparse(str(response.url)).path).suffix.lower()
-                generic_binary = content_type.startswith("application/octet-stream") and url_suffix in IMAGE_SUFFIXES
-                if content_type and not content_type.startswith("image/") and not generic_binary:
-                    raise ValueError(f"not_image_content_type:{content_type[:80]}")
-                size = 0
-                with raw_path.open("wb") as handle:
-                    for chunk in response.iter_content(1024 * 256):
-                        if not chunk:
-                            continue
-                        size += len(chunk)
-                        if size > args.max_bytes:
-                            raise ValueError(f"image_too_large:{size}")
-                        handle.write(chunk)
+            with download_deadline(args.download_timeout):
+                with session.get(url, stream=True, timeout=(args.connect_timeout, args.read_timeout)) as response:
+                    response.raise_for_status()
+                    content_type = str(response.headers.get("content-type") or "").lower()
+                    url_suffix = Path(urlparse(str(response.url)).path).suffix.lower()
+                    generic_binary = content_type.startswith("application/octet-stream") and url_suffix in IMAGE_SUFFIXES
+                    if content_type and not content_type.startswith("image/") and not generic_binary:
+                        raise ValueError(f"not_image_content_type:{content_type[:80]}")
+                    size = 0
+                    with raw_path.open("wb") as handle:
+                        for chunk in response.iter_content(1024 * 256):
+                            if not chunk:
+                                continue
+                            size += len(chunk)
+                            if size > args.max_bytes:
+                                raise ValueError(f"image_too_large:{size}")
+                            handle.write(chunk)
             image_meta = validate_and_normalize(raw_path, normalized_tmp, args.min_side, args.max_side, args.jpeg_quality)
             final_sha = hashlib.sha256(normalized_tmp.read_bytes()).hexdigest()
             dhash_value = int(image_meta["dhash64"], 16)
@@ -469,6 +496,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--delay", type=float, default=0.25)
     parser.add_argument("--connect-timeout", type=float, default=10.0)
     parser.add_argument("--read-timeout", type=float, default=45.0)
+    parser.add_argument("--download-timeout", type=float, default=120.0, help="Hard wall-clock limit for one image download.")
     parser.add_argument("--user-agent", default=os.environ.get("JGZJ_CRAWLER_USER_AGENT", "JGZJ-FireSmoke-Collector/1.0 (dataset research)"))
     parser.add_argument("--allow-unknown-license", action="store_true", help="Keep unknown-license images quarantined for evaluation only.")
     args = parser.parse_args()

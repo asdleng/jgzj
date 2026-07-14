@@ -2,6 +2,7 @@
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -9,7 +10,15 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from crawl_fire_smoke_candidates import BKTree, commons_thumb_url, dhash64, license_allowed, load_seed_file
+from crawl_fire_smoke_candidates import (
+    BKTree,
+    DownloadDeadlineExceeded,
+    commons_thumb_url,
+    dhash64,
+    download_deadline,
+    license_allowed,
+    load_seed_file,
+)
 from label_fire_smoke_candidates_qwen import apply_review_guards, extract_json, normalize_boxes
 
 
@@ -53,6 +62,11 @@ class FireSmokeWebPipelineTest(unittest.TestCase):
         self.assertTrue(url.startswith("https://commons.wikimedia.org/w/thumb.php?"))
         self.assertIn("w=1280", url)
         self.assertNotIn("upload.wikimedia.org", url)
+
+    def test_download_deadline_interrupts_trickle_stream(self):
+        with self.assertRaises(DownloadDeadlineExceeded):
+            with download_deadline(0.01):
+                time.sleep(0.05)
 
     def test_qwen_box_filter_keeps_strong_fire_and_rejects_fog(self):
         boxes = normalize_boxes([
