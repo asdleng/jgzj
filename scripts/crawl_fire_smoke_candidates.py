@@ -27,6 +27,7 @@ ALLOWED_LICENSE_RE = re.compile(
     r"^(?:cc0|public domain|pdm|cc by(?:-sa)?(?: |-|$))", re.IGNORECASE
 )
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+COMMONS_PHOTO_MIME_TYPES = {"image/jpeg", "image/png", "image/x-png", "image/webp"}
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 LANCZOS = getattr(Image, "Resampling", Image).LANCZOS
 
@@ -99,6 +100,10 @@ def clean_text(value: object, max_len: int = 500) -> str:
 
 def license_allowed(value: object) -> bool:
     return bool(ALLOWED_LICENSE_RE.search(clean_text(value, 120)))
+
+
+def commons_mime_allowed(value: object) -> bool:
+    return str(value or "").strip().lower() in COMMONS_PHOTO_MIME_TYPES
 
 
 def retry_session(user_agent: str) -> requests.Session:
@@ -220,6 +225,8 @@ def commons_candidates(session: requests.Session, config_path: Path, timeout: Tu
                 if not infos:
                     continue
                 info = infos[0]
+                if not commons_mime_allowed(info.get("mime")):
+                    continue
                 meta = info.get("extmetadata") or {}
                 download_width = int(config.get("download_width") or 1920)
                 yield {

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from crawl_fire_smoke_candidates import (
     BKTree,
     DownloadDeadlineExceeded,
+    commons_mime_allowed,
     commons_thumb_url,
     dhash64,
     download_deadline,
@@ -62,6 +63,13 @@ class FireSmokeWebPipelineTest(unittest.TestCase):
         self.assertTrue(url.startswith("https://commons.wikimedia.org/w/thumb.php?"))
         self.assertIn("w=1280", url)
         self.assertNotIn("upload.wikimedia.org", url)
+
+    def test_commons_mime_gate_keeps_photos_only(self):
+        self.assertTrue(commons_mime_allowed("image/jpeg"))
+        self.assertTrue(commons_mime_allowed("image/png"))
+        self.assertFalse(commons_mime_allowed("audio/wav"))
+        self.assertFalse(commons_mime_allowed("image/svg+xml"))
+        self.assertFalse(commons_mime_allowed("image/gif"))
 
     def test_download_deadline_interrupts_trickle_stream(self):
         with self.assertRaises(DownloadDeadlineExceeded):
