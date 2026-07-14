@@ -10,11 +10,18 @@
 必须为每张图提供许可证。允许的默认许可证为 Public Domain、CC0、CC BY、CC BY-SA。
 
 ```bash
+HTTP_PROXY=http://127.0.0.1:7897 \
+HTTPS_PROXY=http://127.0.0.1:7897 \
+ALL_PROXY=http://127.0.0.1:7897 \
 python3 scripts/crawl_fire_smoke_candidates.py \
   --output .runtime/yolo_loop/datasets/fire_smoke_web_candidates_v1 \
   --commons-config config/wikimedia_fire_smoke_queries.json \
   --max-images 500
 ```
+
+服务器 Mihomo 在 `127.0.0.1:7897`，但终端默认没有代理环境变量。Commons 图片使用
+`commons.wikimedia.org/w/thumb.php` 官方接口下载；直接访问 `upload.wikimedia.org` 在当前代理
+出口会收到 429。均衡小批量验证可改用 `config/wikimedia_fire_smoke_queries_pilot.json`。
 
 URL 清单格式：
 
@@ -62,6 +69,9 @@ python3 scripts/label_fire_smoke_candidates_qwen.py \
 同一 Qwen 模型的二次复核不能替代人工。建议按 `正样本 100% + hard negative 20%`
 抽检；只有人工明确批准的记录才能导出到新的 train/val/test 数据集，而且必须按来源
 和近重复组切分，不能随机逐图切分。
+
+任何从 `hard_negative_*` bucket 得到的正框都会被确定性转入 `needs_human`，不会写入审核
+YOLO 标签；模型声称 positive 但没有通过严格框过滤的记录同样转人工。
 
 ## 3. 测试
 
