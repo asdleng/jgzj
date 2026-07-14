@@ -151,7 +151,7 @@
       hasBox: true,
       taskKind: "detect",
       autoClassFilter: false,
-      preferredSource: "public_dataset"
+      preferredSource: "web_crawler"
     },
     trash: {
       label: "垃圾事件 · 全部来源 · 默认显示框",
@@ -207,6 +207,7 @@
   const sourceGroups = [
     { value: "", label: "全部来源" },
     { value: "vehicle_collection", label: "车辆自采" },
+    { value: "web_crawler", label: "网络爬虫" },
     { value: "checker_archive", label: "云端校核" },
     { value: "public_dataset", label: "公开数据集" }
   ];
@@ -587,6 +588,10 @@
     empty_scene: "空场景",
     hard_negative: "困难负样本",
     fire_smoke_candidate: "烟火候选",
+    positive: "正样本",
+    unusable: "不可用",
+    real_photo: "真实照片",
+    off_domain: "非目标场景",
     trash_candidate: "垃圾候选",
     small_object_candidate: "小目标候选",
     "quality:good": "质量好",
@@ -598,6 +603,24 @@
     needs_human: "待人工校核",
     error: "异常"
   };
+
+  function webSceneText(scene) {
+    const names = {
+      positive: "正样本",
+      hard_negative: "强负样本",
+      needs_human: "待人工",
+      unusable: "不可用"
+    };
+    return names[normalizeClassToken(scene)] || scene || "未分类";
+  }
+
+  function webSceneTone(scene) {
+    const value = normalizeClassToken(scene);
+    if (value === "positive") return "tone-yes";
+    if (value === "needs_human") return "tone-error";
+    if (value === "unusable") return "tone-no";
+    return "tone-idle";
+  }
 
   function qwenLabelText(value) {
     return qwenLabelNames[value] || value;
@@ -642,6 +665,7 @@
 
   function datasetSourceGroup(dataset) {
     if (dataset?.source_type === "vehicle_collection") return "vehicle_collection";
+    if (dataset?.source_type === "web_crawler" || dataset?.web_crawler || dataset?.summary?.web_crawler) return "web_crawler";
     const text = datasetSearchText(dataset);
     const publicTokens = [
       "public",
@@ -1188,14 +1212,23 @@
       const audit = datasetQwenAudit(dataset);
       const sampleLabel = state.activeEvent === "all" ? "样本" : "事件样本";
       const boxLabel = state.activeEvent === "all" ? "框" : "事件框";
-      [
+      const webCrawler = dataset.web_crawler || dataset.summary?.web_crawler;
+      const metricRows = webCrawler ? [
+        ["总样本", compactNumber(webCrawler.total_images)],
+        ["正样本", compactNumber(webCrawler.positive_images)],
+        ["强负样本", compactNumber(webCrawler.hard_negative_images)],
+        ["待人工", compactNumber(webCrawler.needs_human_images)],
+        ["不可用", compactNumber(webCrawler.unusable_images)],
+        ["最终框", compactNumber(webCrawler.accepted_boxes)]
+      ] : [
         [sampleLabel, compactNumber(eventMetrics.imageCount)],
         [boxLabel, compactNumber(eventMetrics.boxCount)],
         ["YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
         ["NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"],
         ["框已标", datasetMetricValue(dataset, "qwen_bbox.cached_images")],
         ["可疑", audit ? compactNumber(audit.review_queue_images) : "-"]
-      ].forEach(([label, value]) => {
+      ];
+      metricRows.forEach(([label, value]) => {
         const metric = createNode("div", "yolo-review-dataset-metric");
         metric.appendChild(createNode("span", "", label));
         metric.appendChild(createNode("strong", "", value));
@@ -1204,12 +1237,19 @@
       button.appendChild(metrics);
 
       const foot = createNode("div", "yolo-review-dataset-card-foot");
+      if (webCrawler) {
+        foot.appendChild(createNode("span", webCrawler.training_eligible ? "tone-yes" : "tone-error", webCrawler.training_eligible ? "训练已放行" : "训练未放行"));
+        foot.appendChild(createNode("span", "", `隔离冲突 ${compactNumber(webCrawler.quarantined_conflicts)}`));
+        if (webCrawler.qwen_model) foot.appendChild(createNode("span", "", webCrawler.qwen_model));
+      }
       if (state.activeEvent !== "all") {
         foot.appendChild(createNode("span", "", `总样本 ${compactNumber(dataset.total_images)}`));
         foot.appendChild(createNode("span", "", `总框 ${compactNumber(datasetTotalBoxes(dataset))}`));
       }
-      foot.appendChild(createNode("span", "", `语义待标 ${datasetMetricValue(dataset, "qwen_label.pending_images", "0")}`));
-      foot.appendChild(createNode("span", "", `框待标 ${datasetMetricValue(dataset, "qwen_bbox.pending_images", "0")}`));
+      if (!webCrawler) {
+        foot.appendChild(createNode("span", "", `语义待标 ${datasetMetricValue(dataset, "qwen_label.pending_images", "0")}`));
+        foot.appendChild(createNode("span", "", `框待标 ${datasetMetricValue(dataset, "qwen_bbox.pending_images", "0")}`));
+      }
       if (audit) {
         foot.appendChild(createNode("span", "", `待质检 ${compactNumber(audit.pending_images)}`));
         foot.appendChild(createNode("span", "", `质检通过 ${compactNumber(audit.pass_images)}`));
@@ -1535,6 +1575,15 @@
       ["AI NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"]
     ];
     const audit = datasetQwenAudit(dataset);
+    const webCrawler = dataset.web_crawler || dataset.summary?.web_crawler;
+    if (webCrawler) {
+      cells.push(["Qwen正样本", compactNumber(webCrawler.positive_images)]);
+      cells.push(["强负样本", compactNumber(webCrawler.hard_negative_images)]);
+      cells.push(["待人工", compactNumber(webCrawler.needs_human_images)]);
+      cells.push(["不可用", compactNumber(webCrawler.unusable_images)]);
+      cells.push(["隔离冲突", compactNumber(webCrawler.quarantined_conflicts)]);
+      cells.push(["训练门禁", webCrawler.training_eligible ? "已放行" : "未放行"]);
+    }
     if (audit) {
       cells.push(["可疑待校核", compactNumber(audit.review_queue_images)]);
       cells.push(["质检通过", compactNumber(audit.pass_images)]);
@@ -1762,13 +1811,18 @@
       const top = createNode("div", "yolo-review-item-top");
       const dataset = selectedDataset();
       const isClassify = reviewTaskKind(dataset) === "classify";
-      const titleText = isClassify
+      const isWebCrawler = datasetSourceGroup(dataset || item) === "web_crawler";
+      const titleText = isWebCrawler
+        ? item.web_review?.title || item.web_title || item.item_key
+        : isClassify
         ? `${answerDisplay(item.ai_answer)} · ${item.ai_class || item.event_name || "分类样本"}`
         : qwenCountSummary(item) || item.ai_class || item.event_name || item.source_label || "-";
       top.appendChild(createNode("p", "yolo-review-item-title", titleText));
       top.appendChild(createNode("span", `ai-history-chip ${answerTone(item.ai_answer)}`, answerDisplay(item.ai_answer)));
       body.appendChild(top);
-      const metaText = item.source_type === "vehicle_collection"
+      const metaText = isWebCrawler
+        ? `${item.web_review?.collection_bucket || "未分桶"} · ${item.web_review?.license || "许可未知"}`
+        : item.source_type === "vehicle_collection"
         ? `${item.split || "-"} · ${item.vehicle_id || item.device_id || "-"} · ${item.camera_id || "-"} · ${formatDate(item.collected_at)}`
         : `${item.split || "-"} · ${item.request_id || "-"} · task ${item.task_row_id || item.task_id || "-"}`;
       body.appendChild(createNode("p", "yolo-review-item-meta", metaText));
@@ -1776,6 +1830,10 @@
       const chips = createNode("div", "yolo-review-item-chips");
       chips.appendChild(createNode("span", "ai-history-chip tone-idle", datasetSourceText(dataset || item)));
       chips.appendChild(createNode("span", "ai-history-chip tone-idle", `${item.label_count || 0} 框`));
+      if (isWebCrawler && item.web_review) {
+        chips.appendChild(createNode("span", `ai-history-chip ${webSceneTone(item.web_review.scene)}`, webSceneText(item.web_review.scene)));
+        chips.appendChild(createNode("span", `ai-history-chip ${item.web_review.training_eligible ? "tone-yes" : "tone-error"}`, item.web_review.training_eligible ? "训练已放行" : "训练未放行"));
+      }
       const labelSource = labelSourceText(item.label_source);
       if (labelSource) {
         chips.appendChild(createNode("span", `ai-history-chip ${labelSourceTone(item.label_source)}`, labelSource));
@@ -1911,6 +1969,42 @@
     if (trace) {
       wrap.appendChild(createNode("p", "yolo-review-label-line", trace));
     }
+    return wrap;
+  }
+
+  function renderWebCrawlerSection(item, dataset) {
+    const review = item.web_review || {};
+    const crawler = dataset.web_crawler || dataset.summary?.web_crawler || {};
+    const wrap = createNode("div", "yolo-review-labels yolo-review-audit");
+    const head = createNode("div", "yolo-review-section-head");
+    head.appendChild(createNode("h3", "", "网络爬虫与 Qwen 复核"));
+    head.appendChild(createNode("span", `ai-history-chip ${webSceneTone(review.scene)}`, webSceneText(review.scene)));
+    wrap.appendChild(head);
+
+    [
+      `媒体: ${qwenLabelText(review.photo_type) || "-"} · 场景域: ${qwenLabelText(review.domain) || "-"} · 审计: ${qwenAuditText(review.audit_verdict, review.audit_verdict === "not_run" ? "not_applicable" : "done") || review.audit_verdict || "-"}`,
+      `采集桶: ${review.collection_bucket || "-"} · Commons分类: ${review.source_category || "-"}`,
+      `许可: ${review.license || "-"} · 作者: ${review.author || "-"}`,
+      `Qwen模型: ${crawler.qwen_model || "-"} · 抓取时间: ${formatDate(review.downloaded_at)}`,
+      review.quarantine_reason ? `隔离原因: ${review.quarantine_reason}` : "隔离原因: 无",
+      review.training_eligible ? "训练门禁: 已人工放行" : "训练门禁: 未放行，仅供复核"
+    ].forEach((text) => wrap.appendChild(createNode("p", "yolo-review-label-line", text)));
+
+    const links = createNode("p", "yolo-review-label-line");
+    [
+      ["来源页", review.source_page_url],
+      ["原文件", review.source_file_url],
+      ["许可说明", review.license_url]
+    ].forEach(([label, url]) => {
+      if (!url) return;
+      if (links.childElementCount) links.appendChild(document.createTextNode(" · "));
+      const anchor = createNode("a", "", label);
+      anchor.href = url;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      links.appendChild(anchor);
+    });
+    if (links.childElementCount) wrap.appendChild(links);
     return wrap;
   }
 
@@ -2649,6 +2743,7 @@
     imageBlock.appendChild(stage);
 
     const meta = createNode("div", "yolo-review-meta-grid");
+    const isWebCrawler = datasetSourceGroup(dataset || item) === "web_crawler";
     meta.appendChild(metaItem("样本", item.item_key));
     meta.appendChild(metaItem("来源", datasetSourceText(selectedDataset() || dataset || item)));
     meta.appendChild(metaItem("AI标类别", item.ai_class || item.event_name));
@@ -2659,18 +2754,27 @@
     meta.appendChild(metaItem("Qwen质量", item.qwen_quality ? qwenLabelText(`quality:${item.qwen_quality}`) : ""));
     meta.appendChild(metaItem("Qwen质检", qwenAuditSummary(item)));
     meta.appendChild(metaItem("Split", item.split));
-    if (isVehicleCollection) {
+    if (isWebCrawler) {
+      meta.appendChild(metaItem("图片标题", item.web_review?.title));
+      meta.appendChild(metaItem("Qwen场景", webSceneText(item.web_review?.scene)));
+      meta.appendChild(metaItem("采集桶", item.web_review?.collection_bucket));
+      meta.appendChild(metaItem("Commons分类", item.web_review?.source_category));
+      meta.appendChild(metaItem("许可", item.web_review?.license));
+      meta.appendChild(metaItem("作者", item.web_review?.author));
+    } else if (isVehicleCollection) {
       meta.appendChild(metaItem("车辆", item.vehicle_id || item.device_id));
       meta.appendChild(metaItem("采集方式", item.collection_mode_label || item.capture_source));
       meta.appendChild(metaItem("采集时间", formatDate(item.collected_at)));
       meta.appendChild(metaItem("经纬度", item.position?.gaode_longitude && item.position?.gaode_latitude ? `${Number(item.position.gaode_longitude).toFixed(6)}, ${Number(item.position.gaode_latitude).toFixed(6)}` : ""));
     }
-    meta.appendChild(metaItem("地点", item.device_id || item.archive?.request?.device_id));
-    meta.appendChild(metaItem("相机", item.camera_id || item.archive?.request?.camera_id));
-    meta.appendChild(metaItem("Request", item.request_id || item.archive?.request?.request_id));
-    meta.appendChild(metaItem("Task", item.task_row_id || item.task_id));
-    meta.appendChild(metaItem("模型", item.archive?.request?.model));
-    meta.appendChild(metaItem("时间", formatDate(item.archive?.request?.created_at || item.day)));
+    if (!isWebCrawler) {
+      meta.appendChild(metaItem("地点", item.device_id || item.archive?.request?.device_id));
+      meta.appendChild(metaItem("相机", item.camera_id || item.archive?.request?.camera_id));
+      meta.appendChild(metaItem("Request", item.request_id || item.archive?.request?.request_id));
+      meta.appendChild(metaItem("Task", item.task_row_id || item.task_id));
+      meta.appendChild(metaItem("模型", item.archive?.request?.model));
+      meta.appendChild(metaItem("时间", formatDate(item.archive?.request?.created_at || item.day)));
+    }
 
     const manualEditor = renderManualEditor(dataset, item, overlay);
     detailGrid.appendChild(imageBlock);
@@ -2698,6 +2802,9 @@
       labels.appendChild(createNode("p", "yolo-review-label-line", "empty label"));
     }
     refs.detail.appendChild(labels);
+    if (isWebCrawler && item.web_review) {
+      refs.detail.appendChild(renderWebCrawlerSection(item, dataset));
+    }
     if (isVehicleCollection || item.qwen_bbox_audit_status) {
       refs.detail.appendChild(renderQwenAuditSection(item));
     }

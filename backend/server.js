@@ -25,6 +25,11 @@ const registerParkPcmRoutes = require('./park-pcm');
 const registerOneApiProxyRoutes = require('./one-api-proxy');
 const { registerMapPackageUploadRoutes } = require('./map-package-upload');
 const { registerSemanticAnchorInferRoutes } = require('./semantic-anchor-infer');
+const {
+  isYoloWebCrawlerSummary,
+  normalizeYoloWebCrawlerStats,
+  normalizeYoloWebReview
+} = require('./yolo-web-crawler');
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -2865,6 +2870,9 @@ function yoloReviewSourceLabel(sourceType) {
   if (sourceType === 'vehicle_collection') {
     return '车辆自采图片';
   }
+  if (sourceType === 'web_crawler') {
+    return '网络爬虫';
+  }
   if (sourceType === 'checker_archive') {
     return '车端校核数据';
   }
@@ -4094,6 +4102,22 @@ function yoloSummarySplitCounts(summary = {}, key) {
 }
 
 function normalizeYoloDatasetSummaryStats(summary = {}, classes = []) {
+  const webCrawler = normalizeYoloWebCrawlerStats(summary);
+  if (webCrawler) {
+    return {
+      images: summary.images || { review: webCrawler.total_images },
+      positive_images: { review: webCrawler.positive_images },
+      boxes: { review: webCrawler.accepted_boxes },
+      answers: {
+        YES: webCrawler.positive_images,
+        NO: webCrawler.hard_negative_images,
+        NULL: webCrawler.needs_human_images + webCrawler.unusable_images
+      },
+      by_class_yes: null,
+      total_images: webCrawler.total_images,
+      web_crawler: webCrawler
+    };
+  }
   const images = sumYoloImageCounts(summary.images) > 0
     ? summary.images
     : (yoloSummarySplitCounts(summary, 'images') || {});
@@ -4140,17 +4164,18 @@ async function buildYoloDatasetList() {
       const dataDir = resolveYoloDataDir(datasetDir, summary);
       const classes = await readYoloClasses(datasetDir, summary);
       const stats = normalizeYoloDatasetSummaryStats(summary, classes);
+      const sourceType = stats.web_crawler ? 'web_crawler' : 'checker_archive';
       datasets.push({
         id,
         source: spec.alias,
-        source_type: 'checker_archive',
-        source_label: yoloReviewSourceLabel('checker_archive'),
+        source_type: sourceType,
+        source_label: yoloReviewSourceLabel(sourceType),
         name: path.basename(datasetDir),
         parent_name: path.basename(path.dirname(datasetDir)),
         profile: summary.profile || path.basename(datasetDir),
         kind,
         data_dir: toForwardSlashPath(path.relative(datasetDir, dataDir)),
-        created_at: summary.created_at || null,
+        created_at: summary.created_at || summary.updated_at || null,
         classes,
         images: stats.images || {},
         positive_images: stats.positive_images || null,
@@ -4158,7 +4183,9 @@ async function buildYoloDatasetList() {
         answers: stats.answers || null,
         by_class_yes: stats.by_class_yes || null,
         max_task_id: summary.max_task_id ?? null,
-        total_images: stats.total_images
+        total_images: stats.total_images,
+        web_crawler: stats.web_crawler || null,
+        training_eligible: stats.web_crawler ? stats.web_crawler.training_eligible : null
       });
     }
   }
@@ -4255,19 +4282,21 @@ async function resolveYoloDataset(datasetId) {
   const kind = inferYoloDatasetKind(datasetDir, summary);
   const dataDir = resolveYoloDataDir(datasetDir, summary);
   const stats = normalizeYoloDatasetSummaryStats(summary, classes);
+  const sourceType = stats.web_crawler ? 'web_crawler' : 'checker_archive';
   const normalizedSummary = {
     ...summary,
     images: stats.images || {},
     positive_images: stats.positive_images || null,
     boxes: stats.boxes || null,
     answers: stats.answers || null,
-    by_class_yes: stats.by_class_yes || null
+    by_class_yes: stats.by_class_yes || null,
+    web_crawler: stats.web_crawler || null
   };
   return {
     id: `${spec.alias}:${toForwardSlashPath(path.relative(spec.root, datasetDir))}`,
     source: spec.alias,
-    source_type: 'checker_archive',
-    source_label: yoloReviewSourceLabel('checker_archive'),
+    source_type: sourceType,
+    source_label: yoloReviewSourceLabel(sourceType),
     root: spec.root,
     dir: datasetDir,
     data_dir: dataDir,
@@ -4275,7 +4304,8 @@ async function resolveYoloDataset(datasetId) {
     profile: summary.profile || path.basename(datasetDir),
     kind,
     summary: normalizedSummary,
-    classes
+    classes,
+    web_crawler: stats.web_crawler || null
   };
 }
 
@@ -4460,7 +4490,9 @@ async function readYoloBaseLabelsForItem(dataset, imageRelPath) {
   return {
     label_rel_path: labelRelPath,
     label_text: labelText,
-    labels: parseYoloLabelText(labelText, dataset.classes)
+    labels: parseYoloLabelText(labelText, dataset.classes),
+    label_source: dataset.source_type === 'web_crawler' ? 'qwen_bbox_verified' : undefined,
+    auto_label_status: dataset.source_type === 'web_crawler' ? 'done' : undefined
   };
 }
 
@@ -4552,7 +4584,88 @@ async function readYoloManifestItems(dataset) {
     .filter((item) => item.rel);
 }
 
-function buildYoloBaseItem(dataset, rel, manifestItem = null) {
+async function readYoloWebReviewItems(dataset) {
+  if (dataset.source_type !== 'web_crawler' && !isYoloWebCrawlerSummary(dataset.summary)) {
+    return [];
+  }
+  const reviewPath = path.join(dataset.dir, 'qwen_review_manifest.jsonl');
+  const content = await readTextFile(reviewPath, '');
+  if (!content.trim()) {
+    return [];
+  }
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch (_error) {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function yoloWebReviewForManifest(reviewItems, manifestItem, rel) {
+  const sha256 = String(manifestItem?.sha256 || '').trim();
+  return reviewItems.find((review) => (
+    (sha256 && String(review?.image_sha256 || '').trim() === sha256) ||
+    normalizeApiRelPath(review?.image) === normalizeApiRelPath(rel)
+  )) || null;
+}
+
+function yoloWebQwenProjection(webReview, dataset) {
+  if (!webReview) {
+    return {};
+  }
+  const scene = normalizeClassToken(webReview.scene);
+  const counts = {};
+  for (const className of webReview.classes || []) {
+    counts[className] = (counts[className] || 0) + 1;
+  }
+  if (!Object.keys(counts).length && scene) {
+    counts[scene] = 1;
+  }
+  const rawAuditVerdict = normalizeClassToken(webReview.audit_verdict);
+  const auditVerdict = scene === 'needs_human' || webReview.quarantine_reason
+    ? 'needs_human'
+    : rawAuditVerdict;
+  const auditStatus = auditVerdict === 'not_run' ? 'not_applicable' : 'done';
+  const auditReasons = [webReview.quarantine_reason].filter(Boolean);
+  return {
+    qwen_label_status: 'done',
+    qwen_label: {
+      quality: webReview.photo_type === 'real_photo' && webReview.domain === 'target' ? 'good' : 'blocked',
+      counts,
+      flags: [scene].filter(Boolean),
+      tags: [webReview.domain, webReview.collection_bucket].filter(Boolean),
+      risk: auditReasons,
+      model: dataset.web_crawler?.qwen_model || dataset.summary?.qwen_model || '',
+      annotated_at: dataset.web_crawler?.updated_at || dataset.summary?.updated_at || null
+    },
+    qwen_flags: [scene].filter(Boolean),
+    qwen_quality: webReview.photo_type === 'real_photo' && webReview.domain === 'target' ? 'good' : 'blocked',
+    qwen_bbox_status: 'done',
+    qwen_bbox_audit_status: auditStatus,
+    qwen_bbox_audit_verdict: auditVerdict === 'not_run' ? '' : auditVerdict,
+    qwen_bbox_audit_severity: auditVerdict === 'needs_human' ? 'high' : '',
+    qwen_bbox_audit_suspicious_count: webReview.quarantine_reason ? 1 : 0,
+    qwen_bbox_audit_missing_count: 0,
+    qwen_bbox_audit: {
+      status: auditStatus,
+      verdict: auditVerdict === 'not_run' ? '' : auditVerdict,
+      severity: auditVerdict === 'needs_human' ? 'high' : '',
+      reasons: auditReasons,
+      suspicious_count: webReview.quarantine_reason ? 1 : 0,
+      missing_count: 0,
+      model: dataset.web_crawler?.qwen_model || dataset.summary?.qwen_model || '',
+      audited_at: dataset.web_crawler?.updated_at || dataset.summary?.updated_at || null
+    }
+  };
+}
+
+function buildYoloBaseItem(dataset, rel, manifestItem = null, webReview = null) {
   const metadata = parseYoloFilenameMetadata(rel);
   const task = Array.isArray(manifestItem?.tasks) && manifestItem.tasks.length ? manifestItem.tasks[0] : null;
   const split = manifestItem?.split || yoloSplitFromRelPath(dataset.kind, rel);
@@ -4561,6 +4674,7 @@ function buildYoloBaseItem(dataset, rel, manifestItem = null) {
   });
   const taskRowId = Number(task?.task_row_id || metadata.task_row_id || 0);
 
+  const normalizedWebReview = normalizeYoloWebReview(webReview, manifestItem);
   return {
     item_key: rel,
     image_rel_path: rel,
@@ -4573,7 +4687,13 @@ function buildYoloBaseItem(dataset, rel, manifestItem = null) {
     task_row_id: Number.isFinite(taskRowId) && taskRowId > 0 ? taskRowId : null,
     device_id: task?.device_id || (Array.isArray(manifestItem?.device_ids) ? manifestItem.device_ids.join(' / ') : ''),
     camera_id: task?.camera_id || (Array.isArray(manifestItem?.camera_ids) ? manifestItem.camera_ids.join(' / ') : ''),
-    manifest: manifestItem || null
+    manifest: manifestItem || null,
+    web_review: normalizedWebReview,
+    web_title: normalizedWebReview?.title || '',
+    web_scene: normalizedWebReview?.scene || '',
+    web_collection_bucket: normalizedWebReview?.collection_bucket || '',
+    web_training_eligible: normalizedWebReview?.training_eligible === true,
+    ...yoloWebQwenProjection(normalizedWebReview, dataset)
   };
 }
 
@@ -4583,11 +4703,17 @@ async function yoloBaseItems(dataset) {
     return rows.map((row) => buildPatrolBaseItem(dataset, row));
   }
   const manifestItems = await readYoloManifestItems(dataset);
+  const webReviewItems = await readYoloWebReviewItems(dataset);
   const rows = manifestItems.length
     ? manifestItems
     : (await listYoloImageRelPaths(dataset)).map((rel) => ({ rel, item: null }));
 
-  return rows.map(({ rel, item }) => buildYoloBaseItem(dataset, rel, item));
+  return rows.map(({ rel, item }) => buildYoloBaseItem(
+    dataset,
+    rel,
+    item,
+    yoloWebReviewForManifest(webReviewItems, item, rel)
+  ));
 }
 
 function yoloItemMatchesQuery(item, q) {
@@ -4609,6 +4735,13 @@ function yoloItemMatchesQuery(item, q) {
     item.capture_source,
     item.collection_mode_label,
     item.source_label,
+    item.web_title,
+    item.web_scene,
+    item.web_collection_bucket,
+    item.web_review?.source_category,
+    item.web_review?.license,
+    item.web_review?.author,
+    item.web_review?.quarantine_reason,
     item.qwen_summary,
     item.qwen_quality,
     ...(Array.isArray(item.qwen_label_classes) ? item.qwen_label_classes : []),
@@ -4769,6 +4902,28 @@ async function listYoloReviewItems(datasetId, query = {}) {
       } else if (!auditTokens.includes(qwenAudit)) {
         return false;
       }
+    } else if (qwenAudit && dataset.source_type === 'web_crawler') {
+      const verdict = normalizeClassToken(item.web_review?.audit_verdict || '');
+      const scene = normalizeClassToken(item.web_review?.scene || '');
+      if (qwenAudit === 'suspect') {
+        if (verdict !== 'needs_human' && scene !== 'needs_human') {
+          return false;
+        }
+      } else if (qwenAudit === 'needs_human') {
+        if (verdict !== 'needs_human' && scene !== 'needs_human') {
+          return false;
+        }
+      } else if (qwenAudit === 'pending' || qwenAudit === 'unreviewed') {
+        if (verdict !== 'not_run') {
+          return false;
+        }
+      } else if (qwenAudit === 'done') {
+        if (!verdict || verdict === 'not_run') {
+          return false;
+        }
+      } else if (verdict !== qwenAudit) {
+        return false;
+      }
     }
     return yoloItemMatchesQuery(item, q);
   });
@@ -4806,6 +4961,7 @@ async function listYoloReviewItems(datasetId, query = {}) {
       qwen_bbox: dataset.summary?.qwen_bbox || null,
       qwen_bbox_audit: dataset.summary?.qwen_bbox_audit || null,
       qwen_label: dataset.summary?.qwen_label || null,
+      web_crawler: dataset.web_crawler || dataset.summary?.web_crawler || null,
       summary: dataset.summary
     },
     page: safePage,
@@ -4960,6 +5116,7 @@ async function getYoloReviewItemDetail(datasetId, itemKey) {
         qwen_bbox: dataset.summary?.qwen_bbox || null,
         qwen_bbox_audit: dataset.summary?.qwen_bbox_audit || null,
         qwen_label: dataset.summary?.qwen_label || null,
+        web_crawler: dataset.web_crawler || dataset.summary?.web_crawler || null,
         summary: dataset.summary
       },
       item: {
@@ -4972,7 +5129,9 @@ async function getYoloReviewItemDetail(datasetId, itemKey) {
 
   const manifestItems = await readYoloManifestItems(dataset);
   const manifest = manifestItems.find((item) => item.rel === rel)?.item || null;
-  const base = buildYoloBaseItem(dataset, rel, manifest);
+  const webReviewItems = await readYoloWebReviewItems(dataset);
+  const webReview = yoloWebReviewForManifest(webReviewItems, manifest, rel);
+  const base = buildYoloBaseItem(dataset, rel, manifest, webReview);
 
   const enriched = await enrichYoloItem(dataset, { ...base, manifest }, { includeLabels: true });
   const archive = enriched.task_row_id ? await getAiCheckTaskDetail(enriched.task_row_id) : null;
@@ -4985,6 +5144,7 @@ async function getYoloReviewItemDetail(datasetId, itemKey) {
       classes: dataset.classes,
       source_type: dataset.source_type,
       source_label: dataset.source_label,
+      web_crawler: dataset.web_crawler || dataset.summary?.web_crawler || null,
       summary: dataset.summary
     },
     item: {
