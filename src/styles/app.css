@@ -1859,14 +1859,14 @@
 
 .cloud-ops-test-tabs button {
   position: relative;
-  min-height: 86px;
+  min-height: 58px;
   display: grid;
-  grid-template-columns: 34px 12px minmax(0, 1fr);
+  grid-template-columns: 24px 10px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   width: 100%;
   overflow: hidden;
-  padding: 12px;
+  padding: 10px 12px;
   border-radius: 16px;
   border: 1px solid rgba(71, 85, 105, 0.64);
   background:
@@ -8720,65 +8720,107 @@ body.yolo-review-is-panning {
 }
 
 .cloud-ops-test-vehicle-picker-list {
-  display: grid;
-  align-content: start;
-  gap: 7px;
+  display: block;
+  position: relative;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 3px;
+  padding: 2px 4px 2px 0;
 }
 
-.cloud-ops-test-vehicle-picker-item {
+.cloud-ops-test-vehicle-spine::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  top: 17px;
+  bottom: 17px;
+  left: 10px;
+  width: 2px;
+  background: rgba(71, 85, 105, 0.78);
+}
+
+.cloud-ops-test-vehicle-spine-item {
+  position: relative;
+  z-index: 1;
   display: grid;
-  gap: 3px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 10px;
-  border-radius: 11px;
-  border: 1px solid rgba(71, 85, 105, 0.62);
-  background: rgba(15, 23, 42, 0.68);
+  min-height: 52px;
+  padding: 8px 7px 8px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.52);
+  border-radius: 6px;
+  background: transparent;
   color: #e2e8f0;
   text-align: left;
   cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
 }
 
-.cloud-ops-test-vehicle-picker-item strong {
-  font-size: 0.8rem;
+.cloud-ops-test-vehicle-spine-item:hover {
+  background: rgba(30, 41, 59, 0.58);
+}
+
+.cloud-ops-test-vehicle-spine-item:last-child {
+  border-bottom: 0;
+}
+
+.cloud-ops-test-vehicle-spine-node {
+  position: relative;
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin-left: 5px;
+  border: 3px solid #020617;
+  border-radius: 50%;
+  background: #2c8c5a;
+  box-shadow: 0 0 0 2px rgba(44, 140, 90, 0.34);
+}
+
+.cloud-ops-test-vehicle-spine-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cloud-ops-test-vehicle-spine-copy strong {
+  color: #f8fafc;
+  font-family: "Orbitron", "Noto Sans SC", sans-serif;
+  font-size: 0.78rem;
+  line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
-.cloud-ops-test-vehicle-picker-item span {
-  color: #86efac;
+.cloud-ops-test-vehicle-spine-copy small {
+  color: #94a3b8;
   font-size: 0.68rem;
-  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
-.cloud-ops-test-vehicle-picker-item.is-warn {
-  border-color: rgba(251, 191, 36, 0.42);
+.cloud-ops-test-vehicle-spine-item.is-warn .cloud-ops-test-vehicle-spine-node {
+  background: #d88900;
+  box-shadow: 0 0 0 2px rgba(216, 137, 0, 0.34);
 }
 
-.cloud-ops-test-vehicle-picker-item.is-warn span {
-  color: #fde68a;
+.cloud-ops-test-vehicle-spine-item.is-danger .cloud-ops-test-vehicle-spine-node {
+  background: #c9362c;
+  box-shadow: 0 0 0 2px rgba(201, 54, 44, 0.38);
 }
 
-.cloud-ops-test-vehicle-picker-item.is-danger {
-  border-color: rgba(248, 113, 113, 0.5);
+.cloud-ops-test-vehicle-spine-item.is-neutral .cloud-ops-test-vehicle-spine-node {
+  background: #94a3b8;
+  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.32);
 }
 
-.cloud-ops-test-vehicle-picker-item.is-danger span {
-  color: #fecaca;
-}
-
-.cloud-ops-test-vehicle-picker-item.is-selected {
-  border-color: rgba(103, 232, 249, 0.86);
-  background: rgba(8, 145, 178, 0.26);
+.cloud-ops-test-vehicle-spine-item.is-selected {
+  background: rgba(8, 145, 178, 0.2);
   box-shadow: inset 3px 0 0 rgba(103, 232, 249, 0.82);
 }
 
-.cloud-ops-test-vehicle-picker-note {
-  margin: 0;
-  color: #64748b;
-  font-size: 0.68rem;
-  line-height: 1.45;
+.cloud-ops-test-vehicle-spine-item.is-selected .cloud-ops-test-vehicle-spine-node {
+  box-shadow: 0 0 0 2px #67e8f9, 0 0 14px rgba(103, 232, 249, 0.62);
 }
 
 @media (max-width: 1380px) {
@@ -8903,9 +8945,7 @@ body.yolo-review-is-panning {
     padding: 9px;
   }
 
-  .cloud-ops-test-vehicle-picker-item {
-    padding: 8px;
-  }
+  .cloud-ops-test-vehicle-spine-item { min-height: 48px; }
 }
 
 @media (max-width: 1100px) {
@@ -8930,10 +8970,11 @@ body.yolo-review-is-panning {
   }
 }
 
-/* Global picker: the button rail shows abnormal vehicles only; the select keeps the full fleet. */
 .cloud-ops-test-vehicle-picker-list-head {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding-top: 2px;
   border-top: 1px solid rgba(71, 85, 105, 0.42);
 }
@@ -8946,8 +8987,10 @@ body.yolo-review-is-panning {
 }
 
 .cloud-ops-test-vehicle-picker-list-head small {
-  color: #64748b;
+  padding-top: 9px;
+  color: #86efac;
   font-size: 0.66rem;
+  font-weight: 800;
   line-height: 1.4;
 }
 

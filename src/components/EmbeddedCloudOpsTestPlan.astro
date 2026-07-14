@@ -1,15 +1,15 @@
 ---
 const tabs = [
-  { id: "overview", label: "车辆总览", eyebrow: "发现故障", desc: "仅显示异常车辆和故障" },
-  { id: "status", label: "车辆状态检查", eyebrow: "人工确认", desc: "点击后只读检查" },
-  { id: "params", label: "参数设置", eyebrow: "安全变更", desc: "分节点配置与差异预览" },
-  { id: "map", label: "地图管理", eyebrow: "地图路径", desc: "只展示入口和状态" },
-  { id: "agent", label: "智能体运维", eyebrow: "长期运营", desc: "事件队列原型" }
+  { id: "overview", label: "车辆总览" },
+  { id: "status", label: "车辆状态检查" },
+  { id: "params", label: "参数设置" },
+  { id: "map", label: "地图管理" },
+  { id: "agent", label: "智能体运维" }
 ];
 
 const readOnlyToolGroups = [
   {
-    title: "核心诊断：5 个大按钮",
+    title: "核心诊断",
     tools: [
       { label: "车辆当前状态", tool: "vehicle.current_state", desc: "看车辆是否在线、速度/模式/安全状态是否正常", action: "vehicle_detail", purpose: "回答：这台车现在是什么状态？" },
       { label: "自动驾驶健康", tool: "health.autodrive_check", desc: "定位、规划、底盘、阻断条件综合只读检查", timeout: 35, purpose: "回答：自动驾驶是否具备运行条件？" },
@@ -80,7 +80,7 @@ const blockedActionGroups = [
       ["重启主控接口", "controller.reboot_master", "高风险：会中断主控 auto_ad_ai 接口"],
       ["重启 Media 接口", "controller.reboot_media", "高风险：会中断 media auto_ad_ai 接口"],
       ["碰撞停复位", "vehicle.clear_collision_stop", "需要现场安全确认"],
-      ["广告屏/灯光控制", "vehicle.body_control", "测试页先不绑定执行"]
+      ["广告屏/灯光控制", "vehicle.body_control", "需人工确认"]
     ]
   },
   {
@@ -105,23 +105,9 @@ const agentRules = [
 <section class="cloud-ops-test-shell" data-cloud-ops-test>
   <div class="cloud-ops-test-topbar">
     <div>
-      <p class="cloud-ops-test-kicker">CLOUD OPS TEST · READ ONLY FIRST</p>
+      <p class="cloud-ops-test-kicker">CLOUD OPERATIONS</p>
       <h1>云端智能运维(测试)</h1>
-      <p>
-        当前版本已接入真实车辆列表。页面加载只读取云端车辆注册列表，不自动执行任何车端工具；所有车端检查都必须由用户点击按钮触发，且测试页第一版只接只读检查。
-      </p>
     </div>
-    <a class="cloud-ops-test-doc" href="https://my.feishu.cn/docx/JFmYdxCvioqT2kxlIXocqMInnbh" target="_blank" rel="noreferrer">
-      查看方案文档
-    </a>
-  </div>
-
-  <div class="cloud-ops-test-safety-band">
-    <strong>安全边界</strong>
-    <span>自动加载：只调用 <code>/api/cloud-ops/vehicles-lite</code> 读取云端车辆注册列表</span>
-    <span>不会自动调用：<code>/api/cloud-ops/execute</code>、tool-list、vehicle_detail</span>
-    <span>点击执行：只读工具调用</span>
-    <span>禁用：重启、写参数、任务重发、灯光/车身控制</span>
   </div>
 
 
@@ -136,7 +122,6 @@ const agentRules = [
         <div>
           <p class="cloud-ops-test-kicker">INTEGRATED AI OPS</p>
           <h2>山海智枢</h2>
-          <p>单一智能体同时负责自然对话和车辆云端运维：在消息中点名车辆即可读取对应缓存，无需预选或切换模式。</p>
         </div>
         <button class="cloud-ops-test-agent-pin" type="button" data-action="agent-pin" aria-pressed="false">固定</button>
       </div>
@@ -172,7 +157,7 @@ const agentRules = [
       <div class="cloud-ops-test-agent-messages" data-role="agent-messages">
         <div class="cloud-ops-test-agent-message is-agent">
           <strong>山海智枢</strong>
-          <p>你好，我是山海智枢。你可以直接和我对话，也可以在问题中写明车辆编号、车牌或 VIN，我会读取对应车辆缓存进行云端运维分析；不需要提前选择车辆。涉及控车和变更时仍需人工确认。</p>
+          <p>你好，我是山海智枢。</p>
         </div>
       </div>
       <div class="cloud-ops-agent-composer" data-role="agent-composer">
@@ -217,7 +202,6 @@ const agentRules = [
 智能体对话：必须用户点击发送；后端只调用 subapi 兼容模型接口
 控制类动作：未绑定执行</pre>
       </details>
-      <p class="cloud-ops-test-agent-safe-copy">安全边界：智能体会根据对话中提到的车辆与问题自动读取缓存、按需调用只读巡检工具；写参数、重启服务、控车和任务重发等变更操作仍需人工确认。</p>
     </div>
   </aside>
 
@@ -237,13 +221,12 @@ const agentRules = [
         </select>
       </label>
       <div class="cloud-ops-test-vehicle-picker-list-head">
-        <span>当前异常车辆</span>
-        <small>正常车辆请使用上方快速选择</small>
+        <span>在线车辆</span>
+        <small data-role="online-vehicle-count">--</small>
       </div>
-      <div class="cloud-ops-test-vehicle-picker-list" data-role="vehicle-picker-list">
-        <p class="cloud-ops-test-empty">等待异常车辆判断...</p>
+      <div class="cloud-ops-test-vehicle-picker-list cloud-ops-test-vehicle-spine" data-role="vehicle-picker-list">
+        <p class="cloud-ops-test-empty">正在读取车辆...</p>
       </div>
-      <p class="cloud-ops-test-vehicle-picker-note">下方列表只显示当前异常车辆；快速选择保留全部车辆。当前车辆上下文对所有功能模块全局生效，切换车辆本身不会执行任何操作。</p>
     </aside>
 
     <nav class="cloud-ops-test-tabs" aria-label="云端智能运维测试子页面">
@@ -252,9 +235,7 @@ const agentRules = [
           <span class="cloud-ops-tab-light" aria-hidden="true"></span>
           <span class="cloud-ops-tab-index">{String(index + 1).padStart(2, "0")}</span>
           <span class="cloud-ops-tab-copy">
-            <span>{tab.eyebrow}</span>
             <strong>{tab.label}</strong>
-            <small>{tab.desc}</small>
           </span>
           <span class="cloud-ops-tab-scan" aria-hidden="true"></span>
         </button>
@@ -265,15 +246,13 @@ const agentRules = [
       <section id="cloud-ops-test-overview" class="cloud-ops-test-page" data-active="true">
         <div class="cloud-ops-test-page-head">
           <p class="cloud-ops-test-kicker">FAULT OVERVIEW</p>
-          <h2>车辆状态总览：只显示异常车辆</h2>
-          <p>基于云端只读缓存筛选通信、主控 / ROS、安全阻断、定位、规划停车和资源异常；正常车辆不在此处显示。</p>
+          <h2>车辆总览</h2>
         </div>
 
         <section class="cloud-ops-test-panel cloud-ops-test-abnormal-panel">
           <div class="cloud-ops-test-panel-head">
             <div>
               <h3>异常车辆与故障</h3>
-              <p>点击异常车辆只切换当前车辆上下文，不会自动调用车端工具。</p>
             </div>
             <span data-role="vehicle-count">--</span>
           </div>
@@ -295,8 +274,7 @@ const agentRules = [
       <section id="cloud-ops-test-status" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head">
           <p class="cloud-ops-test-kicker">READ ONLY TOOLS</p>
-          <h2>车辆状态检查：按老版云端运维整理按钮，点击后才查车</h2>
-          <p>只读检查按钮已经接到真实接口；控制、重启、写参数、任务重发先展示但禁用。</p>
+          <h2>车辆状态检查</h2>
         </div>
 
         <div class="cloud-ops-test-status-split">
@@ -307,7 +285,6 @@ const agentRules = [
                   <div class="cloud-ops-test-tool-group-head">
                     <div>
                       <h3>{group.title}</h3>
-                      <p>日常运营优先使用这 5 个入口；当前车辆可在网页最左侧全局切换。</p>
                     </div>
                     <span>核心诊断</span>
                   </div>
@@ -337,15 +314,13 @@ const agentRules = [
 
             <details class="cloud-ops-test-disclosure cloud-ops-test-specialist-disclosure">
               <summary>
-                <span>专项诊断（默认收起）</span>
-                <small>保留感知、定位、规划、控制等模块级只读检查</small>
+                <span>专项诊断</span>
               </summary>
               <div class="cloud-ops-test-specialist-stack">
                 {specialistDiagnosticGroups.map((group) => (
                   <details class="cloud-ops-test-specialist-group">
                     <summary>
                       <span>{group.title}</span>
-                      <small>{group.desc}</small>
                     </summary>
                     <div class="cloud-ops-test-command-grid cloud-ops-test-command-grid--specialist">
                       {group.tools.map((item) => (
@@ -372,7 +347,7 @@ const agentRules = [
 
             {blockedActionGroups.map((group) => (
               <details class="cloud-ops-test-disclosure cloud-ops-test-disabled-disclosure">
-                <summary>{group.title}：禁用动作说明</summary>
+                <summary>{group.title}</summary>
                 <div class="cloud-ops-test-command-grid cloud-ops-test-command-grid--blocked">
                   {group.actions.map(([label, tool, desc]) => (
                     <button class="cloud-ops-test-command-button is-disabled" type="button" disabled>
@@ -390,14 +365,13 @@ const agentRules = [
             <div class="cloud-ops-test-panel-head">
               <div>
                 <h3>查询结果</h3>
-                <p>点击左侧任一核心检查后，结果会在这里更新。</p>
               </div>
-              <span data-role="last-tool-label">等待点击</span>
+              <span data-role="last-tool-label">未查询</span>
             </div>
-            <div class="cloud-ops-test-result-summary" data-role="tool-summary">选择车辆后点击左侧核心诊断按钮，这里会立即显示直观摘要；完整返回默认折叠。</div>
+            <div class="cloud-ops-test-result-summary" data-role="tool-summary">暂无查询结果</div>
             <details class="cloud-ops-test-disclosure">
-              <summary>展开原始返回 JSON</summary>
-              <pre class="cloud-ops-test-json" data-role="tool-result">选择车辆后点击左侧只读工具，这里显示真实返回。</pre>
+              <summary>原始数据</summary>
+              <pre class="cloud-ops-test-json" data-role="tool-result">暂无数据</pre>
             </details>
           </section>
         </div>
@@ -406,19 +380,18 @@ const agentRules = [
       <section id="cloud-ops-test-params" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head cloud-ops-param-page-head">
           <div>
-            <p class="cloud-ops-test-kicker">PARAMETER CENTER · DRAFT ONLY</p>
+            <p class="cloud-ops-test-kicker">PARAMETER CENTER</p>
             <h2>车辆参数中心</h2>
-            <p>按节点组织控制与运行策略。当前版本可完成界面配置、基础校验和差异预览，但不会向车辆下发任何控制或参数。</p>
           </div>
-          <div class="cloud-ops-param-safety-note"><strong>安全模式</strong><span>真实写入接口、白名单、回读与回滚尚未接入</span></div>
+          <div class="cloud-ops-param-safety-note"><strong>只读模式</strong></div>
         </div>
 
         <div class="cloud-ops-param-context" aria-label="参数上下文">
           <div><span>当前车辆</span><strong data-role="param-vehicle">--</strong></div>
-          <div><span>参数读取</span><strong>待接口接入</strong></div>
+          <div><span>参数读取</span><strong>未开放</strong></div>
           <div><span>配置版本</span><strong>未读取</strong></div>
           <div><span>草稿变更</span><strong><b data-role="param-changed-count">0</b> 项</strong></div>
-          <button type="button" disabled>读取当前参数（待接）</button>
+          <button type="button" disabled>读取当前参数</button>
         </div>
 
         <div class="cloud-ops-param-layout">
@@ -432,20 +405,20 @@ const agentRules = [
 
           <div class="cloud-ops-param-workspace">
             <section class="cloud-ops-param-domain is-active" data-param-panel="control">
-              <div class="cloud-ops-param-domain-head"><div><p>CONTROL NODE</p><h3>控制节点</h3><span>即时动作与普通参数分开呈现，避免误把控制命令当作配置保存。</span></div><em class="is-danger">含关键动作</em></div>
+              <div class="cloud-ops-param-domain-head"><div><p>CONTROL NODE</p><h3>控制节点</h3></div><em class="is-danger">含关键动作</em></div>
               <div class="cloud-ops-param-control-grid">
-                <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>超声波</h4><p>开启或关闭超声波功能</p></div><span class="is-medium">中风险</span></div><div class="cloud-ops-param-segment"><button disabled>开启</button><button disabled>关闭</button></div><small>待确认真实工具名与当前状态</small></article>
-                <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>广告机上下电</h4><p>控制车载广告屏电源</p></div><span class="is-high">高风险</span></div><div class="cloud-ops-param-segment"><button disabled>上电</button><button disabled>下电</button></div><small>已发现 body_control 字段线索，暂不绑定执行</small></article>
-                <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>转向灯</h4><p>关闭 / 左转 / 右转 / 双闪</p></div><span class="is-medium">中风险</span></div><select disabled><option>待枚举确认</option></select><small>需确认车端支持的状态枚举</small></article>
-                <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>前照灯</h4><p>前照灯即时控制</p></div><span class="is-medium">中风险</span></div><div class="cloud-ops-param-segment"><button disabled>开启</button><button disabled>关闭</button></div><small>已发现 front_lamp 字段线索，暂不绑定执行</small></article>
-                <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>氛围灯</h4><p>氛围灯即时控制</p></div><span class="is-low">低风险</span></div><div class="cloud-ops-param-segment"><button disabled>开启</button><button disabled>关闭</button></div><small>已发现 mood_lamp 字段线索，暂不绑定执行</small></article>
-                <article class="cloud-ops-param-card cloud-ops-param-card--danger"><div class="cloud-ops-param-card-title"><div><h4>电机上下电</h4><p>影响车辆动力系统</p></div><span class="is-high">高风险</span></div><div class="cloud-ops-param-segment"><button disabled>电机上电</button><button disabled>电机下电</button></div><small>未来必须校验车辆静止、现场安全与二次确认</small></article>
-                <article class="cloud-ops-param-card cloud-ops-param-card--critical"><div class="cloud-ops-param-card-title"><div><h4>一键系统下电</h4><p>关键动作，不纳入普通参数保存</p></div><span class="is-critical">关键动作</span></div><button class="cloud-ops-param-critical-button" type="button" disabled>系统下电（未接入）</button><small>未来需输入车辆编号确认，并保留完整审计</small></article>
+                <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>超声波</h4><p>开启或关闭超声波功能</p></div><span class="is-medium">中风险</span></div><div class="cloud-ops-param-segment"><button disabled>开启</button><button disabled>关闭</button></div></article>
+                <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>广告机上下电</h4><p>控制车载广告屏电源</p></div><span class="is-high">高风险</span></div><div class="cloud-ops-param-segment"><button disabled>上电</button><button disabled>下电</button></div></article>
+                <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>转向灯</h4><p>关闭 / 左转 / 右转 / 双闪</p></div><span class="is-medium">中风险</span></div><select disabled><option>未开放</option></select></article>
+                <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>前照灯</h4><p>前照灯即时控制</p></div><span class="is-medium">中风险</span></div><div class="cloud-ops-param-segment"><button disabled>开启</button><button disabled>关闭</button></div></article>
+                <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>氛围灯</h4><p>氛围灯即时控制</p></div><span class="is-low">低风险</span></div><div class="cloud-ops-param-segment"><button disabled>开启</button><button disabled>关闭</button></div></article>
+                <article class="cloud-ops-param-card cloud-ops-param-card--danger"><div class="cloud-ops-param-card-title"><div><h4>电机上下电</h4><p>影响车辆动力系统</p></div><span class="is-high">高风险</span></div><div class="cloud-ops-param-segment"><button disabled>电机上电</button><button disabled>电机下电</button></div><small>需校验车辆静止、现场安全并二次确认</small></article>
+                <article class="cloud-ops-param-card cloud-ops-param-card--critical"><div class="cloud-ops-param-card-title"><div><h4>一键系统下电</h4><p>关键动作，不纳入普通参数保存</p></div><span class="is-critical">关键动作</span></div><button class="cloud-ops-param-critical-button" type="button" disabled>系统下电</button><small>需输入车辆编号确认并保留完整审计</small></article>
               </div>
             </section>
 
             <section class="cloud-ops-param-domain" data-param-panel="planning" hidden>
-              <div class="cloud-ops-param-domain-head"><div><p>PLANNING NODE</p><h3>Planning 节点</h3><span>将总开关、时段覆盖与安全区域规则分层展示。</span></div><em class="is-medium">运行策略</em></div>
+              <div class="cloud-ops-param-domain-head"><div><p>PLANNING NODE</p><h3>Planning 节点</h3></div><em class="is-medium">运行策略</em></div>
               <div class="cloud-ops-param-stack">
                 <article class="cloud-ops-param-card cloud-ops-param-card--wide">
                   <div class="cloud-ops-param-card-title"><div><h4>绕障策略</h4><p>总开关与指定时段强制开启规则</p></div><span class="is-medium">中风险</span></div>
@@ -463,9 +436,9 @@ const agentRules = [
                 </div>
 
                 <div class="cloud-ops-param-three-col">
-                  <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>回充标定</h4><p>建议作为引导式流程，而非自由输入</p></div><span class="is-high">高风险</span></div><div class="cloud-ops-param-readonly"><strong>当前标定</strong><span>待读取</span></div><button type="button" disabled>进入标定流程（待接）</button><small>需确认它是标量参数还是车端标定动作</small></article>
+                  <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>回充标定</h4><p>引导式标定流程</p></div><span class="is-high">高风险</span></div><div class="cloud-ops-param-readonly"><strong>当前标定</strong><span>未读取</span></div><button type="button" disabled>进入标定流程</button></article>
                   <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>AI 功能阈值</h4><p>具体含义尚未确定</p></div><span class="is-pending">待产品确认</span></div><input type="text" placeholder="确认参数定义后开放" disabled><small>当前保持只读，避免把多个算法阈值混为一项</small></article>
-                  <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>定点播报</h4><p>指定点位触发播报</p></div><span class="is-low">低风险</span></div><label class="cloud-ops-param-switch"><input id="param-point-broadcast" type="checkbox" data-param-input data-param-key="planning.point_broadcast_enabled" data-param-label="定点播报" data-original="false"><span></span><b>启用定点播报</b></label><select data-param-input data-param-parent="param-point-broadcast" data-param-key="planning.point_broadcast_profile" data-param-label="定点播报方案" data-original="default"><option value="default">默认点位方案</option><option value="custom">自定义点位方案（待接）</option></select></article>
+                  <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>定点播报</h4><p>指定点位触发播报</p></div><span class="is-low">低风险</span></div><label class="cloud-ops-param-switch"><input id="param-point-broadcast" type="checkbox" data-param-input data-param-key="planning.point_broadcast_enabled" data-param-label="定点播报" data-original="false"><span></span><b>启用定点播报</b></label><select data-param-input data-param-parent="param-point-broadcast" data-param-key="planning.point_broadcast_profile" data-param-label="定点播报方案" data-original="default"><option value="default">默认点位方案</option><option value="custom">自定义点位方案</option></select></article>
                 </div>
 
                 <div class="cloud-ops-param-two-col">
@@ -476,7 +449,7 @@ const agentRules = [
             </section>
 
             <section class="cloud-ops-param-domain" data-param-panel="voice" hidden>
-              <div class="cloud-ops-param-domain-head"><div><p>VOICE NODE</p><h3>语音节点</h3><span>把功能开关、循环次数和静音时段拆成可读规则。</span></div><em class="is-low">运营配置</em></div>
+              <div class="cloud-ops-param-domain-head"><div><p>VOICE NODE</p><h3>语音节点</h3></div><em class="is-low">运营配置</em></div>
               <div class="cloud-ops-param-two-col">
                 <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>AI 语音</h4><p>控制 AI 语音与单次触发循环次数</p></div><span class="is-low">低风险</span></div><label class="cloud-ops-param-switch"><input id="param-ai-voice" type="checkbox" data-param-input data-param-key="voice.ai_voice_enabled" data-param-label="AI 语音" data-original="false"><span></span><b>启用 AI 语音</b></label><label class="cloud-ops-param-field"><span>循环次数</span><div><input type="number" min="1" max="20" step="1" value="1" data-param-input data-param-parent="param-ai-voice" data-param-key="voice.ai_voice_loop_count" data-param-label="AI 语音循环次数" data-original="1"><b>次</b></div></label><small>1–20 仅作为前端草稿限制，真实范围仍需车端确认</small></article>
                 <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>静音策略</h4><p>待机静音与夜间静音时间</p></div><span class="is-low">低风险</span></div><label class="cloud-ops-param-switch"><input type="checkbox" data-param-input data-param-key="voice.standby_mute_enabled" data-param-label="待机静音" data-original="false"><span></span><b>待机时保持静音</b></label><label class="cloud-ops-param-switch"><input id="param-night-mute" type="checkbox" data-param-input data-param-key="voice.night_mute_enabled" data-param-label="夜间静音" data-original="false"><span></span><b>启用夜间静音</b></label><div class="cloud-ops-param-time-row"><label>开始<input type="time" value="22:00" data-param-input data-param-parent="param-night-mute" data-param-key="voice.night_mute_start" data-param-label="夜间静音开始时间" data-original="22:00"></label><i>至</i><label>结束<input type="time" value="07:00" data-param-input data-param-parent="param-night-mute" data-param-key="voice.night_mute_end" data-param-label="夜间静音结束时间" data-original="07:00"></label></div></article>
@@ -484,12 +457,12 @@ const agentRules = [
             </section>
 
             <section class="cloud-ops-param-domain" data-param-panel="localization" hidden>
-              <div class="cloud-ops-param-domain-head"><div><p>LOCALIZATION NODE</p><h3>定位节点</h3><span>定位参数单独呈现并提高风险等级，避免与普通运营配置混合。</span></div><em class="is-high">高风险</em></div>
+              <div class="cloud-ops-param-domain-head"><div><p>LOCALIZATION NODE</p><h3>定位节点</h3></div><em class="is-high">高风险</em></div>
               <article class="cloud-ops-param-card cloud-ops-param-card--wide"><div class="cloud-ops-param-card-title"><div><h4>NDT 阈值</h4><p>影响定位结果接受条件与定位可靠性</p></div><span class="is-high">高风险</span></div><div class="cloud-ops-param-compare"><div><span>当前值</span><strong>待读取</strong></div><div><span>建议值</span><label class="cloud-ops-param-field"><div><input type="number" inputmode="decimal" step="0.01" placeholder="读取后填写" data-param-input data-param-key="localization.ndt_threshold" data-param-label="NDT 阈值" data-original="" data-range-pending="true"><b>单位待确认</b></div></label></div></div><div class="cloud-ops-param-rule-note is-danger"><strong>修改前置条件</strong><span>必须由定位模块确认参数语义、单位和安全范围；后端校验通过后还需二次确认与写后回读。</span></div></article>
             </section>
 
             <section class="cloud-ops-param-domain" data-param-panel="ai" hidden>
-              <div class="cloud-ops-param-domain-head"><div><p>AI NODE</p><h3>AI 节点</h3><span>事件触发条件使用带单位的数值输入，便于理解和审计。</span></div><em class="is-medium">检测阈值</em></div>
+              <div class="cloud-ops-param-domain-head"><div><p>AI NODE</p><h3>AI 节点</h3></div><em class="is-medium">检测阈值</em></div>
               <div class="cloud-ops-param-two-col">
                 <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>夜间逗留时间</h4><p>达到持续时间后触发逗留事件</p></div><span class="is-medium">中风险</span></div><label class="cloud-ops-param-field"><span>触发时长</span><div><input type="number" inputmode="numeric" min="1" step="1" placeholder="读取后填写" data-param-input data-param-key="ai.night_linger_duration" data-param-label="夜间逗留时间" data-original="" data-range-pending="true"><b>单位待确认</b></div></label><div class="cloud-ops-param-range-pending">需确认按秒还是分钟，以及算法允许范围。</div></article>
                 <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>人员聚集人数</h4><p>达到人数后触发聚集事件</p></div><span class="is-medium">中风险</span></div><label class="cloud-ops-param-field"><span>人数阈值</span><div><input type="number" inputmode="numeric" min="2" max="100" step="1" placeholder="读取后填写" data-param-input data-param-key="ai.crowd_count_threshold" data-param-label="人员聚集人数" data-original=""><b>人</b></div></label><small>前端草稿限制 2–100 人；最终范围应以后端 Schema 为准</small></article>
@@ -510,8 +483,7 @@ const agentRules = [
       <section id="cloud-ops-test-map" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head">
           <p class="cloud-ops-test-kicker">MAP MANAGEMENT</p>
-          <h2>地图管理：当前不自动启动地图编辑器</h2>
-          <p>现有真实地图编辑器入口仍在“地图管理”页面。本测试页只展示未来合并后的操作面板，不自动调用 map_editor.start。</p>
+          <h2>地图管理</h2>
         </div>
         <div class="cloud-ops-test-card-grid">
           <article class="cloud-ops-test-card"><h3>车端插件桥接</h3><p>map_editor.start / status / stop / http</p></article>
@@ -519,17 +491,16 @@ const agentRules = [
           <article class="cloud-ops-test-card"><h3>版本管理</h3><p>地图版本、车辆使用版本、发布记录、回滚点。</p></article>
         </div>
         <div class="cloud-ops-test-disabled-actions">
-          <button type="button" disabled>启动并打开插件（禁用）</button>
-          <button type="button" disabled>检查插件状态（待接只读）</button>
-          <button type="button" disabled>关闭插件（禁用）</button>
+          <button type="button" disabled>启动地图插件</button>
+          <button type="button" disabled>检查插件状态</button>
+          <button type="button" disabled>关闭地图插件</button>
         </div>
       </section>
 
       <section id="cloud-ops-test-agent" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head">
           <p class="cloud-ops-test-kicker">AGENT OPS · SYNCHRONIZED</p>
-          <h2>山海智枢：一体化 AI 智能运维</h2>
-          <p>页面入口与右侧侧边栏共享模型和多轮会话。无需切换模式或预选车辆：普通问题自然对话，在消息中提到哪辆车，就读取哪辆车的真实缓存进行运维分析。</p>
+          <h2>山海智枢</h2>
         </div>
 
         <section class="cloud-ops-agent-page-entry">
@@ -549,7 +520,7 @@ const agentRules = [
           <div class="cloud-ops-agent-page-messages cloud-ops-test-agent-messages" data-role="agent-page-messages" aria-live="polite">
             <div class="cloud-ops-test-agent-message is-agent">
               <strong>山海智枢</strong>
-              <p>你好，我是山海智枢。你可以直接和我对话，也可以在问题中写明车辆编号、车牌或 VIN，我会读取对应车辆缓存进行云端运维分析；不需要提前选择车辆。涉及控车和变更时仍需人工确认。</p>
+              <p>你好，我是山海智枢。</p>
             </div>
           </div>
 
@@ -588,29 +559,12 @@ const agentRules = [
           <div class="cloud-ops-agent-page-rail-actions">
             <button type="button" data-action="agent-page-open" data-role="agent-page-open-label">展开右侧侧边栏</button>
             <button type="button" data-action="agent-page-pin" data-role="agent-page-pin-label">固定右侧侧边栏</button>
-            <span>两处入口共享同一会话，权限、模型和输入内容保持同步。</span>
           </div>
         </section>
-
-        <div class="cloud-ops-test-card-grid cloud-ops-test-agent-explain-grid">
-          <article class="cloud-ops-test-card">
-            <h3>常驻侧边栏</h3>
-            <p>桌面端右侧窄栏常驻，悬停或键盘聚焦时展开；点击“固定”后占位显示。移动端作为底部抽屉使用。</p>
-          </article>
-          <article class="cloud-ops-test-card">
-            <h3>只读参谋</h3>
-            <p>普通聊天不加载车辆数据；识别为运维问题后才注入车辆缓存。诊断保持只读，不写参数、不重启、不下发任务。</p>
-          </article>
-          <article class="cloud-ops-test-card">
-            <h3>上下文同步</h3>
-            <p>全局车辆选择不会预先绑定山海智枢；只有发送消息后，智能体才会按消息中出现的车辆编号、车牌或 VIN 读取对应缓存。</p>
-          </article>
-        </div>
 
         <section class="cloud-ops-test-panel">
           <div class="cloud-ops-test-panel-head">
             <h3>规则边界</h3>
-            <span>当前版本</span>
           </div>
           <div class="cloud-ops-test-table-shell cloud-ops-test-table-shell--compact">
             <table class="cloud-ops-test-table">
@@ -672,8 +626,7 @@ const agentRules = [
     const vehicleSortSelect = shell.querySelector('[data-role="vehicle-sort-select"]');
     const vehicleList = shell.querySelector('[data-role="vehicle-list"]');
     const vehiclePickerList = shell.querySelector('[data-role="vehicle-picker-list"]');
-    const fleetSpine = shell.querySelector('[data-role="fleet-spine"]');
-    const fleetSpineCount = shell.querySelector('[data-role="fleet-spine-count"]');
+    const onlineVehicleCount = shell.querySelector('[data-role="online-vehicle-count"]');
     const agentRail = shell.querySelector('[data-role="agent-rail"]');
     const agentToggle = shell.querySelector('[data-action="agent-toggle"]');
     const agentPin = shell.querySelector('[data-action="agent-pin"]');
@@ -1086,7 +1039,6 @@ const agentRules = [
         : vehicleIdOf(vehicles[0] || {});
       syncSelectedVehicleUi();
       renderSummary();
-      renderFleetSpine();
       if (options.silent !== true) {
         setStatus(`已选择 ${currentVehicleId || "车辆"}，未执行任何车端工具。`, "ok");
       }
@@ -1116,27 +1068,6 @@ const agentRules = [
         ["最近在线", `${formatAge(lastSeenOf(vehicle))} · ${lastSeenOf(vehicle) || "无时间戳"} · msg ${displayValue(vehicle?.message_count)}`],
         ["状态判断", health.label]
       ].map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`).join("");
-    };
-
-    const renderFleetSpine = () => {
-      if (fleetSpineCount) fleetSpineCount.textContent = vehicles.length ? `${vehicles.length} 台信号` : "等待车辆";
-      if (!fleetSpine) return;
-      if (!vehicles.length) {
-        fleetSpine.innerHTML = '<p class="cloud-ops-test-empty">没有读取到车辆信号。</p>';
-        return;
-      }
-      const sorted = sortVehiclesByAttention(vehicles);
-      fleetSpine.innerHTML = sorted.map((vehicle) => {
-        const vid = vehicleIdOf(vehicle);
-        const diag = stopDiagnosisOf(vehicle);
-        const health = vehicleHealthOf(vehicle);
-        const tone = diag.tone === "danger" || diag.tone === "warn" ? diag.tone : health.tone;
-        const label = diag.tone === "danger" || diag.tone === "warn" ? diag.label : health.label;
-        return `<button type="button" class="cloud-ops-test-signal-cell is-${escapeHtml(tone)}${vid === selectedVehicleId() ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}" title="${escapeHtml(vid)} · ${escapeHtml(label)} · ${escapeHtml(formatAge(lastSeenOf(vehicle)))}">
-          <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(vid || "未知")}</strong>
-        </button>`;
-      }).join("");
     };
 
     const sortVehiclesByAttention = (items) => {
@@ -1261,36 +1192,45 @@ const agentRules = [
       if (!vehicles.length) {
         vehicleSelect.innerHTML = '<option value="">暂无车辆</option>';
         if (vehiclePickerList) vehiclePickerList.innerHTML = '<p class="cloud-ops-test-empty">暂无车辆</p>';
+        if (onlineVehicleCount) onlineVehicleCount.textContent = "0 台";
         renderSummary();
         return;
       }
-      vehicles.forEach((vehicle) => {
+      sortVehiclesById(vehicles).forEach((vehicle) => {
         const vid = vehicleIdOf(vehicle);
         const option = document.createElement("option");
         option.value = vid;
-        option.textContent = `${vid}${isStale(vehicle) ? " · 待确认" : " · 在线"}`;
+        option.textContent = `${vid}${isStale(vehicle) ? " · 离线" : " · 在线"}`;
         vehicleSelect.appendChild(option);
       });
       if (previous && vehicles.some((vehicle) => vehicleIdOf(vehicle) === previous)) {
         currentVehicleId = previous;
       }
       if (!currentVehicleId || !vehicles.some((vehicle) => vehicleIdOf(vehicle) === currentVehicleId)) {
-        currentVehicleId = vehicleIdOf(vehicles[0]);
+        currentVehicleId = vehicleIdOf(vehicles.find((vehicle) => !isStale(vehicle)) || vehicles[0]);
       }
       vehicleSelect.value = currentVehicleId;
       if (vehiclePickerList) {
-        const abnormalVehicles = sortVehiclesById(vehicles).filter((vehicle) => vehicleFaultsOf(vehicle).length > 0);
-        vehiclePickerList.innerHTML = abnormalVehicles.length
-          ? abnormalVehicles.map((vehicle) => {
+        const onlineVehicles = sortVehiclesByAttention(vehicles.filter((vehicle) => !isStale(vehicle)));
+        if (onlineVehicleCount) onlineVehicleCount.textContent = `${onlineVehicles.length} 台`;
+        vehiclePickerList.innerHTML = onlineVehicles.length
+          ? onlineVehicles.map((vehicle) => {
               const vid = vehicleIdOf(vehicle);
               const faults = vehicleFaultsOf(vehicle);
-              const tone = faultToneOf(faults);
-              return `<button type="button" class="cloud-ops-test-vehicle-picker-item is-${escapeHtml(tone)}${vid === selectedVehicleId() ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}">
-                <strong>${escapeHtml(vid || "未知车辆")}</strong>
-                <span>${escapeHtml(`${faults.length} 项异常`)}</span>
+              const health = vehicleHealthOf(vehicle);
+              const tone = faults.length ? faultToneOf(faults) : health.tone;
+              const label = faults[0]?.label || health.label;
+              const detail = `${label} · ${formatAge(lastSeenOf(vehicle))}`;
+              const title = `${vid} · ${faults.map((fault) => fault.label).join("、") || health.label} · ${formatAge(lastSeenOf(vehicle))}`;
+              return `<button type="button" class="cloud-ops-test-vehicle-spine-item is-${escapeHtml(tone)}${vid === selectedVehicleId() ? " is-selected" : ""}" data-vehicle-id="${escapeHtml(vid)}" title="${escapeHtml(title)}" aria-label="选择车辆 ${escapeHtml(vid)}，${escapeHtml(detail)}">
+                <i class="cloud-ops-test-vehicle-spine-node" aria-hidden="true"></i>
+                <span class="cloud-ops-test-vehicle-spine-copy">
+                  <strong>${escapeHtml(vid || "未知车辆")}</strong>
+                  <small>${escapeHtml(detail)}</small>
+                </span>
               </button>`;
             }).join("")
-          : '<p class="cloud-ops-test-empty">当前没有发现异常车辆。其他车辆可通过上方快速选择切换。</p>';
+          : '<p class="cloud-ops-test-empty">当前无在线车辆</p>';
       }
       syncSelectedVehicleUi();
       renderSummary();
@@ -1748,7 +1688,6 @@ const agentRules = [
         if (lastRefresh) lastRefresh.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
         if (apiNote) apiNote.textContent = payload.note || "只读车辆注册表";
         renderVehicleOptions();
-        renderFleetSpine();
         renderVehicles();
         renderStopFaultMonitor();
         renderVehicleTable();
@@ -1759,7 +1698,6 @@ const agentRules = [
         vehicles = [];
         currentVehicleId = "";
         renderVehicleOptions();
-        renderFleetSpine();
         renderVehicles();
         renderStopFaultMonitor();
         renderVehicleTable();
@@ -1884,7 +1822,7 @@ const agentRules = [
         return;
       }
       if (!READONLY_TOOL_ALLOWLIST.has(toolName)) {
-        setStatus(`工具 ${toolName} 未在测试页只读白名单内`, "error");
+        setStatus(`工具 ${toolName} 不在只读白名单内`, "error");
         return;
       }
       if (lastToolLabel) lastToolLabel.textContent = `${vehicleId} · ${toolName}`;
