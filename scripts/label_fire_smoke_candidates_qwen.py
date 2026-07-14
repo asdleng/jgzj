@@ -33,18 +33,22 @@ REJECT_EVIDENCE = re.compile(
 )
 LANCZOS = getattr(Image, "Resampling", Image).LANCZOS
 
-DETECT_PROMPT = """You are creating high-precision fire/smoke object-detection pre-labels.
+DETECT_PROMPT = """You are creating high-precision fire/smoke object-detection pre-labels for patrol-vehicle and fixed outdoor cameras.
 Return one compact JSON object only, with no markdown or explanation:
-{"q":"good","scene":"positive","b":[["fire",x1,y1,x2,y2,0.93,"actual_orange_flame_with_luminous_core"]],"r":"short_reason"}
+{"q":"good","photo":"real_photo","domain":"target","scene":"positive","b":[["fire",x1,y1,x2,y2,0.93,"actual_orange_flame_with_luminous_core"]],"r":"short_reason"}
 
 Rules:
 - q: good, blur, dark, blocked, or bad.
+- photo: real_photo, illustration, screenshot, collage, or unknown.
+- domain: target or off_domain. Target means a ground-level road, park, campus, residential, commercial, industrial, vehicle, or building scene that resembles patrol/fixed-camera deployment.
 - scene: positive, hard_negative, or unusable.
 - b: at most 12 tight boxes. Coordinates are integers 0-1000 xyxy on the full image.
 - class is only fire or smoke. Score is 0.0-1.0. Evidence is a snake_case visible proof.
 - fire requires an actual flame shape with an orange/yellow luminous core.
 - smoke requires a coherent semi-transparent plume rising or drifting from a plausible source.
 - Never label fog, mist, steam, clouds, dust, haze, glare, sunset, red signs, hydrants, extinguishers, lamps, reflections, taillights, traffic lights, or image blur.
+- Drawings, paintings, posters, maps, diagrams, screenshots, collages, staged light art, aerial/satellite wildfire views, and distant landscape-only wildfire views are unusable: set photo/domain accordingly and return b=[].
+- Close-up museum objects or unrelated indoor scenes are off_domain. Real ground-level buildings, streets, vehicles, parks and industrial scenes are target.
 - A web search query is not evidence. Judge only pixels.
 - Precision is more important than recall. If uncertain, return no boxes and scene=hard_negative.
 """
@@ -54,9 +58,9 @@ Proposed JSON:
 {proposal}
 
 Return one compact JSON object only:
-{"v":"pass","b":[["smoke",x1,y1,x2,y2,0.95,"coherent_rising_smoke_plume"]],"r":"short_reason"}
+{"v":"pass","photo":"real_photo","domain":"target","scene":"positive","b":[["smoke",x1,y1,x2,y2,0.95,"coherent_rising_smoke_plume"]],"r":"short_reason"}
 
-Use v=pass only when every retained box has strong pixel evidence and there is no obvious missed fire/smoke target. Use v=needs_human for ambiguity, false positives, or important misses. You may correct/drop boxes in b. Apply the same exclusions: fog, mist, steam, clouds, dust, haze, glare, sunset, red signs/equipment, lamps, reflections and blur are not fire/smoke.
+Use v=pass only when every retained box has strong pixel evidence and there is no obvious missed fire/smoke target. Use v=needs_human for ambiguity, false positives, or important misses. You may correct/drop boxes in b. Apply the same exclusions and domain rules. Non-real or off-domain media must use scene=unusable and b=[].
 """
 
 
@@ -255,6 +259,8 @@ def apply_review_guards(labels: List[dict], scene: str, collection_bucket: str) 
     guarded_labels = list(labels)
     guarded_scene = str(scene or "needs_human")
     bucket = str(collection_bucket or "")
+    if guarded_scene == "unusable":
+        return [], "unusable", "off_domain_or_non_photo"
     if guarded_labels and bucket.startswith("hard_negative"):
         return [], "needs_human", "positive_in_hard_negative_bucket"
     if guarded_scene == "positive" and not guarded_labels:
@@ -297,13 +303,21 @@ def label_candidates(args: argparse.Namespace) -> dict:
             parsed, raw_text = chat(session, args.endpoint, args.model, DETECT_PROMPT, image_b64, (args.connect_timeout, args.read_timeout), args.max_tokens)
             if parsed is None:
                 raise ValueError(f"detect_json_parse_failed:{raw_text[:1200]}")
-            detected_labels = normalize_boxes(parsed.get("b") or parsed.get("boxes"))
-            proposal = json.dumps({"q": parsed.get("q"), "scene": parsed.get("scene"), "b": parsed.get("b") or parsed.get("boxes") or []}, ensure_ascii=False, separators=(",", ":"))
+            photo_type = str(parsed.get("photo") or "unknown").strip().lower()
+            domain = str(parsed.get("domain") or "off_domain").strip().lower()
+            final_photo_type = photo_type
+            final_domain = domain
+            candidate_scene = str(parsed.get("scene") or "unusable").strip().lower()
+            domain_usable = photo_type == "real_photo" and domain == "target"
+            if not domain_usable:
+                candidate_scene = "unusable"
+            detected_labels = normalize_boxes(parsed.get("b") or parsed.get("boxes")) if domain_usable else []
+            proposal = json.dumps({"q": parsed.get("q"), "photo": photo_type, "domain": domain, "scene": candidate_scene, "b": parsed.get("b") or parsed.get("boxes") or []}, ensure_ascii=False, separators=(",", ":"))
             audit_parsed = None
             audit_raw = ""
             final_labels = detected_labels
             audit_verdict = "not_run"
-            if not args.no_audit:
+            if not args.no_audit and candidate_scene != "unusable":
                 audit_prompt = AUDIT_PROMPT.replace("{proposal}", proposal)
                 audit_parsed, audit_raw = chat(session, args.endpoint, args.model, audit_prompt, image_b64, (args.connect_timeout, args.read_timeout), args.max_tokens)
                 if audit_parsed is None:
@@ -313,10 +327,19 @@ def label_candidates(args: argparse.Namespace) -> dict:
                     audit_verdict = str(audit_parsed.get("v") or "needs_human").strip().lower()
                     if audit_verdict not in {"pass", "needs_human"}:
                         audit_verdict = "needs_human"
-                    audited_labels = normalize_boxes(audit_parsed.get("b") or audit_parsed.get("boxes"))
-                    final_labels = audited_labels if audit_verdict == "pass" else []
+                    audit_photo = str(audit_parsed.get("photo") or "unknown").strip().lower()
+                    audit_domain = str(audit_parsed.get("domain") or "off_domain").strip().lower()
+                    final_photo_type = audit_photo
+                    final_domain = audit_domain
+                    audit_scene = str(audit_parsed.get("scene") or candidate_scene).strip().lower()
+                    audit_usable = audit_photo == "real_photo" and audit_domain == "target" and audit_scene != "unusable"
+                    if not audit_usable:
+                        candidate_scene = "unusable"
+                        audited_labels = []
+                    else:
+                        audited_labels = normalize_boxes(audit_parsed.get("b") or audit_parsed.get("boxes"))
+                    final_labels = audited_labels if audit_verdict == "pass" and audit_usable else []
 
-            candidate_scene = str(parsed.get("scene") or "hard_negative").strip().lower()
             if candidate_scene not in {"positive", "hard_negative", "unusable"}:
                 candidate_scene = "positive" if detected_labels else "hard_negative"
             if final_labels:
@@ -343,6 +366,8 @@ def label_candidates(args: argparse.Namespace) -> dict:
                 "detect": {"parsed": parsed, "raw": raw_text[:8000], "accepted_labels": detected_labels},
                 "audit": {"verdict": audit_verdict, "parsed": audit_parsed, "raw": audit_raw[:8000]},
                 "candidate_scene": candidate_scene,
+                "photo_type": final_photo_type,
+                "domain": final_domain,
                 "scene": scene,
                 "model_labels": model_labels,
                 "labels": final_labels,
@@ -411,6 +436,8 @@ def label_candidates(args: argparse.Namespace) -> dict:
             "cache": cache.relative_to(dataset).as_posix(),
             "scene": scene,
             "model_scene": payload.get("scene"),
+            "photo_type": payload.get("photo_type"),
+            "domain": payload.get("domain"),
             "collection_bucket": source.get("collection_bucket"),
             "quarantine_reason": quarantine_reason,
             "proposed_classes": sorted({str(label.get("class_name") or "") for label in proposed if isinstance(label, dict)}),

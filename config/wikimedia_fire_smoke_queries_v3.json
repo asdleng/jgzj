@@ -1,0 +1,22 @@
+{
+  "api_url": "https://commons.wikimedia.org/w/api.php",
+  "download_width": 1600,
+  "exclude_title_regex": "\\b(?:art|painting|drawing|illustration|poster|pamphlet|map|diagram|logo|sculpture|memorial|museum|drill|aftermath|archive|radar|satellite|aerial|festival|light show)\\b|Bundesarchiv|LCCN|NYPL",
+  "queries": [
+    {"bucket": "fire_building", "category": "Burning buildings", "limit": 30},
+    {"bucket": "fire_vehicle", "category": "Vehicle fires", "limit": 30},
+    {"bucket": "smoke_fire", "category": "Smoke from fires", "limit": 70},
+    {"bucket": "fire_house", "category": "House fires", "limit": 18},
+    {"bucket": "fire_restaurant", "category": "Restaurant fires", "limit": 12},
+    {"bucket": "hard_negative_fog_building", "category": "Buildings in fog", "limit": 24},
+    {"bucket": "hard_negative_fog_road", "category": "Fog on roads", "limit": 9},
+    {"bucket": "hard_negative_exhaust", "category": "Exhaust fumes", "limit": 20},
+    {"bucket": "hard_negative_chimney", "category": "Smoking chimneys", "limit": 20},
+    {"bucket": "hard_negative_hydrant", "category": "Fire hydrants", "limit": 20},
+    {"bucket": "hard_negative_extinguisher", "category": "Fire extinguishers", "limit": 16},
+    {"bucket": "hard_negative_fire_cabinet", "category": "Fire hose cabinets", "limit": 16},
+    {"bucket": "hard_negative_dust", "query": "road dust cloud", "limit": 15, "exclude_title_regex": "Dust bowl"},
+    {"bucket": "hard_negative_light", "query": "traffic lights night street", "limit": 15, "exclude_title_regex": "art|festival|show"},
+    {"bucket": "hard_negative_sunset", "query": "sunset behind buildings street", "limit": 15, "exclude_title_regex": "painting|art"}
+  ]
+}

@@ -140,27 +140,43 @@ def commons_thumb_url(api_url: str, title: str, width: int) -> str:
 def commons_candidates(session: requests.Session, config_path: Path, timeout: Tuple[float, float]) -> Iterator[dict]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     api_url = str(config.get("api_url") or "https://commons.wikimedia.org/w/api.php")
+    global_exclude = str(config.get("exclude_title_regex") or "").strip()
     for item in config.get("queries") or []:
         query = clean_text(item.get("query"), 160)
+        category = clean_text(item.get("category"), 160)
         bucket = clean_text(item.get("bucket") or "unclassified", 80)
         remaining = max(0, int(item.get("limit") or 0))
-        if not query or remaining <= 0:
+        if not (query or category) or remaining <= 0:
             continue
+        include_pattern = str(item.get("include_title_regex") or "").strip()
+        exclude_parts = [part for part in (global_exclude, str(item.get("exclude_title_regex") or "").strip()) if part]
+        exclude_pattern = "|".join(f"(?:{part})" for part in exclude_parts)
         continuation: Dict[str, object] = {}
         while remaining > 0:
             batch = min(50, remaining)
             params: Dict[str, object] = {
                 "action": "query",
-                "generator": "search",
-                "gsrsearch": f"{query} filetype:bitmap",
-                "gsrnamespace": 6,
-                "gsrlimit": batch,
                 "prop": "imageinfo",
                 "iiprop": "url|size|mime|extmetadata",
                 "iiurlwidth": int(config.get("download_width") or 1920),
                 "format": "json",
                 "formatversion": 2,
             }
+            if category:
+                params.update({
+                    "generator": "categorymembers",
+                    "gcmtitle": f"Category:{category}",
+                    "gcmnamespace": 6,
+                    "gcmtype": "file",
+                    "gcmlimit": batch,
+                })
+            else:
+                params.update({
+                    "generator": "search",
+                    "gsrsearch": f"{query} filetype:bitmap",
+                    "gsrnamespace": 6,
+                    "gsrlimit": batch,
+                })
             params.update(continuation)
             response = session.get(api_url, params=params, timeout=timeout)
             response.raise_for_status()
@@ -169,6 +185,11 @@ def commons_candidates(session: requests.Session, config_path: Path, timeout: Tu
             if not pages:
                 break
             for page in pages:
+                title = clean_text(page.get("title"))
+                if include_pattern and not re.search(include_pattern, title, re.I):
+                    continue
+                if exclude_pattern and re.search(exclude_pattern, title, re.I):
+                    continue
                 infos = page.get("imageinfo") or []
                 if not infos:
                     continue
@@ -180,8 +201,9 @@ def commons_candidates(session: requests.Session, config_path: Path, timeout: Tu
                     "url": commons_thumb_url(api_url, page.get("title"), download_width),
                     "canonical_file_url": str(info.get("url") or ""),
                     "source_page_url": str(info.get("descriptionurl") or ""),
-                    "title": clean_text(page.get("title")),
-                    "query": query,
+                    "title": title,
+                    "query": query or f"category:{category}",
+                    "category": category,
                     "bucket": bucket,
                     "license": ext_value(meta, "LicenseShortName") or ext_value(meta, "UsageTerms"),
                     "license_url": ext_value(meta, "LicenseUrl"),
@@ -286,16 +308,19 @@ def crawl(args: argparse.Namespace) -> dict:
     seen_sha = set()
     seen_url = set()
     hash_tree = BKTree()
-    for row in iter_jsonl(manifest_path):
-        sha = str(row.get("sha256") or "")
-        url = str(row.get("source_file_url") or "")
-        dhash = str(row.get("dhash64") or "")
-        if sha:
-            seen_sha.add(sha)
-        if url:
-            seen_url.add(url)
-        if re.fullmatch(r"[0-9a-fA-F]{16}", dhash):
-            hash_tree.add(int(dhash, 16))
+    known_manifests = [manifest_path] + [path.resolve() for path in args.dedupe_manifest]
+    for known_manifest in known_manifests:
+        for row in iter_jsonl(known_manifest):
+            sha = str(row.get("sha256") or "")
+            dhash = str(row.get("dhash64") or "")
+            if sha:
+                seen_sha.add(sha)
+            for key in ("source_file_url", "canonical_file_url"):
+                url = str(row.get(key) or "")
+                if url:
+                    seen_url.add(url)
+            if re.fullmatch(r"[0-9a-fA-F]{16}", dhash):
+                hash_tree.add(int(dhash, 16))
 
     session = retry_session(args.user_agent)
     candidates: List[dict] = []
@@ -310,6 +335,7 @@ def crawl(args: argparse.Namespace) -> dict:
         if accepted >= args.max_images:
             break
         url = str(candidate.get("url") or "")
+        canonical_url = str(candidate.get("canonical_file_url") or "")
         base_log = {
             "schema": SCHEMA,
             "processed_at": now_iso(),
@@ -318,7 +344,7 @@ def crawl(args: argparse.Namespace) -> dict:
             "query": candidate.get("query"),
             "bucket": candidate.get("bucket"),
         }
-        if url in seen_url:
+        if url in seen_url or (canonical_url and canonical_url in seen_url):
             counts["already_seen_url"] = counts.get("already_seen_url", 0) + 1
             continue
         if not license_allowed(candidate.get("license")) and not args.allow_unknown_license:
@@ -367,6 +393,7 @@ def crawl(args: argparse.Namespace) -> dict:
                 "title": candidate.get("title"),
                 "query": candidate.get("query"),
                 "collection_bucket": candidate.get("bucket"),
+                "source_category": candidate.get("category"),
                 "search_hint_is_ground_truth": False,
                 "license": candidate.get("license"),
                 "license_url": candidate.get("license_url"),
@@ -383,6 +410,8 @@ def crawl(args: argparse.Namespace) -> dict:
             append_jsonl(log_path, {**base_log, "status": "accepted", "sha256": final_sha, "image": row["image"]})
             seen_sha.add(final_sha)
             seen_url.add(url)
+            if canonical_url:
+                seen_url.add(canonical_url)
             hash_tree.add(dhash_value)
             accepted += 1
             counts["accepted"] = counts.get("accepted", 0) + 1
@@ -413,6 +442,7 @@ def crawl(args: argparse.Namespace) -> dict:
         "training_eligible": False,
         "training_policy": "qwen_prelabel_then_human_review",
         "source_policy": "license_metadata_required",
+        "dedupe_manifests": [str(path) for path in args.dedupe_manifest],
     }
     write_json_atomic(output / "dataset_summary.json", summary)
     write_json_atomic(output / "training_guard.json", {
@@ -429,6 +459,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed-file", type=Path, action="append", default=[])
     parser.add_argument("--commons-config", type=Path)
+    parser.add_argument("--dedupe-manifest", type=Path, action="append", default=[])
     parser.add_argument("--max-images", type=int, default=200)
     parser.add_argument("--min-side", type=int, default=480)
     parser.add_argument("--max-side", type=int, default=2560)

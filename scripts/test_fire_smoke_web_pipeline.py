@@ -82,6 +82,11 @@ class FireSmokeWebPipelineTest(unittest.TestCase):
         kept, scene, reason = apply_review_guards([], "positive", "smoke_positive")
         self.assertEqual((kept, scene, reason), ([], "needs_human", "positive_without_accepted_box"))
 
+    def test_off_domain_media_is_unusable(self):
+        labels = [{"class_name": "smoke"}]
+        kept, scene, reason = apply_review_guards(labels, "unusable", "smoke_positive")
+        self.assertEqual((kept, scene, reason), ([], "unusable", "off_domain_or_non_photo"))
+
 
 if __name__ == "__main__":
     unittest.main()
