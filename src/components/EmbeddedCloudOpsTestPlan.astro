@@ -1,10 +1,10 @@
 ---
 const tabs = [
-  { id: "overview", label: "车辆总览" },
-  { id: "status", label: "车辆状态检查" },
-  { id: "params", label: "参数设置" },
-  { id: "map", label: "地图管理" },
-  { id: "agent", label: "智能体运维" }
+  { id: "overview", label: "车辆总览", desc: "在线车辆与异常故障" },
+  { id: "status", label: "车辆状态检查", desc: "核心与专项诊断" },
+  { id: "params", label: "参数设置", desc: "节点配置与变更预览" },
+  { id: "map", label: "地图管理", desc: "地图路径与版本管理" },
+  { id: "agent", label: "智能体运维", desc: "智能诊断与协作" }
 ];
 
 const readOnlyToolGroups = [
@@ -236,6 +236,7 @@ const agentRules = [
           <span class="cloud-ops-tab-index">{String(index + 1).padStart(2, "0")}</span>
           <span class="cloud-ops-tab-copy">
             <strong>{tab.label}</strong>
+            <small>{tab.desc}</small>
           </span>
           <span class="cloud-ops-tab-scan" aria-hidden="true"></span>
         </button>

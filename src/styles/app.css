@@ -1859,7 +1859,7 @@
 
 .cloud-ops-test-tabs button {
   position: relative;
-  min-height: 58px;
+  min-height: 70px;
   display: grid;
   grid-template-columns: 24px 10px minmax(0, 1fr);
   align-items: center;
@@ -1896,13 +1896,18 @@
 }
 
 .cloud-ops-tab-index {
+  align-self: start;
+  margin-top: 2px;
   color: #67e8f9;
   font-family: "Orbitron", "Noto Sans SC", sans-serif;
-  font-size: 1rem;
+  font-size: 0.88rem;
   font-weight: 800;
+  line-height: 1.25;
 }
 
 .cloud-ops-tab-light {
+  align-self: start;
+  margin-top: 4px;
   width: 10px;
   height: 10px;
   border-radius: 999px;
@@ -1929,13 +1934,18 @@
 
 .cloud-ops-tab-copy strong {
   color: #f8fafc;
-  font-size: 1rem;
+  font-size: 0.92rem;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
 .cloud-ops-tab-copy small {
   color: #93c5fd;
-  font-size: 0.76rem;
-  line-height: 1.35;
+  font-size: 0.68rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cloud-ops-tab-copy em {
