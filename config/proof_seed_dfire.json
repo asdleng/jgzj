@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "provider": "github_raw",
+      "url": "https://raw.githubusercontent.com/gaia-solutions-on-demand/DFireDataset/master/figures/dfire_examples.png",
+      "source_page_url": "https://github.com/gaia-solutions-on-demand/DFireDataset",
+      "title": "D-Fire representative examples",
+      "query": "official D-Fire examples",
+      "bucket": "pipeline_proof_only",
+      "license": "CC0 1.0 Universal",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "author": "Gaia Solutions on Demand researchers",
+      "credit": "D-Fire dataset repository; pipeline connectivity proof only"
+    }
+  ]
+}
