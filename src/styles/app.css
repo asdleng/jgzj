@@ -8465,6 +8465,11 @@ body.yolo-review-is-panning {
   color: #cbd5e1;
 }
 
+.cloud-ops-test-result-summary li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .cloud-ops-test-result-kv {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -8529,6 +8534,51 @@ body.yolo-review-is-panning {
   font-weight: 800;
 }
 
+.cloud-ops-test-media-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cloud-ops-test-media-head .cloud-ops-test-monitor-state {
+  color: #94a3b8;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-media-head .cloud-ops-test-monitor-state[hidden],
+.cloud-ops-test-monitor-toggle[hidden] {
+  display: none;
+}
+
+.cloud-ops-test-monitor-toggle {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid rgba(34, 211, 238, 0.42);
+  border-radius: 6px;
+  background: rgba(8, 47, 73, 0.7);
+  color: #cffafe;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cloud-ops-test-monitor-toggle:hover,
+.cloud-ops-test-monitor-toggle:focus-visible {
+  border-color: rgba(103, 232, 249, 0.86);
+  background: rgba(14, 116, 144, 0.42);
+  outline: none;
+}
+
+.is-live-monitoring .cloud-ops-test-monitor-toggle {
+  border-color: rgba(74, 222, 128, 0.52);
+  background: rgba(20, 83, 45, 0.58);
+  color: #dcfce7;
+}
+
 .cloud-ops-test-media-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8544,8 +8594,18 @@ body.yolo-review-is-panning {
   background: rgba(2, 6, 23, 0.72);
 }
 
-.cloud-ops-test-media-card > a {
+.cloud-ops-test-media-open {
   display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: #020617;
+  cursor: zoom-in;
+}
+
+.cloud-ops-test-media-open:focus-visible {
+  outline: 2px solid #67e8f9;
+  outline-offset: -2px;
 }
 
 .cloud-ops-test-media-card img,
@@ -8567,6 +8627,22 @@ body.yolo-review-is-panning {
   color: #fee2e2;
   font-size: 0.72rem;
   font-weight: 800;
+}
+
+.is-live-monitoring .cloud-ops-test-media-card.is-monitor-feed::before {
+  content: "LIVE";
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 8px;
+  padding: 4px 7px;
+  border-radius: 4px;
+  background: rgba(22, 101, 52, 0.92);
+  color: #f0fdf4;
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  pointer-events: none;
 }
 
 .cloud-ops-test-media-caption {
@@ -8604,6 +8680,92 @@ body.yolo-review-is-panning {
 
 .cloud-ops-test-media-empty.is-loading {
   color: #a5f3fc;
+}
+
+.cloud-ops-test-media-viewer {
+  width: min(96vw, 1440px);
+  max-width: none;
+  max-height: 94vh;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(103, 232, 249, 0.42);
+  border-radius: 8px;
+  background: #020617;
+  color: #f8fafc;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.68);
+}
+
+.cloud-ops-test-media-viewer::backdrop {
+  background: rgba(0, 0, 0, 0.82);
+}
+
+.cloud-ops-test-media-viewer-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: 94vh;
+}
+
+.cloud-ops-test-media-viewer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 52px;
+  padding: 9px 12px 9px 16px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.58);
+  background: #07101f;
+}
+
+.cloud-ops-test-media-viewer-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-media-viewer-head button {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.46);
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.86);
+  color: #f8fafc;
+  font: inherit;
+  font-size: 1.45rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cloud-ops-test-media-viewer-head button:hover,
+.cloud-ops-test-media-viewer-head button:focus-visible {
+  border-color: #67e8f9;
+  color: #67e8f9;
+  outline: none;
+}
+
+.cloud-ops-test-media-viewer figure {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  margin: 0;
+  background: #000;
+}
+
+.cloud-ops-test-media-viewer img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: calc(94vh - 96px);
+  object-fit: contain;
+}
+
+.cloud-ops-test-media-viewer figcaption {
+  min-height: 34px;
+  padding: 8px 16px;
+  overflow-wrap: anywhere;
+  background: #07101f;
+  color: #94a3b8;
+  font-size: 0.72rem;
 }
 
 
@@ -8663,8 +8825,32 @@ body.yolo-review-is-panning {
 }
 
 @media (max-width: 760px) {
+  .cloud-ops-test-media-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cloud-ops-test-media-head-actions {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
   .cloud-ops-test-media-grid {
     grid-template-columns: 1fr;
+  }
+
+  .cloud-ops-test-media-viewer {
+    width: calc(100vw - 16px);
+    max-height: 92vh;
+  }
+
+  .cloud-ops-test-media-viewer-shell {
+    max-height: 92vh;
+  }
+
+  .cloud-ops-test-media-viewer img {
+    max-height: calc(92vh - 96px);
   }
 }
 

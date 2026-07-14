@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from crawl_fire_smoke_candidates import (
     BKTree,
     DownloadDeadlineExceeded,
+    bucket_has_capacity,
+    commons_candidates,
     commons_mime_allowed,
     commons_thumb_url,
     dhash64,
@@ -71,6 +73,56 @@ class FireSmokeWebPipelineTest(unittest.TestCase):
         self.assertFalse(commons_mime_allowed("audio/wav"))
         self.assertFalse(commons_mime_allowed("image/svg+xml"))
         self.assertFalse(commons_mime_allowed("image/gif"))
+
+    def test_daily_commons_options_and_bucket_cap_are_propagated(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "query": {"pages": [{
+                        "pageid": 1,
+                        "title": "File:Recent fire.jpg",
+                        "imageinfo": [{
+                            "url": "https://upload.wikimedia.org/recent.jpg",
+                            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Recent_fire.jpg",
+                            "width": 1200,
+                            "height": 800,
+                            "mime": "image/jpeg",
+                            "extmetadata": {"LicenseShortName": {"value": "CC BY 4.0"}},
+                        }],
+                    }]},
+                }
+
+        class Session:
+            def __init__(self):
+                self.params = None
+
+            def get(self, _url, params, timeout):
+                self.params = params
+                self.timeout = timeout
+                return Response()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "daily.json"
+            config.write_text(json.dumps({
+                "queries": [{
+                    "bucket": "fire_building",
+                    "category": "Burning buildings",
+                    "limit": 1,
+                    "max_accept": 5,
+                    "category_sort": "timestamp",
+                    "category_direction": "descending",
+                }],
+            }), encoding="utf-8")
+            session = Session()
+            rows = list(commons_candidates(session, config, (3, 7)))
+        self.assertEqual(rows[0]["max_accept"], 5)
+        self.assertEqual(session.params["gcmsort"], "timestamp")
+        self.assertEqual(session.params["gcmdir"], "descending")
+        self.assertTrue(bucket_has_capacity(rows[0], {"fire_building": 4}))
+        self.assertFalse(bucket_has_capacity(rows[0], {"fire_building": 5}))
 
     def test_title_series_key_groups_numbered_event_photos(self):
         first = title_series_key("File:House fire in Waikanae, 16 May 2026, P 09.jpg")

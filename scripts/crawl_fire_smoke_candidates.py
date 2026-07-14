@@ -214,6 +214,12 @@ def commons_candidates(session: requests.Session, config_path: Path, timeout: Tu
                     "gcmtype": "file",
                     "gcmlimit": batch,
                 })
+                category_sort = str(item.get("category_sort") or "").strip().lower()
+                category_direction = str(item.get("category_direction") or "").strip().lower()
+                if category_sort in {"sortkey", "timestamp"}:
+                    params["gcmsort"] = category_sort
+                if category_direction in {"ascending", "descending"}:
+                    params["gcmdir"] = category_direction
             else:
                 params.update({
                     "generator": "search",
@@ -251,6 +257,7 @@ def commons_candidates(session: requests.Session, config_path: Path, timeout: Tu
                     "query": query or f"category:{category}",
                     "category": category,
                     "bucket": bucket,
+                    "max_accept": max(0, int(item.get("max_accept") or 0)),
                     "license": ext_value(meta, "LicenseShortName") or ext_value(meta, "UsageTerms"),
                     "license_url": ext_value(meta, "LicenseUrl"),
                     "author": ext_value(meta, "Artist"),
@@ -312,6 +319,12 @@ class BKTree:
             low, high = distance - radius, distance + radius
             stack.extend(child for edge, child in children.items() if low <= edge <= high)  # type: ignore[arg-type]
         return False
+
+
+def bucket_has_capacity(candidate: dict, accepted_by_bucket: Dict[str, int]) -> bool:
+    bucket = str(candidate.get("bucket") or "unclassified")
+    limit = max(0, int(candidate.get("max_accept") or 0))
+    return not limit or accepted_by_bucket.get(bucket, 0) < limit
 
 
 def validate_and_normalize(
@@ -381,6 +394,7 @@ def crawl(args: argparse.Namespace) -> dict:
 
     existing_images = sum(1 for _ in iter_jsonl(manifest_path))
     accepted = 0
+    accepted_by_bucket: Dict[str, int] = {}
     counts: Dict[str, int] = {}
     for candidate in candidates:
         if existing_images + accepted >= args.max_images:
@@ -397,6 +411,10 @@ def crawl(args: argparse.Namespace) -> dict:
         }
         if url in seen_url or (canonical_url and canonical_url in seen_url):
             counts["already_seen_url"] = counts.get("already_seen_url", 0) + 1
+            continue
+        bucket = str(candidate.get("bucket") or "unclassified")
+        if not bucket_has_capacity(candidate, accepted_by_bucket):
+            counts["bucket_quota_skipped"] = counts.get("bucket_quota_skipped", 0) + 1
             continue
         if not license_allowed(candidate.get("license")) and not args.allow_unknown_license:
             counts["license_rejected"] = counts.get("license_rejected", 0) + 1
@@ -480,6 +498,7 @@ def crawl(args: argparse.Namespace) -> dict:
             hash_tree.add(dhash_value)
             if series_key:
                 series_counts[series_key] = series_counts.get(series_key, 0) + 1
+            accepted_by_bucket[bucket] = accepted_by_bucket.get(bucket, 0) + 1
             accepted += 1
             counts["accepted"] = counts.get("accepted", 0) + 1
         except Exception as exc:
@@ -509,6 +528,7 @@ def crawl(args: argparse.Namespace) -> dict:
         "crawl_existing_images": existing_images,
         "crawl_new_images": accepted,
         "crawl_counts": counts,
+        "crawl_accepted_by_bucket": accepted_by_bucket,
         "training_eligible": False,
         "training_policy": "qwen_prelabel_then_human_review",
         "source_policy": "license_metadata_required",

@@ -1,0 +1,28 @@
+[Unit]
+Description=JGZJ daily licensed fire/smoke image crawl and Qwen review
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=6h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=admin1
+Group=admin1
+WorkingDirectory=/home/admin1/jgzj
+Environment=PYTHONUNBUFFERED=1
+Environment=HTTP_PROXY=http://127.0.0.1:7897
+Environment=HTTPS_PROXY=http://127.0.0.1:7897
+Environment=ALL_PROXY=http://127.0.0.1:7897
+Environment=NO_PROXY=127.0.0.1,localhost
+ExecStart=/usr/bin/python3 /home/admin1/jgzj/scripts/run_fire_smoke_web_daily.py
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=2h
+Restart=on-failure
+RestartSec=15min
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target

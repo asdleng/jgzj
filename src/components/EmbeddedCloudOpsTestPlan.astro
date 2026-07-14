@@ -25,10 +25,10 @@ const specialistDiagnosticGroups = [
     title: "感知与相机",
     desc: "相机、上传链路、AI 检测和障碍物处理。",
     tools: [
-      { label: "相机状态", tool: "status.camera", desc: "检查相机在线、帧率并返回实时画面", args: { include_rate: true, sample_seconds: 1 }, timeout: 18, includeLiveMedia: true },
-      { label: "上传链路", tool: "camera.upload_chain", desc: "检查图片/视频上传链路并返回实时画面", timeout: 25, includeLiveMedia: true },
+      { label: "相机状态", tool: "status.camera", desc: "检查相机在线、帧率并打开连续监控", args: { include_rate: true, sample_seconds: 1 }, timeout: 18, includeLiveMedia: true },
+      { label: "上传链路", tool: "camera.upload_chain", desc: "检查图片/视频上传链路并打开连续监控", timeout: 25, includeLiveMedia: true },
       { label: "AI检测配置", tool: "ai_detection.config", desc: "查看 AI 检测配置和落盘路径", timeout: 20 },
-      { label: "AI检测图片", tool: "ai_detection.images", desc: "查看最近检测图并对照实时画面", args: { limit: 6 }, timeout: 35, includeLiveMedia: true },
+      { label: "AI检测图片", tool: "ai_detection.images", desc: "查看最近检测图并对照连续监控", args: { limit: 6 }, timeout: 35, includeLiveMedia: true },
       { label: "障碍物处理状态", tool: "status.obstacle_processor", desc: "检查 obstacle processor 心跳和输入", timeout: 25 },
       { label: "障碍物预览", tool: "obstacle.preview", desc: "查看障碍物俯视预览", timeout: 25 }
     ]
@@ -373,13 +373,37 @@ const agentRules = [
             <section class="cloud-ops-test-media" data-role="tool-media" hidden aria-live="polite">
               <div class="cloud-ops-test-media-head">
                 <h4>图像与视频</h4>
-                <span data-role="tool-media-count">--</span>
+                <div class="cloud-ops-test-media-head-actions">
+                  <span data-role="tool-media-count">--</span>
+                  <span class="cloud-ops-test-monitor-state" data-role="live-monitor-state" hidden>单次抓拍</span>
+                  <button
+                    type="button"
+                    class="cloud-ops-test-monitor-toggle"
+                    data-action="live-monitor-toggle"
+                    data-role="live-monitor-toggle"
+                    aria-pressed="false"
+                    hidden
+                  >开始监控</button>
+                </div>
               </div>
               <div class="cloud-ops-test-media-grid" data-role="tool-media-grid"></div>
             </section>
           </section>
         </div>
       </section>
+
+      <dialog class="cloud-ops-test-media-viewer" data-role="media-viewer" aria-labelledby="cloud-ops-test-media-viewer-title">
+        <div class="cloud-ops-test-media-viewer-shell">
+          <div class="cloud-ops-test-media-viewer-head">
+            <strong id="cloud-ops-test-media-viewer-title" data-role="media-viewer-title">原图预览</strong>
+            <button type="button" data-action="media-viewer-close" aria-label="关闭原图预览" title="关闭">&times;</button>
+          </div>
+          <figure>
+            <img data-role="media-viewer-image" alt="" />
+            <figcaption data-role="media-viewer-meta"></figcaption>
+          </figure>
+        </div>
+      </dialog>
 
       <section id="cloud-ops-test-params" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head cloud-ops-param-page-head">
@@ -637,6 +661,13 @@ const agentRules = [
       max_width: 640,
       include_base64: true
     };
+    const LIVE_MONITOR_ARGS = {
+      camera_ids: ["camera1", "camera2", "camera3", "camera4"],
+      quality: 55,
+      max_width: 640,
+      include_base64: true
+    };
+    const LIVE_MONITOR_REFRESH_MS = 3000;
 
     const tabs = [...shell.querySelectorAll(".cloud-ops-test-tabs button")];
     const pages = [...shell.querySelectorAll(".cloud-ops-test-page")];
@@ -653,6 +684,12 @@ const agentRules = [
     const toolMedia = shell.querySelector('[data-role="tool-media"]');
     const toolMediaGrid = shell.querySelector('[data-role="tool-media-grid"]');
     const toolMediaCount = shell.querySelector('[data-role="tool-media-count"]');
+    const liveMonitorState = shell.querySelector('[data-role="live-monitor-state"]');
+    const liveMonitorToggle = shell.querySelector('[data-role="live-monitor-toggle"]');
+    const mediaViewer = shell.querySelector('[data-role="media-viewer"]');
+    const mediaViewerImage = shell.querySelector('[data-role="media-viewer-image"]');
+    const mediaViewerTitle = shell.querySelector('[data-role="media-viewer-title"]');
+    const mediaViewerMeta = shell.querySelector('[data-role="media-viewer-meta"]');
     const vehicleCount = shell.querySelector('[data-role="vehicle-count"]');
     const vehicleTableBody = shell.querySelector('[data-role="vehicle-table-body"]');
     const stopFaultCount = shell.querySelector('[data-role="stop-fault-count"]');
@@ -701,6 +738,15 @@ const agentRules = [
     let vehicles = [];
     let currentVehicleId = "";
     let vehicleSortMode = "status";
+    let liveMonitorRunning = false;
+    let liveMonitorTimer = 0;
+    let liveMonitorGeneration = 0;
+    let liveMonitorVehicleId = "";
+    let liveMonitorBasePayloads = [];
+    let liveMonitorLastPayload = null;
+    let liveMonitorFrameCount = 0;
+    let liveMonitorLastUpdatedAt = 0;
+    let activeViewerFollowLabel = "";
     let agentCanChat = false;
     let agentDefaultModel = "gpt-5.6-terra";
     let agentAvailableModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
@@ -790,6 +836,7 @@ const agentRules = [
     };
 
     const setActive = (targetId) => {
+      if (targetId !== "cloud-ops-test-status") stopLiveMonitor({ hideControl: true });
       tabs.forEach((tab) => tab.classList.toggle("is-active", tab.dataset.target === targetId));
       pages.forEach((page) => {
         page.dataset.active = page.id === targetId ? "true" : "false";
@@ -1086,6 +1133,7 @@ const agentRules = [
         items.push({
           src,
           kind,
+          toolName,
           label: mediaLabelOf(source, toolName, kind),
           width: source?.width || source?.frame_width || null,
           height: source?.height || source?.frame_height || null,
@@ -1119,6 +1167,40 @@ const agentRules = [
       visit(toolResultOfPayload(payload));
       return items;
     };
+    const mediaMetaText = (item) => {
+      const parts = [];
+      if (item?.width && item?.height) parts.push(`${item.width} x ${item.height}`);
+      if (item?.timestamp) parts.push(String(item.timestamp));
+      return parts.join(" · ");
+    };
+    const closeMediaViewer = () => {
+      if (!mediaViewer) return;
+      if (mediaViewer.open) mediaViewer.close();
+      if (mediaViewerImage) {
+        mediaViewerImage.removeAttribute("src");
+        mediaViewerImage.alt = "";
+      }
+      activeViewerFollowLabel = "";
+    };
+    const openMediaViewer = (item) => {
+      if (!mediaViewer || !mediaViewerImage || !item?.src) return;
+      mediaViewerImage.src = item.src;
+      mediaViewerImage.alt = item.label || "原图预览";
+      if (mediaViewerTitle) mediaViewerTitle.textContent = item.label || "原图预览";
+      if (mediaViewerMeta) mediaViewerMeta.textContent = mediaMetaText(item);
+      activeViewerFollowLabel = item.toolName === "camera.capture" ? item.label : "";
+      if (!mediaViewer.open) mediaViewer.showModal();
+    };
+    mediaViewer?.addEventListener("close", () => {
+      if (mediaViewerImage) {
+        mediaViewerImage.removeAttribute("src");
+        mediaViewerImage.alt = "";
+      }
+      activeViewerFollowLabel = "";
+    });
+    mediaViewer?.addEventListener("click", (event) => {
+      if (event.target === mediaViewer) closeMediaViewer();
+    });
     const clearToolMedia = () => {
       if (toolMediaGrid) toolMediaGrid.replaceChildren();
       if (toolMediaCount) toolMediaCount.textContent = "--";
@@ -1163,29 +1245,32 @@ const agentRules = [
       items.forEach((item, index) => {
         const card = document.createElement("article");
         card.className = `cloud-ops-test-media-card is-${item.kind}`;
+        if (item.toolName === "camera.capture") card.classList.add("is-monitor-feed");
         let media;
         if (item.kind === "video") {
           media = document.createElement("video");
           media.controls = true;
           media.muted = true;
           media.playsInline = true;
+          media.autoplay = true;
           media.preload = "metadata";
           media.src = item.src;
           media.setAttribute("aria-label", item.label);
           card.appendChild(media);
         } else {
-          const link = document.createElement("a");
-          link.href = item.src;
-          link.target = "_blank";
-          link.rel = "noreferrer noopener";
-          link.title = `${item.label}，点击查看原图`;
+          const openButton = document.createElement("button");
+          openButton.type = "button";
+          openButton.className = "cloud-ops-test-media-open";
+          openButton.title = `${item.label}，点击放大`;
+          openButton.setAttribute("aria-label", `${item.label}，点击放大`);
           media = document.createElement("img");
           media.src = item.src;
           media.alt = item.label;
           media.loading = index < 4 ? "eager" : "lazy";
           media.decoding = "async";
-          link.appendChild(media);
-          card.appendChild(link);
+          openButton.appendChild(media);
+          openButton.addEventListener("click", () => openMediaViewer(item));
+          card.appendChild(openButton);
         }
         media.addEventListener("error", () => card.classList.add("is-error"), { once: true });
 
@@ -1194,12 +1279,10 @@ const agentRules = [
         const title = document.createElement("strong");
         title.textContent = item.label;
         caption.appendChild(title);
-        const metaParts = [];
-        if (item.width && item.height) metaParts.push(`${item.width} × ${item.height}`);
-        if (item.timestamp) metaParts.push(String(item.timestamp));
-        if (metaParts.length) {
+        const metaText = mediaMetaText(item);
+        if (metaText) {
           const meta = document.createElement("small");
-          meta.textContent = metaParts.join(" · ");
+          meta.textContent = metaText;
           caption.appendChild(meta);
         }
         card.appendChild(caption);
@@ -1207,7 +1290,105 @@ const agentRules = [
       });
       if (toolMediaCount) toolMediaCount.textContent = `${items.length} 项`;
       toolMedia.hidden = false;
+      if (mediaViewer?.open && activeViewerFollowLabel) {
+        const nextViewerItem = items.find((item) => item.label === activeViewerFollowLabel && item.kind === "image");
+        if (nextViewerItem && mediaViewerImage) {
+          mediaViewerImage.src = nextViewerItem.src;
+          if (mediaViewerMeta) mediaViewerMeta.textContent = mediaMetaText(nextViewerItem);
+        }
+      }
       return items.length;
+    };
+    const formatMonitorTime = (timestamp) => new Date(timestamp).toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    });
+    const updateLiveMonitorUi = (message = "单次抓拍") => {
+      shell.classList.toggle("is-live-monitoring", liveMonitorRunning);
+      if (liveMonitorToggle) {
+        liveMonitorToggle.hidden = !liveMonitorVehicleId;
+        liveMonitorToggle.textContent = liveMonitorRunning ? "暂停监控" : "开始监控";
+        liveMonitorToggle.setAttribute("aria-pressed", liveMonitorRunning ? "true" : "false");
+      }
+      if (liveMonitorState) {
+        liveMonitorState.hidden = !liveMonitorVehicleId;
+        liveMonitorState.textContent = message;
+      }
+    };
+    const stopLiveMonitor = (options = {}) => {
+      liveMonitorRunning = false;
+      liveMonitorGeneration += 1;
+      if (liveMonitorTimer) window.clearTimeout(liveMonitorTimer);
+      liveMonitorTimer = 0;
+      if (options.hideControl) {
+        liveMonitorVehicleId = "";
+        liveMonitorBasePayloads = [];
+        liveMonitorLastPayload = null;
+      }
+      updateLiveMonitorUi(options.message || "监控已暂停");
+    };
+    const scheduleLiveMonitor = (delay, generation) => {
+      if (!liveMonitorRunning || generation !== liveMonitorGeneration) return;
+      if (liveMonitorTimer) window.clearTimeout(liveMonitorTimer);
+      liveMonitorTimer = window.setTimeout(() => refreshLiveMonitor(generation), delay);
+    };
+    const refreshLiveMonitor = async (generation) => {
+      if (!liveMonitorRunning || generation !== liveMonitorGeneration) return;
+      if (document.visibilityState === "hidden") {
+        if (liveMonitorTimer) window.clearTimeout(liveMonitorTimer);
+        liveMonitorTimer = 0;
+        updateLiveMonitorUi("页面后台，监控暂停");
+        return;
+      }
+      if (!liveMonitorVehicleId || selectedVehicleId() !== liveMonitorVehicleId) {
+        stopLiveMonitor({ hideControl: true });
+        return;
+      }
+      updateLiveMonitorUi("监控中 · 正在刷新");
+      try {
+        const payload = await requestReadOnlyToolPayload(
+          liveMonitorVehicleId,
+          "camera.capture",
+          LIVE_MONITOR_ARGS,
+          40,
+          "live-monitor"
+        );
+        if (!liveMonitorRunning || generation !== liveMonitorGeneration) return;
+        liveMonitorLastPayload = payload;
+        const liveCount = extractToolMediaItems(payload).length;
+        liveMonitorFrameCount += liveCount;
+        liveMonitorLastUpdatedAt = Date.now();
+        renderToolMedia([...liveMonitorBasePayloads, payload], { expected: true });
+        updateLiveMonitorUi(`监控中 · ${formatMonitorTime(liveMonitorLastUpdatedAt)} · ${liveCount} 路`);
+        scheduleLiveMonitor(LIVE_MONITOR_REFRESH_MS, generation);
+      } catch (error) {
+        if (!liveMonitorRunning || generation !== liveMonitorGeneration) return;
+        updateLiveMonitorUi("刷新失败 · 5 秒后重试");
+        scheduleLiveMonitor(5000, generation);
+      }
+    };
+    const startLiveMonitor = () => {
+      if (!liveMonitorVehicleId || !liveMonitorLastPayload) return;
+      liveMonitorRunning = true;
+      liveMonitorGeneration += 1;
+      const generation = liveMonitorGeneration;
+      updateLiveMonitorUi(liveMonitorLastUpdatedAt
+        ? `监控中 · ${formatMonitorTime(liveMonitorLastUpdatedAt)}`
+        : "监控中 · 等待刷新");
+      scheduleLiveMonitor(LIVE_MONITOR_REFRESH_MS, generation);
+    };
+    const configureLiveMonitor = (vehicleId, basePayloads, initialLivePayload, autoStart = true) => {
+      stopLiveMonitor({ hideControl: true });
+      if (!vehicleId || !initialLivePayload || !extractToolMediaItems(initialLivePayload).length) return;
+      liveMonitorVehicleId = vehicleId;
+      liveMonitorBasePayloads = (Array.isArray(basePayloads) ? basePayloads : [basePayloads]).filter(Boolean);
+      liveMonitorLastPayload = initialLivePayload;
+      liveMonitorFrameCount = extractToolMediaItems(initialLivePayload).length;
+      liveMonitorLastUpdatedAt = Date.now();
+      updateLiveMonitorUi(`单次抓拍 · ${formatMonitorTime(liveMonitorLastUpdatedAt)}`);
+      if (autoStart) startLiveMonitor();
     };
     const setStat = (key, value, note, tone = "") => {
       const card = shell.querySelector(`[data-stat="${key}"]`);
@@ -1245,9 +1426,14 @@ const agentRules = [
 
     const setSelectedVehicle = (vehicleId, options = {}) => {
       const normalized = String(vehicleId || "").trim();
-      currentVehicleId = vehicles.some((vehicle) => vehicleIdOf(vehicle) === normalized)
+      const nextVehicleId = vehicles.some((vehicle) => vehicleIdOf(vehicle) === normalized)
         ? normalized
         : vehicleIdOf(vehicles[0] || {});
+      if (currentVehicleId && nextVehicleId !== currentVehicleId) {
+        stopLiveMonitor({ hideControl: true });
+        closeMediaViewer();
+      }
+      currentVehicleId = nextVehicleId;
       syncSelectedVehicleUi();
       renderSummary();
       if (options.silent !== true) {
@@ -1963,13 +2149,13 @@ const agentRules = [
         const cameras = Array.isArray(result?.cameras) ? result.cameras : [];
         const offline = Array.isArray(result?.offline_cameras) ? result.offline_cameras : [];
         return {
-          title: "相机状态与实时画面",
+          title: "相机状态与实时监控",
           tone: ok && !offline.length ? "ok" : "warn",
           kv: [
             ["车辆", vehicleId],
             ["在线相机", `${result?.online_camera_count ?? 0} / ${result?.expected_camera_count ?? cameras.length}`],
             ["离线相机", offline.length ? offline.join("、") : "无"],
-            ["实时画面", liveMediaCount ? `${liveMediaCount} 路` : "未返回"]
+            ["实时监控", liveMediaCount ? `${liveMediaCount} 路` : "未返回"]
           ],
           lines: liveMediaError ? [`实时抓拍失败：${liveMediaError}`] : []
         };
@@ -1978,13 +2164,13 @@ const agentRules = [
         const detectionImages = Array.isArray(result?.images) ? result.images : [];
         const detectionMediaCount = extractToolMediaItems(payload).length;
         return {
-          title: "AI检测图片与实时画面",
+          title: "AI检测图片与实时监控",
           tone: ok && (detectionMediaCount || liveMediaCount) ? "ok" : "warn",
           kv: [
             ["车辆", vehicleId],
             ["最近检测图", `${detectionMediaCount || detectionImages.length || 0} 张`],
             ["目录总数", `${result?.total_files ?? detectionImages.length ?? 0}`],
-            ["实时画面", liveMediaCount ? `${liveMediaCount} 路` : "未返回"]
+            ["实时监控", liveMediaCount ? `${liveMediaCount} 路` : "未返回"]
           ],
           lines: [
             ...(result?.save_path ? [`图片目录：${result.save_path}`] : []),
@@ -1994,12 +2180,12 @@ const agentRules = [
       }
       if (normalizedTool === "camera.upload_chain" && result && typeof result === "object") {
         return {
-          title: "相机上传链路与实时画面",
+          title: "相机上传链路与实时监控",
           tone: ok && liveMediaCount ? "ok" : "warn",
           kv: [
             ["车辆", vehicleId],
             ["链路状态", result?.health || result?.status || "未知"],
-            ["实时画面", liveMediaCount ? `${liveMediaCount} 路` : "未返回"]
+            ["实时监控", liveMediaCount ? `${liveMediaCount} 路` : "未返回"]
           ],
           lines: liveMediaError ? [`实时抓拍失败：${liveMediaError}`] : []
         };
@@ -2095,6 +2281,8 @@ const agentRules = [
         setStatus(`工具 ${toolName} 不在只读白名单内`, "error");
         return;
       }
+      stopLiveMonitor({ hideControl: true });
+      closeMediaViewer();
       if (lastToolLabel) lastToolLabel.textContent = `${vehicleId} · ${toolName}`;
       if (toolSummary) toolSummary.textContent = `正在对 ${vehicleId} 执行只读检查：${toolName}`;
       clearToolMedia();
@@ -2198,6 +2386,9 @@ const agentRules = [
           expected: MEDIA_EXPECTED_TOOLS.has(toolName) || includeLiveMedia,
           error: liveMediaError ? `实时画面获取失败：${liveMediaError}` : ""
         });
+        if (includeLiveMedia && liveMediaPayload) {
+          configureLiveMonitor(vehicleId, [payload], liveMediaPayload, true);
+        }
         setStatus(`只读检查完成：${toolName}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}`, liveMediaError && !mediaCount ? "loading" : "ok");
       } catch (error) {
         const primaryError = error?.message || "未知错误";
@@ -2220,6 +2411,9 @@ const agentRules = [
           toolSummary.textContent = mediaCount
             ? `状态检查失败：${primaryError}；已返回 ${mediaCount} 项实时媒体。`
             : `只读检查失败：${primaryError}`;
+        }
+        if (includeLiveMedia && fallbackLiveMedia) {
+          configureLiveMonitor(vehicleId, [], fallbackLiveMedia, true);
         }
         setStatus(`只读检查失败：${primaryError}${mediaCount ? ` · 已返回 ${mediaCount} 项实时媒体` : ""}`, "error");
       }
@@ -2276,6 +2470,11 @@ const agentRules = [
         loadVehicles();
       } else if (action === "readonly-tool") {
         runReadOnlyTool(actionButton);
+      } else if (action === "live-monitor-toggle") {
+        if (liveMonitorRunning) stopLiveMonitor({ message: "监控已暂停" });
+        else startLiveMonitor();
+      } else if (action === "media-viewer-close") {
+        closeMediaViewer();
       } else if (action === "agent-toggle") {
         setAgentRailOpen(!agentRail?.classList.contains("is-open"));
       } else if (action === "agent-pin") {
@@ -2301,6 +2500,17 @@ const agentRules = [
     vehicleSelect?.addEventListener("change", () => {
       setSelectedVehicle(vehicleSelect.value || "");
     });
+    document.addEventListener("visibilitychange", () => {
+      if (!liveMonitorRunning) return;
+      if (document.visibilityState === "hidden") {
+        if (liveMonitorTimer) window.clearTimeout(liveMonitorTimer);
+        liveMonitorTimer = 0;
+        updateLiveMonitorUi("页面后台，监控暂停");
+        return;
+      }
+      scheduleLiveMonitor(0, liveMonitorGeneration);
+    });
+    window.addEventListener("beforeunload", () => stopLiveMonitor({ hideControl: true }));
     vehicleSortSelect?.addEventListener("change", () => {
       vehicleSortMode = vehicleSortSelect.value === "id" ? "id" : "status";
       renderVehicles();
