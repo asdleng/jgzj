@@ -263,7 +263,6 @@ const agentRules = [
           <div class="cloud-ops-test-api-strip">
             <span>接口 <strong data-role="interface-source">--</strong></span>
             <span>刷新 <strong data-role="last-refresh">--</strong></span>
-            <span data-role="api-note">只读车辆注册表</span>
           </div>
           <div class="cloud-ops-test-vehicle-list cloud-ops-test-abnormal-list" data-role="vehicle-list">
             <p class="cloud-ops-test-empty">等待异常车辆判断...</p>
@@ -642,7 +641,6 @@ const agentRules = [
     const lastToolLabel = shell.querySelector('[data-role="last-tool-label"]');
     const interfaceSource = shell.querySelector('[data-role="interface-source"]');
     const lastRefresh = shell.querySelector('[data-role="last-refresh"]');
-    const apiNote = shell.querySelector('[data-role="api-note"]');
     const agentStatus = shell.querySelector('[data-role="agent-status"]');
     const agentStatusNote = shell.querySelector('[data-role="agent-status-note"]');
     const agentModel = shell.querySelector('[data-role="agent-model"]');
@@ -1040,7 +1038,7 @@ const agentRules = [
       syncSelectedVehicleUi();
       renderSummary();
       if (options.silent !== true) {
-        setStatus(`已选择 ${currentVehicleId || "车辆"}，未执行任何车端工具。`, "ok");
+        setStatus(`当前车辆：${currentVehicleId || "--"}`, "ok");
       }
       updateAgentContext();
     };
@@ -1686,14 +1684,13 @@ const agentRules = [
         vehicles = Array.isArray(payload.vehicles) ? payload.vehicles : [];
         if (interfaceSource) interfaceSource.textContent = payload.source || "cloud_agent_registry";
         if (lastRefresh) lastRefresh.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-        if (apiNote) apiNote.textContent = payload.note || "只读车辆注册表";
         renderVehicleOptions();
         renderVehicles();
         renderStopFaultMonitor();
         renderVehicleTable();
         syncSelectedVehicleUi();
         updateStats();
-        setStatus(`已读取 ${vehicles.length} 台真实车辆。未自动执行任何车端工具。`, "ok");
+        setStatus(`已更新 ${vehicles.length} 台车辆。`, "ok");
       } catch (error) {
         vehicles = [];
         currentVehicleId = "";
