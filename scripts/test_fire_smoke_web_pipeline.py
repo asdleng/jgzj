@@ -10,7 +10,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from crawl_fire_smoke_candidates import BKTree, commons_thumb_url, dhash64, license_allowed, load_seed_file
-from label_fire_smoke_candidates_qwen import extract_json, normalize_boxes
+from label_fire_smoke_candidates_qwen import apply_review_guards, extract_json, normalize_boxes
 
 
 class FireSmokeWebPipelineTest(unittest.TestCase):
@@ -70,6 +70,17 @@ class FireSmokeWebPipelineTest(unittest.TestCase):
     def test_json_extraction_uses_last_complete_object(self):
         parsed = extract_json('<think>{"draft":true}</think>\n{"q":"good","scene":"hard_negative","b":[]}')
         self.assertEqual(parsed["scene"], "hard_negative")
+
+    def test_hard_negative_positive_is_quarantined(self):
+        labels = [{"class_name": "smoke"}]
+        kept, scene, reason = apply_review_guards(labels, "positive", "hard_negative_steam")
+        self.assertEqual(kept, [])
+        self.assertEqual(scene, "needs_human")
+        self.assertEqual(reason, "positive_in_hard_negative_bucket")
+
+    def test_positive_without_strict_box_is_quarantined(self):
+        kept, scene, reason = apply_review_guards([], "positive", "smoke_positive")
+        self.assertEqual((kept, scene, reason), ([], "needs_human", "positive_without_accepted_box"))
 
 
 if __name__ == "__main__":

@@ -251,6 +251,17 @@ def yolo_text(labels: List[dict]) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def apply_review_guards(labels: List[dict], scene: str, collection_bucket: str) -> Tuple[List[dict], str, str]:
+    guarded_labels = list(labels)
+    guarded_scene = str(scene or "needs_human")
+    bucket = str(collection_bucket or "")
+    if guarded_labels and bucket.startswith("hard_negative"):
+        return [], "needs_human", "positive_in_hard_negative_bucket"
+    if guarded_scene == "positive" and not guarded_labels:
+        return [], "needs_human", "positive_without_accepted_box"
+    return guarded_labels, guarded_scene, ""
+
+
 def label_candidates(args: argparse.Namespace) -> dict:
     dataset = args.dataset.resolve()
     manifest_path = dataset / "manifest_selected_images.jsonl"
@@ -259,6 +270,7 @@ def label_candidates(args: argparse.Namespace) -> dict:
     result_manifest = dataset / "qwen_review_manifest.jsonl"
     session = retry_session(args.api_key)
     rows = list(iter_jsonl(manifest_path))
+    source_by_sha = {str(row.get("sha256") or ""): row for row in rows}
     counts: Counter = Counter()
     processed = 0
 
@@ -313,6 +325,12 @@ def label_candidates(args: argparse.Namespace) -> dict:
                 scene = "needs_human"
             else:
                 scene = candidate_scene
+            model_labels = list(final_labels)
+            final_labels, scene, quarantine_reason = apply_review_guards(
+                model_labels,
+                scene,
+                str(row.get("collection_bucket") or ""),
+            )
             payload = {
                 "schema": SCHEMA,
                 "ok": True,
@@ -326,7 +344,9 @@ def label_candidates(args: argparse.Namespace) -> dict:
                 "audit": {"verdict": audit_verdict, "parsed": audit_parsed, "raw": audit_raw[:8000]},
                 "candidate_scene": candidate_scene,
                 "scene": scene,
+                "model_labels": model_labels,
                 "labels": final_labels,
+                "quarantine_reason": quarantine_reason,
                 "review_status": "needs_human",
                 "training_eligible": False,
                 "created_at": now_iso(),
@@ -361,17 +381,28 @@ def label_candidates(args: argparse.Namespace) -> dict:
         if not payload.get("ok"):
             corpus_counts["error_images"] += 1
             continue
-        labels = payload.get("labels") if isinstance(payload.get("labels"), list) else []
+        model_labels = payload.get("model_labels")
+        if not isinstance(model_labels, list):
+            model_labels = payload.get("labels") if isinstance(payload.get("labels"), list) else []
         proposed = ((payload.get("detect") or {}).get("accepted_labels") or [])
-        scene = str(payload.get("scene") or "needs_human")
+        source = source_by_sha.get(str(payload.get("image_sha256") or ""), {})
+        labels, scene, quarantine_reason = apply_review_guards(
+            model_labels,
+            str(payload.get("scene") or "needs_human"),
+            str(source.get("collection_bucket") or ""),
+        )
         audit_verdict = str((payload.get("audit") or {}).get("verdict") or "not_run")
         image_rel = str(payload.get("image") or "")
         label_rel = f"labels/review/{Path(image_rel).stem}.txt"
+        write_text_atomic(dataset / label_rel, yolo_text(labels))
         corpus_counts["labeled_images"] += 1
         corpus_counts[f"scene_{scene}"] += 1
         corpus_counts[f"audit_{audit_verdict}"] += 1
         corpus_counts["accepted_boxes"] += len(labels)
+        corpus_counts["model_accepted_boxes"] += len(model_labels)
         corpus_counts["proposed_boxes"] += len(proposed)
+        if quarantine_reason:
+            corpus_counts[f"quarantine_{quarantine_reason}"] += 1
         review_rows.append({
             "schema": SCHEMA,
             "image_sha256": payload.get("image_sha256"),
@@ -379,7 +410,11 @@ def label_candidates(args: argparse.Namespace) -> dict:
             "label": label_rel,
             "cache": cache.relative_to(dataset).as_posix(),
             "scene": scene,
+            "model_scene": payload.get("scene"),
+            "collection_bucket": source.get("collection_bucket"),
+            "quarantine_reason": quarantine_reason,
             "proposed_classes": sorted({str(label.get("class_name") or "") for label in proposed if isinstance(label, dict)}),
+            "model_classes": sorted({str(label.get("class_name") or "") for label in model_labels if isinstance(label, dict)}),
             "classes": sorted({str(label.get("class_name") or "") for label in labels if isinstance(label, dict)}),
             "box_count": len(labels),
             "audit_verdict": audit_verdict,
