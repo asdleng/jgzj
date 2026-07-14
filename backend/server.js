@@ -26,6 +26,7 @@ const registerOneApiProxyRoutes = require('./one-api-proxy');
 const { registerMapPackageUploadRoutes } = require('./map-package-upload');
 const { registerSemanticAnchorInferRoutes } = require('./semantic-anchor-infer');
 const {
+  effectiveYoloWebAuditVerdict,
   isYoloWebCrawlerSummary,
   normalizeYoloWebCrawlerStats,
   normalizeYoloWebReview
@@ -4627,10 +4628,7 @@ function yoloWebQwenProjection(webReview, dataset) {
   if (!Object.keys(counts).length && scene) {
     counts[scene] = 1;
   }
-  const rawAuditVerdict = normalizeClassToken(webReview.audit_verdict);
-  const auditVerdict = scene === 'needs_human' || webReview.quarantine_reason
-    ? 'needs_human'
-    : rawAuditVerdict;
+  const auditVerdict = normalizeClassToken(effectiveYoloWebAuditVerdict(webReview));
   const auditStatus = auditVerdict === 'not_run' ? 'not_applicable' : 'done';
   const auditReasons = [webReview.quarantine_reason].filter(Boolean);
   return {
@@ -4903,8 +4901,8 @@ async function listYoloReviewItems(datasetId, query = {}) {
         return false;
       }
     } else if (qwenAudit && dataset.source_type === 'web_crawler') {
-      const verdict = normalizeClassToken(item.web_review?.audit_verdict || '');
       const scene = normalizeClassToken(item.web_review?.scene || '');
+      const verdict = normalizeClassToken(effectiveYoloWebAuditVerdict(item.web_review));
       if (qwenAudit === 'suspect') {
         if (verdict !== 'needs_human' && scene !== 'needs_human') {
           return false;

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  effectiveYoloWebAuditVerdict,
   isYoloWebCrawlerSummary,
   normalizeYoloWebCrawlerStats,
   normalizeYoloWebReview
@@ -76,4 +77,13 @@ test('joins source license metadata with the Qwen review row', () => {
   assert.equal(normalized.license, 'CC BY-SA 4.0');
   assert.deepEqual(normalized.model_classes, ['smoke']);
   assert.equal(normalized.training_eligible, false);
+});
+
+test('deterministic quarantine overrides a raw Qwen pass verdict', () => {
+  assert.equal(effectiveYoloWebAuditVerdict({
+    scene: 'needs_human',
+    audit_verdict: 'pass',
+    quarantine_reason: 'positive_in_hard_negative_bucket'
+  }), 'needs_human');
+  assert.equal(effectiveYoloWebAuditVerdict({ scene: 'positive', audit_verdict: 'pass' }), 'pass');
 });

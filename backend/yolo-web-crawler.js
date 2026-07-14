@@ -89,8 +89,18 @@ function normalizeYoloWebReview(review, manifest) {
   };
 }
 
+function effectiveYoloWebAuditVerdict(review) {
+  const scene = String(review?.scene || '').trim().toLowerCase();
+  const quarantineReason = String(review?.quarantine_reason || '').trim();
+  if (scene === 'needs_human' || quarantineReason) {
+    return 'needs_human';
+  }
+  return String(review?.audit_verdict || '').trim().toLowerCase();
+}
+
 module.exports = {
   WEB_CANDIDATE_SCHEMA,
+  effectiveYoloWebAuditVerdict,
   isYoloWebCrawlerSummary,
   normalizeYoloWebCrawlerStats,
   normalizeYoloWebReview
