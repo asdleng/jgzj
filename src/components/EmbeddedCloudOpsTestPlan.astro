@@ -25,10 +25,10 @@ const specialistDiagnosticGroups = [
     title: "感知与相机",
     desc: "相机、上传链路、AI 检测和障碍物处理。",
     tools: [
-      { label: "相机状态", tool: "status.camera", desc: "检查相机在线、帧率和基础状态", args: { include_rate: true, sample_seconds: 1 }, timeout: 18 },
-      { label: "上传链路", tool: "camera.upload_chain", desc: "检查图片/视频上传链路", timeout: 25 },
+      { label: "相机状态", tool: "status.camera", desc: "检查相机在线、帧率并返回实时画面", args: { include_rate: true, sample_seconds: 1 }, timeout: 18, includeLiveMedia: true },
+      { label: "上传链路", tool: "camera.upload_chain", desc: "检查图片/视频上传链路并返回实时画面", timeout: 25, includeLiveMedia: true },
       { label: "AI检测配置", tool: "ai_detection.config", desc: "查看 AI 检测配置和落盘路径", timeout: 20 },
-      { label: "AI检测图片", tool: "ai_detection.images", desc: "查看最近 AI 检测图片", timeout: 25 },
+      { label: "AI检测图片", tool: "ai_detection.images", desc: "查看最近检测图并对照实时画面", args: { limit: 6 }, timeout: 35, includeLiveMedia: true },
       { label: "障碍物处理状态", tool: "status.obstacle_processor", desc: "检查 obstacle processor 心跳和输入", timeout: 25 },
       { label: "障碍物预览", tool: "obstacle.preview", desc: "查看障碍物俯视预览", timeout: 25 }
     ]
@@ -333,6 +333,7 @@ const agentRules = [
                           data-tool-args={JSON.stringify("args" in item ? item.args : {})}
                           data-timeout-s={String("timeout" in item ? item.timeout : 25)}
                           data-purpose={"purpose" in item ? item.purpose : ""}
+                          data-include-live-media={String("includeLiveMedia" in item ? item.includeLiveMedia : false)}
                         >
                           <strong>{item.label}</strong>
                           <span>{item.tool}</span>
@@ -369,10 +370,13 @@ const agentRules = [
               <span data-role="last-tool-label">未查询</span>
             </div>
             <div class="cloud-ops-test-result-summary" data-role="tool-summary">暂无查询结果</div>
-            <details class="cloud-ops-test-disclosure">
-              <summary>原始数据</summary>
-              <pre class="cloud-ops-test-json" data-role="tool-result">暂无数据</pre>
-            </details>
+            <section class="cloud-ops-test-media" data-role="tool-media" hidden aria-live="polite">
+              <div class="cloud-ops-test-media-head">
+                <h4>图像与视频</h4>
+                <span data-role="tool-media-count">--</span>
+              </div>
+              <div class="cloud-ops-test-media-grid" data-role="tool-media-grid"></div>
+            </section>
           </section>
         </div>
       </section>
@@ -607,6 +611,7 @@ const agentRules = [
       "status.body_control",
       "status.control",
       "status.camera",
+      "camera.capture",
       "status.obstacle_processor",
       "ros.overview",
       "system.snapshot",
@@ -618,6 +623,20 @@ const agentRules = [
       "obstacle.preview",
       "route.list"
     ]);
+    const MEDIA_EXPECTED_TOOLS = new Set([
+      "status.camera",
+      "camera.capture",
+      "camera.upload_chain",
+      "ai_detection.images",
+      "map.preview",
+      "obstacle.preview"
+    ]);
+    const LIVE_CAPTURE_ARGS = {
+      camera_ids: ["camera1", "camera2", "camera3", "camera4"],
+      quality: 70,
+      max_width: 640,
+      include_base64: true
+    };
 
     const tabs = [...shell.querySelectorAll(".cloud-ops-test-tabs button")];
     const pages = [...shell.querySelectorAll(".cloud-ops-test-page")];
@@ -631,6 +650,9 @@ const agentRules = [
     const agentToggle = shell.querySelector('[data-action="agent-toggle"]');
     const agentPin = shell.querySelector('[data-action="agent-pin"]');
     const toolSummary = shell.querySelector('[data-role="tool-summary"]');
+    const toolMedia = shell.querySelector('[data-role="tool-media"]');
+    const toolMediaGrid = shell.querySelector('[data-role="tool-media-grid"]');
+    const toolMediaCount = shell.querySelector('[data-role="tool-media-count"]');
     const vehicleCount = shell.querySelector('[data-role="vehicle-count"]');
     const vehicleTableBody = shell.querySelector('[data-role="vehicle-table-body"]');
     const stopFaultCount = shell.querySelector('[data-role="stop-fault-count"]');
@@ -638,7 +660,6 @@ const agentRules = [
     const selectedVehicleChip = shell.querySelector('[data-role="selected-vehicle-chip"]');
     const selectedVehicleTitle = shell.querySelector('[data-role="selected-vehicle-title"]');
     const vehicleSummary = shell.querySelector('[data-role="vehicle-summary"]');
-    const toolResult = shell.querySelector('[data-role="tool-result"]');
     const lastToolLabel = shell.querySelector('[data-role="last-tool-label"]');
     const interfaceSource = shell.querySelector('[data-role="interface-source"]');
     const lastRefresh = shell.querySelector('[data-role="last-refresh"]');
@@ -996,6 +1017,197 @@ const agentRules = [
       } catch (_error) {
         return fallback;
       }
+    };
+    const toolNameOfPayload = (payload) => String(
+      payload?.plan?.tool_name ||
+      payload?.execution?.request?.tool_name ||
+      payload?.request?.tool_name ||
+      payload?.tool_name ||
+      ""
+    ).trim();
+    const toolResultOfPayload = (payload) => {
+      const execution = payload?.execution || payload;
+      return execution?.data?.response?.result ?? execution?.data?.response ?? payload?.result ?? payload;
+    };
+    const looksLikeBase64Payload = (value) => {
+      const text = String(value || "").replace(/\s+/g, "");
+      return text.length > 120 && /^[A-Za-z0-9+/=]+$/.test(text);
+    };
+    const normalizedMediaMime = (value, kind = "image") => {
+      const mime = String(value || "").toLowerCase().split(";", 1)[0].trim();
+      if (kind === "video" && /^video\/(mp4|webm|ogg)$/.test(mime)) return mime;
+      if (kind === "image" && /^image\/(jpeg|jpg|png|webp|gif)$/.test(mime)) return mime === "image/jpg" ? "image/jpeg" : mime;
+      return kind === "video" ? "video/mp4" : "image/jpeg";
+    };
+    const toMediaDataUrl = (base64, mimeType, kind = "image") => {
+      const data = String(base64 || "").replace(/\s+/g, "");
+      if (!looksLikeBase64Payload(data)) return "";
+      return `data:${normalizedMediaMime(mimeType, kind)};base64,${data}`;
+    };
+    const safeMediaUrl = (value, kind = "image", generic = false) => {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      const dataPattern = kind === "video"
+        ? /^data:video\/(mp4|webm|ogg);base64,/i
+        : /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i;
+      if (dataPattern.test(text)) return text;
+      if (generic) {
+        const path = text.split(/[?#]/, 1)[0];
+        const extensionPattern = kind === "video" ? /\.(mp4|webm|ogg)$/i : /\.(jpe?g|png|webp|gif)$/i;
+        if (!extensionPattern.test(path)) return "";
+      }
+      try {
+        const parsed = new URL(text, window.location.origin);
+        if (parsed.origin === window.location.origin || parsed.protocol === "https:") return parsed.href;
+      } catch (_error) {}
+      return "";
+    };
+    const mediaLabelOf = (source, toolName, kind) => {
+      const camera = source?.camera_id || source?.camera || source?.requested || source?.channel || "";
+      const base = toolName === "camera.capture"
+        ? "实时抓拍"
+        : toolName === "ai_detection.images"
+          ? "AI检测图片"
+          : toolName === "obstacle.preview"
+            ? "障碍物预览"
+            : toolName === "map.preview"
+              ? "地图预览"
+              : kind === "video" ? "实时视频" : "实时图像";
+      return camera ? `${base} · ${camera}` : String(source?.label || source?.title || source?.name || base);
+    };
+    const extractToolMediaItems = (payload) => {
+      const items = [];
+      const seenObjects = new WeakSet();
+      const seenSources = new Set();
+      const toolName = toolNameOfPayload(payload);
+      const addItem = (source, src, kind) => {
+        if (!src || seenSources.has(src) || items.length >= 12) return;
+        seenSources.add(src);
+        items.push({
+          src,
+          kind,
+          label: mediaLabelOf(source, toolName, kind),
+          width: source?.width || source?.frame_width || null,
+          height: source?.height || source?.frame_height || null,
+          timestamp: source?.captured_at || source?.generated_at || source?.created_at || source?.ts || ""
+        });
+      };
+      const visit = (value, depth = 0) => {
+        if (!value || depth > 7 || items.length >= 12) return;
+        if (Array.isArray(value)) {
+          value.slice(0, 12).forEach((item) => visit(item, depth + 1));
+          return;
+        }
+        if (typeof value !== "object" || seenObjects.has(value)) return;
+        seenObjects.add(value);
+
+        const mimeType = value?.mime_type || value?.image_mime_type || value?.video_mime_type || value?.format || "";
+        const isVideoMime = String(mimeType).startsWith("video/");
+        const videoBase64 = value?.video_base64 || value?.mp4_base64 || (isVideoMime ? value?.data_base64 || value?.base64 : "");
+        const imageBase64 = value?.image_base64 || value?.jpeg_base64 || value?.jpg_base64 || value?.frame_base64 || (!isVideoMime ? value?.data_base64 || value?.base64 : "");
+        const videoSrc = safeMediaUrl(value?.video_url || value?.playback_url || value?.stream_url, "video") || toMediaDataUrl(videoBase64, mimeType, "video");
+        const imageSrc = safeMediaUrl(value?.image_url || value?.snapshot_url || value?.frame_url, "image") || toMediaDataUrl(imageBase64, mimeType, "image");
+        const genericVideoSrc = safeMediaUrl(value?.url, "video", true);
+        const genericImageSrc = safeMediaUrl(value?.url, "image", true);
+        addItem(value, videoSrc || genericVideoSrc, "video");
+        addItem(value, imageSrc || genericImageSrc, "image");
+
+        Object.values(value).forEach((child) => {
+          if (child && typeof child === "object") visit(child, depth + 1);
+        });
+      };
+      visit(toolResultOfPayload(payload));
+      return items;
+    };
+    const clearToolMedia = () => {
+      if (toolMediaGrid) toolMediaGrid.replaceChildren();
+      if (toolMediaCount) toolMediaCount.textContent = "--";
+      if (toolMedia) toolMedia.hidden = true;
+    };
+    const showToolMediaLoading = (message = "正在获取实时画面...") => {
+      if (!toolMedia || !toolMediaGrid) return;
+      const empty = document.createElement("p");
+      empty.className = "cloud-ops-test-media-empty is-loading";
+      empty.textContent = message;
+      toolMediaGrid.replaceChildren(empty);
+      if (toolMediaCount) toolMediaCount.textContent = "读取中";
+      toolMedia.hidden = false;
+    };
+    const renderToolMedia = (payloads, options = {}) => {
+      if (!toolMedia || !toolMediaGrid) return 0;
+      const items = [];
+      const seen = new Set();
+      (Array.isArray(payloads) ? payloads : [payloads]).filter(Boolean).forEach((payload) => {
+        extractToolMediaItems(payload).forEach((item) => {
+          if (!seen.has(item.src) && items.length < 12) {
+            seen.add(item.src);
+            items.push(item);
+          }
+        });
+      });
+      toolMediaGrid.replaceChildren();
+      if (!items.length) {
+        if (!options.expected && !options.error) {
+          toolMedia.hidden = true;
+          return 0;
+        }
+        const empty = document.createElement("p");
+        empty.className = "cloud-ops-test-media-empty";
+        empty.textContent = options.error || "本次检查未返回可展示的实时图像或视频。";
+        toolMediaGrid.appendChild(empty);
+        if (toolMediaCount) toolMediaCount.textContent = "0 项";
+        toolMedia.hidden = false;
+        return 0;
+      }
+
+      items.forEach((item, index) => {
+        const card = document.createElement("article");
+        card.className = `cloud-ops-test-media-card is-${item.kind}`;
+        let media;
+        if (item.kind === "video") {
+          media = document.createElement("video");
+          media.controls = true;
+          media.muted = true;
+          media.playsInline = true;
+          media.preload = "metadata";
+          media.src = item.src;
+          media.setAttribute("aria-label", item.label);
+          card.appendChild(media);
+        } else {
+          const link = document.createElement("a");
+          link.href = item.src;
+          link.target = "_blank";
+          link.rel = "noreferrer noopener";
+          link.title = `${item.label}，点击查看原图`;
+          media = document.createElement("img");
+          media.src = item.src;
+          media.alt = item.label;
+          media.loading = index < 4 ? "eager" : "lazy";
+          media.decoding = "async";
+          link.appendChild(media);
+          card.appendChild(link);
+        }
+        media.addEventListener("error", () => card.classList.add("is-error"), { once: true });
+
+        const caption = document.createElement("div");
+        caption.className = "cloud-ops-test-media-caption";
+        const title = document.createElement("strong");
+        title.textContent = item.label;
+        caption.appendChild(title);
+        const metaParts = [];
+        if (item.width && item.height) metaParts.push(`${item.width} × ${item.height}`);
+        if (item.timestamp) metaParts.push(String(item.timestamp));
+        if (metaParts.length) {
+          const meta = document.createElement("small");
+          meta.textContent = metaParts.join(" · ");
+          caption.appendChild(meta);
+        }
+        card.appendChild(caption);
+        toolMediaGrid.appendChild(card);
+      });
+      if (toolMediaCount) toolMediaCount.textContent = `${items.length} 项`;
+      toolMedia.hidden = false;
+      return items.length;
     };
     const setStat = (key, value, note, tone = "") => {
       const card = shell.querySelector(`[data-stat="${key}"]`);
@@ -1646,16 +1858,6 @@ const agentRules = [
         const answer = finalPayload.answer || "模型没有返回文本。";
         agentConversationHistory.push({ role: "assistant", content: answer });
         finishAgentRunMessage(run, finalPayload);
-        if (toolResult && finalPayload?.evidence) {
-          toolResult.textContent = JSON.stringify({
-            audit_id: finalPayload.audit_id,
-            mode: finalPayload.mode,
-            run_kind: finalPayload.run_kind,
-            timings: finalPayload.timings,
-            model_error: finalPayload.model_error,
-            evidence: finalPayload.evidence
-          }, null, 2);
-        }
         if (agentLatency) agentLatency.textContent = `${finalPayload?.model_error ? "证据摘要" : "完成"} · ${formatAgentDuration(finalPayload.latency_ms)}`;
         setStatus(
           finalPayload?.run_kind === "vehicle_diagnosis"
@@ -1749,12 +1951,59 @@ const agentRules = [
       };
     };
 
-    const summarizeToolPayload = (toolName, payload, vehicleId) => {
+    const summarizeToolPayload = (toolName, payload, vehicleId, liveMediaPayload = null, liveMediaError = "") => {
       const normalizedTool = String(toolName || "");
       if (normalizedTool === "task.navigation_context" || normalizedTool === "communication.cloud_vehicle" || normalizedTool === "combined.snapshot") {
         return summarizeCombinedResults(payload);
       }
       const ok = payload?.ok !== false;
+      const result = toolResultOfPayload(payload);
+      const liveMediaCount = liveMediaPayload ? extractToolMediaItems(liveMediaPayload).length : 0;
+      if (normalizedTool === "status.camera" && result && typeof result === "object") {
+        const cameras = Array.isArray(result?.cameras) ? result.cameras : [];
+        const offline = Array.isArray(result?.offline_cameras) ? result.offline_cameras : [];
+        return {
+          title: "相机状态与实时画面",
+          tone: ok && !offline.length ? "ok" : "warn",
+          kv: [
+            ["车辆", vehicleId],
+            ["在线相机", `${result?.online_camera_count ?? 0} / ${result?.expected_camera_count ?? cameras.length}`],
+            ["离线相机", offline.length ? offline.join("、") : "无"],
+            ["实时画面", liveMediaCount ? `${liveMediaCount} 路` : "未返回"]
+          ],
+          lines: liveMediaError ? [`实时抓拍失败：${liveMediaError}`] : []
+        };
+      }
+      if (normalizedTool === "ai_detection.images" && result && typeof result === "object") {
+        const detectionImages = Array.isArray(result?.images) ? result.images : [];
+        const detectionMediaCount = extractToolMediaItems(payload).length;
+        return {
+          title: "AI检测图片与实时画面",
+          tone: ok && (detectionMediaCount || liveMediaCount) ? "ok" : "warn",
+          kv: [
+            ["车辆", vehicleId],
+            ["最近检测图", `${detectionMediaCount || detectionImages.length || 0} 张`],
+            ["目录总数", `${result?.total_files ?? detectionImages.length ?? 0}`],
+            ["实时画面", liveMediaCount ? `${liveMediaCount} 路` : "未返回"]
+          ],
+          lines: [
+            ...(result?.save_path ? [`图片目录：${result.save_path}`] : []),
+            ...(liveMediaError ? [`实时抓拍失败：${liveMediaError}`] : [])
+          ]
+        };
+      }
+      if (normalizedTool === "camera.upload_chain" && result && typeof result === "object") {
+        return {
+          title: "相机上传链路与实时画面",
+          tone: ok && liveMediaCount ? "ok" : "warn",
+          kv: [
+            ["车辆", vehicleId],
+            ["链路状态", result?.health || result?.status || "未知"],
+            ["实时画面", liveMediaCount ? `${liveMediaCount} 路` : "未返回"]
+          ],
+          lines: liveMediaError ? [`实时抓拍失败：${liveMediaError}`] : []
+        };
+      }
       const status = findFirstByKey(payload, ["status", "state", "health", "result", "summary"]);
       const speed = findFirstByKey(payload, ["speed_kph", "speed", "vehicle_speed", "localization_speed_mps"]);
       const mode = findFirstByKey(payload, ["running_mode", "mode", "planner_state"]);
@@ -1785,8 +2034,9 @@ const agentRules = [
       if (memory !== undefined) kv.push(["内存", memory]);
       if (disk !== undefined) kv.push(["磁盘", disk]);
       const lines = [];
+      const errorDetail = findFirstByKey(payload, ["detail", "error", "message", "error_message"]);
       if (status !== undefined) lines.push(`返回状态：${displayValue(status)}`);
-      lines.push(ok ? "接口正常返回，下面是根据返回字段提取的关键结果。" : "接口返回异常，请展开原始 JSON 查看错误详情。");
+      if (!ok && errorDetail !== undefined) lines.push(`错误：${displayValue(errorDetail)}`);
       return {
         title: titleByTool[normalizedTool] || `${normalizedTool} 检查摘要`,
         tone: ok ? "ok" : "warn",
@@ -1795,17 +2045,38 @@ const agentRules = [
       };
     };
 
-    const renderToolSummary = (toolName, payload, vehicleId) => {
+    const renderToolSummary = (toolName, payload, vehicleId, liveMediaPayload = null, liveMediaError = "") => {
       if (!toolSummary) return;
-      const summary = summarizeToolPayload(toolName, payload, vehicleId);
+      const summary = summarizeToolPayload(toolName, payload, vehicleId, liveMediaPayload, liveMediaError);
       const kvHtml = summary.kv?.length
         ? `<dl class="cloud-ops-test-result-kv">${summary.kv.map(([k, v]) => resultLine(k, v)).join("")}</dl>`
         : "";
       const lineHtml = summary.lines?.length
         ? `<ul>${summary.lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`
         : "";
-      toolSummary.innerHTML = `<strong>${escapeHtml(summary.title)}</strong>${kvHtml}${lineHtml}<p>完整原始返回已折叠在下方，需要排障时再展开。</p>`;
+      toolSummary.innerHTML = `<strong>${escapeHtml(summary.title)}</strong>${kvHtml}${lineHtml}`;
       toolSummary.dataset.tone = summary.tone || "ok";
+    };
+
+    const requestReadOnlyToolPayload = async (vehicleId, toolName, args = {}, timeout_s = 30, requestKind = "readonly") => {
+      const response = await fetch(EXECUTE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          action: "tool_call",
+          vehicle_id: vehicleId,
+          tool_name: toolName,
+          args,
+          timeout_s,
+          request_id: `cloud-ops-test-${requestKind}-${toolName}-${Date.now()}`
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) {
+        throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+      }
+      return payload;
     };
 
     const runReadOnlyTool = async (button) => {
@@ -1813,6 +2084,7 @@ const agentRules = [
       const toolAction = String(button?.dataset?.toolAction || "tool_call").trim();
       const args = parseJsonDataset(button?.dataset?.toolArgs, {});
       const timeout_s = Number.parseInt(button?.dataset?.timeoutS || "30", 10) || 30;
+      const includeLiveMedia = button?.dataset?.includeLiveMedia === "true";
       const vehicle = selectedVehicle();
       const vehicleId = vehicleIdOf(vehicle);
       if (!vehicleId) {
@@ -1825,7 +2097,8 @@ const agentRules = [
       }
       if (lastToolLabel) lastToolLabel.textContent = `${vehicleId} · ${toolName}`;
       if (toolSummary) toolSummary.textContent = `正在对 ${vehicleId} 执行只读检查：${toolName}`;
-      if (toolResult) toolResult.textContent = "正在执行只读检查...";
+      clearToolMedia();
+      if (MEDIA_EXPECTED_TOOLS.has(toolName) || includeLiveMedia) showToolMediaLoading();
       setStatus(`点击触发只读工具：${toolName}`, "loading");
       try {
         let payload;
@@ -1908,29 +2181,47 @@ const agentRules = [
           payload = await response.json().catch(() => ({}));
           if (!response.ok || payload?.ok === false) throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
         } else {
-          const response = await fetch(EXECUTE_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "application/json" },
-            credentials: "same-origin",
-            body: JSON.stringify({
-              action: "tool_call",
-              vehicle_id: vehicleId,
-              tool_name: toolName,
-              args,
-              timeout_s,
-              request_id: `cloud-ops-test-readonly-${Date.now()}`
-            })
-          });
-          payload = await response.json().catch(() => ({}));
-          if (!response.ok || payload?.ok === false) throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+          payload = await requestReadOnlyToolPayload(vehicleId, toolName, args, timeout_s);
         }
-        renderToolSummary(toolName, payload, vehicleId);
-        if (toolResult) toolResult.textContent = JSON.stringify(payload, null, 2);
-        setStatus(`只读检查完成：${toolName}`, "ok");
+        let liveMediaPayload = null;
+        let liveMediaError = "";
+        if (includeLiveMedia) {
+          if (toolSummary) toolSummary.textContent = `状态检查完成，正在获取 ${vehicleId} 的实时画面...`;
+          try {
+            liveMediaPayload = await requestReadOnlyToolPayload(vehicleId, "camera.capture", LIVE_CAPTURE_ARGS, 40, "live-media");
+          } catch (error) {
+            liveMediaError = error?.message || "未知错误";
+          }
+        }
+        renderToolSummary(toolName, payload, vehicleId, liveMediaPayload, liveMediaError);
+        const mediaCount = renderToolMedia([payload, liveMediaPayload], {
+          expected: MEDIA_EXPECTED_TOOLS.has(toolName) || includeLiveMedia,
+          error: liveMediaError ? `实时画面获取失败：${liveMediaError}` : ""
+        });
+        setStatus(`只读检查完成：${toolName}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}`, liveMediaError && !mediaCount ? "loading" : "ok");
       } catch (error) {
-        if (toolSummary) toolSummary.textContent = `只读检查失败：${error?.message || "未知错误"}`;
-        if (toolResult) toolResult.textContent = `执行失败：${error?.message || "未知错误"}`;
-        setStatus(`只读检查失败：${error?.message || "未知错误"}`, "error");
+        const primaryError = error?.message || "未知错误";
+        let fallbackLiveMedia = null;
+        let fallbackMediaError = "";
+        if (includeLiveMedia) {
+          try {
+            fallbackLiveMedia = await requestReadOnlyToolPayload(vehicleId, "camera.capture", LIVE_CAPTURE_ARGS, 40, "live-media-fallback");
+          } catch (mediaError) {
+            fallbackMediaError = mediaError?.message || "未知错误";
+          }
+        }
+        const mediaCount = renderToolMedia([fallbackLiveMedia], {
+          expected: MEDIA_EXPECTED_TOOLS.has(toolName) || includeLiveMedia,
+          error: fallbackMediaError
+            ? `检查失败：${primaryError}；实时画面获取失败：${fallbackMediaError}`
+            : `检查失败：${primaryError}`
+        });
+        if (toolSummary) {
+          toolSummary.textContent = mediaCount
+            ? `状态检查失败：${primaryError}；已返回 ${mediaCount} 项实时媒体。`
+            : `只读检查失败：${primaryError}`;
+        }
+        setStatus(`只读检查失败：${primaryError}${mediaCount ? ` · 已返回 ${mediaCount} 项实时媒体` : ""}`, "error");
       }
     };
 

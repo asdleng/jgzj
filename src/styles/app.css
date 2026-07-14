@@ -8499,6 +8499,113 @@ body.yolo-review-is-panning {
   overflow-wrap: anywhere;
 }
 
+.cloud-ops-test-media {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(71, 85, 105, 0.5);
+}
+
+.cloud-ops-test-media[hidden] {
+  display: none;
+}
+
+.cloud-ops-test-media-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cloud-ops-test-media-head h4 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 0.9rem;
+}
+
+.cloud-ops-test-media-head span {
+  color: #67e8f9;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.cloud-ops-test-media-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cloud-ops-test-media-card {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(71, 85, 105, 0.62);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.72);
+}
+
+.cloud-ops-test-media-card > a {
+  display: block;
+}
+
+.cloud-ops-test-media-card img,
+.cloud-ops-test-media-card video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border: 0;
+  background: #020617;
+  object-fit: contain;
+}
+
+.cloud-ops-test-media-card.is-error::after {
+  content: "媒体加载失败";
+  position: absolute;
+  inset: 0 0 auto;
+  padding: 7px 9px;
+  background: rgba(127, 29, 29, 0.9);
+  color: #fee2e2;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.cloud-ops-test-media-caption {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 10px 10px;
+}
+
+.cloud-ops-test-media-caption strong {
+  color: #f8fafc;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-media-caption small {
+  color: #94a3b8;
+  font-size: 0.66rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-media-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed rgba(100, 116, 139, 0.58);
+  border-radius: 8px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.cloud-ops-test-media-empty.is-loading {
+  color: #a5f3fc;
+}
+
 
 /* Cloud Ops Test status checks split layout. */
 .cloud-ops-test-status-split {
@@ -8552,6 +8659,12 @@ body.yolo-review-is-panning {
   .cloud-ops-test-sticky-result {
     position: static;
     max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .cloud-ops-test-media-grid {
+    grid-template-columns: 1fr;
   }
 }
 
