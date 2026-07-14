@@ -1,0 +1,16 @@
+{
+  "api_url": "https://commons.wikimedia.org/w/api.php",
+  "download_width": 1600,
+  "queries": [
+    {"bucket": "fire_positive", "query": "building fire flames", "limit": 12},
+    {"bucket": "fire_positive", "query": "vehicle fire flames", "limit": 12},
+    {"bucket": "fire_positive", "query": "small outdoor bonfire", "limit": 12},
+    {"bucket": "smoke_positive", "query": "rising smoke plume fire", "limit": 12},
+    {"bucket": "smoke_positive", "query": "building smoke fire", "limit": 12},
+    {"bucket": "hard_negative_fog", "query": "street fog", "limit": 12},
+    {"bucket": "hard_negative_steam", "query": "street steam vent", "limit": 12},
+    {"bucket": "hard_negative_dust", "query": "road dust cloud", "limit": 12},
+    {"bucket": "hard_negative_light", "query": "red street light night", "limit": 12},
+    {"bucket": "hard_negative_fire_equipment", "query": "fire hydrant street", "limit": 12}
+  ]
+}
