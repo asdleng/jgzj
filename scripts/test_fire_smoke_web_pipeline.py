@@ -19,6 +19,7 @@ from crawl_fire_smoke_candidates import (
     download_deadline,
     license_allowed,
     load_seed_file,
+    title_series_key,
 )
 from label_fire_smoke_candidates_qwen import apply_review_guards, extract_json, normalize_boxes
 
@@ -70,6 +71,14 @@ class FireSmokeWebPipelineTest(unittest.TestCase):
         self.assertFalse(commons_mime_allowed("audio/wav"))
         self.assertFalse(commons_mime_allowed("image/svg+xml"))
         self.assertFalse(commons_mime_allowed("image/gif"))
+
+    def test_title_series_key_groups_numbered_event_photos(self):
+        first = title_series_key("File:House fire in Waikanae, 16 May 2026, P 09.jpg")
+        later = title_series_key("File:House fire in Waikanae, 16 May 2026, P 30.jpg")
+        other = title_series_key("File:Structure Fire in Union, Mississippi 04.jpg")
+        self.assertEqual(first, later)
+        self.assertNotEqual(first, other)
+        self.assertEqual(title_series_key("File:Fire 01.jpg"), "")
 
     def test_download_deadline_interrupts_trickle_stream(self):
         with self.assertRaises(DownloadDeadlineExceeded):

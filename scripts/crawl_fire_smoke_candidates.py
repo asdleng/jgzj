@@ -106,6 +106,19 @@ def commons_mime_allowed(value: object) -> bool:
     return str(value or "").strip().lower() in COMMONS_PHOTO_MIME_TYPES
 
 
+def title_series_key(value: object) -> str:
+    title = clean_text(value, 240)
+    title = re.sub(r"^file:\s*", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\.(?:jpe?g|png|webp|gif|tiff?|bmp|webm)$", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\([^)]*\)", " ", title)
+    title = re.sub(r"\d+", " ", title)
+    title = re.sub(r"[^\w]+", " ", title.casefold(), flags=re.UNICODE)
+    key = " ".join(title.split())
+    if len(key) < 12 or len(key.split()) < 2:
+        return ""
+    return key[:160]
+
+
 def retry_session(user_agent: str) -> requests.Session:
     retry = Retry(
         total=4,
@@ -341,6 +354,7 @@ def crawl(args: argparse.Namespace) -> dict:
     seen_sha = set()
     seen_url = set()
     hash_tree = BKTree()
+    series_counts: Dict[str, int] = {}
     known_manifests = [manifest_path] + [path.resolve() for path in args.dedupe_manifest]
     for known_manifest in known_manifests:
         for row in iter_jsonl(known_manifest):
@@ -354,6 +368,9 @@ def crawl(args: argparse.Namespace) -> dict:
                     seen_url.add(url)
             if re.fullmatch(r"[0-9a-fA-F]{16}", dhash):
                 hash_tree.add(int(dhash, 16))
+            series_key = str(row.get("source_series_key") or title_series_key(row.get("title")))
+            if series_key:
+                series_counts[series_key] = series_counts.get(series_key, 0) + 1
 
     session = retry_session(args.user_agent)
     candidates: List[dict] = []
@@ -384,6 +401,18 @@ def crawl(args: argparse.Namespace) -> dict:
         if not license_allowed(candidate.get("license")) and not args.allow_unknown_license:
             counts["license_rejected"] = counts.get("license_rejected", 0) + 1
             append_jsonl(log_path, {**base_log, "status": "rejected", "reason": "license_not_allowed", "license": candidate.get("license")})
+            seen_url.add(url)
+            continue
+        series_key = title_series_key(candidate.get("title"))
+        if args.max_per_series > 0 and series_key and series_counts.get(series_key, 0) >= args.max_per_series:
+            counts["series_limit_rejected"] = counts.get("series_limit_rejected", 0) + 1
+            append_jsonl(log_path, {
+                **base_log,
+                "status": "rejected",
+                "reason": "series_limit_reached",
+                "source_series_key": series_key,
+                "max_per_series": args.max_per_series,
+            })
             seen_url.add(url)
             continue
 
@@ -429,6 +458,7 @@ def crawl(args: argparse.Namespace) -> dict:
                 "query": candidate.get("query"),
                 "collection_bucket": candidate.get("bucket"),
                 "source_category": candidate.get("category"),
+                "source_series_key": series_key,
                 "search_hint_is_ground_truth": False,
                 "license": candidate.get("license"),
                 "license_url": candidate.get("license_url"),
@@ -448,6 +478,8 @@ def crawl(args: argparse.Namespace) -> dict:
             if canonical_url:
                 seen_url.add(canonical_url)
             hash_tree.add(dhash_value)
+            if series_key:
+                series_counts[series_key] = series_counts.get(series_key, 0) + 1
             accepted += 1
             counts["accepted"] = counts.get("accepted", 0) + 1
         except Exception as exc:
@@ -504,6 +536,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-bytes", type=int, default=20 * 1024 * 1024)
     parser.add_argument("--jpeg-quality", type=int, default=92)
     parser.add_argument("--dhash-radius", type=int, default=4)
+    parser.add_argument("--max-per-series", type=int, default=4, help="Maximum images sharing a normalized event/title series; 0 disables the cap.")
     parser.add_argument("--delay", type=float, default=0.25)
     parser.add_argument("--connect-timeout", type=float, default=10.0)
     parser.add_argument("--read-timeout", type=float, default=45.0)
