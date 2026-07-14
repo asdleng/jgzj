@@ -355,10 +355,11 @@ def crawl(args: argparse.Namespace) -> dict:
     if args.commons_config:
         candidates.extend(commons_candidates(session, args.commons_config, (args.connect_timeout, args.read_timeout)))
 
+    existing_images = sum(1 for _ in iter_jsonl(manifest_path))
     accepted = 0
     counts: Dict[str, int] = {}
     for candidate in candidates:
-        if accepted >= args.max_images:
+        if existing_images + accepted >= args.max_images:
             break
         url = str(candidate.get("url") or "")
         canonical_url = str(candidate.get("canonical_file_url") or "")
@@ -465,6 +466,9 @@ def crawl(args: argparse.Namespace) -> dict:
         "updated_at": now_iso(),
         "classes": ["fire", "smoke"],
         "images": {"review": total_manifest},
+        "crawl_target_images": args.max_images,
+        "crawl_existing_images": existing_images,
+        "crawl_new_images": accepted,
         "crawl_counts": counts,
         "training_eligible": False,
         "training_policy": "qwen_prelabel_then_human_review",
