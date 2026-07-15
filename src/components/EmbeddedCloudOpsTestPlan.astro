@@ -375,6 +375,14 @@ const agentRules = [
                 <h4 data-role="tool-media-title">图像与视频</h4>
                 <div class="cloud-ops-test-media-head-actions">
                   <span data-role="tool-media-count">--</span>
+                  <span class="cloud-ops-test-ai-state" data-role="ai-detection-state" hidden>AI 标注待查询</span>
+                  <button
+                    type="button"
+                    class="cloud-ops-test-ai-action"
+                    data-action="ai-detection-load-more"
+                    data-role="ai-detection-load-more"
+                    hidden
+                  >加载更多标注图</button>
                   <span class="cloud-ops-test-monitor-state" data-role="live-monitor-state" hidden>单次抓拍</span>
                   <button
                     type="button"
@@ -680,8 +688,9 @@ const agentRules = [
       include_base64: true
     };
     const LIVE_MONITOR_REFRESH_MS = 3000;
-    const OBSTACLE_DETECTION_REFRESH_MS = 15000;
-    const OBSTACLE_DETECTION_ARGS = { limit: 6 };
+    const OBSTACLE_DETECTION_INITIAL_ARGS = { limit: 2 };
+    const OBSTACLE_DETECTION_MORE_ARGS = { limit: 6 };
+    const OBSTACLE_DETECTION_TIMEOUT_S = 70;
     const OBSTACLE_POINTCLOUD_TOPICS = ["/rslidar_points32", "/filtered_points"];
     const OBSTACLE_POINTCLOUD_ARGS = {
       timeout_s: 5,
@@ -709,6 +718,8 @@ const agentRules = [
     const toolMediaGrid = shell.querySelector('[data-role="tool-media-grid"]');
     const toolMediaCount = shell.querySelector('[data-role="tool-media-count"]');
     const toolMediaTitle = shell.querySelector('[data-role="tool-media-title"]');
+    const aiDetectionState = shell.querySelector('[data-role="ai-detection-state"]');
+    const aiDetectionLoadMore = shell.querySelector('[data-role="ai-detection-load-more"]');
     const liveMonitorState = shell.querySelector('[data-role="live-monitor-state"]');
     const liveMonitorToggle = shell.querySelector('[data-role="live-monitor-toggle"]');
     const mapRouteControls = shell.querySelector('[data-role="map-route-controls"]');
@@ -772,9 +783,10 @@ const agentRules = [
     let liveMonitorVehicleId = "";
     let liveMonitorBasePayloads = [];
     let liveMonitorLastPayload = null;
-    let liveMonitorSupplement = null;
     let liveMonitorFrameCount = 0;
     let liveMonitorLastUpdatedAt = 0;
+    let liveMonitorRefreshPromise = null;
+    let obstacleDetectionContext = null;
     let activeViewerFollowLabel = "";
     let mapRouteState = null;
     let mapRouteGeneration = 0;
@@ -1755,8 +1767,63 @@ const agentRules = [
         mapRouteStatus.textContent = message || (routes.length ? `${routes.length} 条路线` : "基础地图已显示");
       }
     };
+    const resetObstacleDetectionContext = () => {
+      obstacleDetectionContext = null;
+      if (aiDetectionState) {
+        aiDetectionState.hidden = true;
+        aiDetectionState.textContent = "AI 标注待查询";
+        aiDetectionState.removeAttribute("data-tone");
+      }
+      if (aiDetectionLoadMore) {
+        aiDetectionLoadMore.hidden = true;
+        aiDetectionLoadMore.disabled = false;
+        aiDetectionLoadMore.textContent = "加载更多标注图";
+      }
+    };
+    const updateAiDetectionControls = () => {
+      const context = obstacleDetectionContext;
+      if (!context || context.vehicleId !== selectedVehicleId()) {
+        resetObstacleDetectionContext();
+        return;
+      }
+      const status = context.detectionStatus || {};
+      const imageCount = Number(status.imageCount || 0);
+      if (aiDetectionState) {
+        aiDetectionState.hidden = false;
+        aiDetectionState.textContent = context.loading
+          ? "AI 标注读取中"
+          : status.message || (imageCount ? `AI 标注 ${imageCount} 张` : "暂无历史标注图片");
+        aiDetectionState.dataset.tone = context.loading ? "loading" : (status.kind || "empty");
+      }
+      if (aiDetectionLoadMore) {
+        aiDetectionLoadMore.hidden = false;
+        aiDetectionLoadMore.disabled = Boolean(context.loading);
+        aiDetectionLoadMore.textContent = context.loading
+          ? "正在读取..."
+          : imageCount === 0
+            ? "重试标注图"
+            : !context.loadedFull
+              ? "加载更多标注图"
+              : "刷新标注图";
+      }
+    };
+    const renderObstacleDetectionContext = () => {
+      const context = obstacleDetectionContext;
+      if (!context) return 0;
+      return renderToolMedia(
+        [context.pointCloudPayload || context.obstaclePayload, context.detectionPayload, context.livePayload],
+        {
+          expected: true,
+          error: [
+            context.detectionError ? `AI 标注实景：${context.detectionError}` : "",
+            context.liveMediaError ? `实时相机获取失败：${context.liveMediaError}` : ""
+          ].filter(Boolean).join("；")
+        }
+      );
+    };
     const clearToolMedia = () => {
       resetMapRouteControls();
+      resetObstacleDetectionContext();
       if (toolMediaTitle) toolMediaTitle.textContent = "图像与视频";
       if (toolMediaGrid) toolMediaGrid.replaceChildren();
       if (toolMediaCount) toolMediaCount.textContent = "--";
@@ -1885,7 +1952,6 @@ const agentRules = [
         liveMonitorVehicleId = "";
         liveMonitorBasePayloads = [];
         liveMonitorLastPayload = null;
-        liveMonitorSupplement = null;
       }
       updateLiveMonitorUi(options.message || "监控已暂停");
     };
@@ -1907,58 +1973,41 @@ const agentRules = [
         return;
       }
       updateLiveMonitorUi("监控中 · 正在刷新");
+      let refreshPromise = null;
       try {
-        const refreshSupplement = Boolean(
-          liveMonitorSupplement &&
-          Date.now() - liveMonitorSupplement.lastRequestedAt >= liveMonitorSupplement.refreshMs
+        refreshPromise = requestReadOnlyToolPayload(
+          liveMonitorVehicleId,
+          "camera.capture",
+          LIVE_MONITOR_ARGS,
+          40,
+          "live-monitor"
         );
-        if (refreshSupplement) {
-          liveMonitorSupplement.lastRequestedAt = Date.now();
-        }
-        const supplementRequest = refreshSupplement
-          ? requestReadOnlyToolPayload(
-              liveMonitorVehicleId,
-              liveMonitorSupplement.toolName,
-              liveMonitorSupplement.args,
-              liveMonitorSupplement.timeoutS,
-              "live-monitor-supplement"
-            )
-              .then((response) => ({ payload: response, error: "" }))
-              .catch((error) => ({ payload: null, error: error?.message || "刷新失败" }))
-          : Promise.resolve(null);
-        const [payload, supplementResult] = await Promise.all([
-          requestReadOnlyToolPayload(
-            liveMonitorVehicleId,
-            "camera.capture",
-            LIVE_MONITOR_ARGS,
-            40,
-            "live-monitor"
-          ),
-          supplementRequest
-        ]);
+        liveMonitorRefreshPromise = refreshPromise;
+        const payload = await refreshPromise;
         if (!liveMonitorRunning || generation !== liveMonitorGeneration) return;
-        if (liveMonitorSupplement && supplementResult?.payload) {
-          liveMonitorSupplement.payload = supplementResult.payload;
-          liveMonitorSupplement.error = "";
-        } else if (liveMonitorSupplement && supplementResult?.error) {
-          liveMonitorSupplement.error = supplementResult.error;
-        }
         liveMonitorLastPayload = payload;
         const liveCount = extractToolMediaItems(payload).length;
-        const supplementCount = liveMonitorSupplement?.payload
-          ? extractToolMediaItems(liveMonitorSupplement.payload).length
+        const detectionCount = obstacleDetectionContext?.vehicleId === liveMonitorVehicleId
+          ? Number(obstacleDetectionContext?.detectionStatus?.imageCount || 0)
           : 0;
         liveMonitorFrameCount += liveCount;
         liveMonitorLastUpdatedAt = Date.now();
-        renderToolMedia([...liveMonitorBasePayloads, liveMonitorSupplement?.payload, payload], { expected: true });
+        if (obstacleDetectionContext?.vehicleId === liveMonitorVehicleId) {
+          obstacleDetectionContext.livePayload = payload;
+          renderObstacleDetectionContext();
+        } else {
+          renderToolMedia([...liveMonitorBasePayloads, payload], { expected: true });
+        }
         updateLiveMonitorUi(
-          `监控中 · ${formatMonitorTime(liveMonitorLastUpdatedAt)} · ${liveCount} 路${supplementCount ? ` · 标注 ${supplementCount} 张` : ""}`
+          `监控中 · ${formatMonitorTime(liveMonitorLastUpdatedAt)} · ${liveCount} 路${detectionCount ? ` · 标注 ${detectionCount} 张` : ""}`
         );
         scheduleLiveMonitor(LIVE_MONITOR_REFRESH_MS, generation);
       } catch (error) {
         if (!liveMonitorRunning || generation !== liveMonitorGeneration) return;
         updateLiveMonitorUi("刷新失败 · 5 秒后重试");
         scheduleLiveMonitor(5000, generation);
+      } finally {
+        if (liveMonitorRefreshPromise === refreshPromise) liveMonitorRefreshPromise = null;
       }
     };
     const startLiveMonitor = () => {
@@ -1971,23 +2020,12 @@ const agentRules = [
         : "监控中 · 等待刷新");
       scheduleLiveMonitor(LIVE_MONITOR_REFRESH_MS, generation);
     };
-    const configureLiveMonitor = (vehicleId, basePayloads, initialLivePayload, autoStart = true, supplement = null) => {
+    const configureLiveMonitor = (vehicleId, basePayloads, initialLivePayload, autoStart = true) => {
       stopLiveMonitor({ hideControl: true });
       if (!vehicleId || !initialLivePayload || !extractToolMediaItems(initialLivePayload).length) return;
       liveMonitorVehicleId = vehicleId;
       liveMonitorBasePayloads = (Array.isArray(basePayloads) ? basePayloads : [basePayloads]).filter(Boolean);
       liveMonitorLastPayload = initialLivePayload;
-      liveMonitorSupplement = supplement?.toolName
-        ? {
-            toolName: supplement.toolName,
-            args: supplement.args || {},
-            timeoutS: supplement.timeoutS || 35,
-            refreshMs: supplement.refreshMs || OBSTACLE_DETECTION_REFRESH_MS,
-            lastRequestedAt: Date.now(),
-            payload: supplement.payload || null,
-            error: supplement.error || ""
-          }
-        : null;
       liveMonitorFrameCount = extractToolMediaItems(initialLivePayload).length;
       liveMonitorLastUpdatedAt = Date.now();
       updateLiveMonitorUi(`单次抓拍 · ${formatMonitorTime(liveMonitorLastUpdatedAt)}`);
@@ -2035,6 +2073,7 @@ const agentRules = [
       if (currentVehicleId && nextVehicleId !== currentVehicleId) {
         stopLiveMonitor({ hideControl: true });
         closeMediaViewer();
+        resetObstacleDetectionContext();
       }
       currentVehicleId = nextVehicleId;
       syncSelectedVehicleUi();
@@ -2850,13 +2889,13 @@ const agentRules = [
             ["原始点数", lidarResult?.source_point_count ?? pointcloud?.source_point_count ?? "--"],
             ["绘制点数", lidarResult?.point_count ?? pointcloud?.point_count ?? "--"],
             ["融合障碍物", `${obstacleCount} 个`],
-            ["AI标注实景", detectionMediaCount ? `${detectionMediaCount} 张` : "未返回"],
+            ["AI标注实景", detectionMediaCount ? `${detectionMediaCount} 张` : (detectionError || "暂无历史标注图片")],
             ["实时相机", liveMediaCount ? `${liveMediaCount} 路` : "未返回"],
             ["坐标系", `${lidarResult?.frame_id || "--"} / ${result?.summary?.frame_id || result?.source?.frame_id || "--"}`]
           ],
           lines: [
             ...(auxiliaryError ? [`点云预览回退：${auxiliaryError}`] : []),
-            ...(detectionError ? [`AI 标注实景获取失败：${detectionError}`] : []),
+            ...(detectionError ? [`AI 标注实景：${detectionError}`] : []),
             ...(liveMediaError ? [`实时相机获取失败：${liveMediaError}`] : [])
           ]
         };
@@ -2954,6 +2993,127 @@ const agentRules = [
         throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
       }
       return payload;
+    };
+
+    const readCachedAiDetectionHealth = async (vehicleId) => {
+      try {
+        const response = await fetch(`/api/cloud-ops/vehicles/${encodeURIComponent(vehicleId)}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+          cache: "no-store"
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.ok === false) return {};
+        const data = payload?.execution?.data || payload?.vehicle || payload;
+        const vehicle = data?.vehicle || data;
+        const ai = vehicle?.snapshot?.key_nodes?.subsystems?.ai_detection || {};
+        const topicAlive = vehicle?.telemetry?.key_topics?.["/groundingdino/resultimg"];
+        return {
+          health: String(ai?.health || "").toLowerCase(),
+          nodeOnline: typeof ai?.summary?.node_online === "boolean" ? ai.summary.node_online : null,
+          topicAlive: typeof topicAlive === "boolean" ? topicAlive : null
+        };
+      } catch (_error) {
+        return {};
+      }
+    };
+
+    const describeAiDetectionResult = async (vehicleId, payload, error = "") => {
+      const result = payload ? toolResultOfPayload(payload) || {} : {};
+      const imageCount = payload
+        ? extractToolMediaItems(payload).filter((item) => item.toolName === "ai_detection.images").length
+        : 0;
+      const totalValue = Number(result?.total_files);
+      const totalFiles = Number.isFinite(totalValue) ? totalValue : imageCount;
+      if (imageCount) {
+        return {
+          kind: "ready",
+          imageCount,
+          totalFiles,
+          message: totalFiles > imageCount
+            ? `AI 标注预览 ${imageCount} / ${totalFiles} 张`
+            : `AI 标注 ${imageCount} 张`
+        };
+      }
+
+      const health = await readCachedAiDetectionHealth(vehicleId);
+      if (health.nodeOnline === false || health.health === "fault") {
+        return { kind: "offline", imageCount: 0, totalFiles, message: "AI 节点离线" };
+      }
+      if (health.topicAlive === false) {
+        return { kind: "offline", imageCount: 0, totalFiles, message: "AI 标注结果话题未输出" };
+      }
+      const detail = String(error || "").trim();
+      if (/504|timeout|timed out|deadline|超时/i.test(detail)) {
+        return { kind: "timeout", imageCount: 0, totalFiles, message: "AI 标注读取超时" };
+      }
+      if (/unsupported|not supported|unknown tool|tool_not_found|不支持/i.test(detail)) {
+        return { kind: "unsupported", imageCount: 0, totalFiles, message: "当前车端不支持 AI 标注图片" };
+      }
+      if (detail) {
+        return { kind: "error", imageCount: 0, totalFiles, message: `AI 标注读取失败：${detail}` };
+      }
+      return { kind: "empty", imageCount: 0, totalFiles, message: "暂无历史标注图片" };
+    };
+
+    const loadMoreAiDetectionImages = async () => {
+      const context = obstacleDetectionContext;
+      if (!context || context.vehicleId !== selectedVehicleId() || context.loading) return;
+      const resumeMonitor = liveMonitorRunning;
+      stopLiveMonitor({ message: "监控暂停，正在读取 AI 标注" });
+      if (liveMonitorRefreshPromise) {
+        await liveMonitorRefreshPromise.catch(() => null);
+      }
+      if (obstacleDetectionContext !== context || context.vehicleId !== selectedVehicleId()) return;
+
+      context.loading = true;
+      updateAiDetectionControls();
+      setStatus(`正在读取 ${context.vehicleId} 的更多 AI 标注图...`, "loading");
+      try {
+        const detectionPayload = await requestReadOnlyToolPayload(
+          context.vehicleId,
+          "ai_detection.images",
+          OBSTACLE_DETECTION_MORE_ARGS,
+          OBSTACLE_DETECTION_TIMEOUT_S,
+          "obstacle-detection-more"
+        );
+        context.detectionPayload = detectionPayload;
+        context.detectionStatus = await describeAiDetectionResult(context.vehicleId, detectionPayload);
+        context.detectionError = context.detectionStatus.kind === "ready" ? "" : context.detectionStatus.message;
+        context.loadedFull = context.detectionStatus.kind === "ready";
+      } catch (error) {
+        context.detectionPayload = null;
+        context.detectionStatus = await describeAiDetectionResult(
+          context.vehicleId,
+          null,
+          error?.message || "未知错误"
+        );
+        context.detectionError = context.detectionStatus.message;
+        context.loadedFull = false;
+      } finally {
+        if (obstacleDetectionContext !== context) return;
+        context.loading = false;
+        renderToolSummary(
+          "obstacle.preview",
+          context.obstaclePayload,
+          context.vehicleId,
+          context.livePayload,
+          context.liveMediaError,
+          context.auxiliaryPayload,
+          context.auxiliaryError,
+          context.detectionPayload,
+          context.detectionError
+        );
+        const mediaCount = renderObstacleDetectionContext();
+        updateAiDetectionControls();
+        setStatus(
+          `${context.detectionStatus.message}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}`,
+          context.detectionStatus.kind === "ready" ? "ok" : "error"
+        );
+        if (resumeMonitor && context.livePayload && context.vehicleId === selectedVehicleId()) {
+          startLiveMonitor();
+        }
+      }
     };
 
     const renderSelectedMapRoute = async (routeId) => {
@@ -3203,25 +3363,7 @@ const agentRules = [
         let renderedObstaclePayload = null;
         let detectionPayload = null;
         let detectionError = "";
-        const detectionRequest = toolName === "obstacle.preview"
-          ? requestReadOnlyToolPayload(
-              vehicleId,
-              "ai_detection.images",
-              OBSTACLE_DETECTION_ARGS,
-              35,
-              "obstacle-detection-images"
-            )
-              .then((response) => ({ payload: response, error: "" }))
-              .catch((error) => ({ payload: null, error: error?.message || "未知错误" }))
-          : null;
-        if (includeLiveMedia) {
-          if (toolSummary) toolSummary.textContent = `状态检查完成，正在获取 ${vehicleId} 的实时画面...`;
-          try {
-            liveMediaPayload = await requestReadOnlyToolPayload(vehicleId, "camera.capture", LIVE_CAPTURE_ARGS, 40, "live-media");
-          } catch (error) {
-            liveMediaError = error?.message || "未知错误";
-          }
-        }
+        let detectionStatus = null;
         if (toolName === "obstacle.preview") {
           if (toolMediaTitle) toolMediaTitle.textContent = "点云、AI 标注实景与实时相机";
           if (toolSummary) toolSummary.textContent = `障碍物目标已返回，正在读取 ${vehicleId} 的实时点云...`;
@@ -3253,11 +3395,34 @@ const agentRules = [
               auxiliaryError = error?.message || "点云渲染失败";
             }
           }
-          if (detectionRequest) {
-            const detectionResult = await detectionRequest;
-            detectionPayload = detectionResult.payload;
-            detectionError = detectionResult.error;
+        }
+        if (includeLiveMedia) {
+          if (toolSummary) {
+            toolSummary.textContent = toolName === "obstacle.preview"
+              ? `实时点云读取完成，正在获取 ${vehicleId} 的实时相机...`
+              : `状态检查完成，正在获取 ${vehicleId} 的实时画面...`;
           }
+          try {
+            liveMediaPayload = await requestReadOnlyToolPayload(vehicleId, "camera.capture", LIVE_CAPTURE_ARGS, 40, "live-media");
+          } catch (error) {
+            liveMediaError = error?.message || "未知错误";
+          }
+        }
+        if (toolName === "obstacle.preview") {
+          if (toolSummary) toolSummary.textContent = `点云与相机读取完成，正在获取 ${vehicleId} 的 AI 标注预览...`;
+          try {
+            detectionPayload = await requestReadOnlyToolPayload(
+              vehicleId,
+              "ai_detection.images",
+              OBSTACLE_DETECTION_INITIAL_ARGS,
+              OBSTACLE_DETECTION_TIMEOUT_S,
+              "obstacle-detection-images"
+            );
+            detectionStatus = await describeAiDetectionResult(vehicleId, detectionPayload);
+          } catch (error) {
+            detectionStatus = await describeAiDetectionResult(vehicleId, null, error?.message || "未知错误");
+          }
+          detectionError = detectionStatus.kind === "ready" ? "" : detectionStatus.message;
         }
         renderToolSummary(
           toolName,
@@ -3270,14 +3435,25 @@ const agentRules = [
           detectionPayload,
           detectionError
         );
-        const mediaCount = renderedObstaclePayload
-          ? renderToolMedia([renderedObstaclePayload, detectionPayload, liveMediaPayload], {
-              expected: true,
-              error: [
-                detectionError ? `AI 标注实景获取失败：${detectionError}` : "",
-                liveMediaError ? `实时相机获取失败：${liveMediaError}` : ""
-              ].filter(Boolean).join("；")
-            })
+        if (toolName === "obstacle.preview") {
+          obstacleDetectionContext = {
+            vehicleId,
+            obstaclePayload: payload,
+            pointCloudPayload: renderedObstaclePayload,
+            auxiliaryPayload,
+            auxiliaryError,
+            livePayload: liveMediaPayload,
+            liveMediaError,
+            detectionPayload,
+            detectionStatus,
+            detectionError,
+            loadedFull: false,
+            loading: false
+          };
+          updateAiDetectionControls();
+        }
+        const mediaCount = toolName === "obstacle.preview"
+          ? renderObstacleDetectionContext()
           : renderToolMedia([payload, liveMediaPayload], {
               expected: MEDIA_EXPECTED_TOOLS.has(toolName) || includeLiveMedia,
               error: liveMediaError ? `实时画面获取失败：${liveMediaError}` : ""
@@ -3287,22 +3463,15 @@ const agentRules = [
             vehicleId,
             toolName === "obstacle.preview" && renderedObstaclePayload ? [renderedObstaclePayload] : [payload],
             liveMediaPayload,
-            true,
-            toolName === "obstacle.preview"
-              ? {
-                  toolName: "ai_detection.images",
-                  args: OBSTACLE_DETECTION_ARGS,
-                  timeoutS: 35,
-                  refreshMs: OBSTACLE_DETECTION_REFRESH_MS,
-                  payload: detectionPayload,
-                  error: detectionError
-                }
-              : null
+            true
           );
         }
+        const obstacleDetectionProblem = toolName === "obstacle.preview" && detectionStatus?.kind !== "ready";
         setStatus(
-          `只读检查完成：${toolName}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}`,
-          toolName === "obstacle.preview" && liveMediaError ? "error" : (liveMediaError && !mediaCount ? "loading" : "ok")
+          `只读检查完成：${toolName}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}${obstacleDetectionProblem ? ` · ${detectionStatus.message}` : ""}`,
+          toolName === "obstacle.preview" && (liveMediaError || obstacleDetectionProblem)
+            ? "error"
+            : (liveMediaError && !mediaCount ? "loading" : "ok")
         );
       } catch (error) {
         const primaryError = error?.message || "未知错误";
@@ -3387,6 +3556,8 @@ const agentRules = [
       } else if (action === "live-monitor-toggle") {
         if (liveMonitorRunning) stopLiveMonitor({ message: "监控已暂停" });
         else startLiveMonitor();
+      } else if (action === "ai-detection-load-more") {
+        loadMoreAiDetectionImages();
       } else if (action === "media-viewer-close") {
         closeMediaViewer();
       } else if (action === "agent-toggle") {

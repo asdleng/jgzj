@@ -8549,8 +8549,33 @@ body.yolo-review-is-panning {
 }
 
 .cloud-ops-test-media-head .cloud-ops-test-monitor-state[hidden],
-.cloud-ops-test-monitor-toggle[hidden] {
+.cloud-ops-test-monitor-toggle[hidden],
+.cloud-ops-test-media-head .cloud-ops-test-ai-state[hidden],
+.cloud-ops-test-ai-action[hidden] {
   display: none;
+}
+
+.cloud-ops-test-media-head .cloud-ops-test-ai-state {
+  color: #94a3b8;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-media-head .cloud-ops-test-ai-state[data-tone="ready"] {
+  color: #86efac;
+}
+
+.cloud-ops-test-media-head .cloud-ops-test-ai-state[data-tone="loading"] {
+  color: #a5f3fc;
+}
+
+.cloud-ops-test-media-head .cloud-ops-test-ai-state[data-tone="timeout"] {
+  color: #fde68a;
+}
+
+.cloud-ops-test-media-head .cloud-ops-test-ai-state[data-tone="offline"],
+.cloud-ops-test-media-head .cloud-ops-test-ai-state[data-tone="error"] {
+  color: #fda4af;
 }
 
 .cloud-ops-test-map-route-controls {
@@ -8656,6 +8681,31 @@ body.yolo-review-is-panning {
   font-size: 0.72rem;
   font-weight: 800;
   cursor: pointer;
+}
+
+.cloud-ops-test-ai-action {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid rgba(244, 63, 94, 0.5);
+  border-radius: 6px;
+  background: rgba(76, 5, 25, 0.72);
+  color: #ffe4e6;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cloud-ops-test-ai-action:hover,
+.cloud-ops-test-ai-action:focus-visible {
+  border-color: rgba(251, 113, 133, 0.88);
+  background: rgba(136, 19, 55, 0.65);
+  outline: none;
+}
+
+.cloud-ops-test-ai-action:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .cloud-ops-test-monitor-toggle:hover,
