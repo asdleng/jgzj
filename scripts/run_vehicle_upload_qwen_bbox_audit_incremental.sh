@@ -16,7 +16,7 @@ MAX_NEW="${VEHICLE_QWEN_AUDIT_MAX_NEW:-80}"
 WORKERS="${VEHICLE_QWEN_AUDIT_WORKERS:-1}"
 TIMEOUT_S="${VEHICLE_QWEN_AUDIT_TIMEOUT_S:-120}"
 MAX_TOKENS="${VEHICLE_QWEN_AUDIT_MAX_TOKENS:-768}"
-CLASS_FILTER="${VEHICLE_QWEN_AUDIT_CLASS_FILTER:-fire,smoke,pet,trash,stall,phone,smoking}"
+CLASS_FILTER="${VEHICLE_QWEN_AUDIT_CLASS_FILTER:-person,vehicle,nonmotor,fire,smoke,pet,trash,stall,phone,smoking}"
 EXTRA_ARGS="${VEHICLE_QWEN_AUDIT_EXTRA_ARGS:-}"
 PROMPT_FILE="${VEHICLE_QWEN_AUDIT_PROMPT_FILE:-}"
 
@@ -44,6 +44,7 @@ timestamp() {
     ionice -c2 -n7 nice -n 10 python3 scripts/patrol_qwen_bbox_audit.py \
       --service-url "$SERVICE_URL" \
       --only-missing \
+      --include-empty \
       --class-filter "$CLASS_FILTER" \
       --limit "$MAX_NEW" \
       --workers "$WORKERS" \
@@ -55,6 +56,7 @@ timestamp() {
     nice -n 10 python3 scripts/patrol_qwen_bbox_audit.py \
       --service-url "$SERVICE_URL" \
       --only-missing \
+      --include-empty \
       --class-filter "$CLASS_FILTER" \
       --limit "$MAX_NEW" \
       --workers "$WORKERS" \

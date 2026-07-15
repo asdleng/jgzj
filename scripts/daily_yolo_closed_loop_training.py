@@ -12,6 +12,16 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from yolo_closed_loop_policy import (
+    DEFAULT_QUALITIES,
+    EXPECTED_AUDIT_PROMPT_VERSION,
+    PATROL_DATASET_ID,
+    class_name,
+    effective_labels,
+    load_manual_annotations,
+    training_row_decision,
+)
+
 
 CN_TZ = timezone(timedelta(hours=8))
 PROJECT_ROOT = Path(os.environ.get("JGZJ_PROJECT_ROOT", "/home/admin1/jgzj"))
@@ -19,9 +29,11 @@ RUNTIME_ROOT = PROJECT_ROOT / ".runtime" / "yolo_daily_closed_loop"
 INDEX_PATH = PROJECT_ROOT / ".runtime" / "yolo_label_review" / "patrol_dataset_index.json"
 FRAMES_ROOT = PROJECT_ROOT / ".runtime" / "park-pcm" / "crowd-frames"
 LABEL_ROOT = PROJECT_ROOT / ".runtime" / "yolo_label_review"
+MANUAL_ANNOTATION_ROOT = LABEL_ROOT / "manual_annotations_v1"
 LEGACY_SCRIPT_ROOT = PROJECT_ROOT / ".runtime" / "reliable_vehicle_yolo_20260704"
-BUILD_SCRIPT = LEGACY_SCRIPT_ROOT / "build_reliable_vehicle_upload_yolo.py"
+BUILD_SCRIPT = PROJECT_ROOT / "scripts" / "build_reliable_vehicle_upload_yolo.py"
 TRAIN_SCRIPT = LEGACY_SCRIPT_ROOT / "train_reliable_yolo_finetune.py"
+POLICY_SCRIPT = PROJECT_ROOT / "scripts" / "yolo_closed_loop_policy.py"
 STATE_PATH = RUNTIME_ROOT / "state.json"
 
 A100_HOST = os.environ.get("YOLO_A100_HOST", "192.168.80.49")
@@ -31,8 +43,7 @@ A100_ROOT = os.environ.get("YOLO_DAILY_A100_ROOT", "/home/sari/jgzj_yolo_daily_c
 A100_PY = os.environ.get("YOLO_DAILY_A100_PY", "/home/sari/autodistill/bin/python")
 A100_GPU = int(os.environ.get("YOLO_DAILY_A100_GPU", "3"))
 
-BAD_AUDIT_VERDICTS = {"needs_human", "suspect", "error"}
-GOOD_QUALITIES = {"good", "blur"}
+GOOD_QUALITIES = DEFAULT_QUALITIES
 
 TASKS = [
     {
@@ -136,44 +147,31 @@ def row_day(row: dict) -> str:
         return ""
 
 
-def row_source(row: dict) -> str:
-    meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
-    return str(row.get("source") or meta.get("source") or "")
-
-
-def eligible_row(row: dict) -> bool:
-    if row_source(row) != "auto_ad_patrol_flow_upload":
-        return False
-    if row.get("qwen_bbox_status") != "done":
-        return False
-    if str(row.get("qwen_bbox_quality") or "") not in GOOD_QUALITIES:
-        return False
-    if str(row.get("qwen_bbox_audit_verdict") or "") in BAD_AUDIT_VERDICTS:
-        return False
-    return bool(row.get("qwen_bbox_rel_path"))
-
-
-def class_name(label: dict) -> str:
-    return str(label.get("class_name") or label.get("class") or label.get("label") or "").strip().lower()
-
-
 def summarize_index(allowed_days: set[str]) -> dict:
     data = load_json(INDEX_PATH, {})
     rows = data.get("rows") or []
+    manual_annotations = load_manual_annotations(MANUAL_ANNOTATION_ROOT)
     by_day = collections.defaultdict(lambda: {
         "eligible_images": 0,
         "boxes_by_class": collections.Counter(),
         "boxes_by_task": collections.Counter(),
         "positive_images_by_task": collections.Counter(),
         "negative_images_by_task": collections.Counter(),
+        "review_sources": collections.Counter(),
+        "rejected_by_reason": collections.Counter(),
     })
     for row in rows:
         day = row_day(row)
-        if day not in allowed_days or not eligible_row(row):
+        if day not in allowed_days:
             continue
         stat = by_day[day]
+        eligible, reason, manual = training_row_decision(row, manual_annotations, qualities=GOOD_QUALITIES)
+        if not eligible:
+            stat["rejected_by_reason"][reason] += 1
+            continue
         stat["eligible_images"] += 1
-        labels = row.get("auto_labels") if isinstance(row.get("auto_labels"), list) else []
+        stat["review_sources"][reason] += 1
+        labels = effective_labels(row, manual)
         names = {class_name(label) for label in labels}
         for label in labels:
             name = class_name(label)
@@ -197,6 +195,8 @@ def summarize_index(allowed_days: set[str]) -> dict:
             "boxes_by_task": dict(stat["boxes_by_task"]),
             "positive_images_by_task": dict(stat["positive_images_by_task"]),
             "negative_images_by_task": dict(stat["negative_images_by_task"]),
+            "review_sources": dict(stat["review_sources"]),
+            "rejected_by_reason": dict(stat["rejected_by_reason"]),
         }
     return out
 
@@ -344,6 +344,8 @@ def build_dataset(task: dict, run_dir: Path) -> dict:
         "--index", str(INDEX_PATH),
         "--frames-root", str(FRAMES_ROOT),
         "--label-root", str(LABEL_ROOT),
+        "--manual-root", str(MANUAL_ANNOTATION_ROOT),
+        "--patrol-dataset-id", PATROL_DATASET_ID,
         "--output", str(output),
         "--dates", *train_dates,
         "--qualities", ",".join(sorted(GOOD_QUALITIES)),
@@ -431,6 +433,7 @@ def schedule_remote(run_tag: str, built: list[dict], selected: list[dict], run_d
     a100(f"mkdir -p {remote_quote(A100_ROOT)}/scripts {remote_quote(A100_ROOT)}/datasets/{remote_quote(run_tag)} {remote_quote(A100_ROOT)}/logs", check=True)
     rsync_to_a100(TRAIN_SCRIPT, f"{A100_ROOT}/scripts/train_reliable_yolo_finetune.py")
     rsync_to_a100(BUILD_SCRIPT, f"{A100_ROOT}/scripts/build_reliable_vehicle_upload_yolo.py")
+    rsync_to_a100(POLICY_SCRIPT, f"{A100_ROOT}/scripts/yolo_closed_loop_policy.py")
     for item in built:
         local_dataset = Path(item["local_dataset"])
         remote_dataset = f"{A100_ROOT}/datasets/{run_tag}/{local_dataset.name}"
@@ -478,6 +481,11 @@ def main() -> None:
         "candidate_days": days,
         "replay_candidate_days": replay_candidate_days,
         "day_stats": day_stats,
+        "training_policy": {
+            "manual_annotations": "preferred",
+            "qwen_audit_required": "done/pass",
+            "qwen_audit_prompt_version": EXPECTED_AUDIT_PROMPT_VERSION,
+        },
         "selected": [
             {k: v for k, v in item.items() if k not in {"classes"}}
             for item in selected

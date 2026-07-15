@@ -18,7 +18,7 @@ SCHEMA = "jgzj_vehicle_upload_qwen_bbox_audit.v1"
 LABEL_SCHEMA = "jgzj_vehicle_upload_qwen_bbox_label.v1"
 MODEL = "Qwen3.6-27B-Labeler"
 MODEL_BUNDLE = "qwen_bbox_audit_v1_human_review_queue"
-PROMPT_VERSION = "qwen_bbox_audit_prompt_v1"
+PROMPT_VERSION = "qwen_bbox_audit_prompt_v2_training_all_classes"
 CLASSES = (
     "person",
     "fire",
@@ -32,6 +32,7 @@ CLASSES = (
     "nonmotor",
 )
 HIGH_RISK_CLASSES = {"fire", "smoke", "pet", "trash", "stall", "phone", "smoking"}
+AUDITABLE_MISS_CLASSES = set(CLASSES)
 
 AUDIT_PROMPT = """You are auditing existing Qwen YOLO pre-labels for an autonomous patrol vehicle image.
 You must judge the provided labels, not create a new label set from scratch.
@@ -60,9 +61,9 @@ Existing label fields:
 Audit rules:
 - Mark pass only when all existing boxes are real, visible, class-correct, and reasonably tight.
 - Mark suspect for uncertainty that should be reviewed by a human.
-- Mark needs_human for likely false positives, wrong class, missing high-risk target, or unusable image.
+- Mark needs_human for likely false positives, wrong class, a clear missed training target, or an unusable image.
 - A bad label should be added when it is false positive, wrong class, not visible, duplicate, very loose, or box covers the wrong object.
-- For miss, only report clear high-risk missed objects: fire, smoke, pet, trash, stall, phone, smoking. Do not report weak/ambiguous misses.
+- For miss, report only clear missed training targets: person, vehicle, nonmotor, fire, smoke, pet, trash, stall, phone, smoking. Do not report weak or ambiguous misses.
 
 Hard class definitions:
 - fire: actual visible flame with flame shape and orange/yellow luminous core. Red fire boxes, extinguishers, hydrants,消防箱, red signs, warning boards, lamps, reflections, taillights, cones, and red/orange equipment are NOT fire.
@@ -72,6 +73,9 @@ Hard class definitions:
 - phone: visible handheld mobile phone or clear hand-phone interaction. Wall screens, signs, dashboards, mirrors, bags, and black rectangles are NOT phone.
 - trash: loose discarded waste on ground/road/path. Trash bins, recycling boxes, planters, cones, leaves, stones, fixed facilities, storage boxes, and construction materials are NOT trash.
 - stall: temporary vendor selling setup with table/canopy/goods/operator. Fixed kiosks, guard booths, bus shelters, building entrances, pavilions, fences, ordinary tents, umbrellas, and storage piles are NOT stall.
+- person: a real visible human. Posters, advertising portraits, mannequins, traffic cones, poles, covers, and vehicle accessories are NOT people.
+- vehicle: a real car, truck, bus, or van. Fences, buildings, signs, covers without a visible vehicle, and printed vehicle images are NOT vehicles.
+- nonmotor: a real bicycle, electric bicycle, scooter, tricycle, or cart. Railings, racks, covers without a visible vehicle, and printed images are NOT nonmotor vehicles.
 
 Be strict. When evidence is weak, flag suspect instead of passing. Use short snake_case reasons.
 """
@@ -307,9 +311,30 @@ def load_label_cache(row, label_root):
     return payload, labels
 
 
-def cache_has_valid_audit(path):
+def labels_fingerprint(labels):
+    payload = [
+        {
+            "i": label.get("i"),
+            "class": label.get("class"),
+            "confidence": label.get("confidence"),
+            "bbox_1000": label.get("bbox_1000"),
+            "note": label.get("note") or "",
+        }
+        for label in labels
+    ]
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def cache_has_valid_audit(path, labels=None, prompt_version=PROMPT_VERSION):
     payload = load_json(path)
-    return isinstance(payload, dict) and payload.get("schema") == SCHEMA and payload.get("verdict")
+    if not isinstance(payload, dict) or payload.get("schema") != SCHEMA or not payload.get("verdict"):
+        return False
+    if str(payload.get("prompt_version") or "") != prompt_version:
+        return False
+    if labels is not None and str(payload.get("label_fingerprint") or "") != labels_fingerprint(labels):
+        return False
+    return True
 
 
 def heuristic_findings(labels):
@@ -430,7 +455,7 @@ def normalize_miss_item(item):
         except Exception:
             confidence = None
         reason = str(item.get("reason") or item.get("note") or "")
-    if class_name not in HIGH_RISK_CLASSES:
+    if class_name not in AUDITABLE_MISS_CLASSES:
         return None
     if not isinstance(bbox, list) or len(bbox) != 4:
         return None
@@ -568,12 +593,17 @@ def row_priority(row):
     return score
 
 
+def row_sort_key(row):
+    meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+    return str(meta.get("collected_at") or ""), row_priority(row)
+
+
 def audit_one(row, args, prompt):
     meta = row["meta"]
     out_path = cache_path(args.output_root, meta.get("image_sha256"))
     if out_path is None:
         return "skip:no_sha"
-    if out_path.exists() and not args.refresh and cache_has_valid_audit(out_path):
+    if out_path.exists() and not args.refresh and cache_has_valid_audit(out_path, row["labels"], args.prompt_version):
         return "skip:cached"
     started = time.time()
     labels = row["labels"]
@@ -621,6 +651,7 @@ def audit_one(row, args, prompt):
         "label_cache_rel_path": normalize_rel(row["label_path"].relative_to(args.label_root)) if row.get("label_path") else "",
         "label_count": len(labels),
         "label_classes": sorted({label["class"] for label in labels}),
+        "label_fingerprint": labels_fingerprint(labels),
         "labels": labels,
         "heuristic_findings": heuristic,
         "image_request": image_request,
@@ -654,10 +685,10 @@ def build_rows(args):
             continue
         if not labels and not args.include_empty:
             continue
-        if class_filter and not any(label["class"] in class_filter for label in labels):
+        if class_filter and labels and not any(label["class"] in class_filter for label in labels):
             continue
         out_path = cache_path(args.output_root, row["meta"].get("image_sha256"))
-        if args.only_missing and not args.refresh and out_path and cache_has_valid_audit(out_path):
+        if args.only_missing and not args.refresh and out_path and cache_has_valid_audit(out_path, labels, args.prompt_version):
             continue
         label_path = cache_path(args.label_root, row["meta"].get("image_sha256"))
         rows.append({
@@ -666,7 +697,7 @@ def build_rows(args):
             "label_path": label_path,
             "labels": labels,
         })
-    rows.sort(key=lambda item: (row_priority(item), str(item["meta"].get("collected_at") or "")), reverse=True)
+    rows.sort(key=row_sort_key, reverse=True)
     return scanned, rows
 
 
