@@ -72,6 +72,15 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+def enforce_media_scene(photo: object, domain: object, scene: object) -> str:
+    normalized = str(scene or "unusable").strip().lower()
+    if str(photo or "unknown").strip().lower() != "real_photo":
+        return "unusable"
+    if str(domain or "off_domain").strip().lower() != "target":
+        return "unusable"
+    return normalized
+
+
 def target_from_bucket(bucket: object) -> Optional[str]:
     value = str(bucket or "").strip().lower()
     if "fishing_rod" in value:
@@ -246,8 +255,8 @@ def label_candidates(args: argparse.Namespace) -> dict:
                 raise ValueError(f"detect_json_parse_failed:{raw_text[:800]}")
             photo = str(parsed.get("photo") or "unknown").strip().lower()
             domain = str(parsed.get("domain") or "off_domain").strip().lower()
-            candidate_scene = str(parsed.get("scene") or "unusable").strip().lower()
-            usable = photo == "real_photo" and domain == "target" and candidate_scene != "unusable"
+            candidate_scene = enforce_media_scene(photo, domain, parsed.get("scene"))
+            usable = candidate_scene != "unusable"
             detected = normalize_boxes(parsed.get("b") or parsed.get("boxes"), target) if usable else []
             proposal = {
                 "q": parsed.get("q"), "photo": photo, "domain": domain,
@@ -271,8 +280,10 @@ def label_candidates(args: argparse.Namespace) -> dict:
                         audit_verdict = "needs_human"
                     audit_photo = str(audit_parsed.get("photo") or "unknown").strip().lower()
                     audit_domain = str(audit_parsed.get("domain") or "off_domain").strip().lower()
-                    audit_scene = str(audit_parsed.get("scene") or candidate_scene).strip().lower()
-                    audit_usable = audit_photo == "real_photo" and audit_domain == "target" and audit_scene != "unusable"
+                    audit_scene = enforce_media_scene(
+                        audit_photo, audit_domain, audit_parsed.get("scene") or candidate_scene,
+                    )
+                    audit_usable = audit_scene != "unusable"
                     photo, domain, candidate_scene = audit_photo, audit_domain, audit_scene
                     final_labels = normalize_boxes(audit_parsed.get("b") or audit_parsed.get("boxes"), target) if audit_verdict == "pass" and audit_usable else []
             if candidate_scene not in {"positive", "hard_negative", "unusable"}:

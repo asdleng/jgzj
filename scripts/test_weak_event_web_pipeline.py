@@ -10,6 +10,7 @@ from label_weak_event_candidates_qwen import (
     apply_review_guards,
     audit_prompt,
     detect_prompt,
+    enforce_media_scene,
     normalize_boxes,
     target_from_bucket,
     yolo_text,
@@ -29,6 +30,11 @@ class WeakEventWebPipelineTest(unittest.TestCase):
         self.assertEqual(target_from_bucket("pet_domain_positive"), "pet")
         self.assertEqual(target_from_bucket("hard_negative_trash"), "trash")
         self.assertIsNone(target_from_bucket("unknown"))
+
+    def test_off_domain_scene_is_always_unusable(self):
+        self.assertEqual(enforce_media_scene("real_photo", "off_domain", "positive"), "unusable")
+        self.assertEqual(enforce_media_scene("illustration", "target", "positive"), "unusable")
+        self.assertEqual(enforce_media_scene("real_photo", "target", "positive"), "positive")
 
     def test_fishing_rod_filter_rejects_walking_stick(self):
         labels = normalize_boxes([
