@@ -30,7 +30,7 @@ const specialistDiagnosticGroups = [
       { label: "AI检测配置", tool: "ai_detection.config", desc: "查看 AI 检测配置和落盘路径", timeout: 20 },
       { label: "AI标注实景", tool: "ai_detection.images", desc: "查看已标注障碍物的实景图并对照连续监控", args: { limit: 6 }, timeout: 35, includeLiveMedia: true },
       { label: "障碍物处理状态", tool: "status.obstacle_processor", desc: "检查 obstacle processor 心跳和输入", timeout: 25 },
-      { label: "障碍物预览", tool: "obstacle.preview", desc: "查看俯视点云、AI标注实景和实时相机画面", args: { topic: "/fusion/objects", range_m: 25, image_size: 768, save_file: false, include_base64: true, timeout_s: 3, max_obstacles: 120, include_invalid: true }, timeout: 40, includeLiveMedia: true }
+      { label: "障碍物预览", tool: "obstacle.preview", desc: "查看俯视点云和融合障碍物实景", args: { topic: "/fusion/objects", range_m: 25, image_size: 768, save_file: false, include_base64: true, timeout_s: 3, max_obstacles: 120, include_invalid: true }, timeout: 40, includeLiveMedia: true }
     ]
   },
   {
@@ -375,14 +375,7 @@ const agentRules = [
                 <h4 data-role="tool-media-title">图像与视频</h4>
                 <div class="cloud-ops-test-media-head-actions">
                   <span data-role="tool-media-count">--</span>
-                  <span class="cloud-ops-test-ai-state" data-role="ai-detection-state" hidden>AI 标注待查询</span>
-                  <button
-                    type="button"
-                    class="cloud-ops-test-ai-action"
-                    data-action="ai-detection-load-more"
-                    data-role="ai-detection-load-more"
-                    hidden
-                  >加载更多标注图</button>
+                  <span class="cloud-ops-test-obstacle-state" data-role="obstacle-overlay-state" hidden>障碍物实景待查询</span>
                   <span class="cloud-ops-test-monitor-state" data-role="live-monitor-state" hidden>单次抓拍</span>
                   <button
                     type="button"
@@ -655,6 +648,7 @@ const agentRules = [
       "status.camera",
       "camera.capture",
       "lidar.relocalization_capture",
+      "vehicle.calibration",
       "status.obstacle_processor",
       "ros.overview",
       "system.snapshot",
@@ -688,9 +682,10 @@ const agentRules = [
       include_base64: true
     };
     const LIVE_MONITOR_REFRESH_MS = 3000;
-    const OBSTACLE_DETECTION_INITIAL_ARGS = { limit: 2 };
-    const OBSTACLE_DETECTION_MORE_ARGS = { limit: 6 };
-    const OBSTACLE_DETECTION_TIMEOUT_S = 70;
+    const OBSTACLE_CALIBRATION_ARGS = {
+      include_raw_camera_info: false,
+      include_lidar_extrinsics: true
+    };
     const OBSTACLE_POINTCLOUD_TOPICS = ["/rslidar_points32", "/filtered_points"];
     const OBSTACLE_POINTCLOUD_ARGS = {
       timeout_s: 5,
@@ -718,8 +713,7 @@ const agentRules = [
     const toolMediaGrid = shell.querySelector('[data-role="tool-media-grid"]');
     const toolMediaCount = shell.querySelector('[data-role="tool-media-count"]');
     const toolMediaTitle = shell.querySelector('[data-role="tool-media-title"]');
-    const aiDetectionState = shell.querySelector('[data-role="ai-detection-state"]');
-    const aiDetectionLoadMore = shell.querySelector('[data-role="ai-detection-load-more"]');
+    const obstacleOverlayState = shell.querySelector('[data-role="obstacle-overlay-state"]');
     const liveMonitorState = shell.querySelector('[data-role="live-monitor-state"]');
     const liveMonitorToggle = shell.querySelector('[data-role="live-monitor-toggle"]');
     const mapRouteControls = shell.querySelector('[data-role="map-route-controls"]');
@@ -786,7 +780,7 @@ const agentRules = [
     let liveMonitorFrameCount = 0;
     let liveMonitorLastUpdatedAt = 0;
     let liveMonitorRefreshPromise = null;
-    let obstacleDetectionContext = null;
+    let obstaclePreviewContext = null;
     let activeViewerFollowLabel = "";
     let mapRouteState = null;
     let mapRouteGeneration = 0;
@@ -1156,6 +1150,8 @@ const agentRules = [
       const camera = source?.camera_id || source?.camera || source?.requested || source?.channel || "";
       const base = toolName === "camera.capture"
         ? "实时抓拍"
+        : toolName === "obstacle.camera_overlay"
+          ? "障碍物实景"
         : toolName === "ai_detection.images"
           ? "AI标注实景"
           : toolName === "obstacle.preview"
@@ -1178,6 +1174,7 @@ const agentRules = [
           kind,
           toolName,
           label: mediaLabelOf(source, toolName, kind),
+          cameraId: source?.camera_id || source?.camera || source?.requested || source?.channel || "",
           width: source?.width || source?.frame_width || null,
           height: source?.height || source?.frame_height || null,
           timestamp: source?.captured_at || source?.generated_at || source?.created_at || source?.modified_at || source?.mtime || source?.ts || ""
@@ -1693,6 +1690,212 @@ const agentRules = [
         }
       };
     };
+    const loadOverlaySourceImage = (src) => new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("实时相机图像无法解码"));
+      image.src = src;
+    });
+    const invertRigidTransform = (matrix) => {
+      if (!Array.isArray(matrix) || matrix.length < 3) return null;
+      const rotation = matrix.slice(0, 3).map((row) => row.slice(0, 3).map(Number));
+      const translation = matrix.slice(0, 3).map((row) => Number(row?.[3]));
+      if (rotation.flat().some((value) => !Number.isFinite(value)) || translation.some((value) => !Number.isFinite(value))) {
+        return null;
+      }
+      const inverseRotation = [0, 1, 2].map((row) => [0, 1, 2].map((column) => rotation[column][row]));
+      const inverseTranslation = inverseRotation.map((row) => -(
+        row[0] * translation[0] + row[1] * translation[1] + row[2] * translation[2]
+      ));
+      return inverseRotation.map((row, index) => [...row, inverseTranslation[index]]);
+    };
+    const transformPoint3d = (matrix, point) => {
+      if (!matrix) return null;
+      const x = Number(point?.x);
+      const y = Number(point?.y);
+      const z = Number(point?.z);
+      if (![x, y, z].every(Number.isFinite)) return null;
+      return {
+        x: matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z + matrix[0][3],
+        y: matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z + matrix[1][3],
+        z: matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z + matrix[2][3]
+      };
+    };
+    const projectCameraPoint = (point, camera, width, height) => {
+      if (!point || point.z <= 0.08) return null;
+      const intrinsic = camera?.intrinsic || {};
+      const sourceWidth = Math.max(1, Number(camera?.resolution?.width || width));
+      const sourceHeight = Math.max(1, Number(camera?.resolution?.height || height));
+      const fx = Number(intrinsic.fx) * width / sourceWidth;
+      const fy = Number(intrinsic.fy) * height / sourceHeight;
+      const cx = Number(intrinsic.cx) * width / sourceWidth;
+      const cy = Number(intrinsic.cy) * height / sourceHeight;
+      if (![fx, fy, cx, cy].every(Number.isFinite)) return null;
+      const normalizedX = point.x / point.z;
+      const normalizedY = point.y / point.z;
+      if (Math.abs(normalizedX) > 5 || Math.abs(normalizedY) > 5) return null;
+      const coeffs = Array.isArray(camera?.distortion?.coeffs) ? camera.distortion.coeffs.map(Number) : [];
+      const [k1 = 0, k2 = 0, p1 = 0, p2 = 0, k3 = 0] = coeffs;
+      const radius2 = normalizedX * normalizedX + normalizedY * normalizedY;
+      const radial = 1 + k1 * radius2 + k2 * radius2 * radius2 + k3 * radius2 * radius2 * radius2;
+      const distortedX = normalizedX * radial + 2 * p1 * normalizedX * normalizedY + p2 * (radius2 + 2 * normalizedX * normalizedX);
+      const distortedY = normalizedY * radial + p1 * (radius2 + 2 * normalizedY * normalizedY) + 2 * p2 * normalizedX * normalizedY;
+      const x = fx * distortedX + cx;
+      const y = fy * distortedY + cy;
+      return Number.isFinite(x) && Number.isFinite(y) ? { x, y, depth: point.z } : null;
+    };
+    const obstacleCorners3d = (obstacle) => {
+      const center = obstacle?.center || {};
+      const dimensions = obstacle?.dimensions || {};
+      const centerZ = Number(center.z || 0);
+      const height = Math.max(0.05, Math.abs(Number(dimensions.z || 0.1)));
+      let footprint = Array.isArray(obstacle?.corners)
+        ? obstacle.corners
+            .map((corner) => ({ x: Number(corner?.x), y: Number(corner?.y) }))
+            .filter((corner) => Number.isFinite(corner.x) && Number.isFinite(corner.y))
+        : [];
+      if (footprint.length < 4) {
+        const centerX = Number(center.x);
+        const centerY = Number(center.y);
+        const length = Math.max(0.05, Math.abs(Number(dimensions.x || 0.1)));
+        const width = Math.max(0.05, Math.abs(Number(dimensions.y || 0.1)));
+        const yaw = Number(obstacle?.yaw_rad || 0);
+        const cosine = Math.cos(yaw);
+        const sine = Math.sin(yaw);
+        footprint = [[1, 1], [1, -1], [-1, -1], [-1, 1]].map(([sx, sy]) => {
+          const localX = sx * length / 2;
+          const localY = sy * width / 2;
+          return {
+            x: centerX + localX * cosine - localY * sine,
+            y: centerY + localX * sine + localY * cosine
+          };
+        });
+      }
+      return footprint.flatMap((corner) => [
+        { x: corner.x, y: corner.y, z: centerZ - height / 2 },
+        { x: corner.x, y: corner.y, z: centerZ + height / 2 }
+      ]);
+    };
+    const renderObstacleCameraOverlayPayload = async (cameraPayload, obstaclePayload, calibrationPayload) => {
+      const cameraResult = toolResultOfPayload(cameraPayload) || {};
+      const obstacleResult = toolResultOfPayload(obstaclePayload) || {};
+      const calibrationResult = toolResultOfPayload(calibrationPayload) || {};
+      const cameraMedia = extractToolMediaItems(cameraPayload).filter((item) => item.kind === "image");
+      const calibrations = Array.isArray(calibrationResult?.cameras) ? calibrationResult.cameras : [];
+      const obstacles = Array.isArray(obstacleResult?.obstacles) ? obstacleResult.obstacles : [];
+      if (!cameraMedia.length) throw new Error("车端未返回实时相机帧");
+      if (!calibrations.length) throw new Error("车端未返回相机标定参数");
+
+      const overlays = [];
+      for (const item of cameraMedia) {
+        const cameraId = String(item.cameraId || "").trim();
+        const calibration = calibrations.find((camera) => String(camera?.camera_id || "") === cameraId);
+        const cameraTransform = invertRigidTransform(calibration?.T_base_cam);
+        if (!calibration || !cameraTransform || calibration?.canonical_calibration === false) continue;
+        const sourceImage = await loadOverlaySourceImage(item.src);
+        const width = sourceImage.naturalWidth || sourceImage.width;
+        const height = sourceImage.naturalHeight || sourceImage.height;
+        if (!width || !height) continue;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        if (!context) continue;
+        context.drawImage(sourceImage, 0, 0, width, height);
+
+        const boxes = [];
+        obstacles.slice(0, 120).forEach((obstacle) => {
+          const pixels = obstacleCorners3d(obstacle)
+            .map((corner) => transformPoint3d(cameraTransform, corner))
+            .map((point) => projectCameraPoint(point, calibration, width, height))
+            .filter(Boolean);
+          if (pixels.length < 2) return;
+          const rawMinX = Math.min(...pixels.map((point) => point.x));
+          const rawMaxX = Math.max(...pixels.map((point) => point.x));
+          const rawMinY = Math.min(...pixels.map((point) => point.y));
+          const rawMaxY = Math.max(...pixels.map((point) => point.y));
+          if (rawMaxX < 0 || rawMinX > width || rawMaxY < 0 || rawMinY > height) return;
+          let minX = Math.max(0, rawMinX);
+          let maxX = Math.min(width - 1, rawMaxX);
+          let minY = Math.max(0, rawMinY);
+          let maxY = Math.min(height - 1, rawMaxY);
+          const centerX = (minX + maxX) / 2;
+          const centerY = (minY + maxY) / 2;
+          if (maxX - minX < 18) {
+            minX = Math.max(0, centerX - 9);
+            maxX = Math.min(width - 1, centerX + 9);
+          }
+          if (maxY - minY < 18) {
+            minY = Math.max(0, centerY - 9);
+            maxY = Math.min(height - 1, centerY + 9);
+          }
+          if (maxX - minX < 4 || maxY - minY < 4) return;
+          boxes.push({ obstacle, minX, minY, maxX, maxY });
+        });
+
+        context.lineWidth = Math.max(2, Math.round(width / 480));
+        context.font = `800 ${Math.max(12, Math.round(width / 70))}px system-ui, sans-serif`;
+        context.textBaseline = "top";
+        boxes.forEach(({ obstacle, minX, minY, maxX, maxY }) => {
+          const color = "#fb7185";
+          context.strokeStyle = color;
+          context.fillStyle = "rgba(251, 113, 133, 0.1)";
+          context.strokeRect(minX, minY, maxX - minX, maxY - minY);
+          context.fillRect(minX, minY, maxX - minX, maxY - minY);
+          const obstacleCenter = obstacle?.center || {};
+          const reportedDistance = Number(obstacle?.distance_m ?? obstacleCenter?.distance_m);
+          const derivedDistance = Math.hypot(Number(obstacleCenter?.x || 0), Number(obstacleCenter?.y || 0));
+          const distance = Number.isFinite(reportedDistance) ? reportedDistance : derivedDistance;
+          const label = `FUSION #${obstacle?.id ?? obstacle?.index ?? "-"}${Number.isFinite(distance) ? ` · ${distance.toFixed(1)}m` : ""}`;
+          const metrics = context.measureText(label);
+          const labelHeight = Math.max(18, Math.round(width / 45));
+          const labelWidth = Math.min(width - minX, metrics.width + 12);
+          const labelY = Math.max(0, minY - labelHeight);
+          context.fillStyle = "rgba(136, 19, 55, 0.92)";
+          context.fillRect(minX, labelY, labelWidth, labelHeight);
+          context.fillStyle = "#fff1f2";
+          context.fillText(label, minX + 6, labelY + 2);
+        });
+
+        const headerHeight = Math.max(30, Math.round(width / 24));
+        context.fillStyle = "rgba(2, 6, 23, 0.76)";
+        context.fillRect(0, 0, width, headerHeight);
+        context.fillStyle = "#f8fafc";
+        context.font = `900 ${Math.max(14, Math.round(width / 55))}px system-ui, sans-serif`;
+        context.textBaseline = "middle";
+        context.fillText(`FUSION · ${cameraId} · ${boxes.length} 个目标`, 12, headerHeight / 2);
+
+        overlays.push({
+          camera_id: cameraId,
+          image_url: canvas.toDataURL("image/jpeg", 0.88),
+          mime_type: "image/jpeg",
+          label: `障碍物实景 · ${cameraId} · ${boxes.length} 个融合目标`,
+          width,
+          height,
+          captured_at: cameraResult?.generated_at || obstacleResult?.generated_at || "",
+          projected_obstacle_count: boxes.length,
+          calibration_id: calibration?.calibration_id || calibrationResult?.sensor_rig_version || "",
+          source_topic: obstacleResult?.source?.topic || "/fusion/objects"
+        });
+      }
+      if (!overlays.length) throw new Error("当前车辆没有可用于投影的正式相机标定");
+      return {
+        tool_name: "obstacle.camera_overlay",
+        result: {
+          generated_at: cameraResult?.generated_at || obstacleResult?.generated_at || "",
+          source_topic: obstacleResult?.source?.topic || "/fusion/objects",
+          source_frame: obstacleResult?.source?.frame_id || obstacleResult?.summary?.frame_id || "vehicle",
+          sensor_rig_id: calibrationResult?.sensor_rig_id || "",
+          transform: "vehicle_base_to_camera",
+          summary: {
+            camera_count: overlays.length,
+            fusion_object_count: Number(obstacleResult?.summary?.object_count ?? obstacles.length) || 0,
+            projected_obstacle_count: overlays.reduce((sum, image) => sum + image.projected_obstacle_count, 0)
+          },
+          images: overlays
+        }
+      };
+    };
     const mediaMetaText = (item) => {
       const parts = [];
       if (item?.width && item?.height) parts.push(`${item.width} x ${item.height}`);
@@ -1714,7 +1917,7 @@ const agentRules = [
       mediaViewerImage.alt = item.label || "原图预览";
       if (mediaViewerTitle) mediaViewerTitle.textContent = item.label || "原图预览";
       if (mediaViewerMeta) mediaViewerMeta.textContent = mediaMetaText(item);
-      activeViewerFollowLabel = item.toolName === "camera.capture" ? item.label : "";
+      activeViewerFollowLabel = ["camera.capture", "obstacle.camera_overlay"].includes(item.toolName) ? item.label : "";
       if (!mediaViewer.open) mediaViewer.showModal();
     };
     mediaViewer?.addEventListener("close", () => {
@@ -1767,55 +1970,49 @@ const agentRules = [
         mapRouteStatus.textContent = message || (routes.length ? `${routes.length} 条路线` : "基础地图已显示");
       }
     };
-    const resetObstacleDetectionContext = () => {
-      obstacleDetectionContext = null;
-      if (aiDetectionState) {
-        aiDetectionState.hidden = true;
-        aiDetectionState.textContent = "AI 标注待查询";
-        aiDetectionState.removeAttribute("data-tone");
-      }
-      if (aiDetectionLoadMore) {
-        aiDetectionLoadMore.hidden = true;
-        aiDetectionLoadMore.disabled = false;
-        aiDetectionLoadMore.textContent = "加载更多标注图";
+    const resetObstaclePreviewContext = () => {
+      obstaclePreviewContext = null;
+      if (obstacleOverlayState) {
+        obstacleOverlayState.hidden = true;
+        obstacleOverlayState.textContent = "障碍物实景待查询";
+        obstacleOverlayState.removeAttribute("data-tone");
       }
     };
-    const updateAiDetectionControls = () => {
-      const context = obstacleDetectionContext;
+    const updateObstacleOverlayState = () => {
+      const context = obstaclePreviewContext;
       if (!context || context.vehicleId !== selectedVehicleId()) {
-        resetObstacleDetectionContext();
+        resetObstaclePreviewContext();
         return;
       }
-      const status = context.detectionStatus || {};
-      const imageCount = Number(status.imageCount || 0);
-      if (aiDetectionState) {
-        aiDetectionState.hidden = false;
-        aiDetectionState.textContent = context.loading
-          ? "AI 标注读取中"
-          : status.message || (imageCount ? `AI 标注 ${imageCount} 张` : "暂无历史标注图片");
-        aiDetectionState.dataset.tone = context.loading ? "loading" : (status.kind || "empty");
-      }
-      if (aiDetectionLoadMore) {
-        aiDetectionLoadMore.hidden = false;
-        aiDetectionLoadMore.disabled = Boolean(context.loading);
-        aiDetectionLoadMore.textContent = context.loading
-          ? "正在读取..."
-          : imageCount === 0
-            ? "重试标注图"
-            : !context.loadedFull
-              ? "加载更多标注图"
-              : "刷新标注图";
+      const overlayResult = context.overlayPayload ? toolResultOfPayload(context.overlayPayload) || {} : {};
+      const cameraCount = context.overlayPayload ? extractToolMediaItems(context.overlayPayload).length : 0;
+      const projectedCount = Number(overlayResult?.summary?.projected_obstacle_count || 0);
+      const message = context.overlayError
+        ? context.overlayError
+        : cameraCount
+          ? `${cameraCount} 路障碍物实景 · ${projectedCount} 个融合目标`
+          : context.liveMediaError || "未返回障碍物实景";
+      if (obstacleOverlayState) {
+        obstacleOverlayState.hidden = false;
+        obstacleOverlayState.textContent = message;
+        obstacleOverlayState.dataset.tone = context.overlayError || context.liveMediaError
+          ? "error"
+          : projectedCount ? "ready" : "empty";
       }
     };
-    const renderObstacleDetectionContext = () => {
-      const context = obstacleDetectionContext;
+    const renderObstaclePreviewContext = () => {
+      const context = obstaclePreviewContext;
       if (!context) return 0;
       return renderToolMedia(
-        [context.pointCloudPayload || context.obstaclePayload, context.detectionPayload, context.livePayload],
+        [
+          context.pointCloudPayload || context.obstaclePayload,
+          context.overlayPayload || context.cameraPayload
+        ],
         {
           expected: true,
           error: [
-            context.detectionError ? `AI 标注实景：${context.detectionError}` : "",
+            context.auxiliaryError ? `俯视点云：${context.auxiliaryError}` : "",
+            context.overlayError ? `障碍物实景：${context.overlayError}` : "",
             context.liveMediaError ? `实时相机获取失败：${context.liveMediaError}` : ""
           ].filter(Boolean).join("；")
         }
@@ -1823,7 +2020,7 @@ const agentRules = [
     };
     const clearToolMedia = () => {
       resetMapRouteControls();
-      resetObstacleDetectionContext();
+      resetObstaclePreviewContext();
       if (toolMediaTitle) toolMediaTitle.textContent = "图像与视频";
       if (toolMediaGrid) toolMediaGrid.replaceChildren();
       if (toolMediaCount) toolMediaCount.textContent = "--";
@@ -1869,6 +2066,7 @@ const agentRules = [
         const card = document.createElement("article");
         card.className = `cloud-ops-test-media-card is-${item.kind}`;
         if (item.toolName === "camera.capture") card.classList.add("is-monitor-feed");
+        if (item.toolName === "obstacle.camera_overlay") card.classList.add("is-obstacle-overlay", "is-monitor-feed");
         if (item.toolName === "ai_detection.images") card.classList.add("is-ai-detection");
         if (item.toolName === "obstacle.pointcloud.preview") card.classList.add("is-pointcloud-preview");
         if (item.toolName === "map.preview" || item.toolName === "map.route.preview") card.classList.add("is-map-preview");
@@ -1975,35 +2173,98 @@ const agentRules = [
       updateLiveMonitorUi("监控中 · 正在刷新");
       let refreshPromise = null;
       try {
-        refreshPromise = requestReadOnlyToolPayload(
-          liveMonitorVehicleId,
-          "camera.capture",
-          LIVE_MONITOR_ARGS,
-          40,
-          "live-monitor"
-        );
+        const obstacleContext = obstaclePreviewContext?.vehicleId === liveMonitorVehicleId
+          ? obstaclePreviewContext
+          : null;
+        refreshPromise = obstacleContext
+          ? (async () => {
+              const obstaclePayload = await requestReadOnlyToolPayload(
+                liveMonitorVehicleId,
+                "obstacle.preview",
+                {
+                  ...obstacleContext.obstacleArgs,
+                  image_size: 320,
+                  save_file: false,
+                  include_base64: false
+                },
+                40,
+                "live-monitor-obstacles"
+              );
+              const cameraPayload = await requestReadOnlyToolPayload(
+                liveMonitorVehicleId,
+                "camera.capture",
+                LIVE_MONITOR_ARGS,
+                40,
+                "live-monitor"
+              );
+              let overlayPayload = null;
+              let overlayError = "";
+              try {
+                overlayPayload = await renderObstacleCameraOverlayPayload(
+                  cameraPayload,
+                  obstaclePayload,
+                  obstacleContext.calibrationPayload
+                );
+              } catch (error) {
+                overlayError = error?.message || "障碍物投影失败";
+              }
+              return { kind: "obstacle", obstaclePayload, cameraPayload, overlayPayload, overlayError };
+            })()
+          : requestReadOnlyToolPayload(
+              liveMonitorVehicleId,
+              "camera.capture",
+              LIVE_MONITOR_ARGS,
+              40,
+              "live-monitor"
+            ).then((payload) => ({ kind: "camera", payload }));
         liveMonitorRefreshPromise = refreshPromise;
-        const payload = await refreshPromise;
+        const refreshResult = await refreshPromise;
         if (!liveMonitorRunning || generation !== liveMonitorGeneration) return;
+        const payload = refreshResult.kind === "obstacle"
+          ? (refreshResult.overlayPayload || refreshResult.cameraPayload)
+          : refreshResult.payload;
         liveMonitorLastPayload = payload;
         const liveCount = extractToolMediaItems(payload).length;
-        const detectionCount = obstacleDetectionContext?.vehicleId === liveMonitorVehicleId
-          ? Number(obstacleDetectionContext?.detectionStatus?.imageCount || 0)
-          : 0;
         liveMonitorFrameCount += liveCount;
         liveMonitorLastUpdatedAt = Date.now();
-        if (obstacleDetectionContext?.vehicleId === liveMonitorVehicleId) {
-          obstacleDetectionContext.livePayload = payload;
-          renderObstacleDetectionContext();
+        if (refreshResult.kind === "obstacle" && obstacleContext) {
+          obstacleContext.obstaclePayload = refreshResult.obstaclePayload;
+          obstacleContext.cameraPayload = refreshResult.cameraPayload;
+          obstacleContext.overlayPayload = refreshResult.overlayPayload;
+          obstacleContext.liveMediaError = "";
+          obstacleContext.overlayError = refreshResult.overlayError;
+          renderToolSummary(
+            "obstacle.preview",
+            obstacleContext.obstaclePayload,
+            obstacleContext.vehicleId,
+            obstacleContext.cameraPayload,
+            "",
+            obstacleContext.auxiliaryPayload,
+            obstacleContext.auxiliaryError,
+            obstacleContext.overlayPayload,
+            ""
+          );
+          renderObstaclePreviewContext();
+          updateObstacleOverlayState();
+          const projectedCount = Number(toolResultOfPayload(refreshResult.overlayPayload)?.summary?.projected_obstacle_count || 0);
+          updateLiveMonitorUi(
+            refreshResult.overlayError
+              ? `监控中 · ${formatMonitorTime(liveMonitorLastUpdatedAt)} · ${liveCount} 路 · 障碍物投影未完成`
+              : `监控中 · ${formatMonitorTime(liveMonitorLastUpdatedAt)} · ${liveCount} 路 · 投影 ${projectedCount} 个`
+          );
         } else {
           renderToolMedia([...liveMonitorBasePayloads, payload], { expected: true });
+          updateLiveMonitorUi(
+            `监控中 · ${formatMonitorTime(liveMonitorLastUpdatedAt)} · ${liveCount} 路`
+          );
         }
-        updateLiveMonitorUi(
-          `监控中 · ${formatMonitorTime(liveMonitorLastUpdatedAt)} · ${liveCount} 路${detectionCount ? ` · 标注 ${detectionCount} 张` : ""}`
-        );
         scheduleLiveMonitor(LIVE_MONITOR_REFRESH_MS, generation);
       } catch (error) {
         if (!liveMonitorRunning || generation !== liveMonitorGeneration) return;
+        if (obstaclePreviewContext?.vehicleId === liveMonitorVehicleId) {
+          obstaclePreviewContext.overlayError = error?.message || "障碍物实景刷新失败";
+          updateObstacleOverlayState();
+        }
         updateLiveMonitorUi("刷新失败 · 5 秒后重试");
         scheduleLiveMonitor(5000, generation);
       } finally {
@@ -2073,7 +2334,7 @@ const agentRules = [
       if (currentVehicleId && nextVehicleId !== currentVehicleId) {
         stopLiveMonitor({ hideControl: true });
         closeMediaViewer();
-        resetObstacleDetectionContext();
+        resetObstaclePreviewContext();
       }
       currentVehicleId = nextVehicleId;
       syncSelectedVehicleUi();
@@ -2787,8 +3048,8 @@ const agentRules = [
       liveMediaError = "",
       auxiliaryPayload = null,
       auxiliaryError = "",
-      detectionPayload = null,
-      detectionError = ""
+      overlayPayload = null,
+      overlayError = ""
     ) => {
       const normalizedTool = String(toolName || "");
       if (normalizedTool === "task.navigation_context" || normalizedTool === "communication.cloud_vehicle" || normalizedTool === "combined.snapshot") {
@@ -2878,24 +3139,25 @@ const agentRules = [
         const lidarResult = auxiliaryPayload ? toolResultOfPayload(auxiliaryPayload) : null;
         const pointcloud = lidarResult?.pointcloud || {};
         const obstacleCount = Number(result?.summary?.drawn_obstacle_count ?? result?.obstacles?.length ?? 0) || 0;
-        const detectionMediaCount = detectionPayload ? extractToolMediaItems(detectionPayload).length : 0;
+        const overlayResult = overlayPayload ? toolResultOfPayload(overlayPayload) || {} : {};
+        const overlayMediaCount = overlayPayload ? extractToolMediaItems(overlayPayload).length : 0;
+        const projectedCount = Number(overlayResult?.summary?.projected_obstacle_count || 0);
         const pointCloudReady = Boolean(lidarResult && !auxiliaryError);
         return {
-          title: pointCloudReady ? "实时俯视点云、AI 标注实景与相机" : "障碍物与 AI 标注实景",
-          tone: ok && pointCloudReady && detectionMediaCount && liveMediaCount ? "ok" : "warn",
+          title: pointCloudReady ? "实时俯视点云与障碍物实景" : "融合障碍物实景",
+          tone: ok && pointCloudReady && overlayMediaCount ? "ok" : "warn",
           kv: [
             ["车辆", vehicleId],
             ["点云来源", lidarResult?.topic || "未返回"],
             ["原始点数", lidarResult?.source_point_count ?? pointcloud?.source_point_count ?? "--"],
             ["绘制点数", lidarResult?.point_count ?? pointcloud?.point_count ?? "--"],
             ["融合障碍物", `${obstacleCount} 个`],
-            ["AI标注实景", detectionMediaCount ? `${detectionMediaCount} 张` : (detectionError || "暂无历史标注图片")],
-            ["实时相机", liveMediaCount ? `${liveMediaCount} 路` : "未返回"],
+            ["障碍物实景", overlayMediaCount ? `${overlayMediaCount} 路 · 投影 ${projectedCount} 个` : (overlayError || "未返回")],
             ["坐标系", `${lidarResult?.frame_id || "--"} / ${result?.summary?.frame_id || result?.source?.frame_id || "--"}`]
           ],
           lines: [
             ...(auxiliaryError ? [`点云预览回退：${auxiliaryError}`] : []),
-            ...(detectionError ? [`AI 标注实景：${detectionError}`] : []),
+            ...(overlayError ? [`障碍物实景：${overlayError}`] : []),
             ...(liveMediaError ? [`实时相机获取失败：${liveMediaError}`] : [])
           ]
         };
@@ -2949,8 +3211,8 @@ const agentRules = [
       liveMediaError = "",
       auxiliaryPayload = null,
       auxiliaryError = "",
-      detectionPayload = null,
-      detectionError = ""
+      overlayPayload = null,
+      overlayError = ""
     ) => {
       if (!toolSummary) return;
       const summary = summarizeToolPayload(
@@ -2961,8 +3223,8 @@ const agentRules = [
         liveMediaError,
         auxiliaryPayload,
         auxiliaryError,
-        detectionPayload,
-        detectionError
+        overlayPayload,
+        overlayError
       );
       const kvHtml = summary.kv?.length
         ? `<dl class="cloud-ops-test-result-kv">${summary.kv.map(([k, v]) => resultLine(k, v)).join("")}</dl>`
@@ -2993,127 +3255,6 @@ const agentRules = [
         throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
       }
       return payload;
-    };
-
-    const readCachedAiDetectionHealth = async (vehicleId) => {
-      try {
-        const response = await fetch(`/api/cloud-ops/vehicles/${encodeURIComponent(vehicleId)}`, {
-          headers: { Accept: "application/json" },
-          credentials: "same-origin",
-          cache: "no-store"
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload?.ok === false) return {};
-        const data = payload?.execution?.data || payload?.vehicle || payload;
-        const vehicle = data?.vehicle || data;
-        const ai = vehicle?.snapshot?.key_nodes?.subsystems?.ai_detection || {};
-        const topicAlive = vehicle?.telemetry?.key_topics?.["/groundingdino/resultimg"];
-        return {
-          health: String(ai?.health || "").toLowerCase(),
-          nodeOnline: typeof ai?.summary?.node_online === "boolean" ? ai.summary.node_online : null,
-          topicAlive: typeof topicAlive === "boolean" ? topicAlive : null
-        };
-      } catch (_error) {
-        return {};
-      }
-    };
-
-    const describeAiDetectionResult = async (vehicleId, payload, error = "") => {
-      const result = payload ? toolResultOfPayload(payload) || {} : {};
-      const imageCount = payload
-        ? extractToolMediaItems(payload).filter((item) => item.toolName === "ai_detection.images").length
-        : 0;
-      const totalValue = Number(result?.total_files);
-      const totalFiles = Number.isFinite(totalValue) ? totalValue : imageCount;
-      if (imageCount) {
-        return {
-          kind: "ready",
-          imageCount,
-          totalFiles,
-          message: totalFiles > imageCount
-            ? `AI 标注预览 ${imageCount} / ${totalFiles} 张`
-            : `AI 标注 ${imageCount} 张`
-        };
-      }
-
-      const health = await readCachedAiDetectionHealth(vehicleId);
-      if (health.nodeOnline === false || health.health === "fault") {
-        return { kind: "offline", imageCount: 0, totalFiles, message: "AI 节点离线" };
-      }
-      if (health.topicAlive === false) {
-        return { kind: "offline", imageCount: 0, totalFiles, message: "AI 标注结果话题未输出" };
-      }
-      const detail = String(error || "").trim();
-      if (/504|timeout|timed out|deadline|超时/i.test(detail)) {
-        return { kind: "timeout", imageCount: 0, totalFiles, message: "AI 标注读取超时" };
-      }
-      if (/unsupported|not supported|unknown tool|tool_not_found|不支持/i.test(detail)) {
-        return { kind: "unsupported", imageCount: 0, totalFiles, message: "当前车端不支持 AI 标注图片" };
-      }
-      if (detail) {
-        return { kind: "error", imageCount: 0, totalFiles, message: `AI 标注读取失败：${detail}` };
-      }
-      return { kind: "empty", imageCount: 0, totalFiles, message: "暂无历史标注图片" };
-    };
-
-    const loadMoreAiDetectionImages = async () => {
-      const context = obstacleDetectionContext;
-      if (!context || context.vehicleId !== selectedVehicleId() || context.loading) return;
-      const resumeMonitor = liveMonitorRunning;
-      stopLiveMonitor({ message: "监控暂停，正在读取 AI 标注" });
-      if (liveMonitorRefreshPromise) {
-        await liveMonitorRefreshPromise.catch(() => null);
-      }
-      if (obstacleDetectionContext !== context || context.vehicleId !== selectedVehicleId()) return;
-
-      context.loading = true;
-      updateAiDetectionControls();
-      setStatus(`正在读取 ${context.vehicleId} 的更多 AI 标注图...`, "loading");
-      try {
-        const detectionPayload = await requestReadOnlyToolPayload(
-          context.vehicleId,
-          "ai_detection.images",
-          OBSTACLE_DETECTION_MORE_ARGS,
-          OBSTACLE_DETECTION_TIMEOUT_S,
-          "obstacle-detection-more"
-        );
-        context.detectionPayload = detectionPayload;
-        context.detectionStatus = await describeAiDetectionResult(context.vehicleId, detectionPayload);
-        context.detectionError = context.detectionStatus.kind === "ready" ? "" : context.detectionStatus.message;
-        context.loadedFull = context.detectionStatus.kind === "ready";
-      } catch (error) {
-        context.detectionPayload = null;
-        context.detectionStatus = await describeAiDetectionResult(
-          context.vehicleId,
-          null,
-          error?.message || "未知错误"
-        );
-        context.detectionError = context.detectionStatus.message;
-        context.loadedFull = false;
-      } finally {
-        if (obstacleDetectionContext !== context) return;
-        context.loading = false;
-        renderToolSummary(
-          "obstacle.preview",
-          context.obstaclePayload,
-          context.vehicleId,
-          context.livePayload,
-          context.liveMediaError,
-          context.auxiliaryPayload,
-          context.auxiliaryError,
-          context.detectionPayload,
-          context.detectionError
-        );
-        const mediaCount = renderObstacleDetectionContext();
-        updateAiDetectionControls();
-        setStatus(
-          `${context.detectionStatus.message}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}`,
-          context.detectionStatus.kind === "ready" ? "ok" : "error"
-        );
-        if (resumeMonitor && context.livePayload && context.vehicleId === selectedVehicleId()) {
-          startLiveMonitor();
-        }
-      }
     };
 
     const renderSelectedMapRoute = async (routeId) => {
@@ -3361,12 +3502,54 @@ const agentRules = [
         let auxiliaryPayload = null;
         let auxiliaryError = "";
         let renderedObstaclePayload = null;
-        let detectionPayload = null;
-        let detectionError = "";
-        let detectionStatus = null;
+        let calibrationPayload = null;
+        let calibrationError = "";
+        let overlayPayload = null;
+        let overlayError = "";
         if (toolName === "obstacle.preview") {
-          if (toolMediaTitle) toolMediaTitle.textContent = "点云、AI 标注实景与实时相机";
-          if (toolSummary) toolSummary.textContent = `障碍物目标已返回，正在读取 ${vehicleId} 的实时点云...`;
+          if (toolMediaTitle) toolMediaTitle.textContent = "实时俯视点云与障碍物实景";
+          if (toolSummary) toolSummary.textContent = `融合障碍物已返回，正在获取 ${vehicleId} 的实时相机...`;
+          try {
+            liveMediaPayload = await requestReadOnlyToolPayload(
+              vehicleId,
+              "camera.capture",
+              LIVE_CAPTURE_ARGS,
+              40,
+              "obstacle-live-camera"
+            );
+          } catch (error) {
+            liveMediaError = error?.message || "未知错误";
+          }
+          if (liveMediaPayload) {
+            if (toolSummary) toolSummary.textContent = `实时相机已返回，正在读取 ${vehicleId} 的相机标定...`;
+            try {
+              calibrationPayload = await requestReadOnlyToolPayload(
+                vehicleId,
+                "vehicle.calibration",
+                OBSTACLE_CALIBRATION_ARGS,
+                30,
+                "obstacle-calibration"
+              );
+            } catch (error) {
+              calibrationError = error?.message || "相机标定读取失败";
+            }
+            if (calibrationPayload) {
+              try {
+                overlayPayload = await renderObstacleCameraOverlayPayload(
+                  liveMediaPayload,
+                  payload,
+                  calibrationPayload
+                );
+              } catch (error) {
+                overlayError = error?.message || "障碍物投影失败";
+              }
+            } else {
+              overlayError = calibrationError || "相机标定未返回";
+            }
+          } else {
+            overlayError = liveMediaError || "实时相机未返回";
+          }
+          if (toolSummary) toolSummary.textContent = `障碍物实景处理完成，正在读取 ${vehicleId} 的实时点云...`;
           const pointCloudErrors = [];
           for (const topic of OBSTACLE_POINTCLOUD_TOPICS) {
             try {
@@ -3395,34 +3578,15 @@ const agentRules = [
               auxiliaryError = error?.message || "点云渲染失败";
             }
           }
-        }
-        if (includeLiveMedia) {
+        } else if (includeLiveMedia) {
           if (toolSummary) {
-            toolSummary.textContent = toolName === "obstacle.preview"
-              ? `实时点云读取完成，正在获取 ${vehicleId} 的实时相机...`
-              : `状态检查完成，正在获取 ${vehicleId} 的实时画面...`;
+            toolSummary.textContent = `状态检查完成，正在获取 ${vehicleId} 的实时画面...`;
           }
           try {
             liveMediaPayload = await requestReadOnlyToolPayload(vehicleId, "camera.capture", LIVE_CAPTURE_ARGS, 40, "live-media");
           } catch (error) {
             liveMediaError = error?.message || "未知错误";
           }
-        }
-        if (toolName === "obstacle.preview") {
-          if (toolSummary) toolSummary.textContent = `点云与相机读取完成，正在获取 ${vehicleId} 的 AI 标注预览...`;
-          try {
-            detectionPayload = await requestReadOnlyToolPayload(
-              vehicleId,
-              "ai_detection.images",
-              OBSTACLE_DETECTION_INITIAL_ARGS,
-              OBSTACLE_DETECTION_TIMEOUT_S,
-              "obstacle-detection-images"
-            );
-            detectionStatus = await describeAiDetectionResult(vehicleId, detectionPayload);
-          } catch (error) {
-            detectionStatus = await describeAiDetectionResult(vehicleId, null, error?.message || "未知错误");
-          }
-          detectionError = detectionStatus.kind === "ready" ? "" : detectionStatus.message;
         }
         renderToolSummary(
           toolName,
@@ -3432,28 +3596,28 @@ const agentRules = [
           liveMediaError,
           auxiliaryPayload,
           auxiliaryError,
-          detectionPayload,
-          detectionError
+          overlayPayload,
+          overlayError
         );
         if (toolName === "obstacle.preview") {
-          obstacleDetectionContext = {
+          obstaclePreviewContext = {
             vehicleId,
+            obstacleArgs: { ...args },
             obstaclePayload: payload,
             pointCloudPayload: renderedObstaclePayload,
             auxiliaryPayload,
             auxiliaryError,
-            livePayload: liveMediaPayload,
+            cameraPayload: liveMediaPayload,
             liveMediaError,
-            detectionPayload,
-            detectionStatus,
-            detectionError,
-            loadedFull: false,
-            loading: false
+            calibrationPayload,
+            calibrationError,
+            overlayPayload,
+            overlayError
           };
-          updateAiDetectionControls();
+          updateObstacleOverlayState();
         }
         const mediaCount = toolName === "obstacle.preview"
-          ? renderObstacleDetectionContext()
+          ? renderObstaclePreviewContext()
           : renderToolMedia([payload, liveMediaPayload], {
               expected: MEDIA_EXPECTED_TOOLS.has(toolName) || includeLiveMedia,
               error: liveMediaError ? `实时画面获取失败：${liveMediaError}` : ""
@@ -3462,14 +3626,14 @@ const agentRules = [
           configureLiveMonitor(
             vehicleId,
             toolName === "obstacle.preview" && renderedObstaclePayload ? [renderedObstaclePayload] : [payload],
-            liveMediaPayload,
+            toolName === "obstacle.preview" ? (overlayPayload || liveMediaPayload) : liveMediaPayload,
             true
           );
         }
-        const obstacleDetectionProblem = toolName === "obstacle.preview" && detectionStatus?.kind !== "ready";
+        const obstacleOverlayProblem = toolName === "obstacle.preview" && Boolean(overlayError);
         setStatus(
-          `只读检查完成：${toolName}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}${obstacleDetectionProblem ? ` · ${detectionStatus.message}` : ""}`,
-          toolName === "obstacle.preview" && (liveMediaError || obstacleDetectionProblem)
+          `只读检查完成：${toolName}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}${obstacleOverlayProblem ? ` · ${overlayError}` : ""}`,
+          toolName === "obstacle.preview" && (liveMediaError || obstacleOverlayProblem)
             ? "error"
             : (liveMediaError && !mediaCount ? "loading" : "ok")
         );
@@ -3556,8 +3720,6 @@ const agentRules = [
       } else if (action === "live-monitor-toggle") {
         if (liveMonitorRunning) stopLiveMonitor({ message: "监控已暂停" });
         else startLiveMonitor();
-      } else if (action === "ai-detection-load-more") {
-        loadMoreAiDetectionImages();
       } else if (action === "media-viewer-close") {
         closeMediaViewer();
       } else if (action === "agent-toggle") {
