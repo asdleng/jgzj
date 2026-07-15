@@ -23,6 +23,9 @@ from urllib3.util.retry import Retry
 
 
 SCHEMA = "jgzj_fire_smoke_web_candidate.v1"
+SUMMARY_SCHEMA = "jgzj_fire_smoke_web_candidate_summary.v1"
+DEFAULT_PROFILE = "烟雾火焰网络候选集"
+DEFAULT_CLASSES = ("fire", "smoke")
 ALLOWED_LICENSE_RE = re.compile(
     r"^(?:cc0|public domain|pdm|cc by(?:-sa)?(?: |-|$))", re.IGNORECASE
 )
@@ -402,7 +405,7 @@ def crawl(args: argparse.Namespace) -> dict:
         url = str(candidate.get("url") or "")
         canonical_url = str(candidate.get("canonical_file_url") or "")
         base_log = {
-            "schema": SCHEMA,
+            "schema": args.dataset_schema,
             "processed_at": now_iso(),
             "provider": candidate.get("provider"),
             "url": url,
@@ -466,7 +469,7 @@ def crawl(args: argparse.Namespace) -> dict:
             destination = image_root / f"{final_sha[:24]}.jpg"
             os.replace(str(normalized_tmp), str(destination))
             row = {
-                "schema": SCHEMA,
+                "schema": args.dataset_schema,
                 "image": destination.relative_to(output).as_posix(),
                 "source_provider": candidate.get("provider"),
                 "source_file_url": url,
@@ -518,11 +521,11 @@ def crawl(args: argparse.Namespace) -> dict:
 
     total_manifest = sum(1 for _ in iter_jsonl(manifest_path))
     summary = {
-        "schema": "jgzj_fire_smoke_web_candidate_summary.v1",
-        "profile": "烟雾火焰网络候选集",
+        "schema": args.summary_schema,
+        "profile": args.profile,
         "kind": "detect",
         "updated_at": now_iso(),
-        "classes": ["fire", "smoke"],
+        "classes": args.class_name or list(DEFAULT_CLASSES),
         "images": {"review": total_manifest},
         "crawl_target_images": args.max_images,
         "crawl_existing_images": existing_images,
@@ -538,18 +541,26 @@ def crawl(args: argparse.Namespace) -> dict:
     write_json_atomic(output / "training_guard.json", {
         "schema": "jgzj_yolo_training_guard.v1",
         "training_eligible": False,
-        "reason": "Web search results are candidates only; Qwen labels and human approval are required.",
+        "reason": args.training_guard_reason,
         "updated_at": now_iso(),
     })
     return summary
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Collect license-traceable fire/smoke web images into a review-only dataset.")
+    parser = argparse.ArgumentParser(description="Collect license-traceable web images into a review-only detection dataset.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed-file", type=Path, action="append", default=[])
     parser.add_argument("--commons-config", type=Path)
     parser.add_argument("--dedupe-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--dataset-schema", default=SCHEMA)
+    parser.add_argument("--summary-schema", default=SUMMARY_SCHEMA)
+    parser.add_argument("--profile", default=DEFAULT_PROFILE)
+    parser.add_argument("--class-name", action="append", default=[])
+    parser.add_argument(
+        "--training-guard-reason",
+        default="Web search results are candidates only; Qwen labels and human approval are required.",
+    )
     parser.add_argument("--max-images", type=int, default=200)
     parser.add_argument("--min-side", type=int, default=480)
     parser.add_argument("--max-side", type=int, default=2560)
