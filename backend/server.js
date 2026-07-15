@@ -328,15 +328,22 @@ if (!cloudOpsAgentAllowedModels.includes(cloudOpsAgentModel)) {
 }
 const cloudOpsAgentTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_TIMEOUT_MS || 300000);
 const cloudOpsAgentReasoningEffort = String(
-  process.env.CLOUD_OPS_AGENT_REASONING_EFFORT || 'high'
-).trim() || 'high';
+  process.env.CLOUD_OPS_AGENT_REASONING_EFFORT || 'xhigh'
+).trim() || 'xhigh';
 const cloudOpsAgentMaxContextVehicles = Number(process.env.CLOUD_OPS_AGENT_MAX_CONTEXT_VEHICLES || 30);
 const cloudOpsCodexHost = process.env.CLOUD_OPS_CODEX_HOST || '127.0.0.1';
 const cloudOpsCodexPort = Number(process.env.CLOUD_OPS_CODEX_PORT || 14521);
 const cloudOpsCodexBin = process.env.CLOUD_OPS_CODEX_BIN || '/home/admin1/.local/bin/codex';
 const cloudOpsCodexStatusTimeoutMs = Number(process.env.CLOUD_OPS_CODEX_STATUS_TIMEOUT_MS || 1500);
 const cloudOpsCodexAgentEnabled = String(process.env.CLOUD_OPS_CODEX_AGENT_ENABLED || 'true').toLowerCase() !== 'false';
-const cloudOpsCodexAgentModel = process.env.CLOUD_OPS_CODEX_AGENT_MODEL || 'gpt-5.4';
+const cloudOpsCodexAgentModel = process.env.CLOUD_OPS_CODEX_AGENT_MODEL || 'gpt-5.6-terra';
+const cloudOpsCodexUnifiedRouteEnabled = String(
+  process.env.CLOUD_OPS_CODEX_UNIFIED_ROUTE_ENABLED || 'true'
+).toLowerCase() !== 'false';
+const cloudOpsCodexWebSearchMode = (() => {
+  const mode = String(process.env.CLOUD_OPS_CODEX_WEB_SEARCH_MODE || 'live').trim().toLowerCase();
+  return ['disabled', 'cached', 'indexed', 'live'].includes(mode) ? mode : 'live';
+})();
 const cloudOpsCodexAgentCwd = path.resolve(process.env.CLOUD_OPS_CODEX_AGENT_CWD || projectRoot);
 const cloudOpsCodexAgentTimeoutMs = Number(process.env.CLOUD_OPS_CODEX_AGENT_TIMEOUT_MS || 20 * 60 * 1000);
 const cloudOpsCodexApprovalTimeoutMs = Number(process.env.CLOUD_OPS_CODEX_APPROVAL_TIMEOUT_MS || 10 * 60 * 1000);
@@ -1289,16 +1296,21 @@ async function getCloudOpsCodexDeploymentStatus() {
     ok: Boolean(appServer?.ok && cli?.ok),
     deployed: Boolean(appServer?.ok && cli?.ok),
     integrated: cloudOpsCodexAgentEnabled && Boolean(cli?.ok),
-    mode: 'codex_app_server_local_ws',
+    mode: 'codex_app_server_unified',
+    transport: 'stdio_per_request',
     listen: `ws://${cloudOpsCodexHost}:${cloudOpsCodexPort}`,
     agent_model: cloudOpsCodexAgentModel,
     requested_default_model: cloudOpsAgentModel,
     model_route: cloudOpsCodexAgentModel === cloudOpsAgentModel ? 'exact' : 'compatibility_fallback',
+    unified_route: cloudOpsCodexUnifiedRouteEnabled,
+    web_search: cloudOpsCodexWebSearchMode,
+    reasoning_effort: cloudOpsAgentReasoningEffort,
     app_server: appServer,
     cli,
     safety: [
-      'Codex App Server 仅监听本机地址；JGZJ 通过独立 stdio 会话接入，不向浏览器暴露端口。',
-      'Codex 本地 shell 保持只读且禁网，车端访问只通过后端 vehicle_tool / vehicle_ssh 动态工具。',
+      '所有山海智枢对话统一进入 Codex App Server；浏览器不能直接连接 App Server。',
+      `Codex 原生 Web Search 为 ${cloudOpsCodexWebSearchMode}；本地 shell 保持只读 sandbox，需变更时走网页审批。`,
+      '车辆访问只通过后端 vehicle_tool / vehicle_ssh 动态工具，不允许本地 shell 绕过车辆安全网关。',
       '只读检查自动执行；写入、重启、部署和非白名单 SSH 命令需要 vehicle:control 权限逐项审批。'
     ]
   };
@@ -6366,10 +6378,13 @@ function cloudOpsAgentHistoryRecord(record) {
 }
 
 async function appendCloudOpsAgentHistory(record) {
+  const normalizedRecord = record?.id && Object.prototype.hasOwnProperty.call(record, 'prompt_snippet')
+    ? record
+    : cloudOpsAgentHistoryRecord(record);
   await fs.mkdir(path.dirname(cloudOpsAgentHistoryPath), { recursive: true });
   await fs.appendFile(
     cloudOpsAgentHistoryPath,
-    `${JSON.stringify(cloudOpsAgentHistoryRecord(record))}\n`,
+    `${JSON.stringify(normalizedRecord)}\n`,
     'utf-8'
   );
 }
@@ -7222,19 +7237,24 @@ async function executeCloudOpsCodexVehicleSsh(argumentsPayload, vehicles) {
 
 function buildCloudOpsCodexInstructions({ vehicleId, summary, tailscalePeer }) {
   return [
-    '你是运行在公司云服务器上的 Codex 智能运维代理。你的任务是端到端调查车辆问题，并在获得网页人工审批后执行必要修复。',
-    '必须先调查再变更。车辆实时数据和远程操作只允许使用 vehicle_tool 或 vehicle_ssh 动态工具；不要用本地 curl、ssh、scp 绕过这些工具。',
+    '你是“山海智枢”，完整运行在 OpenAI Codex App Server 上，由 GPT-5.6 Terra 统一驱动。你不是简单问答接口，而是可以自主规划、搜索、读取文件、执行 shell、调用车辆工具并在审批后完成变更的通用智能体。',
+    '普通知识问答、写作、翻译、总结、编程和方案讨论应像完整的通用 AI 助手一样自然回答，不要机械套用车辆运维模板。',
+    '涉及“今天、最新、目前、刚刚、实时、新闻、天气、价格、政策、版本”等时效信息时，必须优先调用原生 Web Search 核实；回答要标注信息日期并给出可点击的来源 URL。只有工具确实失败时才能说明无法联网，不得把模型知识截止时间冒充实时结果。',
+    '你可以使用 Codex 原生只读 shell 调查当前云服务器和项目。需要写文件、安装、重启或其他越出只读 sandbox 的动作时，必须发起审批并等待网页用户决定；审批被拒绝时不得声称已执行。',
+    '车辆问题必须先调查再变更。车辆实时数据和远程操作只允许使用 vehicle_tool 或 vehicle_ssh 动态工具；不要用本地 curl、ssh、scp 绕过车辆安全网关。',
     'vehicle_tool 的只读工具会自动执行；写入、重启、部署、任务或车身控制工具会暂停并请求网页审批。',
     'vehicle_ssh 的严格只读命令会自动执行；其他命令会暂停并展示完整命令等待审批。不得把密码、Token、私钥或 Cookie 放进命令。',
     '不得执行原始 CAN 帧、车辆运动控制、绕过急停或其他可能造成人身/车辆风险的命令。此类需求只说明需要现场安全流程。',
     '修复后必须回读状态并说明：根因、执行内容、验证证据、剩余风险。审批被拒绝时继续提供可执行建议，不要声称已经修复。',
+    '需要澄清时直接在最终回复中向用户提问，不调用当前网页无法呈现的交互式用户输入工具。默认使用用户正在使用的语言，避免输出隐藏思维链。',
+    `当前服务器时间：${new Date().toISOString()}`,
     `当前目标车辆：${vehicleId || '未指定'}`,
     `车辆注册摘要：${safeJsonStringify(summary, 8000)}`,
     `Tailscale 线索：${safeJsonStringify(tailscalePeer, 2000)}`
   ].join('\n');
 }
 
-async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicleId, actor, onProgress }) {
+async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicleId, actor, operationIntent, onProgress }) {
   if (!cloudOpsCodexAgentEnabled) {
     const error = new Error('cloud_ops_codex_agent_disabled');
     error.status = 503;
@@ -7247,7 +7267,11 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
   const summary = rawVehicle ? makeCloudOpsAgentVehicleSummary(rawVehicle) : null;
   const mediaTarget = vehicleId ? await resolveCloudOpsVehicleMediaSshTarget(vehicleId, rawVehicle) : null;
   const codexModel = cloudOpsCodexAgentModel;
-  const child = spawn(cloudOpsCodexBin, ['app-server', '--stdio'], {
+  const child = spawn(cloudOpsCodexBin, [
+    '-c', `web_search=${JSON.stringify(cloudOpsCodexWebSearchMode)}`,
+    'app-server',
+    '--stdio'
+  ], {
     cwd: cloudOpsCodexAgentCwd,
     stdio: ['pipe', 'pipe', 'pipe'],
     env: process.env
@@ -7257,6 +7281,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
   let stderr = '';
   let answer = '';
   let reasoningSummary = '';
+  let webSearchCount = 0;
   let completed = false;
   let closing = false;
   let turnCompletionResolve;
@@ -7403,6 +7428,18 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
     }
     if (messagePayload.method === 'item/started' || messagePayload.method === 'item/completed') {
       const item = params.item || {};
+      if (item.type === 'webSearch') {
+        if (messagePayload.method === 'item/completed') webSearchCount += 1;
+        const action = item.action && typeof item.action === 'object' ? item.action : {};
+        const detail = action.query || action.url || action.pattern || safeJsonStringify(action, 1200);
+        cloudOpsAgentProgress(onProgress, {
+          stage: 'codex_web_search',
+          status: messagePayload.method === 'item/completed' ? 'completed' : 'running',
+          title: messagePayload.method === 'item/completed' ? '实时网页检索已完成' : 'Codex 正在检索实时信息',
+          detail: normalizeReply(detail) || 'Web Search',
+          elapsed_ms: Date.now() - startedAt
+        });
+      }
       if (item.type === 'commandExecution') {
         cloudOpsAgentProgress(onProgress, {
           stage: 'codex_tool',
@@ -7461,8 +7498,8 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
     cloudOpsAgentProgress(onProgress, {
       stage: 'codex',
       status: 'running',
-      title: `正在启动 Codex 运维线程`,
-      detail: `${codexModel} · high · 只读调查，变更逐项审批`,
+      title: '正在启动山海智枢 Codex 线程',
+      detail: `${codexModel} · ${cloudOpsAgentReasoningEffort} · Web Search ${cloudOpsCodexWebSearchMode} · 变更逐项审批`,
       elapsed_ms: 0
     });
     await request('initialize', {
@@ -7525,9 +7562,10 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         type: 'text',
         text: [
           historyText ? `最近对话：\n${historyText}` : '',
+          `当前时间：${new Date().toISOString()}`,
           `用户当前需求：${message}`,
           requestedModel && requestedModel !== codexModel
-            ? `页面选择模型为 ${requestedModel}；当前服务器 Codex CLI 暂以兼容模型 ${codexModel} 执行工具循环。`
+            ? `页面请求模型为 ${requestedModel}；山海智枢统一由 ${codexModel} 执行，此处以实际模型为准。`
             : ''
         ].filter(Boolean).join('\n\n')
       }],
@@ -7544,9 +7582,9 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
       reasoning_effort: cloudOpsAgentReasoningEffort,
       latency_ms: Date.now() - startedAt,
       mode: 'codex_app_server',
-      run_kind: 'codex_operations',
+      run_kind: (operationIntent || vehicleId) ? 'codex_operations' : 'codex_general',
       codex_run_id: runId,
-      context: { vehicle_id: vehicleId || null },
+      context: { vehicle_id: vehicleId || null, web_search_count: webSearchCount },
       reasoning_summary: normalizeReply(reasoningSummary).slice(0, 6000)
     };
   } finally {
@@ -14837,37 +14875,46 @@ app.get('/api/cloud-ops-agent/status', authStore.requirePermission('vehicle:read
     getCloudOpsCodexDeploymentStatus(),
     listCloudOpsAgentVehicleSummaries().catch(() => [])
   ]);
-  const configured = cloudOpsAgentConfigured();
+  const legacySubapiConfigured = cloudOpsAgentConfigured();
+  const codexConfigured = Boolean(codexDeployment.integrated);
+  const configured = cloudOpsCodexUnifiedRouteEnabled ? codexConfigured : legacySubapiConfigured;
   return res.json({
     ok: true,
     enabled: cloudOpsAgentEnabled,
     configured,
-    provider: 'subapi_openai_compatible',
-    route: 'server_side_only',
+    provider: cloudOpsCodexUnifiedRouteEnabled ? 'openai_codex_app_server' : 'subapi_openai_compatible',
+    route: cloudOpsCodexUnifiedRouteEnabled ? 'unified_codex' : 'server_side_only',
+    execution_route_label: cloudOpsCodexUnifiedRouteEnabled
+      ? `Codex App Server · Web Search ${cloudOpsCodexWebSearchMode}`
+      : publicCloudOpsAgentBaseLabel(),
     public_entry_hint: '7791 -> JGZJ -> /api/cloud-ops-agent/*',
     upstream_base_url: publicCloudOpsAgentBaseLabel(),
-    model: cloudOpsAgentModel,
-    default_model: cloudOpsAgentModel,
-    available_models: cloudOpsAgentAllowedModels,
+    model: cloudOpsCodexUnifiedRouteEnabled ? cloudOpsCodexAgentModel : cloudOpsAgentModel,
+    default_model: cloudOpsCodexUnifiedRouteEnabled ? cloudOpsCodexAgentModel : cloudOpsAgentModel,
+    available_models: cloudOpsCodexUnifiedRouteEnabled ? [cloudOpsCodexAgentModel] : cloudOpsAgentAllowedModels,
     reasoning_effort: cloudOpsAgentReasoningEffort,
     request_timeout_ms: cloudOpsAgentTimeoutMs,
     diagnosis_model_timeout_ms: cloudOpsAgentDiagnoseModelTimeoutMs,
     mode: 'integrated_ai_ops',
     can_chat: cloudOpsAgentEnabled && configured,
+    unified_codex: cloudOpsCodexUnifiedRouteEnabled,
+    web_search: cloudOpsCodexWebSearchMode,
+    legacy_subapi_configured: legacySubapiConfigured,
     codex: codexDeployment,
     codex_app_server: codexDeployment.app_server,
     fleet: summarizeCloudOpsAgentFleet(vehicles),
     safeguards: [
       '页面加载只读取车辆缓存、智能体状态、Codex 部署状态和对话历史。',
-      '调查/修复意图由 Codex App Server 执行多步工具循环；浏览器不能直接连接 App Server。',
-      '具体车辆状态问题自动调用实时只读工具；注册缓存缺失时可补充 Tailscale 和固定命令 SSH 只读巡检。',
+      '所有用户消息统一由 GPT-5.6 Terra + Codex App Server 执行；浏览器不能直接连接 App Server。',
+      `时效性问题可调用 Codex 原生 Web Search（${cloudOpsCodexWebSearchMode}），结果必须给出可核验来源。`,
+      '具体车辆状态问题由 Codex 自主调用实时只读工具；注册缓存缺失时可补充 Tailscale 和 SSH 只读巡检。',
       'Codex 只读工具自动执行；写入、重启、部署和非白名单 SSH 命令逐项请求网页审批。',
       '审批接口要求 vehicle:control 权限；原始 CAN、运动控制和绕过安全停止不开放。',
       'API key 只允许保存在服务器环境变量，不下发到前端。'
     ],
     missing_config: configured
       ? []
-      : ['CLOUD_OPS_AGENT_API_KEY or CLOUD_OPS_AGENT_SUBAPI_KEY']
+      : [cloudOpsCodexUnifiedRouteEnabled ? 'Codex CLI/App Server' : 'CLOUD_OPS_AGENT_API_KEY or CLOUD_OPS_AGENT_SUBAPI_KEY']
   });
 });
 
@@ -14934,7 +14981,7 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
   sendEvent('start', {
     ok: true,
     mode: 'integrated_ai_ops',
-    model: resolveCloudOpsAgentModel(requestedModel),
+    model: cloudOpsCodexUnifiedRouteEnabled ? cloudOpsCodexAgentModel : resolveCloudOpsAgentModel(requestedModel),
     title: '山海智枢已开始处理',
     elapsed_ms: 0
   });
@@ -14951,29 +14998,33 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
     const requestedVehicleTokens = extractCloudOpsAgentRequestedVehicleTokens(message);
     const explicitVehicleId = requestedVehicleTokens.length === 1 ? requestedVehicleTokens[0] : '';
     const matchedVehicleId = mentionedVehicles.length ? getCloudOpsVehicleId(mentionedVehicles[0]) : '';
-    const vehicleId = matchedVehicleId || explicitVehicleId || selectedVehicleId;
+    const codexRequested = shouldRunCloudOpsCodexAgent(message);
+    const diagnosisRequested = shouldRunCloudOpsAgentDeepDiagnosis(message);
+    const vehicleScopedMessage = /(车辆|这辆车|该车|车端|主控|media\s*控制器|自动驾驶|定位|规划|routing|control|底盘|can\b|感知|相机|ros\b|节点|路线|任务下发)/i.test(message);
+    const contextualSelectedVehicleId = vehicleScopedMessage ? selectedVehicleId : '';
+    const vehicleId = matchedVehicleId || explicitVehicleId || contextualSelectedVehicleId;
     const vehicleSource = matchedVehicleId
       ? 'registry_match'
       : explicitVehicleId
         ? 'explicit_vehicle_id'
-        : selectedVehicleId
+        : contextualSelectedVehicleId
           ? 'selected_vehicle'
           : 'none';
-    const codexRequested = shouldRunCloudOpsCodexAgent(message);
-    const diagnosisRequested = shouldRunCloudOpsAgentDeepDiagnosis(message);
-    const runCodex = Boolean(codexRequested);
+    const runCodex = Boolean(cloudOpsCodexAgentEnabled && (cloudOpsCodexUnifiedRouteEnabled || codexRequested));
     const runDiagnosis = Boolean(!runCodex && vehicleId && diagnosisRequested);
 
     sendEvent('progress', {
       stage: 'intent',
       status: 'completed',
       title: runCodex
-        ? `自动进入 Codex 运维${vehicleId ? ` · ${vehicleId}` : ''}`
+        ? `${codexRequested ? '自动进入 Codex 运维' : '自动进入统一 Codex 智能体'}${vehicleId ? ` · ${vehicleId}` : ''}`
         : runDiagnosis
           ? `自动进入 ${vehicleId} 车辆诊断`
           : '自动进入一体化对话',
       detail: runCodex
-        ? '识别到调查/修复意图；Codex 将自主调查，所有变更逐项等待网页审批'
+        ? codexRequested
+          ? 'Codex 将自主调查并调用所需工具，所有变更逐项等待网页审批'
+          : `GPT-5.6 Terra + Codex App Server · Web Search ${cloudOpsCodexWebSearchMode} · ${cloudOpsAgentReasoningEffort}`
         : runDiagnosis
         ? `${vehicleSource === 'registry_match' ? '已匹配车辆注册缓存' : '已确定目标车辆'}，将调用实时只读工具采集证据`
         : diagnosisRequested && !vehicleId
@@ -14993,6 +15044,7 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
           history: normalizedHistory,
           vehicleId,
           actor,
+          operationIntent: codexRequested,
           onProgress
         })
       : runDiagnosis

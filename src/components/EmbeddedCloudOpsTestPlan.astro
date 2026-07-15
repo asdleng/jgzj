@@ -135,7 +135,7 @@ const agentRules = [
         <article>
           <span>模型</span>
           <strong data-role="agent-model">--</strong>
-          <small data-role="agent-route">7791 / JGZJ / subapi</small>
+          <small data-role="agent-route">Codex App Server</small>
         </article>
         <article>
           <span>Codex</span>
@@ -169,9 +169,9 @@ const agentRules = [
         ></textarea>
         <div class="cloud-ops-agent-composer-footer">
           <div class="cloud-ops-agent-composer-options">
-            <span class="cloud-ops-agent-composer-scope" title="自动理解对话或车辆运维意图；涉及车辆变更时仍需人工确认">
+            <span class="cloud-ops-agent-composer-scope" title="所有对话统一进入 Codex；联网搜索自动执行，系统与车辆变更仍需人工确认">
               <i aria-hidden="true"></i>
-              一体化自动上下文
+              GPT-5.6 Codex 统一智能体
             </span>
             <label class="cloud-ops-agent-composer-select">
               <span>模型</span>
@@ -198,9 +198,10 @@ const agentRules = [
         </div>
         <p class="cloud-ops-test-agent-history-count">历史：<span data-role="agent-history-count">--</span></p>
         <pre class="cloud-ops-test-json cloud-ops-test-json--compact" data-role="agent-audit">自动调用清单：/api/cloud-ops/vehicles-lite、/api/cloud-ops-agent/status、/api/cloud-ops-agent/history
-禁止自动调用：/api/cloud-ops/execute、tool-list、vehicle_detail
-智能体对话：必须用户点击发送；后端只调用 subapi 兼容模型接口
-控制类动作：未绑定执行</pre>
+只读自动能力：实时 Web Search、只读 shell、tool-list、vehicle_detail、车辆状态工具
+智能体对话：必须用户点击发送；所有消息统一进入 Codex App Server
+Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆工具与受控 SSH
+控制类动作：逐项审批；高危车辆控制硬阻断</pre>
       </details>
     </div>
   </aside>
@@ -572,9 +573,9 @@ const agentRules = [
             ></textarea>
             <div class="cloud-ops-agent-composer-footer">
               <div class="cloud-ops-agent-composer-options">
-                <span class="cloud-ops-agent-composer-scope" title="自动理解对话或车辆运维意图；涉及车辆变更时仍需人工确认">
+                <span class="cloud-ops-agent-composer-scope" title="所有对话统一进入 Codex；联网搜索自动执行，系统与车辆变更仍需人工确认">
                   <i aria-hidden="true"></i>
-                  一体化自动上下文
+                  GPT-5.6 Codex 统一智能体
                 </span>
                 <label class="cloud-ops-agent-composer-select">
                   <span>模型</span>
@@ -2627,16 +2628,16 @@ const agentRules = [
       if (agentPageStatus) agentPageStatus.textContent = statusText;
       if (agentStatusNote) {
         agentStatusNote.textContent = payload?.can_chat
-          ? `服务端 key 已配置 · 推理 ${payload?.reasoning_effort || "high"}`
+          ? `Codex 已就绪 · 推理 ${payload?.reasoning_effort || "xhigh"}`
           : (payload?.missing_config?.length ? `缺少 ${payload.missing_config.join(", ")}` : "服务端未启用");
       }
       configureAgentModelSelectors(payload);
-      if (agentRoute) agentRoute.textContent = payload?.upstream_base_url || "JGZJ / subapi";
+      if (agentRoute) agentRoute.textContent = payload?.execution_route_label || payload?.upstream_base_url || "Codex App Server";
       const codex = payload?.codex || {};
       if (agentCodex) agentCodex.textContent = codex?.integrated ? "已接入" : (codex?.deployed ? "仅探测" : "未就绪");
       if (agentCodexNote) {
         const cliVersion = codex?.cli?.version ? ` · ${codex.cli.version}` : "";
-        const codexModel = codex?.agent_model ? ` · 运维 ${agentModelLabel(codex.agent_model)}` : "";
+        const codexModel = codex?.agent_model ? ` · 统一 ${agentModelLabel(codex.agent_model)}` : "";
         agentCodexNote.textContent = codex?.listen ? `${codex.listen}${cliVersion}${codexModel}` : (codex?.app_server?.detail || "本机 App Server");
       }
       if (agentFleet) agentFleet.textContent = `${payload?.fleet?.vehicle_count ?? vehicles.length} 台`;
@@ -2647,10 +2648,11 @@ const agentRules = [
       if (agentAudit && payload?.safeguards?.length) {
         agentAudit.textContent = [
           "自动调用清单：/api/cloud-ops/vehicles-lite、/api/cloud-ops-agent/status、/api/cloud-ops-agent/history",
-          "禁止自动调用：/api/cloud-ops/execute、tool-list、vehicle_detail",
-          "智能体对话：必须用户点击发送；后端只调用 subapi 兼容模型接口",
-          `模型推理强度：${payload?.reasoning_effort || "high"}`,
-          "具体车辆状态：自动调用实时只读工具，缓存缺失时补充 Tailscale/SSH 只读巡检",
+          "只读自动能力：实时 Web Search、只读 shell、tool-list、vehicle_detail、车辆状态工具",
+          "智能体对话：必须用户点击发送；所有消息统一进入 Codex App Server",
+          `模型推理强度：${payload?.reasoning_effort || "xhigh"}`,
+          `实时信息：Codex 原生 Web Search ${payload?.web_search || "live"}`,
+          "具体车辆状态：Codex 自主调用实时只读工具，缓存缺失时补充 Tailscale/SSH 只读巡检",
           "控制类动作：必须单独确认后才能执行",
           "",
           "后端安全边界：",
@@ -2888,6 +2890,8 @@ const agentRules = [
       if (meta) {
         const kind = payload?.run_kind === "codex_operations"
           ? "Codex 运维"
+          : payload?.run_kind === "codex_general"
+            ? "Codex 通用智能体"
           : payload?.run_kind === "vehicle_diagnosis"
             ? "自动车辆诊断"
             : "一体化对话";
@@ -2956,8 +2960,8 @@ const agentRules = [
         return;
       }
       if (!agentCanChat) {
-        appendAgentMessage("error", "智能体模型链路还没有配置服务端 subapi key，不能发起对话。");
-        setStatus("智能体未配置 CLOUD_OPS_AGENT_API_KEY", "error");
+        appendAgentMessage("error", "Codex App Server 尚未就绪，不能发起对话。");
+        setStatus("智能体 Codex 链路未就绪", "error");
         return;
       }
 
@@ -2973,7 +2977,7 @@ const agentRules = [
         resizeAgentInput(agentPageInput);
       }
       if (agentLatency) agentLatency.textContent = "正在思考 · 0.0 秒";
-      setStatus("山海智枢正在理解问题；如识别到车辆诊断意图，将自动调用只读工具。", "loading");
+      setStatus("GPT-5.6 Terra 正在深度思考；Codex 会按需搜索网页、读取系统或调用车辆工具。", "loading");
       setAgentComposerBusy(true);
       const run = createAgentRunMessage(selectedAgentModel());
       let finalPayload = null;
@@ -3024,6 +3028,8 @@ const agentRules = [
         setStatus(
           finalPayload?.run_kind === "codex_operations"
             ? "Codex 运维完成；已记录调查、审批、执行与验证过程。"
+            : finalPayload?.run_kind === "codex_general"
+            ? "Codex 智能体回复完成；网页搜索与工具过程已记录。"
             : finalPayload?.run_kind === "vehicle_diagnosis"
             ? (finalPayload?.model_error ? "车辆证据采集完成；模型总结未完成，已返回可审计摘要。" : "车辆诊断完成；未执行任何车辆变更。")
             : "山海智枢回复完成；车辆上下文由消息自动识别。",
