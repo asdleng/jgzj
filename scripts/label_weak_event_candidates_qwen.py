@@ -81,6 +81,10 @@ def enforce_media_scene(photo: object, domain: object, scene: object) -> str:
     return normalized
 
 
+def select_shard(rows: Iterable[dict], shard_index: int, shard_count: int) -> List[dict]:
+    return [row for index, row in enumerate(rows) if index % shard_count == shard_index]
+
+
 def target_from_bucket(bucket: object) -> Optional[str]:
     value = str(bucket or "").strip().lower()
     if "fishing_rod" in value:
@@ -218,6 +222,7 @@ def yolo_text(labels: Iterable[dict]) -> str:
 def label_candidates(args: argparse.Namespace) -> dict:
     dataset = args.dataset.resolve()
     rows = list(iter_jsonl(dataset / "manifest_selected_images.jsonl"))
+    process_rows = select_shard(rows, args.shard_index, args.shard_count)
     cache_root = dataset / "qwen_labels"
     label_root = dataset / "labels" / "review"
     session = retry_session(args.api_key)
@@ -225,7 +230,7 @@ def label_candidates(args: argparse.Namespace) -> dict:
     processed = 0
     run_counts: Counter = Counter()
 
-    for row in rows:
+    for row in process_rows:
         if processed >= args.max_images:
             break
         sha256 = str(row.get("sha256") or "")
@@ -333,6 +338,16 @@ def label_candidates(args: argparse.Namespace) -> dict:
             })
             run_counts["processed_error"] += 1
 
+    if args.skip_summary:
+        return {
+            "schema": "jgzj_weak_event_web_qwen_shard.v1",
+            "shard_index": args.shard_index,
+            "shard_count": args.shard_count,
+            "shard_images": len(process_rows),
+            "run_counts": dict(run_counts),
+            "training_eligible": False,
+        }
+
     manifest_path = dataset / "qwen_review_manifest.jsonl"
     manifest_path.unlink(missing_ok=True)
     summary_counts: Counter = Counter()
@@ -400,7 +415,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--no-audit", action="store_true")
-    return parser.parse_args()
+    parser.add_argument("--shard-count", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--skip-summary", action="store_true")
+    args = parser.parse_args()
+    if args.shard_count < 1:
+        parser.error("--shard-count must be at least 1")
+    if args.shard_index < 0 or args.shard_index >= args.shard_count:
+        parser.error("--shard-index must be in [0, shard-count)")
+    return args
 
 
 if __name__ == "__main__":

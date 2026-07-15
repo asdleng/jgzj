@@ -52,6 +52,26 @@ python3 scripts/label_weak_event_candidates_qwen.py \
   --model Qwen3.6-27B-Labeler
 ```
 
+标注服务允许并发时，可将同一清单拆成固定分片。并行分片必须使用 `--skip-summary`，全部结束后再由单进程生成一次总清单：
+
+```bash
+for index in 0 1 2 3; do
+  NO_PROXY=127.0.0.1,localhost \
+  python3 scripts/label_weak_event_candidates_qwen.py \
+    --dataset "$DATASET" \
+    --endpoint http://127.0.0.1:18016 \
+    --model Qwen3.6-27B-Labeler \
+    --shard-count 4 \
+    --shard-index "$index" \
+    --skip-summary &
+done
+wait
+
+python3 scripts/label_weak_event_candidates_qwen.py \
+  --dataset "$DATASET" \
+  --max-images 0
+```
+
 重复执行会按 URL、SHA-256、感知哈希和标题系列去重，并复用已有 Qwen 缓存。
 
 ## 输出
