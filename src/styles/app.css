@@ -10183,6 +10183,10 @@ body.yolo-review-is-panning {
   font-weight: 800;
 }
 
+.cloud-ops-agent-task-dialog label[hidden] {
+  display: none;
+}
+
 .cloud-ops-agent-task-dialog input {
   width: 100%;
   min-height: 42px;
