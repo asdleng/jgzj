@@ -353,6 +353,10 @@ def label_candidates(args: argparse.Namespace) -> dict:
     summary_counts: Counter = Counter()
     class_boxes: Counter = Counter()
     target_counts: Counter = Counter()
+    audit_counts: Counter = Counter()
+    quarantine_counts: Counter = Counter()
+    proposed_boxes = 0
+    model_accepted_boxes = 0
     for row in rows:
         sha256 = str(row.get("sha256") or "")
         if not re.fullmatch(r"[0-9a-f]{64}", sha256):
@@ -366,16 +370,51 @@ def label_candidates(args: argparse.Namespace) -> dict:
         except ValueError:
             summary_counts["invalid_cache"] += 1
             continue
-        append_jsonl(manifest_path, {**row, "qwen_review": payload})
+        labels = payload.get("labels") if isinstance(payload.get("labels"), list) else []
+        model_labels = payload.get("model_labels") if isinstance(payload.get("model_labels"), list) else []
+        detect = payload.get("detect") if isinstance(payload.get("detect"), dict) else {}
+        proposed_labels = detect.get("accepted_labels") if isinstance(detect.get("accepted_labels"), list) else []
+        audit = payload.get("audit") if isinstance(payload.get("audit"), dict) else {}
+        audit_verdict = str(audit.get("verdict") or ("error" if not payload.get("ok") else "not_run"))
+        scene = str(payload.get("scene") or ("needs_human" if not payload.get("ok") else "hard_negative"))
+        quarantine_reason = str(payload.get("quarantine_reason") or "")
+        review_row = {
+            "schema": SCHEMA,
+            "image_sha256": sha256,
+            "image": row.get("image"),
+            "label": f"labels/review/{sha256[:24]}.txt",
+            "cache": cache.relative_to(dataset).as_posix(),
+            "target": payload.get("target") or target_from_bucket(row.get("collection_bucket")),
+            "scene": scene,
+            "model_scene": payload.get("candidate_scene") or "",
+            "photo_type": payload.get("photo_type") or "",
+            "domain": payload.get("domain") or "",
+            "collection_bucket": row.get("collection_bucket") or "",
+            "quarantine_reason": quarantine_reason,
+            "proposed_classes": [str(item.get("class_name") or "") for item in proposed_labels],
+            "model_classes": [str(item.get("class_name") or "") for item in model_labels],
+            "classes": [str(item.get("class_name") or "") for item in labels],
+            "box_count": len(labels),
+            "audit_verdict": audit_verdict,
+            "review_status": payload.get("review_status") or ("error" if not payload.get("ok") else "needs_human"),
+            "training_eligible": False,
+        }
+        append_jsonl(manifest_path, review_row)
         if not payload.get("ok"):
             summary_counts["error"] += 1
+            audit_counts[audit_verdict] += 1
             continue
-        scene = str(payload.get("scene") or "needs_human")
         target_counts[f"{payload.get('target')}:{scene}"] += 1
         summary_counts[scene] += 1
-        for label in payload.get("labels") or []:
+        audit_counts[audit_verdict] += 1
+        if quarantine_reason:
+            quarantine_counts[quarantine_reason] += 1
+        proposed_boxes += len(proposed_labels)
+        model_accepted_boxes += len(model_labels)
+        for label in labels:
             class_boxes[str(label.get("class_name") or "unknown")] += 1
 
+    accepted_boxes = sum(class_boxes.values())
     summary = {
         "schema": "jgzj_weak_event_web_qwen_summary.v1",
         "profile": "弱事件网络候选集",
@@ -387,8 +426,26 @@ def label_candidates(args: argparse.Namespace) -> dict:
         "scene_counts": dict(summary_counts),
         "target_scene_counts": dict(target_counts),
         "boxes_by_class": dict(class_boxes),
+        "audit_counts": dict(audit_counts),
+        "quarantine_counts": dict(quarantine_counts),
+        "qwen_model": args.model,
+        "qwen_label_summary": {
+            "labeled_images": sum(summary_counts[scene] for scene in ("positive", "hard_negative", "needs_human", "unusable")),
+            "scene_positive": summary_counts["positive"],
+            "scene_hard_negative": summary_counts["hard_negative"],
+            "scene_needs_human": summary_counts["needs_human"],
+            "scene_unusable": summary_counts["unusable"],
+            "accepted_boxes": accepted_boxes,
+            "model_accepted_boxes": model_accepted_boxes,
+            "proposed_boxes": proposed_boxes,
+            "audit_pass": audit_counts["pass"],
+            "audit_needs_human": audit_counts["needs_human"],
+            "audit_not_run": audit_counts["not_run"],
+            "quarantine_positive_in_hard_negative_bucket": quarantine_counts["positive_in_hard_negative_bucket"],
+        },
         "training_eligible": False,
         "training_policy": "two_pass_qwen_then_human_review",
+        "source_policy": "license_metadata_required",
     }
     write_json_atomic(dataset / "dataset_summary.json", summary)
     write_json_atomic(dataset / "training_guard.json", {

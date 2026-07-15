@@ -207,7 +207,7 @@
   const sourceGroups = [
     { value: "", label: "全部来源" },
     { value: "vehicle_collection", label: "车辆自采" },
-    { value: "web_crawler", label: "网络爬虫" },
+    { value: "web_crawler", label: "网络搜索数据集" },
     { value: "checker_archive", label: "云端校核" },
     { value: "public_dataset", label: "公开数据集" }
   ];
@@ -720,6 +720,9 @@
     }
     const tokens = Array.isArray(preset.tokens) ? preset.tokens.map(normalizeClassToken).filter(Boolean) : [];
     if (tokens.some((token) => text.includes(token))) {
+      return true;
+    }
+    if (datasetHasEventClass(dataset, preset)) {
       return true;
     }
     if (sourceGroup !== "vehicle_collection") {

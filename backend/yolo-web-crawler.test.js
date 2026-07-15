@@ -34,6 +34,39 @@ test('recognizes the licensed fire/smoke web candidate summary', () => {
   assert.equal(isYoloWebCrawlerSummary({ schema: 'other' }), false);
 });
 
+test('recognizes and normalizes the weak-event web candidate summary', () => {
+  const weakSummary = {
+    schema: 'jgzj_weak_event_web_qwen_summary.v1',
+    profile: '弱事件网络候选集',
+    images: { review: 300 },
+    scene_counts: { positive: 151, hard_negative: 76, needs_human: 24, unusable: 49 },
+    boxes_by_class: { fishing_rod: 79, stall: 68, pet: 23, bottle: 33, bag: 28, paper: 5, box: 6 },
+    qwen_model: 'Qwen3.6-27B-Labeler',
+    training_eligible: false,
+    training_policy: 'two_pass_qwen_then_human_review',
+    updated_at: '2026-07-15T19:07:46+08:00'
+  };
+  assert.equal(isYoloWebCrawlerSummary(weakSummary), true);
+  assert.deepEqual(normalizeYoloWebCrawlerStats(weakSummary), {
+    total_images: 300,
+    positive_images: 151,
+    hard_negative_images: 76,
+    needs_human_images: 24,
+    unusable_images: 49,
+    accepted_boxes: 242,
+    model_accepted_boxes: 0,
+    proposed_boxes: 0,
+    audit_pass_images: 0,
+    audit_needs_human_images: 0,
+    audit_not_run_images: 0,
+    quarantined_conflicts: 0,
+    training_eligible: false,
+    training_policy: 'two_pass_qwen_then_human_review',
+    qwen_model: 'Qwen3.6-27B-Labeler',
+    updated_at: '2026-07-15T19:07:46+08:00'
+  });
+});
+
 test('normalizes crawler and Qwen review counts without enabling training', () => {
   assert.deepEqual(normalizeYoloWebCrawlerStats(summary), {
     total_images: 294,

@@ -1,4 +1,9 @@
 const WEB_CANDIDATE_SCHEMA = 'jgzj_fire_smoke_web_candidate_summary.v1';
+const WEAK_EVENT_WEB_CANDIDATE_SCHEMA = 'jgzj_weak_event_web_qwen_summary.v1';
+const WEB_CANDIDATE_SCHEMAS = new Set([
+  WEB_CANDIDATE_SCHEMA,
+  WEAK_EVENT_WEB_CANDIDATE_SCHEMA
+]);
 
 function numberValue(value) {
   const number = Number(value);
@@ -19,9 +24,9 @@ function isYoloWebCrawlerSummary(summary) {
   if (!summary || typeof summary !== 'object') {
     return false;
   }
-  return String(summary.schema || '') === WEB_CANDIDATE_SCHEMA || (
+  return WEB_CANDIDATE_SCHEMAS.has(String(summary.schema || '')) || (
     String(summary.source_policy || '') === 'license_metadata_required' &&
-    String(summary.profile || '').includes('烟雾火焰网络候选集')
+    /网络候选集/.test(String(summary.profile || ''))
   );
 }
 
@@ -32,18 +37,21 @@ function normalizeYoloWebCrawlerStats(summary) {
   const qwen = summary.qwen_label_summary && typeof summary.qwen_label_summary === 'object'
     ? summary.qwen_label_summary
     : {};
+  const scenes = summary.scene_counts && typeof summary.scene_counts === 'object'
+    ? summary.scene_counts
+    : {};
   const totalImages = numberValue(qwen.labeled_images) || sumCounts(summary.images);
-  const positiveImages = numberValue(qwen.scene_positive);
-  const hardNegativeImages = numberValue(qwen.scene_hard_negative);
-  const needsHumanImages = numberValue(qwen.scene_needs_human);
-  const unusableImages = numberValue(qwen.scene_unusable);
+  const positiveImages = numberValue(qwen.scene_positive) || numberValue(scenes.positive);
+  const hardNegativeImages = numberValue(qwen.scene_hard_negative) || numberValue(scenes.hard_negative);
+  const needsHumanImages = numberValue(qwen.scene_needs_human) || numberValue(scenes.needs_human);
+  const unusableImages = numberValue(qwen.scene_unusable) || numberValue(scenes.unusable);
   return {
     total_images: totalImages,
     positive_images: positiveImages,
     hard_negative_images: hardNegativeImages,
     needs_human_images: needsHumanImages,
     unusable_images: unusableImages,
-    accepted_boxes: numberValue(qwen.accepted_boxes),
+    accepted_boxes: numberValue(qwen.accepted_boxes) || sumCounts(summary.boxes_by_class),
     model_accepted_boxes: numberValue(qwen.model_accepted_boxes),
     proposed_boxes: numberValue(qwen.proposed_boxes),
     audit_pass_images: numberValue(qwen.audit_pass),
@@ -103,6 +111,7 @@ function effectiveYoloWebAuditVerdict(review) {
 
 module.exports = {
   WEB_CANDIDATE_SCHEMA,
+  WEAK_EVENT_WEB_CANDIDATE_SCHEMA,
   effectiveYoloWebAuditVerdict,
   isYoloWebCrawlerSummary,
   normalizeYoloWebCrawlerStats,

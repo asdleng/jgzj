@@ -2912,7 +2912,7 @@ function yoloReviewSourceLabel(sourceType) {
     return '车辆自采图片';
   }
   if (sourceType === 'web_crawler') {
-    return '网络爬虫';
+    return '网络搜索数据集';
   }
   if (sourceType === 'checker_archive') {
     return '车端校核数据';
