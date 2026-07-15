@@ -30,7 +30,7 @@ const specialistDiagnosticGroups = [
       { label: "AI检测配置", tool: "ai_detection.config", desc: "查看 AI 检测配置和落盘路径", timeout: 20 },
       { label: "AI检测图片", tool: "ai_detection.images", desc: "查看最近检测图并对照连续监控", args: { limit: 6 }, timeout: 35, includeLiveMedia: true },
       { label: "障碍物处理状态", tool: "status.obstacle_processor", desc: "检查 obstacle processor 心跳和输入", timeout: 25 },
-      { label: "障碍物预览", tool: "obstacle.preview", desc: "查看实时俯视点云并叠加障碍物框", args: { topic: "/fusion/objects", range_m: 25, image_size: 768, save_file: false, include_base64: true, timeout_s: 3, max_obstacles: 120, include_invalid: true }, timeout: 40 }
+      { label: "障碍物预览", tool: "obstacle.preview", desc: "查看俯视点云、障碍物框和实时相机画面", args: { topic: "/fusion/objects", range_m: 25, image_size: 768, save_file: false, include_base64: true, timeout_s: 3, max_obstacles: 120, include_invalid: true }, timeout: 40, includeLiveMedia: true }
     ]
   },
   {
@@ -2791,17 +2791,21 @@ const agentRules = [
         const obstacleCount = Number(result?.summary?.drawn_obstacle_count ?? result?.obstacles?.length ?? 0) || 0;
         const pointCloudReady = Boolean(lidarResult && !auxiliaryError);
         return {
-          title: pointCloudReady ? "实时俯视点云与障碍物" : "障碍物目标俯视预览",
-          tone: ok && pointCloudReady ? "ok" : "warn",
+          title: pointCloudReady ? "实时俯视点云、障碍物与实景" : "障碍物目标与实景预览",
+          tone: ok && pointCloudReady && liveMediaCount ? "ok" : "warn",
           kv: [
             ["车辆", vehicleId],
             ["点云来源", lidarResult?.topic || "未返回"],
             ["原始点数", lidarResult?.source_point_count ?? pointcloud?.source_point_count ?? "--"],
             ["绘制点数", lidarResult?.point_count ?? pointcloud?.point_count ?? "--"],
             ["障碍物框", `${obstacleCount} 个`],
+            ["实时相机", liveMediaCount ? `${liveMediaCount} 路` : "未返回"],
             ["坐标系", `${lidarResult?.frame_id || "--"} / ${result?.summary?.frame_id || result?.source?.frame_id || "--"}`]
           ],
-          lines: auxiliaryError ? [`点云预览回退：${auxiliaryError}`] : []
+          lines: [
+            ...(auxiliaryError ? [`点云预览回退：${auxiliaryError}`] : []),
+            ...(liveMediaError ? [`实时相机获取失败：${liveMediaError}`] : [])
+          ]
         };
       }
       const status = findFirstByKey(payload, ["status", "state", "health", "result", "summary"]);
@@ -3149,6 +3153,7 @@ const agentRules = [
           }
         }
         if (toolName === "obstacle.preview") {
+          if (toolMediaTitle) toolMediaTitle.textContent = "点云、障碍物与实景";
           if (toolSummary) toolSummary.textContent = `障碍物目标已返回，正在读取 ${vehicleId} 的实时点云...`;
           const pointCloudErrors = [];
           for (const topic of OBSTACLE_POINTCLOUD_TOPICS) {
@@ -3189,15 +3194,26 @@ const agentRules = [
           auxiliaryError
         );
         const mediaCount = renderedObstaclePayload
-          ? renderToolMedia([renderedObstaclePayload], { expected: true })
+          ? renderToolMedia([renderedObstaclePayload, liveMediaPayload], {
+              expected: true,
+              error: liveMediaError ? `实时相机获取失败：${liveMediaError}` : ""
+            })
           : renderToolMedia([payload, liveMediaPayload], {
               expected: MEDIA_EXPECTED_TOOLS.has(toolName) || includeLiveMedia,
               error: liveMediaError ? `实时画面获取失败：${liveMediaError}` : ""
             });
         if (includeLiveMedia && liveMediaPayload) {
-          configureLiveMonitor(vehicleId, [payload], liveMediaPayload, true);
+          configureLiveMonitor(
+            vehicleId,
+            toolName === "obstacle.preview" && renderedObstaclePayload ? [renderedObstaclePayload] : [payload],
+            liveMediaPayload,
+            true
+          );
         }
-        setStatus(`只读检查完成：${toolName}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}`, liveMediaError && !mediaCount ? "loading" : "ok");
+        setStatus(
+          `只读检查完成：${toolName}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}`,
+          toolName === "obstacle.preview" && liveMediaError ? "error" : (liveMediaError && !mediaCount ? "loading" : "ok")
+        );
       } catch (error) {
         const primaryError = error?.message || "未知错误";
         let fallbackLiveMedia = null;

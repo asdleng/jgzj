@@ -15,6 +15,8 @@ from pathlib import Path
 
 SCHEMA = "jgzj_yolo_event_feedback_dataset.v1"
 SOURCE = "qwen_permanent_yes_frame"
+NO_LABELER_SOURCE = "qwen_no_labeler_positive_frame"
+ALLOWED_SOURCES = {SOURCE, NO_LABELER_SOURCE}
 CLASSES = (
     "person",
     "vehicle",
@@ -120,6 +122,19 @@ def valid_yes_tasks(meta: dict) -> list[dict]:
         answer = str(task.get("answer") or "").upper()
         passed = task.get("pass") is True or task.get("pass") == 1
         if answer == "YES" and passed:
+            out.append(task)
+    return out
+
+
+def valid_no_tasks(meta: dict) -> list[dict]:
+    tasks = meta.get("no_tasks") or meta.get("qwen_no_tasks") or []
+    out = []
+    for task in tasks if isinstance(tasks, list) else []:
+        if not isinstance(task, dict):
+            continue
+        answer = str(task.get("answer") or "").upper()
+        failed = task.get("pass") is False or task.get("pass") == 0
+        if answer == "NO" or failed:
             out.append(task)
     return out
 
@@ -281,10 +296,11 @@ def iter_candidate_rows(
         meta = load_json(meta_path)
         if not isinstance(meta, dict):
             continue
-        if str(meta.get("source") or SOURCE) != SOURCE:
+        source = str(meta.get("source") or SOURCE)
+        if source not in ALLOWED_SOURCES:
             continue
-        tasks = valid_yes_tasks(meta)
-        if not tasks:
+        tasks = valid_yes_tasks(meta) if source == SOURCE else valid_no_tasks(meta)
+        if source == SOURCE and not tasks:
             continue
         image_path = permanent_image_path(meta_path, meta, permanent_root)
         if image_path is None:
@@ -298,6 +314,8 @@ def iter_candidate_rows(
         label_payload = load_json(label_path) if label_path else None
         audit_payload = load_json(audit_path) if audit_path else None
         labels = normalize_labels(label_payload)
+        if source == NO_LABELER_SOURCE and not labels:
+            continue
         expected = {
             mapped
             for mapped in (expected_class(task.get("event_name")) for task in tasks)
@@ -310,6 +328,7 @@ def iter_candidate_rows(
             "image_path": image_path,
             "image_sha256": image_sha,
             "day": day,
+            "source": source,
             "tasks": tasks,
             "labels": labels,
             "label_payload": label_payload,
@@ -415,7 +434,7 @@ def build_dataset(args) -> dict:
             "frame_height": (row["label_payload"] or {}).get("image_request", {}).get("original_height") or meta.get("frame_height"),
             "source_frame": str(row["image_path"]),
             "source_meta": str(row["meta_path"]),
-            "source": SOURCE,
+            "source": row["source"],
             "image_sha256": row["image_sha256"],
             "collected_at": meta.get("collected_at"),
             "feedback_status": row["feedback_status"],
@@ -455,11 +474,13 @@ def build_dataset(args) -> dict:
         "positive_images": {"independent_label_positive": sum(1 for row in rows if row["labels"])},
         "boxes": dict(sorted(box_counts.items())),
         "answers": {
-            "YES": sum(1 for row in rows if row["labels"]),
-            "NO": sum(1 for row in rows if row["label_payload"] is not None and not row["labels"]),
+            "YES": sum(1 for row in rows if row["source"] == SOURCE),
+            "NO_WITH_LABELS": sum(1 for row in rows if row["source"] == NO_LABELER_SOURCE and row["labels"]),
+            "NO": sum(1 for row in rows if row["source"] == NO_LABELER_SOURCE),
             "NULL": sum(1 for row in rows if row["label_payload"] is None),
         },
         "source": SOURCE,
+        "sources": sorted(ALLOWED_SOURCES),
         "source_root": str(permanent_root),
         "training_eligible": False,
         "training_policy": "manual_review_required",

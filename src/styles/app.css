@@ -8714,6 +8714,10 @@ body.yolo-review-is-panning {
   aspect-ratio: 1 / 1;
 }
 
+.cloud-ops-test-media-card.is-pointcloud-preview {
+  grid-column: 1 / -1;
+}
+
 .cloud-ops-test-media-card.is-map-preview {
   grid-column: 1 / -1;
 }
