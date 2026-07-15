@@ -611,6 +611,7 @@ function registerMapPackageUploadRoutes(app, options = {}) {
   const vehicleInstallTimeoutS = Number(options.vehicleInstallTimeoutS || 1800);
   const vehicleDownloadInsecureTls = Boolean(options.vehicleDownloadInsecureTls);
   const executeVehicleTool = options.executeVehicleTool;
+  const vehicleSupportsTool = options.vehicleSupportsTool;
   const writePermission = requirePermission('vehicle:path:write');
 
   app.post('/api/map-upload/:vehicleId/sessions', writePermission, async (req, res) => {
@@ -796,6 +797,19 @@ function registerMapPackageUploadRoutes(app, options = {}) {
         }
         if (!['ready', 'server_synced'].includes(current.status)) {
           throw Object.assign(new Error('地图包尚未完成上传和校验'), { status: 409 });
+        }
+        if (typeof vehicleSupportsTool === 'function') {
+          const supported = await vehicleSupportsTool(current.vehicle_id, 'map.pointcloud.install');
+          if (!supported) {
+            current.vehicle_sync_error = 'vehicle_map_install_tool_missing';
+            current.updated_at = isoNow();
+            await writeJsonAtomic(metadataPath(uploadRoot, vehicleId, uploadId), current);
+            throw Object.assign(new Error('车辆尚未提供 map.pointcloud.install，地图包未同步'), {
+              status: 409,
+              code: 'vehicle_map_install_tool_missing',
+              session: await publicSession(uploadRoot, current)
+            });
+          }
         }
         if (current.status === 'ready') {
           const synced = await syncReadySession(uploadRoot, vehicleMapRoot, current);

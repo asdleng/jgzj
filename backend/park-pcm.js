@@ -1163,6 +1163,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   const cloudAgentBaseUrl = String(
     options.cloudAgentBaseUrl || process.env.CLOUD_AGENT_BASE_URL || 'http://127.0.0.1:8000'
   ).replace(/\/+$/, '');
+  const cloudAgentAuthHeaders = { ...(options.cloudAgentAuthHeaders || {}) };
   const rootDir = path.resolve(options.rootDir || path.resolve(__dirname, '..'));
   const runtimeRoot = path.resolve(
     process.env.PARK_CROWD_RUNTIME_ROOT || process.env.PARK_PCM_RUNTIME_ROOT || path.join(rootDir, '.runtime/park-pcm')
@@ -1183,6 +1184,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   const crowdAnalysisStatePath = path.join(runtimeRoot, 'crowd-analysis-state.json');
   const crowdUploadStatePath = path.join(runtimeRoot, 'patrol-flow-upload-state.json');
   const crowdUploadIndexLogPath = path.join(runtimeRoot, 'patrol-flow-uploads.jsonl');
+  const crowdStorageStatusPath = path.join(runtimeRoot, 'crowd-storage-status.json');
   const statusToolTimeoutS = toFiniteNumber(
     process.env.PARK_PCM_STATUS_TOOL_TIMEOUT_S,
     DEFAULT_STATUS_TOOL_TIMEOUT_S,
@@ -1355,6 +1357,16 @@ module.exports = function registerParkPcmRoutes(app, options) {
     DEFAULT_CROWD_STORAGE_MIN_FREE_BYTES,
     { min: 256 * 1024 * 1024, max: 200 * 1024 * 1024 * 1024 }
   );
+  const crowdStorageCleanupIntervalMs = toFiniteInteger(
+    process.env.PARK_CROWD_STORAGE_CLEANUP_INTERVAL_MS || process.env.PARK_PCM_STORAGE_CLEANUP_INTERVAL_MS,
+    15 * 60 * 1000,
+    { min: 60 * 1000, max: 24 * 60 * 60 * 1000 }
+  );
+  const crowdStorageCleanupBootDelayMs = toFiniteInteger(
+    process.env.PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS || process.env.PARK_PCM_STORAGE_CLEANUP_BOOT_DELAY_MS,
+    5000,
+    { min: 1000, max: 60 * 60 * 1000 }
+  );
   const patrolFlowUploadMaxBytes = toFiniteInteger(
     process.env.PARK_CROWD_PATROL_FLOW_UPLOAD_MAX_BYTES || process.env.PARK_PCM_PATROL_FLOW_UPLOAD_MAX_BYTES,
     DEFAULT_PATROL_FLOW_UPLOAD_MAX_BYTES,
@@ -1366,7 +1378,10 @@ module.exports = function registerParkPcmRoutes(app, options) {
     { min: 1, max: 100000 }
   );
   const patrolFlowUploadToken = String(
-    process.env.PARK_CROWD_PATROL_FLOW_UPLOAD_TOKEN || process.env.PARK_PCM_PATROL_FLOW_UPLOAD_TOKEN || ''
+    options.patrolFlowUploadToken ||
+      process.env.PARK_CROWD_PATROL_FLOW_UPLOAD_TOKEN ||
+      process.env.PARK_PCM_PATROL_FLOW_UPLOAD_TOKEN ||
+      ''
   ).trim();
   const feishuWebhookUrl = String(
     process.env.PARK_PCM_FEISHU_WEBHOOK_URL ||
@@ -1382,9 +1397,12 @@ module.exports = function registerParkPcmRoutes(app, options) {
   let crowdCaptureInFlight = false;
   let crowdMonitorInFlight = false;
   let crowdAnalysisInFlight = false;
+  let crowdStorageCleanupInFlight = null;
+  let crowdStorageStatusCache = null;
   let reportTimer = null;
   let crowdMonitorTimer = null;
   let crowdAnalysisTimer = null;
+  let crowdStorageCleanupTimer = null;
 
   async function ensureRuntimeDir() {
     await fsp.mkdir(runtimeRoot, { recursive: true });
@@ -1455,7 +1473,8 @@ module.exports = function registerParkPcmRoutes(app, options) {
       method: (fetchOptions && fetchOptions.method) || 'GET',
       headers: {
         Accept: 'application/json',
-        ...(body ? { 'Content-Type': 'application/json' } : {})
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...cloudAgentAuthHeaders
       },
       body,
       signal: AbortSignal.timeout(timeoutMs)
@@ -1901,7 +1920,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   async function buildPatrolFlowUploadStatus(params) {
     const [state, storage, recent_log, sample_index] = await Promise.all([
       readPatrolFlowUploadState(),
-      cleanupCrowdStorage(),
+      readCachedCrowdStorageStatus(),
       readPatrolFlowUploadLog(params?.log_limit),
       summarizeCrowdSampleIndex()
     ]);
@@ -1993,7 +2012,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     await walk(rootPath);
   }
 
-  async function cleanupCrowdStorage() {
+  async function performCrowdStorageCleanup() {
     await ensureCrowdRuntimeDirs();
     const startedAt = Date.now();
     const cutoffMs = Date.now() - crowdStorageRetentionDays * 24 * 60 * 60 * 1000;
@@ -2056,6 +2075,59 @@ module.exports = function registerParkPcmRoutes(app, options) {
         latestTotalBytes < crowdStorageMaxBytes &&
         (diskFreeBytes == null || diskFreeBytes >= crowdStorageMinFreeBytes),
       elapsed_ms: Date.now() - startedAt
+    };
+  }
+
+  async function cleanupCrowdStorage() {
+    if (crowdStorageCleanupInFlight) {
+      return crowdStorageCleanupInFlight;
+    }
+    crowdStorageCleanupInFlight = performCrowdStorageCleanup().then(async (storage) => {
+      const cached = {
+        ...storage,
+        cache_ready: true,
+        cached_at: nowIso()
+      };
+      crowdStorageStatusCache = cached;
+      await atomicWriteJson(crowdStorageStatusPath, cached);
+      return cached;
+    });
+    try {
+      return await crowdStorageCleanupInFlight;
+    } finally {
+      crowdStorageCleanupInFlight = null;
+    }
+  }
+
+  async function readCachedCrowdStorageStatus() {
+    if (!crowdStorageStatusCache) {
+      crowdStorageStatusCache = await readJsonFile(crowdStorageStatusPath);
+    }
+    if (crowdStorageStatusCache) {
+      return {
+        ...crowdStorageStatusCache,
+        cleanup_in_flight: Boolean(crowdStorageCleanupInFlight)
+      };
+    }
+    const diskFreeBytes = await getCrowdDiskFreeBytes();
+    return {
+      runtime_root: runtimeRoot,
+      frames_root: crowdFramesRoot,
+      uploads_root: crowdUploadsRoot,
+      total_bytes: null,
+      max_storage_bytes: crowdStorageMaxBytes,
+      file_count: null,
+      image_file_count: null,
+      retention_days: crowdStorageRetentionDays,
+      deleted_expired: 0,
+      deleted_for_quota: 0,
+      disk_free_bytes: diskFreeBytes,
+      min_free_bytes: crowdStorageMinFreeBytes,
+      can_accept_upload: diskFreeBytes == null || diskFreeBytes >= crowdStorageMinFreeBytes,
+      elapsed_ms: 0,
+      cache_ready: false,
+      cached_at: null,
+      cleanup_in_flight: Boolean(crowdStorageCleanupInFlight)
     };
   }
 
@@ -6093,6 +6165,24 @@ print(len(faces))
     }
   }
 
+  function scheduleNextCrowdStorageCleanup(delayMs) {
+    if (crowdStorageCleanupTimer) {
+      clearTimeout(crowdStorageCleanupTimer);
+    }
+    crowdStorageCleanupTimer = setTimeout(() => {
+      void cleanupCrowdStorage()
+        .catch((error) => {
+          console.warn(`park_pcm_storage_cleanup_failed: ${error.message}`);
+        })
+        .finally(() => {
+          scheduleNextCrowdStorageCleanup(crowdStorageCleanupIntervalMs);
+        });
+    }, delayMs);
+    if (typeof crowdStorageCleanupTimer.unref === 'function') {
+      crowdStorageCleanupTimer.unref();
+    }
+  }
+
   app.get('/api/park-pcm/status', requirePermission('vehicle:read'), async (_req, res) => {
     const [snapshot, reportState, monitorState, analysisState, uploadState] = await Promise.all([
       readJsonFile(snapshotPath),
@@ -6565,4 +6655,5 @@ print(len(faces))
   scheduleNextReport(reportBootDelayMs);
   scheduleNextCrowdMonitor(crowdMonitorBootDelayMs);
   scheduleNextCrowdAnalysis(crowdAnalysisBootDelayMs);
+  scheduleNextCrowdStorageCleanup(crowdStorageCleanupBootDelayMs);
 };

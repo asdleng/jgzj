@@ -137,6 +137,40 @@ const openClawAuthTtlMs = Number(
 );
 const cloudAgentBaseUrl = process.env.CLOUD_AGENT_BASE_URL || 'http://127.0.0.1:8000';
 const cloudAgentTimeoutMs = Number(process.env.CLOUD_AGENT_TIMEOUT_MS || 25000);
+
+function readSecretFromEnvOrFile(valueNames, fileName, defaultPath) {
+  for (const valueName of valueNames) {
+    const direct = String(process.env[valueName] || '').trim();
+    if (direct) {
+      if (/[\r\n]/.test(direct)) throw new Error(`${valueName} must be a single-line secret`);
+      return direct;
+    }
+  }
+  const secretPath = String(process.env[fileName] || defaultPath || '').trim();
+  if (!secretPath) return '';
+  let value = '';
+  try {
+    value = fsSync.readFileSync(secretPath, 'utf8').trim();
+  } catch (_error) {
+    return '';
+  }
+  if (/[\r\n]/.test(value)) throw new Error(`${fileName} must contain one secret line`);
+  return value;
+}
+
+const cloudAgentOpsToken = readSecretFromEnvOrFile(
+  ['CLOUD_AGENT_OPS_TOKEN'],
+  'CLOUD_AGENT_OPS_TOKEN_FILE',
+  '/home/admin1/.config/cloud-agent/ops_token'
+);
+const cloudAgentAuthHeaders = cloudAgentOpsToken
+  ? Object.freeze({ Authorization: `Bearer ${cloudAgentOpsToken}` })
+  : Object.freeze({});
+const patrolFlowUploadToken = readSecretFromEnvOrFile(
+  ['PARK_CROWD_PATROL_FLOW_UPLOAD_TOKEN', 'PARK_PCM_PATROL_FLOW_UPLOAD_TOKEN'],
+  'PARK_CROWD_PATROL_FLOW_UPLOAD_TOKEN_FILE',
+  '/home/admin1/.config/cloud-agent/patrol_flow_token'
+);
 const cloudAgentPlanSessionSuffix = process.env.CLOUD_AGENT_PLAN_SESSION_SUFFIX || 'ops-plan';
 const cloudAgentAnswerSessionSuffix =
   process.env.CLOUD_AGENT_ANSWER_SESSION_SUFFIX || 'ops-answer';
@@ -6018,7 +6052,8 @@ async function fetchCloudAgentJson(pathname, options = {}) {
     headers: {
       Accept: 'application/json',
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers || {})
+      ...(options.headers || {}),
+      ...cloudAgentAuthHeaders
     },
     signal: AbortSignal.timeout(options.timeoutMs || cloudAgentTimeoutMs)
   };
@@ -9035,6 +9070,24 @@ async function executeMapPackageVehicleTool(vehicleId, toolName, args = {}, time
       payload: error.payload || null
     };
   }
+}
+
+async function cloudAgentVehicleSupportsTool(vehicleId, toolName) {
+  const normalizedVehicleId = String(vehicleId || '').trim();
+  const normalizedToolName = String(toolName || '').trim();
+  if (!normalizedVehicleId || !normalizedToolName) return false;
+
+  const detail = await fetchCloudAgentJson(`/api/vehicles/${encodeURIComponent(normalizedVehicleId)}`);
+  const vehicle = detail?.data?.vehicle || {};
+  let tools = vehicle?.hello?.tools || vehicle?.tool_list_result?.tools || [];
+  if (!Array.isArray(tools) || tools.length === 0) {
+    const live = await fetchCloudAgentJson(
+      `/api/vehicles/${encodeURIComponent(normalizedVehicleId)}/tool-list?timeout_s=15`,
+      { timeoutMs: Math.max(cloudAgentTimeoutMs, 20000) }
+    );
+    tools = live?.data?.response?.tools || [];
+  }
+  return Array.isArray(tools) && tools.some((tool) => String(tool?.name || '') === normalizedToolName);
 }
 
 function getLidarRelocRemoteMapSize(mapPointcloud, mapInfo) {
@@ -18231,7 +18284,8 @@ registerCloudMappingRoutes(app, {
 });
 registerThreeDgsRoutes(app, {
   authStore,
-  cloudAgentBaseUrl
+  cloudAgentBaseUrl,
+  cloudAgentAuthHeaders
 });
 registerRuntimeControlRoutes(app, {
   requireOpenClawAuth,
@@ -18241,11 +18295,14 @@ registerRuntimeControlRoutes(app, {
 registerCrowdCpmRoutes(app, {
   requirePermission: (permission) => authStore.requirePermission(permission),
   cloudAgentBaseUrl,
+  cloudAgentAuthHeaders,
   rootDir: path.resolve(__dirname, '..')
 });
 registerParkPcmRoutes(app, {
   requirePermission: (permission) => authStore.requirePermission(permission),
   cloudAgentBaseUrl,
+  cloudAgentAuthHeaders,
+  patrolFlowUploadToken,
   rootDir: path.resolve(__dirname, '..')
 });
 registerMapPackageUploadRoutes(app, {
@@ -18255,6 +18312,7 @@ registerMapPackageUploadRoutes(app, {
   publicBaseUrl: publicSiteBaseUrl,
   downloadBaseUrl: process.env.MAP_PACKAGE_DOWNLOAD_BASE_URL || '',
   executeVehicleTool: executeMapPackageVehicleTool,
+  vehicleSupportsTool: cloudAgentVehicleSupportsTool,
   vehicleInstallTimeoutS: Number(process.env.MAP_PACKAGE_VEHICLE_INSTALL_TIMEOUT_S || 1800),
   vehicleDownloadInsecureTls: ['1', 'true', 'yes'].includes(
     String(process.env.MAP_PACKAGE_VEHICLE_DOWNLOAD_INSECURE_TLS || '')
@@ -18637,7 +18695,7 @@ function writeUpgradeError(socket, statusCode, reason) {
   socket.destroy();
 }
 
-function buildWebSocketProxyRequest(req, targetUrl) {
+function buildWebSocketProxyRequest(req, targetUrl, extraHeaders = {}) {
   const pathWithQuery = `${targetUrl.pathname || '/'}${targetUrl.search || ''}`;
   const lines = [
     `GET ${pathWithQuery} HTTP/1.1`,
@@ -18645,7 +18703,13 @@ function buildWebSocketProxyRequest(req, targetUrl) {
     'Upgrade: websocket',
     'Connection: Upgrade'
   ];
-  const skipHeaders = new Set(['host', 'upgrade', 'connection', 'proxy-connection']);
+  const skipHeaders = new Set([
+    'host',
+    'upgrade',
+    'connection',
+    'proxy-connection',
+    ...Object.keys(extraHeaders).map((name) => String(name).toLowerCase())
+  ]);
 
   for (let i = 0; i < req.rawHeaders.length; i += 2) {
     const name = req.rawHeaders[i];
@@ -18661,11 +18725,18 @@ function buildWebSocketProxyRequest(req, targetUrl) {
     lines.push(`X-Forwarded-For: ${remoteAddress}`);
   }
 
+  for (const [name, value] of Object.entries(extraHeaders)) {
+    if (!name || /[\r\n]/.test(String(name)) || /[\r\n]/.test(String(value))) {
+      throw new Error('invalid websocket upstream header');
+    }
+    lines.push(`${name}: ${value}`);
+  }
+
   lines.push('', '');
   return lines.join('\r\n');
 }
 
-function proxyWebSocketUpgrade(req, socket, head, targetUrl) {
+function proxyWebSocketUpgrade(req, socket, head, targetUrl, extraHeaders = {}) {
   const targetPort = Number(targetUrl.port || (targetUrl.protocol === 'wss:' ? 443 : 80));
   const upstreamSocket = net.connect(
     {
@@ -18673,7 +18744,7 @@ function proxyWebSocketUpgrade(req, socket, head, targetUrl) {
       port: targetPort
     },
     () => {
-      upstreamSocket.write(buildWebSocketProxyRequest(req, targetUrl));
+      upstreamSocket.write(buildWebSocketProxyRequest(req, targetUrl, extraHeaders));
       if (head?.length) {
         upstreamSocket.write(head);
       }
@@ -18717,7 +18788,8 @@ function getWebSocketUpgradeTarget(pathname) {
     return {
       permission: 'vehicle:read',
       baseUrl: process.env.CLOUD_OPS_WS_BASE_URL || cloudAgentBaseUrl,
-      path: process.env.CLOUD_OPS_WS_PATH || '/ws/ops'
+      path: process.env.CLOUD_OPS_WS_PATH || '/ws/ops',
+      headers: cloudAgentAuthHeaders
     };
   }
 
@@ -18752,7 +18824,7 @@ async function handleWebSocketUpgrade(req, socket, head) {
 
     const targetUrl = new URL(target.path, target.baseUrl);
     targetUrl.protocol = targetUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-    proxyWebSocketUpgrade(req, socket, head, targetUrl);
+    proxyWebSocketUpgrade(req, socket, head, targetUrl, target.headers || {});
   } catch (error) {
     console.warn(`websocket auth/proxy error path=${req.url}: ${error.message}`);
     writeUpgradeError(socket, 500, 'Internal Server Error');

@@ -151,6 +151,7 @@ module.exports = function registerCrowdCpmRoutes(app, options) {
   const cloudAgentBaseUrl = String(
     options.cloudAgentBaseUrl || process.env.CLOUD_AGENT_BASE_URL || 'http://127.0.0.1:8000'
   ).replace(/\/+$/, '');
+  const cloudAgentAuthHeaders = { ...(options.cloudAgentAuthHeaders || {}) };
   const rootDir = path.resolve(options.rootDir || path.resolve(__dirname, '..'));
   const runtimeRoot = path.resolve(
     process.env.CROWD_CPM_RUNTIME_ROOT || path.join(rootDir, '.runtime/crowd-cpm')
@@ -293,7 +294,8 @@ module.exports = function registerCrowdCpmRoutes(app, options) {
       method: (fetchOptions && fetchOptions.method) || 'GET',
       headers: {
         Accept: 'application/json',
-        ...(body ? { 'Content-Type': 'application/json' } : {})
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...cloudAgentAuthHeaders
       },
       body,
       signal: AbortSignal.timeout(timeoutMs)

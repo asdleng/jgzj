@@ -143,6 +143,7 @@ function createInitialState() {
 module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const authStore = options.authStore || null;
   const cloudAgentBaseUrl = options.cloudAgentBaseUrl || process.env.CLOUD_AGENT_BASE_URL || 'http://127.0.0.1:8000';
+  const cloudAgentAuthHeaders = { ...(options.cloudAgentAuthHeaders || {}) };
   const cloudAgentTimeoutMs = Number(process.env.THREE_DGS_CLOUD_AGENT_TIMEOUT_MS || 30000);
   const runtimeRoot = path.resolve(process.env.THREE_DGS_RUNTIME_ROOT || path.resolve(__dirname, '../.runtime/three-dgs'));
   const uploadDir = path.join(runtimeRoot, 'uploads');
@@ -1898,7 +1899,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       method: options.method || 'GET',
       headers: {
         Accept: 'application/json',
-        ...(options.body ? { 'Content-Type': 'application/json' } : {})
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...cloudAgentAuthHeaders
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
       signal: AbortSignal.timeout(options.timeoutMs || cloudAgentTimeoutMs)
