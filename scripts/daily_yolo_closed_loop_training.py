@@ -483,7 +483,8 @@ def main() -> None:
         "day_stats": day_stats,
         "training_policy": {
             "manual_annotations": "preferred",
-            "qwen_audit_required": "done/pass",
+            "qwen_audit": "review_queue_only",
+            "training_release": "manual_annotation_required",
             "qwen_audit_prompt_version": EXPECTED_AUDIT_PROMPT_VERSION,
         },
         "selected": [

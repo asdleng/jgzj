@@ -85,6 +85,7 @@ def training_row_decision(
     *,
     source: str = TRAINING_SOURCE,
     qualities: set[str] | None = None,
+    allow_qwen_audit_pass: bool = False,
 ) -> tuple[bool, str, dict | None]:
     if row_source(row) != source:
         return False, "source", None
@@ -113,4 +114,6 @@ def training_row_decision(
         return False, "audit_policy_version", None
     if not _audit_snapshot_matches(row):
         return False, "audit_snapshot_mismatch", None
+    if not allow_qwen_audit_pass:
+        return False, "qwen_audit_manual_required", None
     return True, "qwen_audit_pass", None

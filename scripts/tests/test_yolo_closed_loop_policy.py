@@ -38,8 +38,12 @@ def base_row():
 
 
 class ClosedLoopPolicyTest(unittest.TestCase):
-    def test_matching_v2_audit_pass_is_eligible(self):
-        self.assertEqual(training_row_decision(base_row())[:2], (True, "qwen_audit_pass"))
+    def test_matching_v2_audit_pass_requires_manual_release_by_default(self):
+        self.assertEqual(training_row_decision(base_row())[:2], (False, "qwen_audit_manual_required"))
+        self.assertEqual(
+            training_row_decision(base_row(), allow_qwen_audit_pass=True)[:2],
+            (True, "qwen_audit_pass"),
+        )
 
     def test_pending_and_old_audit_are_rejected(self):
         pending = base_row()
