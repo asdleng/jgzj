@@ -2774,7 +2774,11 @@ const agentRules = [
           lines: [
             ...(routeState?.currentRouteId
               ? [`当前路线：${routeState.routes.find((route) => route.routeId === routeState.currentRouteId)?.name || routeState.currentRouteId}`]
-              : routeState?.routes?.length ? ["当前无活动路线，已默认显示路线库第一条。"] : []),
+              : routeState?.routes?.length
+                ? [routeState.selectedRouteId === routeState.routes[0]?.routeId
+                  ? "当前无活动路线，已默认显示路线库第一条。"
+                  : "当前无活动路线，正在查看所选路线。"]
+                : []),
             ...(routeState?.catalogError ? [`路线目录读取失败：${routeState.catalogError}`] : []),
             ...(routeState?.routingError ? [`当前路线识别失败：${routeState.routingError}`] : []),
             ...(routeState?.detailError ? [`路线叠加失败：${routeState.detailError}`] : [])
