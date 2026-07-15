@@ -4148,7 +4148,9 @@ function normalizeYoloDatasetSummaryStats(summary = {}, classes = []) {
     return {
       images: summary.images || { review: webCrawler.total_images },
       positive_images: { review: webCrawler.positive_images },
-      boxes: { review: webCrawler.accepted_boxes },
+      boxes: Object.keys(webCrawler.boxes_by_class || {}).length
+        ? webCrawler.boxes_by_class
+        : { review: webCrawler.accepted_boxes },
       answers: {
         YES: webCrawler.positive_images,
         NO: webCrawler.hard_negative_images,

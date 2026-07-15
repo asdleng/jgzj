@@ -824,6 +824,11 @@
 
   function eventPositiveImageCount(dataset, classTokens, preset) {
     if (!dataset || !classTokens.length) return 0;
+    const webTargetImages = sumMatchingCounts(
+      dataset.web_crawler?.positive_images_by_target || dataset.summary?.web_crawler?.positive_images_by_target,
+      classTokens
+    );
+    if (webTargetImages > 0) return webTargetImages;
     const qwenImages = sumMatchingCounts(dataset.qwen_label?.images_by_class || dataset.summary?.qwen_label?.images_by_class, classTokens);
     const qwenBboxImages = sumMatchingCounts(dataset.qwen_bbox?.images_by_class || dataset.summary?.qwen_bbox?.images_by_class, classTokens);
     const qwenBoxes = sumMatchingCounts(dataset.qwen_bbox?.boxes_by_class || dataset.summary?.qwen_bbox?.boxes_by_class, classTokens);
@@ -1725,7 +1730,7 @@
     params.set("page", String(state.page));
     params.set("page_size", String(state.pageSize));
     if (refs.split.value) params.set("split", refs.split.value);
-    const eventClassFilter = datasetSourceGroup(dataset) === "vehicle_collection" && reviewTaskKind(dataset) === "detect"
+    const eventClassFilter = ["vehicle_collection", "web_crawler"].includes(datasetSourceGroup(dataset)) && reviewTaskKind(dataset) === "detect"
       ? matchingDatasetEventClassTokens(dataset, preset).join(",")
       : "";
     const classFilter = eventClassFilter || refs.className.value;

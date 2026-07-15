@@ -40,6 +40,12 @@ test('recognizes and normalizes the weak-event web candidate summary', () => {
     profile: '弱事件网络候选集',
     images: { review: 300 },
     scene_counts: { positive: 151, hard_negative: 76, needs_human: 24, unusable: 49 },
+    target_scene_counts: {
+      'fishing_rod:positive': 38,
+      'stall:positive': 63,
+      'pet:positive': 20,
+      'trash:positive': 30
+    },
     boxes_by_class: { fishing_rod: 79, stall: 68, pet: 23, bottle: 33, bag: 28, paper: 5, box: 6 },
     qwen_model: 'Qwen3.6-27B-Labeler',
     training_eligible: false,
@@ -60,6 +66,21 @@ test('recognizes and normalizes the weak-event web candidate summary', () => {
     audit_needs_human_images: 0,
     audit_not_run_images: 0,
     quarantined_conflicts: 0,
+    positive_images_by_target: {
+      fishing_rod: 38,
+      stall: 63,
+      pet: 20,
+      trash: 30
+    },
+    boxes_by_class: {
+      fishing_rod: 79,
+      stall: 68,
+      pet: 23,
+      bottle: 33,
+      bag: 28,
+      paper: 5,
+      box: 6
+    },
     training_eligible: false,
     training_policy: 'two_pass_qwen_then_human_review',
     qwen_model: 'Qwen3.6-27B-Labeler',
@@ -81,6 +102,8 @@ test('normalizes crawler and Qwen review counts without enabling training', () =
     audit_needs_human_images: 100,
     audit_not_run_images: 25,
     quarantined_conflicts: 32,
+    positive_images_by_target: {},
+    boxes_by_class: {},
     training_eligible: false,
     training_policy: 'human_review_required_after_qwen_audit',
     qwen_model: 'Qwen3.6-27B-Labeler',
