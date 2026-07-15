@@ -1309,7 +1309,7 @@ async function getCloudOpsCodexDeploymentStatus() {
     cli,
     safety: [
       '所有山海智枢对话统一进入 Codex App Server；浏览器不能直接连接 App Server。',
-      `Codex 原生 Web Search 为 ${cloudOpsCodexWebSearchMode}；项目 shell 保持只读 sandbox，宿主机访问通过受控 cloud_shell。`,
+      `Codex 原生 Web Search 为 ${cloudOpsCodexWebSearchMode}；本地 shell 保持只读 sandbox，需变更时走网页审批。`,
       '车辆访问只通过后端 vehicle_tool / vehicle_ssh 动态工具，不允许本地 shell 绕过车辆安全网关。',
       '只读检查自动执行；写入、重启、部署和非白名单 SSH 命令需要 vehicle:control 权限逐项审批。'
     ]
@@ -4148,9 +4148,7 @@ function normalizeYoloDatasetSummaryStats(summary = {}, classes = []) {
     return {
       images: summary.images || { review: webCrawler.total_images },
       positive_images: { review: webCrawler.positive_images },
-      boxes: Object.keys(webCrawler.boxes_by_class || {}).length
-        ? webCrawler.boxes_by_class
-        : { review: webCrawler.accepted_boxes },
+      boxes: { review: webCrawler.accepted_boxes },
       answers: {
         YES: webCrawler.positive_images,
         NO: webCrawler.hard_negative_images,
@@ -7073,8 +7071,7 @@ function isCloudOpsCodexReadOnlySshCommand(command) {
   const subcommand = parts[1] || '';
   const directReadCommands = new Set([
     'hostname', 'uname', 'uptime', 'date', 'df', 'free', 'ip', 'ss', 'ps', 'ls', 'stat',
-    'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'sed', 'find', 'pgrep', 'pidof',
-    'nvidia-smi', 'rosnode', 'rosservice'
+    'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'sed', 'find', 'nvidia-smi', 'rosnode', 'rosservice'
   ]);
   if (directReadCommands.has(commandName)) return true;
   if (commandName === 'systemctl') {
@@ -7112,12 +7109,6 @@ function isCloudOpsCodexReadOnlySshCommand(command) {
     return subcommand === 'echo' && (parts.includes('-n') || parts.some((item) => /^-n\d+$/.test(item)));
   }
   return false;
-}
-
-function isCloudOpsCodexReadOnlyLocalCommand(command) {
-  const text = String(command || '').trim();
-  const wrapped = text.match(/^(?:(?:\/usr)?\/bin\/)?(?:ba|z|)sh\s+-lc\s+'([^'\n\r]*)'$/);
-  return isCloudOpsCodexReadOnlySshCommand(wrapped ? wrapped[1] : text);
 }
 
 function createCloudOpsCodexApproval({ runId, actor, kind, detail, onProgress }) {
@@ -7261,46 +7252,16 @@ async function executeCloudOpsCodexVehicleSsh(argumentsPayload, vehicles) {
   }
 }
 
-async function executeCloudOpsCodexCloudShell(argumentsPayload) {
-  const command = String(argumentsPayload?.command || '').trim();
-  const timeoutMs = toFiniteInteger(argumentsPayload?.timeout_s, 30, { min: 3, max: 120 }) * 1000;
-  if (!command) return { ok: false, error: 'command_required' };
-  try {
-    const { stdout, stderr } = await execFileAsync('/bin/bash', ['-lc', command], {
-      cwd: cloudOpsCodexAgentCwd,
-      timeout: timeoutMs,
-      maxBuffer: 512 * 1024,
-      env: process.env
-    });
-    return {
-      ok: true,
-      cwd: cloudOpsCodexAgentCwd,
-      command: sanitizeCloudOpsCodexCommandForDisplay(command),
-      stdout: truncateText(stdout, 24000),
-      stderr: truncateText(stderr, 8000)
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      cwd: cloudOpsCodexAgentCwd,
-      command: sanitizeCloudOpsCodexCommandForDisplay(command),
-      error: error?.message || 'cloud_shell_failed',
-      stdout: truncateText(error?.stdout || '', 12000),
-      stderr: truncateText(error?.stderr || '', 8000)
-    };
-  }
-}
-
 function buildCloudOpsCodexInstructions({ vehicleId, summary, tailscalePeer }) {
   return [
     '你是“山海智枢”，完整运行在 OpenAI Codex App Server 上，由 GPT-5.6 Terra 统一驱动。你不是简单问答接口，而是可以自主规划、搜索、读取文件、执行 shell、调用车辆工具并在审批后完成变更的通用智能体。',
     '普通知识问答、写作、翻译、总结、编程和方案讨论应像完整的通用 AI 助手一样自然回答，不要机械套用车辆运维模板。',
     '涉及“今天、最新、目前、刚刚、实时、新闻、天气、价格、政策、版本”等时效信息时，必须优先调用原生 Web Search 核实；回答要标注信息日期并给出可点击的来源 URL。只有工具确实失败时才能说明无法联网，不得把模型知识截止时间冒充实时结果。',
-    '使用 Codex 原生 shell 读取项目文件和执行 sandbox 内命令；需要读取宿主机 systemd、Docker、端口、进程或日志时使用 cloud_shell。cloud_shell 的严格只读命令自动执行，写文件、安装、重启、部署等动作必须发起网页审批；审批被拒绝时不得声称已执行。',
+    '你可以使用 Codex 原生只读 shell 调查当前云服务器和项目。需要写文件、安装、重启或其他越出只读 sandbox 的动作时，必须发起审批并等待网页用户决定；审批被拒绝时不得声称已执行。',
     '车辆问题必须先调查再变更。车辆实时数据和远程操作只允许使用 vehicle_tool 或 vehicle_ssh 动态工具；不要用本地 curl、ssh、scp 绕过车辆安全网关。',
     'vehicle_tool 的只读工具会自动执行；写入、重启、部署、任务或车身控制工具会暂停并请求网页审批。',
     'vehicle_ssh 的严格只读命令会自动执行；其他命令会暂停并展示完整命令等待审批。不得把密码、Token、私钥或 Cookie 放进命令。',
-    'vehicle_ssh 做只读检查时使用直接命令或分号分隔的简单命令，例如 hostname、date、uptime、ping、pgrep、pidof、ss、systemctl status、journalctl；不要套 bash -lc，不要使用管道、重定向、命令替换或后台符号，否则会被视为需要审批。',
+    'vehicle_ssh 做只读检查时使用直接命令或分号分隔的简单命令，例如 hostname、date、uptime、ping、ss、systemctl status、journalctl；不要套 bash -lc，不要使用管道、重定向、命令替换或后台符号，否则会被视为需要审批。',
     '不得执行原始 CAN 帧、车辆运动控制、绕过急停或其他可能造成人身/车辆风险的命令。此类需求只说明需要现场安全流程。',
     '修复后必须回读状态并说明：根因、执行内容、验证证据、剩余风险。审批被拒绝时继续提供可执行建议，不要声称已经修复。',
     '需要澄清时直接在最终回复中向用户提问，不调用当前网页无法呈现的交互式用户输入工具。默认使用用户正在使用的语言，避免输出隐藏思维链。',
@@ -7374,47 +7335,6 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
     const params = messagePayload.params || {};
     const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
     try {
-      if (params.tool === 'cloud_shell') {
-        const command = String(args.command || '').trim();
-        if (cloudOpsCodexCommandContainsSecret(command) || isCloudOpsCodexForbiddenCommand(command)) {
-          respond(messagePayload.id, cloudOpsCodexDynamicToolResponse(false, {
-            ok: false,
-            error: 'command_blocked_by_cloud_safety_policy'
-          }));
-          return;
-        }
-        const autoRead = isCloudOpsCodexReadOnlyLocalCommand(command);
-        if (!autoRead) {
-          const approved = await requestCustomApproval('cloud_shell', {
-            title: '确认执行云服务器命令',
-            reason: args.reason || 'Codex 请求修改云服务器状态',
-            command,
-            cwd: cloudOpsCodexAgentCwd,
-            required_permission: 'vehicle:control'
-          });
-          if (!approved) {
-            respond(messagePayload.id, cloudOpsCodexDynamicToolResponse(false, { ok: false, error: 'user_declined' }));
-            return;
-          }
-        }
-        cloudOpsAgentProgress(onProgress, {
-          stage: 'codex_cloud_shell',
-          status: 'running',
-          title: autoRead ? 'Codex 正在执行宿主机只读命令' : 'Codex 正在执行已批准的宿主机命令',
-          detail: sanitizeCloudOpsCodexCommandForDisplay(command),
-          elapsed_ms: Date.now() - startedAt
-        });
-        const result = await executeCloudOpsCodexCloudShell(args);
-        cloudOpsAgentProgress(onProgress, {
-          stage: 'codex_cloud_shell',
-          status: 'completed',
-          title: result.ok ? '宿主机命令已完成' : '宿主机命令未成功',
-          detail: sanitizeCloudOpsCodexCommandForDisplay(command),
-          elapsed_ms: Date.now() - startedAt
-        });
-        respond(messagePayload.id, cloudOpsCodexDynamicToolResponse(result?.ok !== false, result));
-        return;
-      }
       if (params.tool === 'vehicle_tool') {
         const toolName = String(args.tool_name || '').trim();
         const autoRead = toolName === 'tool_list' || toolName === 'vehicle_detail' || cloudOpsCodexAutoReadToolNames.has(toolName);
@@ -7481,17 +7401,6 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
       const command = String(params.command || '');
       if (cloudOpsCodexCommandContainsSecret(command) || isCloudOpsCodexForbiddenCommand(command)) {
         respond(messagePayload.id, { decision: 'decline' });
-        return;
-      }
-      if (isCloudOpsCodexReadOnlyLocalCommand(command)) {
-        cloudOpsAgentProgress(onProgress, {
-          stage: 'codex_tool',
-          status: 'running',
-          title: 'Codex 只读主机命令已自动放行',
-          detail: sanitizeCloudOpsCodexCommandForDisplay(command),
-          elapsed_ms: Date.now() - startedAt
-        });
-        respond(messagePayload.id, { decision: 'accept' });
         return;
       }
       requestCustomApproval('codex_command', {
@@ -7628,20 +7537,6 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         tailscalePeer: mediaTarget?.peer || null
       }),
       dynamicTools: [
-        {
-          name: 'cloud_shell',
-          description: '在当前云服务器宿主机执行命令。hostname、uptime、systemctl status/is-active、journalctl、docker ps/logs 等严格只读命令自动执行；写入、重启、部署、安装等操作必须等待网页审批。禁止携带密码、Token、Cookie 或私钥。',
-          inputSchema: {
-            type: 'object',
-            required: ['command', 'reason'],
-            properties: {
-              command: { type: 'string', minLength: 1, maxLength: 3000 },
-              reason: { type: 'string' },
-              timeout_s: { type: 'integer', minimum: 3, maximum: 120 }
-            },
-            additionalProperties: false
-          }
-        },
         {
           name: 'vehicle_tool',
           description: '调用 cloud-agent 注册的车辆工具。只读工具自动执行；写入、重启、部署和车辆控制工具会等待网页审批。',

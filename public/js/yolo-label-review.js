@@ -1132,11 +1132,13 @@
     if (!refs.sourceCards) return;
     refs.sourceCards.innerHTML = "";
     const selectedSource = refs.source?.value || "";
-    sourceGroups.forEach((group) => {
+    const orderedGroups = [...sourceGroups.slice(1), sourceGroups[0]];
+    orderedGroups.forEach((group) => {
       const stats = sourceStats(group.value);
       const button = createNode("button", "yolo-review-source-card");
       button.type = "button";
       button.dataset.sourceGroup = group.value;
+      button.classList.toggle("yolo-review-source-card--all", !group.value);
       button.classList.toggle("is-active", group.value === selectedSource);
       button.classList.toggle("is-empty", stats.datasetCount === 0);
       button.addEventListener("click", () => {

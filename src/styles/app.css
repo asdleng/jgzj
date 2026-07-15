@@ -5949,6 +5949,10 @@
   transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
 }
 
+.yolo-review-source-card--all {
+  grid-column: 1 / -1;
+}
+
 .yolo-review-source-card:hover {
   border-color: rgba(45, 212, 191, 0.66);
   background: rgba(8, 15, 31, 0.86);
