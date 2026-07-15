@@ -382,6 +382,11 @@ const cloudOpsAgentHistoryPath = path.resolve(
   process.env.CLOUD_OPS_AGENT_HISTORY_PATH ||
     path.join(projectRoot, '.runtime/cloud-ops-agent/chat-history.jsonl')
 );
+const cloudOpsAgentConversationRoot = path.resolve(
+  process.env.CLOUD_OPS_AGENT_CONVERSATION_ROOT ||
+    path.join(projectRoot, '.runtime/cloud-ops-agent/conversations')
+);
+const cloudOpsAgentConversationLocks = new Map();
 const cloudOpsCodexPendingApprovals = new Map();
 const cloudOpsAgentEnabled =
   String(process.env.CLOUD_OPS_AGENT_ENABLED || 'true').toLowerCase() !== 'false';
@@ -6563,6 +6568,7 @@ function cloudOpsAgentHistoryRecord(record) {
     at: record.at || new Date().toISOString(),
     ok: record.ok !== false,
     actor: record.actor || null,
+    conversation_id: normalizeCloudOpsAgentConversationId(record.conversation_id) || null,
     vehicle_id: record.vehicle_id || null,
     model: record.model || cloudOpsAgentModel,
     latency_ms: Number.isFinite(Number(record.latency_ms)) ? Number(record.latency_ms) : null,
@@ -6603,6 +6609,228 @@ async function readCloudOpsAgentHistory(limit = 20) {
     }
     throw error;
   }
+}
+
+function normalizeCloudOpsAgentConversationId(value) {
+  const id = String(value || '').trim();
+  return /^coat_\d{13}_[a-f0-9]{10}$/.test(id) ? id : '';
+}
+
+function cloudOpsAgentConversationOwnerKey(username) {
+  return crypto.createHash('sha256').update(String(username || '').trim().toLowerCase()).digest('hex');
+}
+
+function cloudOpsAgentConversationStorePath(username) {
+  return path.join(cloudOpsAgentConversationRoot, `${cloudOpsAgentConversationOwnerKey(username)}.json`);
+}
+
+function cloudOpsAgentConversationTitle(value, fallback = '新任务') {
+  const title = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!title) return fallback;
+  return title.length > 60 ? `${title.slice(0, 57)}...` : title;
+}
+
+function cloudOpsAgentConversationTitleFromMessage(message) {
+  return cloudOpsAgentConversationTitle(message, '新任务');
+}
+
+function normalizeCloudOpsAgentConversationMessage(message) {
+  const role = ['user', 'assistant', 'error'].includes(message?.role) ? message.role : '';
+  const content = String(message?.content || '').trim().slice(0, 60000);
+  if (!role || !content) return null;
+  return {
+    id: String(message?.id || `coam_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`).slice(0, 80),
+    role,
+    content,
+    at: String(message?.at || new Date().toISOString()).slice(0, 40),
+    model: message?.model ? String(message.model).slice(0, 120) : null,
+    permission_mode: message?.permission_mode
+      ? normalizeCloudOpsAgentPermissionMode(message.permission_mode)
+      : null,
+    run_kind: message?.run_kind ? String(message.run_kind).slice(0, 80) : null,
+    latency_ms: Number.isFinite(Number(message?.latency_ms)) ? Number(message.latency_ms) : null,
+    reasoning_summary: message?.reasoning_summary
+      ? String(message.reasoning_summary).trim().slice(0, 12000)
+      : null,
+    vehicle_id: message?.vehicle_id ? String(message.vehicle_id).slice(0, 120) : null
+  };
+}
+
+function normalizeCloudOpsAgentConversation(conversation) {
+  const id = normalizeCloudOpsAgentConversationId(conversation?.id);
+  if (!id) return null;
+  const createdAt = String(conversation?.created_at || new Date().toISOString()).slice(0, 40);
+  const messages = Array.isArray(conversation?.messages)
+    ? conversation.messages.map(normalizeCloudOpsAgentConversationMessage).filter(Boolean).slice(-500)
+    : [];
+  return {
+    id,
+    title: cloudOpsAgentConversationTitle(conversation?.title),
+    created_at: createdAt,
+    updated_at: String(conversation?.updated_at || createdAt).slice(0, 40),
+    last_model: conversation?.last_model ? String(conversation.last_model).slice(0, 120) : null,
+    permission_mode: normalizeCloudOpsAgentPermissionMode(conversation?.permission_mode),
+    selected_vehicle_id: conversation?.selected_vehicle_id
+      ? normalizeCloudOpsExplicitVehicleId(conversation.selected_vehicle_id)
+      : null,
+    messages
+  };
+}
+
+async function readCloudOpsAgentConversationStore(username) {
+  try {
+    const payload = parseJsonField(
+      await fs.readFile(cloudOpsAgentConversationStorePath(username), 'utf-8'),
+      null
+    );
+    if (!payload || !Array.isArray(payload.conversations)) {
+      throw new Error('cloud_ops_agent_conversation_store_invalid');
+    }
+    return {
+      version: 1,
+      conversations: payload.conversations
+        .map(normalizeCloudOpsAgentConversation)
+        .filter(Boolean)
+    };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { version: 1, conversations: [] };
+    throw error;
+  }
+}
+
+async function writeCloudOpsAgentConversationStore(username, store) {
+  await fs.mkdir(cloudOpsAgentConversationRoot, { recursive: true, mode: 0o700 });
+  const storePath = cloudOpsAgentConversationStorePath(username);
+  const temporaryPath = `${storePath}.${process.pid}.${crypto.randomBytes(5).toString('hex')}.tmp`;
+  await fs.writeFile(temporaryPath, `${JSON.stringify({
+    version: 1,
+    updated_at: new Date().toISOString(),
+    conversations: store.conversations
+  })}\n`, { encoding: 'utf-8', mode: 0o600 });
+  await fs.rename(temporaryPath, storePath);
+}
+
+function withCloudOpsAgentConversationLock(username, operation) {
+  const key = cloudOpsAgentConversationOwnerKey(username);
+  const previous = cloudOpsAgentConversationLocks.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  let queued;
+  queued = current.finally(() => {
+    if (cloudOpsAgentConversationLocks.get(key) === queued) {
+      cloudOpsAgentConversationLocks.delete(key);
+    }
+  });
+  cloudOpsAgentConversationLocks.set(key, queued);
+  return current;
+}
+
+function cloudOpsAgentConversationSummary(conversation) {
+  const lastMessage = [...conversation.messages].reverse().find((message) => message.content) || null;
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    created_at: conversation.created_at,
+    updated_at: conversation.updated_at,
+    message_count: conversation.messages.length,
+    last_message_preview: lastMessage
+      ? String(lastMessage.content).replace(/\s+/g, ' ').slice(0, 160)
+      : '',
+    last_model: conversation.last_model,
+    permission_mode: conversation.permission_mode,
+    selected_vehicle_id: conversation.selected_vehicle_id
+  };
+}
+
+async function listCloudOpsAgentConversations(username, limit = 50) {
+  const store = await readCloudOpsAgentConversationStore(username);
+  return store.conversations
+    .slice()
+    .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)))
+    .slice(0, Math.max(1, Math.min(200, limit)))
+    .map(cloudOpsAgentConversationSummary);
+}
+
+async function getCloudOpsAgentConversation(username, conversationId) {
+  const id = normalizeCloudOpsAgentConversationId(conversationId);
+  if (!id) return null;
+  const store = await readCloudOpsAgentConversationStore(username);
+  return store.conversations.find((conversation) => conversation.id === id) || null;
+}
+
+async function createCloudOpsAgentConversation(username, input = {}) {
+  return withCloudOpsAgentConversationLock(username, async () => {
+    const store = await readCloudOpsAgentConversationStore(username);
+    if (store.conversations.length >= 200) {
+      const error = new Error('conversation_limit_reached');
+      error.status = 409;
+      throw error;
+    }
+    const now = new Date().toISOString();
+    const conversation = normalizeCloudOpsAgentConversation({
+      id: `coat_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`,
+      title: cloudOpsAgentConversationTitle(input?.title),
+      created_at: now,
+      updated_at: now,
+      last_model: input?.model || null,
+      permission_mode: input?.permission_mode,
+      selected_vehicle_id: input?.selected_vehicle_id || null,
+      messages: []
+    });
+    store.conversations.unshift(conversation);
+    await writeCloudOpsAgentConversationStore(username, store);
+    return conversation;
+  });
+}
+
+async function updateCloudOpsAgentConversation(username, conversationId, updates = {}) {
+  return withCloudOpsAgentConversationLock(username, async () => {
+    const store = await readCloudOpsAgentConversationStore(username);
+    const conversation = store.conversations.find((item) => item.id === normalizeCloudOpsAgentConversationId(conversationId));
+    if (!conversation) return null;
+    if (Object.prototype.hasOwnProperty.call(updates, 'title')) {
+      conversation.title = cloudOpsAgentConversationTitle(updates.title, conversation.title);
+    }
+    conversation.updated_at = new Date().toISOString();
+    await writeCloudOpsAgentConversationStore(username, store);
+    return conversation;
+  });
+}
+
+async function appendCloudOpsAgentConversationMessage(username, conversationId, message, metadata = {}) {
+  return withCloudOpsAgentConversationLock(username, async () => {
+    const store = await readCloudOpsAgentConversationStore(username);
+    const conversation = store.conversations.find((item) => item.id === normalizeCloudOpsAgentConversationId(conversationId));
+    if (!conversation) return null;
+    const normalizedMessage = normalizeCloudOpsAgentConversationMessage(message);
+    if (!normalizedMessage) return conversation;
+    conversation.messages.push(normalizedMessage);
+    if (conversation.messages.length > 500) conversation.messages = conversation.messages.slice(-500);
+    if (normalizedMessage.role === 'user' && conversation.title === '新任务') {
+      conversation.title = cloudOpsAgentConversationTitleFromMessage(normalizedMessage.content);
+    }
+    conversation.updated_at = normalizedMessage.at || new Date().toISOString();
+    if (metadata?.model) conversation.last_model = String(metadata.model).slice(0, 120);
+    if (metadata?.permission_mode) {
+      conversation.permission_mode = normalizeCloudOpsAgentPermissionMode(metadata.permission_mode);
+    }
+    if (metadata?.selected_vehicle_id) {
+      conversation.selected_vehicle_id = normalizeCloudOpsExplicitVehicleId(metadata.selected_vehicle_id);
+    }
+    await writeCloudOpsAgentConversationStore(username, store);
+    return conversation;
+  });
+}
+
+async function deleteCloudOpsAgentConversation(username, conversationId) {
+  return withCloudOpsAgentConversationLock(username, async () => {
+    const store = await readCloudOpsAgentConversationStore(username);
+    const id = normalizeCloudOpsAgentConversationId(conversationId);
+    const index = store.conversations.findIndex((conversation) => conversation.id === id);
+    if (index < 0) return false;
+    store.conversations.splice(index, 1);
+    await writeCloudOpsAgentConversationStore(username, store);
+    return true;
+  });
 }
 
 function normalizeCloudOpsAgentConversationHistory(history) {
@@ -15388,6 +15616,105 @@ app.get('/api/cloud-ops-agent/codex/status', authStore.requirePermission('vehicl
   }
 });
 
+app.get('/api/cloud-ops-agent/conversations', authStore.requirePermission('vehicle:read'), async (req, res) => {
+  try {
+    const limit = toFiniteInteger(req.query?.limit, 50, { min: 1, max: 200 });
+    const conversations = await listCloudOpsAgentConversations(req.jgzjAuth.user.username, limit);
+    return res.json({ ok: true, conversations });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: 'cloud_ops_agent_conversation_list_failed',
+      detail: error?.message || 'cloud_ops_agent_conversation_list_failed'
+    });
+  }
+});
+
+app.post('/api/cloud-ops-agent/conversations', authStore.requirePermission('vehicle:read'), async (req, res) => {
+  try {
+    const conversation = await createCloudOpsAgentConversation(req.jgzjAuth.user.username, {
+      title: req.body?.title,
+      model: req.body?.model,
+      permission_mode: req.body?.permission_mode,
+      selected_vehicle_id: req.body?.selected_vehicle_id
+    });
+    return res.status(201).json({
+      ok: true,
+      conversation,
+      summary: cloudOpsAgentConversationSummary(conversation)
+    });
+  } catch (error) {
+    const status = Number(error?.status) || 502;
+    return res.status(status).json({
+      ok: false,
+      error: error?.message || 'cloud_ops_agent_conversation_create_failed',
+      detail: error?.message || 'cloud_ops_agent_conversation_create_failed'
+    });
+  }
+});
+
+app.get('/api/cloud-ops-agent/conversations/:conversationId', authStore.requirePermission('vehicle:read'), async (req, res) => {
+  try {
+    const conversation = await getCloudOpsAgentConversation(
+      req.jgzjAuth.user.username,
+      req.params.conversationId
+    );
+    if (!conversation) {
+      return res.status(404).json({ ok: false, error: 'conversation_not_found' });
+    }
+    return res.json({ ok: true, conversation });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: 'cloud_ops_agent_conversation_read_failed',
+      detail: error?.message || 'cloud_ops_agent_conversation_read_failed'
+    });
+  }
+});
+
+app.patch('/api/cloud-ops-agent/conversations/:conversationId', authStore.requirePermission('vehicle:read'), async (req, res) => {
+  try {
+    const conversation = await updateCloudOpsAgentConversation(
+      req.jgzjAuth.user.username,
+      req.params.conversationId,
+      { title: req.body?.title }
+    );
+    if (!conversation) {
+      return res.status(404).json({ ok: false, error: 'conversation_not_found' });
+    }
+    return res.json({
+      ok: true,
+      conversation,
+      summary: cloudOpsAgentConversationSummary(conversation)
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: 'cloud_ops_agent_conversation_update_failed',
+      detail: error?.message || 'cloud_ops_agent_conversation_update_failed'
+    });
+  }
+});
+
+app.delete('/api/cloud-ops-agent/conversations/:conversationId', authStore.requirePermission('vehicle:read'), async (req, res) => {
+  try {
+    const deleted = await deleteCloudOpsAgentConversation(
+      req.jgzjAuth.user.username,
+      req.params.conversationId
+    );
+    if (!deleted) {
+      return res.status(404).json({ ok: false, error: 'conversation_not_found' });
+    }
+    return res.json({ ok: true, deleted: true });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: 'cloud_ops_agent_conversation_delete_failed',
+      detail: error?.message || 'cloud_ops_agent_conversation_delete_failed'
+    });
+  }
+});
+
 app.get('/api/cloud-ops-agent/history', authStore.requirePermission('vehicle:read'), async (req, res) => {
   const limit = toFiniteInteger(req.query?.limit, 20, { min: 1, max: 50 });
   try {
@@ -15411,6 +15738,8 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
   const permission = cloudOpsAgentPermissionConfig(permissionMode);
   const selectedVehicleId = normalizeCloudOpsExplicitVehicleId(req.body?.selected_vehicle_id || '');
   const conversationHistory = req.body?.history;
+  const requestedConversationIdRaw = String(req.body?.conversation_id || '').trim();
+  const requestedConversationId = normalizeCloudOpsAgentConversationId(requestedConversationIdRaw);
   if (!message) {
     return res.status(400).json({ ok: false, error: 'message_required', detail: 'message is required.' });
   }
@@ -15423,6 +15752,45 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
       error: 'permission_mode_denied',
       required_permission: 'vehicle:control',
       detail: `当前账号无权使用“${permission.label}”模式。`
+    });
+  }
+
+  if (requestedConversationIdRaw && !requestedConversationId) {
+    return res.status(400).json({ ok: false, error: 'invalid_conversation_id' });
+  }
+
+  const actor = req.jgzjAuth?.user?.username || null;
+  let activeConversation;
+  let normalizedHistory;
+  try {
+    activeConversation = requestedConversationId
+      ? await getCloudOpsAgentConversation(actor, requestedConversationId)
+      : await createCloudOpsAgentConversation(actor, {
+          title: cloudOpsAgentConversationTitleFromMessage(message),
+          model: requestedModel,
+          permission_mode: permissionMode,
+          selected_vehicle_id: selectedVehicleId
+        });
+    if (!activeConversation) {
+      return res.status(404).json({ ok: false, error: 'conversation_not_found' });
+    }
+    normalizedHistory = normalizeCloudOpsAgentConversationHistory(
+      activeConversation.messages.length ? activeConversation.messages : conversationHistory
+    );
+    activeConversation = await appendCloudOpsAgentConversationMessage(actor, activeConversation.id, {
+      role: 'user',
+      content: message
+    }, {
+      model: requestedModel,
+      permission_mode: permissionMode,
+      selected_vehicle_id: selectedVehicleId
+    });
+  } catch (error) {
+    const status = Number(error?.status) || 502;
+    return res.status(status).json({
+      ok: false,
+      error: 'cloud_ops_agent_conversation_prepare_failed',
+      detail: error?.message || 'cloud_ops_agent_conversation_prepare_failed'
     });
   }
 
@@ -15448,6 +15816,8 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
     model: cloudOpsCodexUnifiedRouteEnabled ? cloudOpsCodexAgentModel : resolveCloudOpsAgentModel(requestedModel),
     permission_mode: permissionMode,
     permission_label: permission.label,
+    conversation_id: activeConversation.id,
+    conversation: cloudOpsAgentConversationSummary(activeConversation),
     title: '山海智枢已开始处理',
     elapsed_ms: 0
   });
@@ -15456,9 +15826,7 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
   }, 5000);
   heartbeat.unref?.();
 
-  const actor = req.jgzjAuth?.user?.username || null;
   try {
-    const normalizedHistory = normalizeCloudOpsAgentConversationHistory(conversationHistory);
     const vehicles = await listCloudAgentVehicles().catch(() => []);
     const mentionedVehicles = findCloudOpsAgentMentionedVehicles(message, normalizedHistory, vehicles);
     const requestedVehicleTokens = extractCloudOpsAgentRequestedVehicleTokens(message);
@@ -15532,9 +15900,25 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
         });
 
     const resultVehicleId = result.evidence?.vehicle_id || result.context?.mentioned_vehicle_ids?.[0] || vehicleId || null;
+    const runKind = result.run_kind || (runDiagnosis ? 'vehicle_diagnosis' : 'conversation');
+    activeConversation = await appendCloudOpsAgentConversationMessage(actor, activeConversation.id, {
+      role: 'assistant',
+      content: result.answer,
+      model: result.model,
+      permission_mode: result.permission_mode || permissionMode,
+      run_kind: runKind,
+      latency_ms: Date.now() - startedAt,
+      reasoning_summary: result.reasoning_summary,
+      vehicle_id: resultVehicleId
+    }, {
+      model: result.model,
+      permission_mode: result.permission_mode || permissionMode,
+      selected_vehicle_id: resultVehicleId || selectedVehicleId
+    });
     const historyRecord = cloudOpsAgentHistoryRecord({
       ok: true,
       actor,
+      conversation_id: activeConversation.id,
       vehicle_id: resultVehicleId,
       model: result.model,
       latency_ms: result.latency_ms,
@@ -15550,8 +15934,10 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
       ok: true,
       provider: runCodex ? 'codex_app_server' : 'subapi_openai_compatible',
       mode: result.mode || 'integrated_ai_ops',
-      run_kind: result.run_kind || (runDiagnosis ? 'vehicle_diagnosis' : 'conversation'),
+      run_kind: runKind,
       audit_id: historyRecord.id,
+      conversation_id: activeConversation.id,
+      conversation: cloudOpsAgentConversationSummary(activeConversation),
       ...result,
       permission_mode: result.permission_mode || permissionMode,
       permission_label: result.permission_label || permission.label,
@@ -15560,9 +15946,23 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
     });
   } catch (error) {
     const status = error?.status && Number.isFinite(Number(error.status)) ? Number(error.status) : 502;
+    if (activeConversation?.id) {
+      activeConversation = await appendCloudOpsAgentConversationMessage(actor, activeConversation.id, {
+        role: 'error',
+        content: `调用失败：${error?.message || 'cloud_ops_agent_run_failed'}`,
+        model: requestedModel || cloudOpsAgentModel,
+        permission_mode: permissionMode,
+        latency_ms: Date.now() - startedAt
+      }, {
+        model: requestedModel || cloudOpsAgentModel,
+        permission_mode: permissionMode,
+        selected_vehicle_id: selectedVehicleId
+      }).catch(() => activeConversation);
+    }
     await appendCloudOpsAgentHistory({
       ok: false,
       actor,
+      conversation_id: activeConversation?.id || null,
       vehicle_id: null,
       model: requestedModel || cloudOpsAgentModel,
       prompt: message,
@@ -15576,6 +15976,8 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
       status,
       error: error?.code || 'cloud_ops_agent_run_failed',
       detail: error?.message || 'cloud_ops_agent_run_failed',
+      conversation_id: activeConversation?.id || null,
+      conversation: activeConversation ? cloudOpsAgentConversationSummary(activeConversation) : null,
       elapsed_ms: Date.now() - startedAt
     });
   } finally {

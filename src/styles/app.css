@@ -9913,6 +9913,378 @@ body.yolo-review-is-panning {
   .cloud-ops-agent-page-toolbar { grid-template-columns: 1fr; }
 }
 
+/* Cloud Ops Test: persistent task navigation for Shanhai Ops. */
+.cloud-ops-agent-task-switcher,
+.cloud-ops-agent-task-sidebar,
+.cloud-ops-agent-conversation-pane {
+  min-width: 0;
+}
+
+.cloud-ops-agent-task-switcher {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(71, 85, 105, 0.52);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.48);
+}
+
+.cloud-ops-agent-task-switcher-head,
+.cloud-ops-agent-task-sidebar-head,
+.cloud-ops-agent-conversation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cloud-ops-agent-task-switcher-head > div,
+.cloud-ops-agent-task-sidebar-head > div,
+.cloud-ops-agent-conversation-head > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.cloud-ops-agent-task-switcher-head span,
+.cloud-ops-agent-task-sidebar-head span,
+.cloud-ops-agent-conversation-head span {
+  color: #94a3b8;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.cloud-ops-agent-task-switcher-head strong,
+.cloud-ops-agent-task-sidebar-head strong,
+.cloud-ops-agent-conversation-head strong {
+  min-width: 0;
+  color: #f8fafc;
+  font-size: 0.86rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-ops-agent-task-switcher-head button,
+.cloud-ops-agent-task-sidebar-head button,
+.cloud-ops-agent-conversation-actions button {
+  min-height: 32px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid rgba(103, 232, 249, 0.32);
+  border-radius: 6px;
+  background: rgba(8, 47, 73, 0.42);
+  color: #cffafe;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cloud-ops-agent-task-switcher-head button:hover,
+.cloud-ops-agent-task-sidebar-head button:hover,
+.cloud-ops-agent-conversation-actions button:hover {
+  border-color: rgba(103, 232, 249, 0.64);
+  background: rgba(8, 145, 178, 0.2);
+}
+
+.cloud-ops-agent-task-switcher-head button:disabled,
+.cloud-ops-agent-task-sidebar-head button:disabled,
+.cloud-ops-agent-conversation-actions button:disabled,
+.cloud-ops-agent-task-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.cloud-ops-agent-task-list {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  overflow: auto;
+}
+
+.cloud-ops-agent-task-switcher.is-compact .cloud-ops-agent-task-list {
+  max-height: 156px;
+}
+
+.cloud-ops-agent-task-item {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #cbd5e1;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cloud-ops-agent-task-item:hover {
+  border-color: rgba(100, 116, 139, 0.5);
+  background: rgba(30, 41, 59, 0.56);
+}
+
+.cloud-ops-agent-task-item.is-active {
+  border-color: rgba(52, 211, 153, 0.42);
+  background: rgba(6, 78, 59, 0.24);
+}
+
+.cloud-ops-agent-task-item strong,
+.cloud-ops-agent-task-item span,
+.cloud-ops-agent-task-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-ops-agent-task-item strong {
+  color: #f8fafc;
+  font-size: 0.76rem;
+}
+
+.cloud-ops-agent-task-item span {
+  color: #94a3b8;
+  font-size: 0.68rem;
+}
+
+.cloud-ops-agent-task-item small {
+  color: #64748b;
+  font-size: 0.62rem;
+}
+
+.cloud-ops-agent-task-empty {
+  margin: 0;
+  padding: 10px 8px;
+  color: #64748b;
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.cloud-ops-agent-task-workspace {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.cloud-ops-agent-task-sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  max-height: 640px;
+  padding-right: 14px;
+  border-right: 1px solid rgba(71, 85, 105, 0.44);
+}
+
+.cloud-ops-agent-task-sidebar .cloud-ops-agent-task-list {
+  max-height: 590px;
+}
+
+.cloud-ops-agent-conversation-pane {
+  display: grid;
+  grid-template-rows: auto minmax(320px, 1fr) auto auto;
+  gap: 11px;
+}
+
+.cloud-ops-agent-conversation-head {
+  min-height: 38px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.38);
+}
+
+.cloud-ops-agent-conversation-head strong {
+  font-size: 0.94rem;
+}
+
+.cloud-ops-agent-conversation-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cloud-ops-agent-conversation-actions button:last-child {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(69, 10, 10, 0.18);
+  color: #fecaca;
+}
+
+.cloud-ops-agent-task-workspace .cloud-ops-agent-page-messages {
+  min-height: 360px;
+  max-height: min(58vh, 620px);
+}
+
+.cloud-ops-agent-task-dialog[hidden] {
+  display: none;
+}
+
+.cloud-ops-agent-task-dialog {
+  position: fixed;
+  z-index: 420;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(2, 6, 23, 0.74);
+}
+
+.cloud-ops-agent-task-dialog > section {
+  width: min(430px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(103, 232, 249, 0.34);
+  border-radius: 8px;
+  background: #0f172a;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+}
+
+.cloud-ops-agent-task-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cloud-ops-agent-task-dialog-head > div {
+  min-width: 0;
+}
+
+.cloud-ops-agent-task-dialog-head span {
+  color: #67e8f9;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.cloud-ops-agent-task-dialog-head h3 {
+  margin: 4px 0 0;
+  color: #f8fafc;
+  font-size: 1rem;
+}
+
+.cloud-ops-agent-task-dialog-head button {
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.cloud-ops-agent-task-dialog label {
+  display: grid;
+  gap: 7px;
+  color: #cbd5e1;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.cloud-ops-agent-task-dialog input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid rgba(100, 116, 139, 0.66);
+  border-radius: 6px;
+  background: #020617;
+  color: #f8fafc;
+  font: inherit;
+}
+
+.cloud-ops-agent-task-dialog input:focus {
+  border-color: #22d3ee;
+  outline: 2px solid rgba(34, 211, 238, 0.18);
+  outline-offset: 1px;
+}
+
+.cloud-ops-agent-task-dialog p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.cloud-ops-agent-task-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cloud-ops-agent-task-dialog-actions button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid rgba(100, 116, 139, 0.52);
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.72);
+  color: #e2e8f0;
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cloud-ops-agent-task-dialog-actions button:last-child {
+  border-color: rgba(34, 211, 238, 0.52);
+  background: rgba(8, 145, 178, 0.28);
+  color: #cffafe;
+}
+
+.cloud-ops-agent-task-dialog-actions button.is-danger {
+  border-color: rgba(248, 113, 113, 0.5);
+  background: rgba(127, 29, 29, 0.34);
+  color: #fecaca;
+}
+
+.cloud-ops-agent-task-dialog-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+@media (max-width: 900px) {
+  .cloud-ops-agent-task-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-ops-agent-task-sidebar {
+    grid-template-rows: auto auto;
+    max-height: none;
+    padding: 0 0 12px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(71, 85, 105, 0.44);
+  }
+
+  .cloud-ops-agent-task-sidebar .cloud-ops-agent-task-list {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(190px, 240px);
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 4px;
+  }
+}
+
+@media (max-width: 560px) {
+  .cloud-ops-agent-task-switcher-head,
+  .cloud-ops-agent-conversation-head {
+    align-items: flex-start;
+  }
+
+  .cloud-ops-agent-conversation-head {
+    display: grid;
+  }
+
+  .cloud-ops-agent-conversation-actions {
+    justify-content: flex-start;
+  }
+
+  .cloud-ops-agent-task-workspace .cloud-ops-agent-page-messages {
+    min-height: 320px;
+    max-height: 56vh;
+  }
+}
+
 
 /* Cloud Ops Test: synchronized, server-whitelisted model selection for Shanhai Ops. */
 .cloud-ops-test-agent-model-control {

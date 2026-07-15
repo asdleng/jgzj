@@ -154,6 +154,19 @@ const agentRules = [
         <span data-role="agent-latency">等待输入</span>
       </div>
 
+      <section class="cloud-ops-agent-task-switcher is-compact" aria-label="智能体任务">
+        <div class="cloud-ops-agent-task-switcher-head">
+          <div>
+            <span>当前任务</span>
+            <strong data-role="agent-task-title">新任务</strong>
+          </div>
+          <button type="button" data-action="agent-task-new">新任务</button>
+        </div>
+        <div class="cloud-ops-agent-task-list" data-role="agent-task-list">
+          <p class="cloud-ops-agent-task-empty">读取任务中...</p>
+        </div>
+      </section>
+
       <div class="cloud-ops-test-agent-messages" data-role="agent-messages">
         <div class="cloud-ops-test-agent-message is-agent">
           <strong>山海智枢</strong>
@@ -565,56 +578,84 @@ const agentRules = [
             </div>
           </div>
 
-          <div class="cloud-ops-agent-page-messages cloud-ops-test-agent-messages" data-role="agent-page-messages" aria-live="polite">
-            <div class="cloud-ops-test-agent-message is-agent">
-              <strong>山海智枢</strong>
-              <p>你好，我是山海智枢。</p>
-            </div>
-          </div>
-
-          <div class="cloud-ops-agent-composer is-page" data-role="agent-composer">
-            <textarea
-              class="cloud-ops-test-agent-input cloud-ops-agent-page-input"
-              data-role="agent-page-input"
-              rows="4"
-              placeholder="直接输入需求；提到哪辆车，就自动读取并分析哪辆车。"
-            ></textarea>
-            <div class="cloud-ops-agent-composer-footer">
-              <div class="cloud-ops-agent-composer-options">
-                <span class="cloud-ops-agent-composer-scope" title="所有对话由山海智枢统一处理">
-                  <i aria-hidden="true"></i>
-                  GPT-5.6 统一智能体
-                </span>
-                <label class="cloud-ops-agent-composer-select">
-                  <span>模型</span>
-                  <select data-role="agent-model-select" aria-label="选择智能体运维分析模型">
-                    <option value="gpt-5.6-terra" selected>GPT-5.6 Terra</option>
-                    <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
-                    <option value="gpt-5.6">GPT-5.6</option>
-                    <option value="gpt-5.5">GPT-5.5</option>
-                    <option value="gpt-5.4">GPT-5.4</option>
-                    <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
-                  </select>
-                </label>
-                <label class="cloud-ops-agent-composer-select is-permission">
-                  <span>权限</span>
-                  <select data-role="agent-permission-select" aria-label="选择智能体运行权限">
-                    <option value="on_request" selected>请求批准</option>
-                    <option value="auto_review">替我审批</option>
-                    <option value="full_access">完全访问权限</option>
-                  </select>
-                </label>
+          <div class="cloud-ops-agent-task-workspace">
+            <aside class="cloud-ops-agent-task-sidebar" aria-label="历史任务">
+              <div class="cloud-ops-agent-task-sidebar-head">
+                <div>
+                  <span>任务</span>
+                  <strong data-role="agent-task-count">--</strong>
+                </div>
+                <button type="button" data-action="agent-task-new">新任务</button>
               </div>
-              <span class="cloud-ops-agent-composer-hint">Enter 发送 · Shift+Enter 换行</span>
-              <button class="cloud-ops-agent-composer-send" type="button" data-action="agent-send" aria-label="发送消息" title="发送消息">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
-              </button>
-            </div>
-          </div>
+              <div class="cloud-ops-agent-task-list" data-role="agent-task-list">
+                <p class="cloud-ops-agent-task-empty">读取任务中...</p>
+              </div>
+            </aside>
 
-          <div class="cloud-ops-agent-page-rail-actions">
-            <button type="button" data-action="agent-page-open" data-role="agent-page-open-label">展开右侧侧边栏</button>
-            <button type="button" data-action="agent-page-pin" data-role="agent-page-pin-label">固定右侧侧边栏</button>
+            <div class="cloud-ops-agent-conversation-pane">
+              <div class="cloud-ops-agent-conversation-head">
+                <div>
+                  <span>当前任务</span>
+                  <strong data-role="agent-task-title">新任务</strong>
+                </div>
+                <div class="cloud-ops-agent-conversation-actions">
+                  <button type="button" data-action="agent-task-rename">重命名</button>
+                  <button type="button" data-action="agent-task-delete">删除</button>
+                </div>
+              </div>
+
+              <div class="cloud-ops-agent-page-messages cloud-ops-test-agent-messages" data-role="agent-page-messages" aria-live="polite">
+                <div class="cloud-ops-test-agent-message is-agent">
+                  <strong>山海智枢</strong>
+                  <p>你好，我是山海智枢。</p>
+                </div>
+              </div>
+
+              <div class="cloud-ops-agent-composer is-page" data-role="agent-composer">
+                <textarea
+                  class="cloud-ops-test-agent-input cloud-ops-agent-page-input"
+                  data-role="agent-page-input"
+                  rows="4"
+                  placeholder="直接输入需求；提到哪辆车，就自动读取并分析哪辆车。"
+                ></textarea>
+                <div class="cloud-ops-agent-composer-footer">
+                  <div class="cloud-ops-agent-composer-options">
+                    <span class="cloud-ops-agent-composer-scope" title="所有对话由山海智枢统一处理">
+                      <i aria-hidden="true"></i>
+                      GPT-5.6 统一智能体
+                    </span>
+                    <label class="cloud-ops-agent-composer-select">
+                      <span>模型</span>
+                      <select data-role="agent-model-select" aria-label="选择智能体运维分析模型">
+                        <option value="gpt-5.6-terra" selected>GPT-5.6 Terra</option>
+                        <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+                        <option value="gpt-5.6">GPT-5.6</option>
+                        <option value="gpt-5.5">GPT-5.5</option>
+                        <option value="gpt-5.4">GPT-5.4</option>
+                        <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+                      </select>
+                    </label>
+                    <label class="cloud-ops-agent-composer-select is-permission">
+                      <span>权限</span>
+                      <select data-role="agent-permission-select" aria-label="选择智能体运行权限">
+                        <option value="on_request" selected>请求批准</option>
+                        <option value="auto_review">替我审批</option>
+                        <option value="full_access">完全访问权限</option>
+                      </select>
+                    </label>
+                  </div>
+                  <span class="cloud-ops-agent-composer-hint">Enter 发送 · Shift+Enter 换行</span>
+                  <button class="cloud-ops-agent-composer-send" type="button" data-action="agent-send" aria-label="发送消息" title="发送消息">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="cloud-ops-agent-page-rail-actions">
+                <button type="button" data-action="agent-page-open" data-role="agent-page-open-label">展开右侧侧边栏</button>
+                <button type="button" data-action="agent-page-pin" data-role="agent-page-pin-label">固定右侧侧边栏</button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -632,6 +673,27 @@ const agentRules = [
       </section>      </section>
     </div>
   </div>
+
+  <div class="cloud-ops-agent-task-dialog" data-role="agent-task-dialog" hidden>
+    <section role="dialog" aria-modal="true" aria-labelledby="cloud-ops-agent-task-dialog-title">
+      <div class="cloud-ops-agent-task-dialog-head">
+        <div>
+          <span>任务管理</span>
+          <h3 id="cloud-ops-agent-task-dialog-title" data-role="agent-task-dialog-title">重命名任务</h3>
+        </div>
+        <button type="button" data-action="agent-task-dialog-cancel" aria-label="关闭任务对话框">关闭</button>
+      </div>
+      <label data-role="agent-task-dialog-field">
+        任务名称
+        <input type="text" maxlength="60" data-role="agent-task-dialog-input" autocomplete="off" />
+      </label>
+      <p data-role="agent-task-dialog-copy"></p>
+      <div class="cloud-ops-agent-task-dialog-actions">
+        <button type="button" data-action="agent-task-dialog-cancel">取消</button>
+        <button type="button" data-action="agent-task-dialog-confirm" data-role="agent-task-dialog-confirm">保存</button>
+      </div>
+    </section>
+  </div>
 </section>
 
 <script is:inline>
@@ -643,6 +705,7 @@ const agentRules = [
     const EXECUTE_URL = "/api/cloud-ops/execute";
     const AGENT_STATUS_URL = "/api/cloud-ops-agent/status";
     const AGENT_HISTORY_URL = "/api/cloud-ops-agent/history";
+    const AGENT_CONVERSATIONS_URL = "/api/cloud-ops-agent/conversations";
     const AGENT_RUN_URL = "/api/cloud-ops-agent/run";
     const AGENT_APPROVAL_BASE_URL = "/api/cloud-ops-agent/approvals";
     const READONLY_TOOL_ALLOWLIST = new Set([
@@ -778,6 +841,15 @@ const agentRules = [
     const agentPageInput = shell.querySelector('[data-role="agent-page-input"]');
     const agentPageOpenLabel = shell.querySelector('[data-role="agent-page-open-label"]');
     const agentPagePinLabel = shell.querySelector('[data-role="agent-page-pin-label"]');
+    const agentTaskLists = [...shell.querySelectorAll('[data-role="agent-task-list"]')];
+    const agentTaskTitles = [...shell.querySelectorAll('[data-role="agent-task-title"]')];
+    const agentTaskCounts = [...shell.querySelectorAll('[data-role="agent-task-count"]')];
+    const agentTaskDialog = document.querySelector('[data-role="agent-task-dialog"]');
+    const agentTaskDialogTitle = agentTaskDialog?.querySelector('[data-role="agent-task-dialog-title"]');
+    const agentTaskDialogField = agentTaskDialog?.querySelector('[data-role="agent-task-dialog-field"]');
+    const agentTaskDialogInput = agentTaskDialog?.querySelector('[data-role="agent-task-dialog-input"]');
+    const agentTaskDialogCopy = agentTaskDialog?.querySelector('[data-role="agent-task-dialog-copy"]');
+    const agentTaskDialogConfirm = agentTaskDialog?.querySelector('[data-role="agent-task-dialog-confirm"]');
     const paramVehicle = shell.querySelector('[data-role="param-vehicle"]');
     const paramChangedCount = shell.querySelector('[data-role="param-changed-count"]');
     const paramChangedBadge = shell.querySelector('[data-role="param-changed-badge"]');
@@ -808,12 +880,17 @@ const agentRules = [
     let agentAvailableModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
     const agentModelStorageKey = "cloudOpsTestAgentModel";
     const agentPermissionStorageKey = "cloudOpsTestAgentPermissionMode";
+    const agentConversationStorageKey = "cloudOpsTestAgentConversationId";
     const agentPermissionLabels = {
       on_request: "请求批准",
       auto_review: "替我审批",
       full_access: "完全访问权限"
     };
-    const agentConversationHistory = [];
+    let agentConversationHistory = [];
+    let agentConversations = [];
+    let currentAgentConversationId = "";
+    let agentConversationsReady = false;
+    let agentTaskDialogMode = "";
     let agentRequestInFlight = false;
 
     const paramInputValue = (input) => input.type === "checkbox" ? String(input.checked) : String(input.value || "");
@@ -2665,6 +2742,9 @@ const agentRules = [
       [...agentModelSelects, ...agentPermissionSelects].forEach((select) => {
         select.disabled = agentRequestInFlight || Boolean(select.selectedOptions[0]?.disabled);
       });
+      shell.querySelectorAll('[data-action^="agent-task-"]').forEach((button) => {
+        button.disabled = agentRequestInFlight;
+      });
       agentComposers.forEach((composer) => composer.classList.toggle("is-busy", agentRequestInFlight));
     };
 
@@ -2765,6 +2845,296 @@ const agentRules = [
         if (agentHistory) agentHistory.innerHTML = `<p class="cloud-ops-test-empty">历史读取失败：${escapeHtml(error?.message || "未知错误")}</p>`;
       }
     };
+
+    const formatAgentConversationTime = (value) => {
+      const date = new Date(value || "");
+      if (!Number.isFinite(date.getTime())) return "";
+      const today = new Date();
+      const sameDay = date.toDateString() === today.toDateString();
+      return new Intl.DateTimeFormat("zh-CN", sameDay
+        ? { hour: "2-digit", minute: "2-digit", hour12: false }
+        : { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }
+      ).format(date);
+    };
+
+    const currentAgentConversationSummary = () =>
+      agentConversations.find((conversation) => conversation.id === currentAgentConversationId) || null;
+
+    const mergeAgentConversationSummary = (conversation) => {
+      if (!conversation?.id) return;
+      const index = agentConversations.findIndex((item) => item.id === conversation.id);
+      if (index >= 0) agentConversations.splice(index, 1, { ...agentConversations[index], ...conversation });
+      else agentConversations.unshift(conversation);
+      agentConversations.sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")));
+      renderAgentConversationLists();
+    };
+
+    const renderAgentConversationLists = () => {
+      const current = currentAgentConversationSummary();
+      agentTaskTitles.forEach((node) => { node.textContent = current?.title || "新任务"; });
+      agentTaskCounts.forEach((node) => { node.textContent = `${agentConversations.length} 个`; });
+      agentTaskLists.forEach((list) => {
+        if (!agentConversationsReady) {
+          list.innerHTML = '<p class="cloud-ops-agent-task-empty">读取任务中...</p>';
+          return;
+        }
+        if (!agentConversations.length) {
+          list.innerHTML = '<p class="cloud-ops-agent-task-empty">暂无历史任务。</p>';
+          return;
+        }
+        list.innerHTML = agentConversations.map((conversation) => {
+          const active = conversation.id === currentAgentConversationId;
+          const preview = conversation.last_message_preview || "尚未开始对话";
+          const meta = [
+            formatAgentConversationTime(conversation.updated_at),
+            `${Number(conversation.message_count || 0)} 条消息`
+          ].filter(Boolean).join(" · ");
+          return `<button class="cloud-ops-agent-task-item${active ? " is-active" : ""}" type="button" data-action="agent-task-select" data-conversation-id="${escapeHtml(conversation.id)}" aria-current="${active ? "true" : "false"}">
+            <strong>${escapeHtml(conversation.title || "新任务")}</strong>
+            <span>${escapeHtml(preview)}</span>
+            <small>${escapeHtml(meta)}</small>
+          </button>`;
+        }).join("");
+      });
+    };
+
+    const renderAgentConversationMessages = (conversation) => {
+      if (!agentMessages) return;
+      agentMessages.replaceChildren();
+      const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
+      agentConversationHistory = messages
+        .filter((message) => message?.role === "user" || message?.role === "assistant")
+        .map((message) => ({ role: message.role, content: String(message.content || "") }));
+      if (!messages.length) {
+        const greeting = document.createElement("div");
+        greeting.className = "cloud-ops-test-agent-message is-agent";
+        greeting.innerHTML = "<strong>山海智枢</strong><p>你好，我是山海智枢。</p>";
+        agentMessages.appendChild(greeting);
+      } else {
+        messages.forEach((message) => {
+          const role = message?.role === "user" ? "user" : message?.role === "error" ? "error" : "agent";
+          const node = document.createElement("div");
+          node.className = `cloud-ops-test-agent-message is-${role}`;
+          const title = role === "user" ? "你" : role === "error" ? "调用失败" : "山海智枢";
+          const permissionLabel = agentPermissionLabels[message?.permission_mode] || "";
+          const meta = [
+            message?.model ? agentModelLabel(message.model) : "",
+            permissionLabel,
+            formatAgentConversationTime(message?.at)
+          ].filter(Boolean).join(" · ");
+          const reasoning = role === "agent" && message?.reasoning_summary
+            ? `<details class="cloud-ops-agent-run-trace"><summary>思考过程</summary><pre class="cloud-ops-agent-run-reasoning">${escapeHtml(message.reasoning_summary)}</pre></details>`
+            : "";
+          node.innerHTML = `<strong>${escapeHtml(title)}</strong>${reasoning}<p>${escapeHtml(message?.content || "")}</p>${meta ? `<small>${escapeHtml(meta)}</small>` : ""}`;
+          agentMessages.appendChild(node);
+        });
+      }
+      agentMessages.scrollTop = agentMessages.scrollHeight;
+      syncAgentMessageViews({ forceBottom: true });
+    };
+
+    const applyAgentConversation = (conversation) => {
+      if (!conversation?.id) return;
+      currentAgentConversationId = conversation.id;
+      try { localStorage.setItem(agentConversationStorageKey, currentAgentConversationId); } catch (_error) {}
+      const index = agentConversations.findIndex((item) => item.id === conversation.id);
+      const summary = {
+        id: conversation.id,
+        title: conversation.title || "新任务",
+        created_at: conversation.created_at,
+        updated_at: conversation.updated_at,
+        message_count: Array.isArray(conversation.messages) ? conversation.messages.length : Number(conversation.message_count || 0),
+        last_message_preview: Array.isArray(conversation.messages) && conversation.messages.length
+          ? String(conversation.messages[conversation.messages.length - 1]?.content || "").replace(/\s+/g, " ").slice(0, 160)
+          : (conversation.last_message_preview || ""),
+        last_model: conversation.last_model,
+        permission_mode: conversation.permission_mode,
+        selected_vehicle_id: conversation.selected_vehicle_id
+      };
+      if (index >= 0) agentConversations.splice(index, 1, summary);
+      else agentConversations.unshift(summary);
+      agentConversations.sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")));
+      if (conversation.last_model) setAgentModelSelection(conversation.last_model, false);
+      if (conversation.permission_mode) setAgentPermissionSelection(conversation.permission_mode, false);
+      renderAgentConversationLists();
+      renderAgentConversationMessages(conversation);
+    };
+
+    const fetchAgentConversation = async (conversationId) => {
+      const response = await fetch(`${AGENT_CONVERSATIONS_URL}/${encodeURIComponent(conversationId)}`, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        credentials: "same-origin"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false || !payload?.conversation) {
+        throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+      }
+      return payload.conversation;
+    };
+
+    const selectAgentConversation = async (conversationId) => {
+      const id = String(conversationId || "").trim();
+      if (!id || id === currentAgentConversationId) return;
+      if (agentRequestInFlight) {
+        setStatus("当前任务仍在运行，完成后再切换任务。", "loading");
+        return;
+      }
+      try {
+        const conversation = await fetchAgentConversation(id);
+        applyAgentConversation(conversation);
+        setStatus(`已切换到任务“${conversation.title || "新任务"}”。`, "ok");
+      } catch (error) {
+        setStatus(`任务读取失败：${error?.message || "未知错误"}`, "error");
+      }
+    };
+
+    const refreshAgentConversationList = async () => {
+      const response = await fetch(`${AGENT_CONVERSATIONS_URL}?limit=100`, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        credentials: "same-origin"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) {
+        throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+      }
+      agentConversations = Array.isArray(payload.conversations) ? payload.conversations : [];
+      agentConversationsReady = true;
+      renderAgentConversationLists();
+      return agentConversations;
+    };
+
+    const createAgentConversation = async ({ announce = true } = {}) => {
+      if (agentRequestInFlight) {
+        setStatus("当前任务仍在运行，完成后再新建任务。", "loading");
+        return null;
+      }
+      const response = await fetch(AGENT_CONVERSATIONS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          title: "新任务",
+          model: selectedAgentModel(),
+          permission_mode: selectedAgentPermissionMode(),
+          selected_vehicle_id: selectedVehicleId()
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false || !payload?.conversation) {
+        throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+      }
+      agentConversations.unshift(payload.summary || payload.conversation);
+      agentConversationsReady = true;
+      applyAgentConversation(payload.conversation);
+      if (announce) setStatus("已新建任务。", "ok");
+      return payload.conversation;
+    };
+
+    const loadAgentConversations = async () => {
+      try {
+        const conversations = await refreshAgentConversationList();
+        let stored = "";
+        try { stored = localStorage.getItem(agentConversationStorageKey) || ""; } catch (_error) {}
+        const selected = conversations.find((conversation) => conversation.id === stored) || conversations[0];
+        if (selected) {
+          applyAgentConversation(await fetchAgentConversation(selected.id));
+        } else {
+          await createAgentConversation({ announce: false });
+        }
+      } catch (error) {
+        agentConversationsReady = true;
+        renderAgentConversationLists();
+        setStatus(`任务历史读取失败：${error?.message || "未知错误"}`, "error");
+      }
+    };
+
+    const closeAgentTaskDialog = () => {
+      if (!agentTaskDialog) return;
+      agentTaskDialog.hidden = true;
+      agentTaskDialogMode = "";
+      agentTaskDialogConfirm?.classList.remove("is-danger");
+    };
+
+    const openAgentTaskDialog = (mode) => {
+      if (!agentTaskDialog || !currentAgentConversationId || agentRequestInFlight) return;
+      const current = currentAgentConversationSummary();
+      agentTaskDialogMode = mode === "delete" ? "delete" : "rename";
+      agentTaskDialog.hidden = false;
+      if (agentTaskDialogMode === "delete") {
+        if (agentTaskDialogTitle) agentTaskDialogTitle.textContent = "删除任务";
+        if (agentTaskDialogField) agentTaskDialogField.hidden = true;
+        if (agentTaskDialogCopy) agentTaskDialogCopy.textContent = `将删除“${current?.title || "新任务"}”及其全部对话，此操作无法撤销。`;
+        if (agentTaskDialogConfirm) {
+          agentTaskDialogConfirm.textContent = "删除任务";
+          agentTaskDialogConfirm.classList.add("is-danger");
+          window.setTimeout(() => agentTaskDialogConfirm.focus(), 0);
+        }
+      } else {
+        if (agentTaskDialogTitle) agentTaskDialogTitle.textContent = "重命名任务";
+        if (agentTaskDialogField) agentTaskDialogField.hidden = false;
+        if (agentTaskDialogCopy) agentTaskDialogCopy.textContent = "任务名称会同时显示在主工作台和右侧任务列表中。";
+        if (agentTaskDialogInput) agentTaskDialogInput.value = current?.title || "新任务";
+        if (agentTaskDialogConfirm) agentTaskDialogConfirm.textContent = "保存";
+        window.setTimeout(() => {
+          agentTaskDialogInput?.focus();
+          agentTaskDialogInput?.select();
+        }, 0);
+      }
+    };
+
+    const submitAgentTaskDialog = async () => {
+      if (!currentAgentConversationId || !agentTaskDialogMode || agentRequestInFlight) return;
+      const mode = agentTaskDialogMode;
+      if (mode === "rename" && !String(agentTaskDialogInput?.value || "").trim()) {
+        agentTaskDialogInput?.focus();
+        return;
+      }
+      if (agentTaskDialogConfirm) agentTaskDialogConfirm.disabled = true;
+      try {
+        if (mode === "rename") {
+          const response = await fetch(`${AGENT_CONVERSATIONS_URL}/${encodeURIComponent(currentAgentConversationId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ title: String(agentTaskDialogInput?.value || "").trim() })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || payload?.ok === false) throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+          const index = agentConversations.findIndex((item) => item.id === currentAgentConversationId);
+          if (index >= 0) agentConversations.splice(index, 1, payload.summary || payload.conversation);
+          renderAgentConversationLists();
+          closeAgentTaskDialog();
+          setStatus("任务已重命名。", "ok");
+          return;
+        }
+
+        const response = await fetch(`${AGENT_CONVERSATIONS_URL}/${encodeURIComponent(currentAgentConversationId)}`, {
+          method: "DELETE",
+          headers: { Accept: "application/json" },
+          credentials: "same-origin"
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.ok === false) throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+        const deletedId = currentAgentConversationId;
+        agentConversations = agentConversations.filter((conversation) => conversation.id !== deletedId);
+        currentAgentConversationId = "";
+        try { localStorage.removeItem(agentConversationStorageKey); } catch (_error) {}
+        const next = agentConversations[0];
+        if (next) applyAgentConversation(await fetchAgentConversation(next.id));
+        else await createAgentConversation({ announce: false });
+        closeAgentTaskDialog();
+        setStatus("任务已删除。", "ok");
+      } catch (error) {
+        setStatus(`任务${mode === "rename" ? "重命名" : "删除"}失败：${error?.message || "未知错误"}`, "error");
+      } finally {
+        if (agentTaskDialogConfirm) agentTaskDialogConfirm.disabled = false;
+      }
+    };
+
+    const renameAgentConversation = () => openAgentTaskDialog("rename");
+    const deleteAgentConversation = () => openAgentTaskDialog("delete");
 
     const isAgentScrollerNearBottom = (node, threshold = 36) => {
       if (!node) return true;
@@ -3132,7 +3502,17 @@ const agentRules = [
         return;
       }
 
+      if (!currentAgentConversationId) {
+        try {
+          await createAgentConversation({ announce: false });
+        } catch (error) {
+          setStatus(`无法创建任务：${error?.message || "未知错误"}`, "error");
+          return;
+        }
+      }
+
       const priorHistory = agentConversationHistory.slice(-12);
+      const requestConversationId = currentAgentConversationId;
       appendAgentMessage("user", text, "一体化 AI 运维");
       agentConversationHistory.push({ role: "user", content: text });
       if (agentInput) {
@@ -3160,6 +3540,7 @@ const agentRules = [
             model: selectedAgentModel(),
             permission_mode: selectedAgentPermissionMode(),
             selected_vehicle_id: selectedVehicleId(),
+            conversation_id: requestConversationId,
             history: priorHistory
           })
         });
@@ -3174,6 +3555,8 @@ const agentRules = [
             return;
           }
           if (eventName === "start" || eventName === "progress") {
+            if (payload?.conversation_id) currentAgentConversationId = payload.conversation_id;
+            if (payload?.conversation) mergeAgentConversationSummary(payload.conversation);
             updateAgentRunMessage(run, payload);
             if (agentLatency) agentLatency.textContent = `${payload?.title || "正在思考"} · ${formatAgentDuration(payload?.elapsed_ms)}`;
             return;
@@ -3191,6 +3574,8 @@ const agentRules = [
 
         const answer = finalPayload.answer || "模型没有返回文本。";
         agentConversationHistory.push({ role: "assistant", content: answer });
+        if (finalPayload?.conversation_id) currentAgentConversationId = finalPayload.conversation_id;
+        if (finalPayload?.conversation) mergeAgentConversationSummary(finalPayload.conversation);
         finishAgentRunMessage(run, finalPayload);
         if (agentLatency) agentLatency.textContent = `${finalPayload?.model_error ? "证据摘要" : "完成"} · ${formatAgentDuration(finalPayload.latency_ms)}`;
         setStatus(
@@ -3204,11 +3589,13 @@ const agentRules = [
           finalPayload?.model_error ? "loading" : "ok"
         );
         loadAgentHistory();
+        refreshAgentConversationList().catch(() => {});
       } catch (error) {
         failAgentRunMessage(run, error);
         if (agentLatency) agentLatency.textContent = "调用失败";
         setStatus(`智能体调用失败：${error?.message || "未知错误"}`, "error");
         loadAgentHistory();
+        refreshAgentConversationList().catch(() => {});
       } finally {
         setAgentComposerBusy(false);
       }
@@ -3978,6 +4365,18 @@ const agentRules = [
       } else if (action === "agent-send") {
         const composerInput = actionButton.closest('[data-role="agent-composer"]')?.querySelector("textarea");
         sendAgentMessage(composerInput?.value || agentInput?.value || agentPageInput?.value || "");
+      } else if (action === "agent-task-new") {
+        createAgentConversation().catch((error) => setStatus(`新建任务失败：${error?.message || "未知错误"}`, "error"));
+      } else if (action === "agent-task-select") {
+        selectAgentConversation(actionButton.dataset.conversationId || "");
+      } else if (action === "agent-task-rename") {
+        renameAgentConversation();
+      } else if (action === "agent-task-delete") {
+        deleteAgentConversation();
+      } else if (action === "agent-task-dialog-cancel") {
+        closeAgentTaskDialog();
+      } else if (action === "agent-task-dialog-confirm") {
+        submitAgentTaskDialog();
       } else if (action === "agent-approval") {
         sendAgentApprovalDecision(actionButton.dataset.approvalId, actionButton.dataset.decision);
       } else if (action === "agent-page-open") {
@@ -4050,6 +4449,16 @@ const agentRules = [
     };
     agentInput?.addEventListener("keydown", (event) => handleAgentComposerKeydown(event, agentInput));
     agentPageInput?.addEventListener("keydown", (event) => handleAgentComposerKeydown(event, agentPageInput));
+    agentTaskDialogInput?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        submitAgentTaskDialog();
+      }
+    });
+    agentTaskDialog?.querySelectorAll('[data-action="agent-task-dialog-cancel"]').forEach((button) => {
+      button.addEventListener("click", closeAgentTaskDialog);
+    });
+    agentTaskDialogConfirm?.addEventListener("click", submitAgentTaskDialog);
     agentToggle?.addEventListener("mouseenter", () => setAgentRailOpen(true));
     agentRail?.addEventListener("mouseleave", () => {
       if (!agentRail.classList.contains("is-pinned") && !agentRail.matches(":focus-within")) setAgentRailOpen(false);
@@ -4061,6 +4470,10 @@ const agentRules = [
       }, 80);
     });
     document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && agentTaskDialog && !agentTaskDialog.hidden) {
+        closeAgentTaskDialog();
+        return;
+      }
       if (event.key === "Escape" && agentRail && !agentRail.classList.contains("is-pinned")) {
         setAgentRailOpen(false);
       }
@@ -4077,5 +4490,6 @@ const agentRules = [
     loadVehicles();
     loadAgentStatus();
     loadAgentHistory();
+    loadAgentConversations();
   })();
 </script>
