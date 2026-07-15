@@ -3,6 +3,7 @@
   if (!root) return;
 
   const VEHICLES_URL = "/api/lidar-relocalization/vehicles";
+  const DATASET_URL = "/api/lidar-relocalization/dataset";
   const statusNode = document.getElementById("lidar-reloc-status");
   const vehicleSelect = document.getElementById("lidar-reloc-vehicle");
   const refreshBtn = document.getElementById("lidar-reloc-refresh");
@@ -17,11 +18,32 @@
   const visualState = document.getElementById("lidar-reloc-visual-state");
   const bevCanvas = document.getElementById("lidar-reloc-bev");
   const legendNode = document.getElementById("lidar-reloc-legend");
+  const datasetStateNode = document.getElementById("lidar-dataset-state");
+  const datasetRefreshBtn = document.getElementById("lidar-dataset-refresh");
+  const datasetSummaryNode = document.getElementById("lidar-dataset-summary");
+  const datasetVehicleCountNode = document.getElementById("lidar-dataset-vehicle-count");
+  const datasetVehiclesNode = document.getElementById("lidar-dataset-vehicles");
+  const datasetSessionSelect = document.getElementById("lidar-dataset-session");
+  const datasetPrevBtn = document.getElementById("lidar-dataset-prev");
+  const datasetNextBtn = document.getElementById("lidar-dataset-next");
+  const datasetFrameRange = document.getElementById("lidar-dataset-frame");
+  const datasetFrameLabel = document.getElementById("lidar-dataset-frame-label");
+  const datasetCanvas = document.getElementById("lidar-dataset-pointcloud");
+  const datasetCloudBadge = document.getElementById("lidar-dataset-cloud-badge");
+  const datasetPreviewMeta = document.getElementById("lidar-dataset-preview-meta");
 
   let vehicles = [];
   let currentVehicleId = "";
   let currentStatus = null;
   let busy = false;
+  let datasetOverview = null;
+  let datasetVehicleId = "";
+  let datasetSessionId = "";
+  let datasetFrameIndex = 0;
+  let datasetPreviewRequest = 0;
+  let datasetFrameDebounce = 0;
+  let datasetResizeDebounce = 0;
+  let lastDatasetPreviewPayload = null;
 
   function setStatus(text, state = "idle") {
     if (!statusNode) return;
@@ -39,6 +61,12 @@
     if (!visualState) return;
     visualState.textContent = text;
     visualState.dataset.state = state;
+  }
+
+  function setDatasetState(text, state = "idle") {
+    if (!datasetStateNode) return;
+    datasetStateNode.textContent = text;
+    datasetStateNode.dataset.state = state;
   }
 
   function setBusy(nextBusy) {
@@ -99,6 +127,26 @@
     const num = Number(value);
     if (!Number.isFinite(num)) return "-";
     return new Intl.NumberFormat("zh-CN").format(Math.round(num));
+  }
+
+  function formatBytes(value) {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes < 0) return "-";
+    if (bytes < 1024) return `${Math.round(bytes)} B`;
+    const units = ["KiB", "MiB", "GiB", "TiB"];
+    let size = bytes;
+    let unit = -1;
+    do {
+      size /= 1024;
+      unit += 1;
+    } while (size >= 1024 && unit < units.length - 1);
+    return `${size >= 100 ? size.toFixed(0) : size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${units[unit]}`;
+  }
+
+  function formatCompact(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "-";
+    return new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 }).format(num);
   }
 
   function formatTime(value) {
@@ -316,6 +364,313 @@
     if (!container) return;
     container.innerHTML = "";
     container.appendChild(createNode("p", "lidar-reloc-empty", text));
+  }
+
+  function datasetVehicles() {
+    return Array.isArray(datasetOverview?.vehicles) ? datasetOverview.vehicles : [];
+  }
+
+  function selectedDatasetVehicle() {
+    return datasetVehicles().find((vehicle) => vehicle.vehicle_id === datasetVehicleId) || null;
+  }
+
+  function selectedDatasetSession() {
+    const vehicle = selectedDatasetVehicle();
+    return (vehicle?.sessions || []).find((session) => session.session_id === datasetSessionId) || null;
+  }
+
+  function addDatasetStat(label, value, tone = "") {
+    if (!datasetSummaryNode) return;
+    const item = createNode("div", `lidar-dataset-stat${tone ? ` is-${tone}` : ""}`);
+    item.appendChild(createNode("span", "", label));
+    item.appendChild(createNode("strong", "", value));
+    datasetSummaryNode.appendChild(item);
+  }
+
+  function renderDatasetSummary() {
+    if (!datasetSummaryNode) return;
+    const summary = datasetOverview?.summary || {};
+    datasetSummaryNode.innerHTML = "";
+    addDatasetStat("车辆", `${formatInteger(summary.vehicle_count)} 台`);
+    addDatasetStat("采集帧", formatInteger(summary.frame_count));
+    addDatasetStat("完整帧", formatInteger(summary.complete_frame_count), "complete");
+    addDatasetStat("同步中", formatInteger(summary.pending_frame_count), summary.pending_frame_count ? "pending" : "complete");
+    addDatasetStat("Session", `${formatInteger(summary.complete_session_count)} / ${formatInteger(summary.session_count)}`);
+    addDatasetStat("PCD 数据", formatBytes(summary.pcd_bytes));
+  }
+
+  function clearDatasetCanvas(text = "等待点云") {
+    if (!datasetCanvas) return;
+    lastDatasetPreviewPayload = null;
+    const ctx = datasetCanvas.getContext("2d");
+    if (!ctx) return;
+    const width = datasetCanvas.width;
+    const height = datasetCanvas.height;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = "rgba(71, 85, 105, 0.58)";
+    ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "14px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, width / 2, height / 2);
+    if (datasetCloudBadge) datasetCloudBadge.textContent = text;
+  }
+
+  function drawDatasetPointcloud(payload) {
+    if (!datasetCanvas) return;
+    const points = Array.isArray(payload?.preview?.points) ? payload.preview.points : [];
+    if (!points.length) {
+      clearDatasetCanvas("该帧没有可绘制点");
+      return;
+    }
+    lastDatasetPreviewPayload = payload;
+    const ctx = datasetCanvas.getContext("2d");
+    if (!ctx) return;
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const cssWidth = datasetCanvas.clientWidth || 760;
+    const cssHeight = Math.max(280, Math.round(cssWidth * 0.56));
+    const width = Math.round(cssWidth * dpr);
+    const height = Math.round(cssHeight * dpr);
+    if (datasetCanvas.width !== width || datasetCanvas.height !== height) {
+      datasetCanvas.width = width;
+      datasetCanvas.height = height;
+    }
+    const bounds = payload.preview.bounds || {};
+    const maxRange = Math.max(
+      10,
+      Math.abs(Number(bounds.min_x) || 0),
+      Math.abs(Number(bounds.max_x) || 0),
+      Math.abs(Number(bounds.min_y) || 0),
+      Math.abs(Number(bounds.max_y) || 0)
+    );
+    const margin = 30 * dpr;
+    const scale = Math.min((width - margin * 2) / (maxRange * 2), (height - margin * 2) / (maxRange * 2));
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const project = (x, y) => ({ x: centerX - Number(y) * scale, y: centerY - Number(x) * scale });
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(0, 0, width, height);
+    ctx.lineWidth = dpr;
+    for (let radius = 10; radius <= maxRange; radius += 10) {
+      ctx.strokeStyle = radius % 20 === 0 ? "rgba(71, 85, 105, 0.45)" : "rgba(51, 65, 85, 0.3)";
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius * scale, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = "rgba(100, 116, 139, 0.42)";
+    ctx.beginPath();
+    ctx.moveTo(margin, centerY);
+    ctx.lineTo(width - margin, centerY);
+    ctx.moveTo(centerX, margin);
+    ctx.lineTo(centerX, height - margin);
+    ctx.stroke();
+
+    const minZ = Number(bounds.min_z);
+    const maxZ = Number(bounds.max_z);
+    const spanZ = Number.isFinite(minZ) && Number.isFinite(maxZ) ? Math.max(0.5, maxZ - minZ) : 1;
+    const colors = ["#64748b", "#22d3ee", "#fbbf24", "#f472b6"];
+    points.forEach((point) => {
+      if (!Array.isArray(point) || point.length < 3) return;
+      const p = project(point[0], point[1]);
+      const normalizedZ = Math.max(0, Math.min(0.999, (Number(point[2]) - minZ) / spanZ));
+      const colorIndex = Number.isFinite(normalizedZ) ? Math.floor(normalizedZ * colors.length) : 1;
+      ctx.fillStyle = colors[Math.max(0, Math.min(colors.length - 1, colorIndex))];
+      ctx.fillRect(p.x - dpr, p.y - dpr, 2 * dpr, 2 * dpr);
+    });
+
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.fillStyle = "#4ade80";
+    ctx.strokeStyle = "#052e16";
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(0, -11 * dpr);
+    ctx.lineTo(-7 * dpr, 8 * dpr);
+    ctx.lineTo(0, 5 * dpr);
+    ctx.lineTo(7 * dpr, 8 * dpr);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = `${11 * dpr}px system-ui, sans-serif`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText(`±${Math.ceil(maxRange)}m`, 10 * dpr, 10 * dpr);
+    if (datasetCloudBadge) {
+      datasetCloudBadge.textContent = `${payload.vehicle_id} · ${formatInteger(payload.preview.preview_point_count)} / ${formatInteger(payload.preview.source_point_count)} 点`;
+    }
+  }
+
+  function renderDatasetPreviewMeta(payload = null) {
+    if (!datasetPreviewMeta) return;
+    datasetPreviewMeta.innerHTML = "";
+    const session = selectedDatasetSession();
+    const values = payload
+      ? [
+          ["采集时间", formatTime(payload.saved_at)],
+          ["可靠定位", payload.pose?.reliable ? "true" : "false"],
+          ["采集位姿", formatPose(payload.pose)],
+          ["原始点数", formatInteger(payload.cloud?.point_count)]
+        ]
+      : [
+          ["Session 状态", session?.integrity_complete ? "完整" : "同步中"],
+          ["帧数", formatInteger(session?.frame_count)],
+          ["点数", formatCompact(session?.point_count)],
+          ["数据量", formatBytes(session?.pcd_bytes)]
+        ];
+    values.forEach(([label, value]) => {
+      const item = createNode("div", "");
+      item.appendChild(createNode("span", "", label));
+      item.appendChild(createNode("strong", "", value));
+      datasetPreviewMeta.appendChild(item);
+    });
+  }
+
+  function updateDatasetFrameControls() {
+    const session = selectedDatasetSession();
+    const frameCount = Number(session?.frame_count || 0);
+    datasetFrameIndex = Math.max(0, Math.min(Math.max(0, frameCount - 1), Number(datasetFrameIndex) || 0));
+    if (datasetFrameRange) {
+      datasetFrameRange.disabled = frameCount <= 0;
+      datasetFrameRange.max = String(Math.max(0, frameCount - 1));
+      datasetFrameRange.value = String(datasetFrameIndex);
+    }
+    if (datasetPrevBtn) datasetPrevBtn.disabled = frameCount <= 0 || datasetFrameIndex <= 0;
+    if (datasetNextBtn) datasetNextBtn.disabled = frameCount <= 0 || datasetFrameIndex >= frameCount - 1;
+    if (datasetFrameLabel) {
+      datasetFrameLabel.textContent = frameCount ? `${formatInteger(datasetFrameIndex + 1)} / ${formatInteger(frameCount)}` : "-- / --";
+    }
+  }
+
+  async function loadDatasetPreview() {
+    const session = selectedDatasetSession();
+    if (!datasetVehicleId || !session) {
+      clearDatasetCanvas("暂无采集帧");
+      renderDatasetPreviewMeta();
+      return;
+    }
+    updateDatasetFrameControls();
+    const requestId = ++datasetPreviewRequest;
+    if (datasetCloudBadge) datasetCloudBadge.textContent = "点云加载中...";
+    try {
+      const url = `${DATASET_URL}/${encodeURIComponent(datasetVehicleId)}/sessions/${encodeURIComponent(session.session_id)}/frames/${datasetFrameIndex}/preview?max_points=8000&range_m=80`;
+      const payload = await requestJson(url);
+      if (requestId !== datasetPreviewRequest) return;
+      drawDatasetPointcloud(payload);
+      renderDatasetPreviewMeta(payload);
+    } catch (error) {
+      if (requestId !== datasetPreviewRequest) return;
+      clearDatasetCanvas(error.message || "点云加载失败");
+      renderDatasetPreviewMeta();
+    }
+  }
+
+  function renderDatasetSessions({ resetFrame = false } = {}) {
+    const vehicle = selectedDatasetVehicle();
+    const sessions = Array.isArray(vehicle?.sessions) ? vehicle.sessions : [];
+    if (!datasetSessionSelect) return;
+    datasetSessionSelect.innerHTML = "";
+    if (!sessions.length) {
+      datasetSessionSelect.appendChild(new Option("暂无数据", ""));
+      datasetSessionSelect.disabled = true;
+      datasetSessionId = "";
+      updateDatasetFrameControls();
+      clearDatasetCanvas("暂无采集帧");
+      renderDatasetPreviewMeta();
+      return;
+    }
+    datasetSessionSelect.disabled = false;
+    sessions.forEach((session) => {
+      const state = session.integrity_complete ? "完整" : "同步中";
+      datasetSessionSelect.appendChild(
+        new Option(`${session.session_id.replace("session_", "")} · ${formatInteger(session.frame_count)} 帧 · ${state}`, session.session_id)
+      );
+    });
+    if (!sessions.some((session) => session.session_id === datasetSessionId)) {
+      datasetSessionId = sessions[0].session_id;
+      resetFrame = true;
+    }
+    datasetSessionSelect.value = datasetSessionId;
+    const session = selectedDatasetSession();
+    if (resetFrame) datasetFrameIndex = Number(session?.preview_index || 0);
+    updateDatasetFrameControls();
+    renderDatasetPreviewMeta();
+    loadDatasetPreview().catch(() => {});
+  }
+
+  function selectDatasetVehicle(vehicleId) {
+    if (!datasetVehicles().some((vehicle) => vehicle.vehicle_id === vehicleId)) return;
+    datasetVehicleId = vehicleId;
+    datasetSessionId = "";
+    renderDatasetFleet();
+    renderDatasetSessions({ resetFrame: true });
+  }
+
+  function renderDatasetFleet() {
+    if (!datasetVehiclesNode) return;
+    const items = datasetVehicles();
+    datasetVehiclesNode.innerHTML = "";
+    if (datasetVehicleCountNode) datasetVehicleCountNode.textContent = `${formatInteger(items.length)} 台`;
+    items.forEach((vehicle) => {
+      const row = createNode("tr", `lidar-dataset-vehicle-row${vehicle.vehicle_id === datasetVehicleId ? " is-selected" : ""}`);
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+      row.setAttribute("aria-label", `查看 ${vehicle.vehicle_id} 采集数据`);
+      const vehicleCell = createNode("td", "", vehicle.vehicle_id);
+      const framesCell = createNode("td", "");
+      framesCell.appendChild(createNode("span", "lidar-dataset-complete-count", formatInteger(vehicle.complete_frame_count)));
+      if (vehicle.pending_frame_count) {
+        framesCell.appendChild(createNode("span", "lidar-dataset-pending-count", `+${formatInteger(vehicle.pending_frame_count)}`));
+      }
+      row.appendChild(vehicleCell);
+      row.appendChild(framesCell);
+      row.appendChild(createNode("td", "", `${vehicle.complete_session_count}/${vehicle.session_count}`));
+      row.appendChild(createNode("td", "", formatTime(vehicle.latest_saved_at)));
+      row.addEventListener("click", () => selectDatasetVehicle(vehicle.vehicle_id));
+      row.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectDatasetVehicle(vehicle.vehicle_id);
+        }
+      });
+      datasetVehiclesNode.appendChild(row);
+    });
+  }
+
+  function renderDatasetOverview() {
+    renderDatasetSummary();
+    const items = datasetVehicles();
+    if (!items.some((vehicle) => vehicle.vehicle_id === datasetVehicleId)) {
+      datasetVehicleId = items.some((vehicle) => vehicle.vehicle_id === currentVehicleId)
+        ? currentVehicleId
+        : items[0]?.vehicle_id || "";
+      datasetSessionId = "";
+    }
+    renderDatasetFleet();
+    renderDatasetSessions({ resetFrame: true });
+  }
+
+  async function loadDatasetOverview({ refresh = false } = {}) {
+    if (datasetRefreshBtn) datasetRefreshBtn.disabled = true;
+    setDatasetState("加载采集数据...", "loading");
+    try {
+      datasetOverview = await requestJson(`${DATASET_URL}${refresh ? "?refresh=1" : ""}`);
+      renderDatasetOverview();
+      setDatasetState(`更新于 ${formatTime(datasetOverview.generated_at)}`, "ok");
+    } catch (error) {
+      setDatasetState(error.message || "采集数据加载失败", "error");
+      if (datasetSummaryNode) renderEmpty(datasetSummaryNode, "采集数据加载失败。");
+      clearDatasetCanvas("采集数据加载失败");
+    } finally {
+      if (datasetRefreshBtn) datasetRefreshBtn.disabled = false;
+    }
   }
 
   function renderMap(status) {
@@ -568,10 +923,14 @@
 
   vehicleSelect?.addEventListener("change", () => {
     currentVehicleId = vehicleSelect.value;
+    if (datasetVehicles().some((vehicle) => vehicle.vehicle_id === currentVehicleId)) {
+      selectDatasetVehicle(currentVehicleId);
+    }
     loadStatus().catch((error) => setStatus(error.message || "状态加载失败", "error"));
   });
   refreshBtn?.addEventListener("click", () => {
     refreshAll().catch((error) => setStatus(error.message || "刷新失败", "error"));
+    loadDatasetOverview({ refresh: true }).catch(() => {});
   });
   captureBtn?.addEventListener("click", () => {
     captureCurrentFrame().catch((error) => setStatus(error.message || "抓取失败", "error"));
@@ -579,11 +938,55 @@
   inferBtn?.addEventListener("click", () => {
     inferPose().catch((error) => setStatus(error.message || "推理失败", "error"));
   });
+  datasetRefreshBtn?.addEventListener("click", () => {
+    loadDatasetOverview({ refresh: true }).catch(() => {});
+  });
+  datasetSessionSelect?.addEventListener("change", () => {
+    datasetSessionId = datasetSessionSelect.value;
+    const session = selectedDatasetSession();
+    datasetFrameIndex = Number(session?.preview_index || 0);
+    updateDatasetFrameControls();
+    renderDatasetPreviewMeta();
+    loadDatasetPreview().catch(() => {});
+  });
+  datasetPrevBtn?.addEventListener("click", () => {
+    datasetFrameIndex -= 1;
+    updateDatasetFrameControls();
+    loadDatasetPreview().catch(() => {});
+  });
+  datasetNextBtn?.addEventListener("click", () => {
+    datasetFrameIndex += 1;
+    updateDatasetFrameControls();
+    loadDatasetPreview().catch(() => {});
+  });
+  datasetFrameRange?.addEventListener("input", () => {
+    datasetFrameIndex = Number(datasetFrameRange.value) || 0;
+    updateDatasetFrameControls();
+    window.clearTimeout(datasetFrameDebounce);
+    datasetFrameDebounce = window.setTimeout(() => {
+      loadDatasetPreview().catch(() => {});
+    }, 180);
+  });
+  datasetFrameRange?.addEventListener("change", () => {
+    window.clearTimeout(datasetFrameDebounce);
+    datasetFrameIndex = Number(datasetFrameRange.value) || 0;
+    updateDatasetFrameControls();
+    loadDatasetPreview().catch(() => {});
+  });
+  window.addEventListener("resize", () => {
+    window.clearTimeout(datasetResizeDebounce);
+    datasetResizeDebounce = window.setTimeout(() => {
+      if (lastDatasetPreviewPayload) drawDatasetPointcloud(lastDatasetPreviewPayload);
+    }, 160);
+  });
 
   renderEmpty(mapNode, "等待车辆状态。");
   renderEmpty(localizationNode, "等待定位状态。");
   renderEmpty(pipelineNode, "等待工具列表。");
   clearVisualization();
+  clearDatasetCanvas();
+  renderDatasetPreviewMeta();
+  loadDatasetOverview().catch(() => {});
   refreshAll().catch((error) => {
     setStatus(error.message || "加载失败", "error");
     if (rawJsonNode) rawJsonNode.textContent = JSON.stringify(error.payload || { error: error.message }, null, 2);

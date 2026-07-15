@@ -1,0 +1,353 @@
+.lidar-dataset-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px 0;
+  border-top: 1px solid rgba(71, 85, 105, 0.58);
+  border-bottom: 1px solid rgba(71, 85, 105, 0.58);
+}
+
+.lidar-dataset-panel h4,
+.lidar-dataset-panel h5 {
+  margin: 2px 0 0;
+  color: #f8fafc;
+}
+
+.lidar-dataset-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.lidar-dataset-icon-button,
+.lidar-dataset-frame-controls button {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid rgba(71, 85, 105, 0.7);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.86);
+  color: #e2e8f0;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lidar-dataset-icon-button:hover:not(:disabled),
+.lidar-dataset-frame-controls button:hover:not(:disabled) {
+  border-color: rgba(103, 232, 249, 0.72);
+  color: #67e8f9;
+}
+
+.lidar-dataset-icon-button:disabled,
+.lidar-dataset-frame-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.lidar-dataset-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid rgba(71, 85, 105, 0.58);
+  border-radius: 8px;
+  background: rgba(71, 85, 105, 0.58);
+}
+
+.lidar-dataset-stat {
+  min-width: 0;
+  padding: 12px 13px;
+  background: rgba(8, 15, 29, 0.96);
+}
+
+.lidar-dataset-stat span,
+.lidar-dataset-preview-meta span {
+  display: block;
+  color: #94a3b8;
+  font-size: 0.7rem;
+}
+
+.lidar-dataset-stat strong,
+.lidar-dataset-preview-meta strong {
+  display: block;
+  margin-top: 4px;
+  color: #f8fafc;
+  font-size: 0.98rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.lidar-dataset-stat.is-complete strong {
+  color: #86efac;
+}
+
+.lidar-dataset-stat.is-pending strong {
+  color: #fcd34d;
+}
+
+.lidar-dataset-workspace {
+  display: grid;
+  grid-template-columns: minmax(430px, 0.9fr) minmax(500px, 1.35fr);
+  min-height: 520px;
+  border: 1px solid rgba(71, 85, 105, 0.58);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(2, 6, 23, 0.46);
+}
+
+.lidar-dataset-fleet,
+.lidar-dataset-preview {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+}
+
+.lidar-dataset-fleet {
+  grid-template-rows: auto minmax(0, 1fr);
+  border-right: 1px solid rgba(71, 85, 105, 0.58);
+}
+
+.lidar-dataset-subhead,
+.lidar-dataset-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  padding: 10px 13px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.52);
+  background: rgba(15, 23, 42, 0.7);
+}
+
+.lidar-dataset-subhead span {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.lidar-dataset-table-wrap {
+  max-height: 510px;
+  overflow: auto;
+}
+
+.lidar-dataset-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.lidar-dataset-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.6);
+  background: #111827;
+  color: #94a3b8;
+  font-size: 0.68rem;
+  text-align: left;
+}
+
+.lidar-dataset-table th:nth-child(1) { width: 23%; }
+.lidar-dataset-table th:nth-child(2) { width: 23%; }
+.lidar-dataset-table th:nth-child(3) { width: 19%; }
+.lidar-dataset-table th:nth-child(4) { width: 35%; }
+
+.lidar-dataset-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.48);
+  color: #cbd5e1;
+  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lidar-dataset-vehicle-row {
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.lidar-dataset-vehicle-row:hover {
+  background: rgba(30, 41, 59, 0.72);
+}
+
+.lidar-dataset-vehicle-row.is-selected {
+  background: rgba(8, 145, 178, 0.18);
+  box-shadow: inset 3px 0 0 #22d3ee;
+}
+
+.lidar-dataset-vehicle-row td:first-child {
+  color: #f8fafc;
+  font-weight: 800;
+}
+
+.lidar-dataset-complete-count {
+  color: #86efac;
+}
+
+.lidar-dataset-pending-count {
+  margin-left: 4px;
+  color: #fcd34d;
+}
+
+.lidar-dataset-preview {
+  gap: 0;
+}
+
+.lidar-dataset-preview-toolbar label {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: min(440px, 64%);
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.lidar-dataset-preview-toolbar select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid rgba(71, 85, 105, 0.68);
+  border-radius: 6px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0 9px;
+}
+
+.lidar-dataset-frame-controls {
+  display: grid;
+  grid-template-columns: 36px minmax(74px, auto) 36px;
+  align-items: center;
+  gap: 6px;
+}
+
+.lidar-dataset-frame-controls output {
+  color: #e2e8f0;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.lidar-dataset-frame-range {
+  width: calc(100% - 26px);
+  height: 24px;
+  margin: 8px 13px 4px;
+  accent-color: #22d3ee;
+}
+
+.lidar-dataset-canvas-wrap {
+  position: relative;
+  min-height: 390px;
+  margin: 0 13px;
+}
+
+.lidar-dataset-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 390px;
+  aspect-ratio: 12 / 7;
+  border: 1px solid rgba(71, 85, 105, 0.62);
+  border-radius: 8px;
+  background: #020617;
+}
+
+.lidar-dataset-cloud-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  max-width: calc(100% - 20px);
+  padding: 5px 8px;
+  border: 1px solid rgba(71, 85, 105, 0.72);
+  border-radius: 5px;
+  background: rgba(2, 6, 23, 0.82);
+  color: #cbd5e1;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.lidar-dataset-preview-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 10px;
+  border-top: 1px solid rgba(71, 85, 105, 0.52);
+  background: rgba(71, 85, 105, 0.42);
+}
+
+.lidar-dataset-preview-meta > div {
+  min-width: 0;
+  padding: 10px 12px;
+  background: rgba(8, 15, 29, 0.94);
+}
+
+.lidar-dataset-preview-meta strong {
+  font-size: 0.8rem;
+}
+
+@media (max-width: 1180px) {
+  .lidar-dataset-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lidar-dataset-workspace {
+    grid-template-columns: minmax(350px, 0.8fr) minmax(450px, 1.2fr);
+  }
+}
+
+@media (max-width: 920px) {
+  .lidar-dataset-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .lidar-dataset-fleet {
+    border-right: 0;
+    border-bottom: 1px solid rgba(71, 85, 105, 0.58);
+  }
+
+  .lidar-dataset-table-wrap {
+    max-height: 340px;
+  }
+}
+
+@media (max-width: 620px) {
+  .lidar-dataset-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lidar-dataset-preview-toolbar {
+    display: grid;
+  }
+
+  .lidar-dataset-preview-toolbar label {
+    min-width: 0;
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
+
+  .lidar-dataset-frame-controls {
+    justify-content: start;
+  }
+
+  .lidar-dataset-canvas-wrap,
+  .lidar-dataset-canvas-wrap canvas {
+    min-height: 280px;
+  }
+
+  .lidar-dataset-preview-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lidar-dataset-table th:nth-child(3),
+  .lidar-dataset-table td:nth-child(3) {
+    display: none;
+  }
+
+  .lidar-dataset-table th:nth-child(1) { width: 28%; }
+  .lidar-dataset-table th:nth-child(2) { width: 28%; }
+  .lidar-dataset-table th:nth-child(4) { width: 44%; }
+}

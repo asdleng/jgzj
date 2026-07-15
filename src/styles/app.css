@@ -8753,6 +8753,22 @@ body.yolo-review-is-panning {
   pointer-events: none;
 }
 
+.cloud-ops-test-media-card.is-ai-detection::before {
+  content: "AI 标注";
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 8px;
+  padding: 4px 7px;
+  border-radius: 4px;
+  background: rgba(185, 28, 28, 0.94);
+  color: #fff7ed;
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+
 .cloud-ops-test-media-caption {
   display: grid;
   gap: 3px;

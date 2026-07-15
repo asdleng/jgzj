@@ -26,6 +26,9 @@ const registerOneApiProxyRoutes = require('./one-api-proxy');
 const { registerMapPackageUploadRoutes } = require('./map-package-upload');
 const { registerSemanticAnchorInferRoutes } = require('./semantic-anchor-infer');
 const {
+  registerLidarRelocalizationDatasetRoutes
+} = require('./lidar-relocalization-dataset');
+const {
   effectiveYoloWebAuditVerdict,
   isYoloWebCrawlerSummary,
   normalizeYoloWebCrawlerStats,
@@ -166,6 +169,15 @@ const cloudOpsDeployGitCacheDir = path.resolve(
 );
 const lidarRelocalizationRoot = path.resolve(
   process.env.LIDAR_RELOCALIZATION_ROOT || '/home/admin1/.runtime/lidar_reloc_bevplace_20260629'
+);
+const lidarRelocalizationPatrolRoot = path.resolve(
+  process.env.LIDAR_RELOCALIZATION_PATROL_ROOT ||
+    path.join(lidarRelocalizationRoot, 'patrol_reloc_samples')
+);
+const lidarRelocalizationDatasetCacheTtlMs = toFiniteInteger(
+  process.env.LIDAR_RELOCALIZATION_DATASET_CACHE_TTL_MS,
+  30000,
+  { min: 5000, max: 300000 }
 );
 const lidarRelocalizationVehicleMapRoot = path.resolve(
   process.env.LIDAR_RELOCALIZATION_VEHICLE_MAP_ROOT ||
@@ -14504,6 +14516,13 @@ app.get(
     });
   }
 );
+
+registerLidarRelocalizationDatasetRoutes(app, {
+  requireVehicleRead: authStore.requirePermission('vehicle:read'),
+  rootPath: lidarRelocalizationPatrolRoot,
+  vehicleMapRoot: lidarRelocalizationVehicleMapRoot,
+  cacheTtlMs: lidarRelocalizationDatasetCacheTtlMs
+});
 
 app.get('/api/lidar-relocalization/vehicles', authStore.requirePermission('vehicle:read'), async (_req, res) => {
   try {

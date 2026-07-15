@@ -1,5 +1,6 @@
 ---
 import scriptText from "../scripts/lidar-relocalization.js?raw";
+import "../styles/lidar-relocalization-data.css";
 ---
 
 <section
@@ -54,6 +55,71 @@ import scriptText from "../scripts/lidar-relocalization.js?raw";
       <div id="lidar-reloc-pipeline" class="lidar-reloc-meta-grid"></div>
     </section>
   </div>
+
+  <section class="lidar-dataset-panel" aria-labelledby="lidar-dataset-title">
+    <div class="lidar-reloc-result-head">
+      <div>
+        <p class="lidar-reloc-panel-kicker">CAPTURE DATASET</p>
+        <h4 id="lidar-dataset-title">车队采集数据</h4>
+      </div>
+      <div class="lidar-dataset-head-actions">
+        <p id="lidar-dataset-state" class="cloud-ops-inline-status" data-state="idle">待加载</p>
+        <button
+          id="lidar-dataset-refresh"
+          class="lidar-dataset-icon-button"
+          type="button"
+          title="刷新采集数据"
+          aria-label="刷新采集数据"
+        >↻</button>
+      </div>
+    </div>
+
+    <div id="lidar-dataset-summary" class="lidar-dataset-summary"></div>
+
+    <div class="lidar-dataset-workspace">
+      <div class="lidar-dataset-fleet">
+        <div class="lidar-dataset-subhead">
+          <h5>车辆数据</h5>
+          <span id="lidar-dataset-vehicle-count">0 台</span>
+        </div>
+        <div class="lidar-dataset-table-wrap">
+          <table class="lidar-dataset-table">
+            <thead>
+              <tr>
+                <th>车辆</th>
+                <th>完整帧</th>
+                <th>Session</th>
+                <th>最近采集</th>
+              </tr>
+            </thead>
+            <tbody id="lidar-dataset-vehicles"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="lidar-dataset-preview">
+        <div class="lidar-dataset-preview-toolbar">
+          <label for="lidar-dataset-session">
+            <span>Session</span>
+            <select id="lidar-dataset-session" disabled>
+              <option value="">暂无数据</option>
+            </select>
+          </label>
+          <div class="lidar-dataset-frame-controls">
+            <button id="lidar-dataset-prev" type="button" title="上一帧" aria-label="上一帧" disabled>‹</button>
+            <output id="lidar-dataset-frame-label">-- / --</output>
+            <button id="lidar-dataset-next" type="button" title="下一帧" aria-label="下一帧" disabled>›</button>
+          </div>
+        </div>
+        <input id="lidar-dataset-frame" class="lidar-dataset-frame-range" type="range" min="0" max="0" value="0" disabled aria-label="采集帧序号" />
+        <div class="lidar-dataset-canvas-wrap">
+          <canvas id="lidar-dataset-pointcloud" width="960" height="520" aria-label="采集点云俯视预览"></canvas>
+          <div id="lidar-dataset-cloud-badge" class="lidar-dataset-cloud-badge">等待点云</div>
+        </div>
+        <div id="lidar-dataset-preview-meta" class="lidar-dataset-preview-meta"></div>
+      </div>
+    </div>
+  </section>
 
   <section class="lidar-reloc-visual-panel">
     <div class="lidar-reloc-result-head">
