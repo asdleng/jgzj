@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from label_weak_event_candidates_qwen import (
     apply_review_guards,
+    audit_prompt,
     detect_prompt,
     normalize_boxes,
     target_from_bucket,
@@ -69,6 +70,10 @@ class WeakEventWebPipelineTest(unittest.TestCase):
         prompt = detect_prompt("stall")
         self.assertIn("Fixed kiosks", prompt)
         self.assertIn("temporary mobile vendor", prompt.lower())
+        fishing_audit = audit_prompt("fishing_rod", {"b": []})
+        self.assertIn("mounted or propped", fishing_audit)
+        self.assertIn('[["fishing_rod",x1,y1,x2,y2,0.95,"visible_pixel_evidence"]]', fishing_audit)
+        self.assertIn("Never return coordinate-only arrays", fishing_audit)
         text = yolo_text([{"class_id": 0, "x": 0.5, "y": 0.4, "w": 0.2, "h": 0.3}])
         self.assertEqual(text, "0 0.500000 0.400000 0.200000 0.300000\n")
 

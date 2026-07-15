@@ -85,7 +85,10 @@ def task_rules(target: str) -> str:
     spec = TARGETS[target]
     classes = ", ".join(spec["classes"])
     extra = {
-        "fishing_rod": "Do not label walking sticks, trekking poles, umbrellas, railings, branches, masts, antennas, or paddles.",
+        "fishing_rod": (
+            "A clearly visible fishing rod mounted or propped for fishing counts even when the angler is outside the frame. "
+            "Do not label walking sticks, trekking poles, umbrellas, railings, branches, masts, antennas, or paddles."
+        ),
         "pet": "Only live dogs and cats count. Statues, sculptures, plush toys, posters, reflections, and other animals do not count.",
         "stall": "Fixed kiosks, vending machines, permanent booths, security checkpoints, and bus shelters are not stalls.",
         "trash": "Only use bottle, box, paper, or bag. The object must visibly be discarded litter; bins, stored/stacked boxes, road paint, signs, and utility boxes are negatives.",
@@ -114,15 +117,16 @@ Rules:
 
 
 def audit_prompt(target: str, proposal: dict) -> str:
+    example_class = TARGETS[target]["classes"][0]
     return f"""Act as a strict independent reviewer of proposed {target} boxes in the attached image.
 {task_rules(target)}
 Proposed JSON:
 {json.dumps(proposal, ensure_ascii=False, separators=(',', ':'))}
 
 Return one compact JSON object only:
-{{"v":"pass","photo":"real_photo","domain":"target","scene":"positive","b":[],"r":"short_reason"}}
+{{"v":"pass","photo":"real_photo","domain":"target","scene":"positive","b":[["{example_class}",x1,y1,x2,y2,0.95,"visible_pixel_evidence"]],"r":"short_reason"}}
 
-Use v=pass only when every retained box has strong pixel evidence and there is no important missed target. Correct or drop boxes in b. Use v=needs_human for ambiguity, false positives, or important misses. Non-real or off-domain media must use scene=unusable and b=[].
+Every retained b item must contain exactly class, x1, y1, x2, y2, score, and evidence. Never return coordinate-only arrays. Use v=pass only when every retained box has strong pixel evidence and there is no important missed target. Correct or drop boxes in b. Use v=needs_human for ambiguity, false positives, or important misses. Non-real or off-domain media must use scene=unusable and b=[].
 """
 
 
