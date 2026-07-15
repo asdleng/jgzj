@@ -72,7 +72,7 @@ class WeakEventWebPipelineTest(unittest.TestCase):
         self.assertIn("temporary mobile vendor", prompt.lower())
         fishing_audit = audit_prompt("fishing_rod", {"b": []})
         self.assertIn("mounted or propped", fishing_audit)
-        self.assertIn('[["fishing_rod",x1,y1,x2,y2,0.95,"visible_pixel_evidence"]]', fishing_audit)
+        self.assertIn('[["fishing_rod",x1,y1,x2,y2,0.95,"visible_fishing_rod_with_reel"]]', fishing_audit)
         self.assertIn("Never return coordinate-only arrays", fishing_audit)
         text = yolo_text([{"class_id": 0, "x": 0.5, "y": 0.4, "w": 0.2, "h": 0.3}])
         self.assertEqual(text, "0 0.500000 0.400000 0.200000 0.300000\n")

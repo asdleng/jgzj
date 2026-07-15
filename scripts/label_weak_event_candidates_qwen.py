@@ -34,6 +34,7 @@ TARGETS = {
         "threshold": 0.82,
         "accept": re.compile(r"fishing|angler|rod|reel|fishing_line", re.I),
         "reject": re.compile(r"walking|trekking|umbrella|railing|branch|mast|antenna|paddle", re.I),
+        "example_evidence": "visible_fishing_rod_with_reel",
     },
     "pet": {
         "classes": ("pet",),
@@ -41,6 +42,7 @@ TARGETS = {
         "threshold": 0.90,
         "accept": re.compile(r"live|dog|cat|canine|feline", re.I),
         "reject": re.compile(r"statue|sculpture|plush|toy|poster|reflection|painting", re.I),
+        "example_evidence": "live_dog_body_legs_and_tail",
     },
     "stall": {
         "classes": ("stall",),
@@ -48,6 +50,7 @@ TARGETS = {
         "threshold": 0.90,
         "accept": re.compile(r"vendor|market|goods|cart|table|canopy|temporary|street_stall", re.I),
         "reject": re.compile(r"fixed|kiosk|vending|checkpoint|shelter|booth_building", re.I),
+        "example_evidence": "temporary_vendor_table_with_goods",
     },
     "trash": {
         "classes": ("bottle", "box", "paper", "bag"),
@@ -55,6 +58,7 @@ TARGETS = {
         "threshold": 0.88,
         "accept": re.compile(r"discarded|litter|ground|curb|loose|waste|bottle|cardboard|paper|plastic_bag", re.I),
         "reject": re.compile(r"storage|stacked|trash_bin|waste_bin|container|utility|road_marking|arrow|traffic_sign|in_use", re.I),
+        "example_evidence": "discarded_bottle_on_ground",
     },
 }
 
@@ -102,7 +106,7 @@ Target task: {target}.
 {task_rules(target)}
 
 Return one compact JSON object only, with no markdown:
-{{"q":"good","photo":"real_photo","domain":"target","scene":"positive","b":[["{TARGETS[target]['classes'][0]}",x1,y1,x2,y2,0.94,"visible_pixel_evidence"]],"r":"short_reason"}}
+{{"q":"good","photo":"real_photo","domain":"target","scene":"positive","b":[["{TARGETS[target]['classes'][0]}",x1,y1,x2,y2,0.94,"{TARGETS[target]['example_evidence']}"]],"r":"short_reason"}}
 
 Rules:
 - q: good, blur, dark, blocked, or bad.
@@ -124,7 +128,7 @@ Proposed JSON:
 {json.dumps(proposal, ensure_ascii=False, separators=(',', ':'))}
 
 Return one compact JSON object only:
-{{"v":"pass","photo":"real_photo","domain":"target","scene":"positive","b":[["{example_class}",x1,y1,x2,y2,0.95,"visible_pixel_evidence"]],"r":"short_reason"}}
+{{"v":"pass","photo":"real_photo","domain":"target","scene":"positive","b":[["{example_class}",x1,y1,x2,y2,0.95,"{TARGETS[target]['example_evidence']}"]],"r":"short_reason"}}
 
 Every retained b item must contain exactly class, x1, y1, x2, y2, score, and evidence. Never return coordinate-only arrays. Use v=pass only when every retained box has strong pixel evidence and there is no important missed target. Correct or drop boxes in b. Use v=needs_human for ambiguity, false positives, or important misses. Non-real or off-domain media must use scene=unusable and b=[].
 """
