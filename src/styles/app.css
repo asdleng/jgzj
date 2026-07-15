@@ -10317,7 +10317,7 @@ body.yolo-review-is-panning {
 }
 
 .cloud-ops-agent-run-trace ol {
-  max-height: 210px;
+  max-height: 360px;
   overflow: auto;
   display: grid;
   gap: 0;
@@ -10351,6 +10351,7 @@ body.yolo-review-is-panning {
 .cloud-ops-agent-run-trace li.is-completed::before { background: #34d399; }
 .cloud-ops-agent-run-trace li.is-warning::before { background: #fbbf24; }
 .cloud-ops-agent-run-trace li.is-error::before { background: #fb7185; }
+.cloud-ops-agent-run-trace li.is-declined::before { background: #94a3b8; }
 
 .cloud-ops-agent-run-trace li > span {
   min-width: 0;
@@ -10426,4 +10427,66 @@ body.yolo-review-is-panning {
   color: #dbeafe;
   line-height: 1.62;
   white-space: pre-wrap;
+}
+
+.cloud-ops-agent-run-trace li.is-approval {
+  grid-template-columns: minmax(0, 1fr);
+  margin: 6px 0;
+  padding: 10px 10px 10px 22px;
+  border: 1px solid rgba(251, 191, 36, 0.38);
+  border-radius: 8px;
+  background: rgba(69, 45, 8, 0.24);
+}
+
+.cloud-ops-agent-run-trace li.is-approval::before {
+  background: #fbbf24;
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.12);
+}
+
+.cloud-ops-agent-run-trace li.is-approval > code {
+  display: block;
+  min-width: 0;
+  max-height: 112px;
+  overflow: auto;
+  padding: 7px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.72);
+  color: #e2e8f0;
+  font-size: 0.67rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-agent-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  color: #cbd5e1;
+  font-size: 0.68rem;
+}
+
+.cloud-ops-agent-approval-actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.9);
+  color: #e2e8f0;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cloud-ops-agent-approval-actions button:first-child {
+  border-color: rgba(52, 211, 153, 0.48);
+  background: rgba(6, 78, 59, 0.34);
+  color: #a7f3d0;
+}
+
+.cloud-ops-agent-approval-actions button:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }

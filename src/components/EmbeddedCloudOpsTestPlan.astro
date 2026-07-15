@@ -627,6 +627,7 @@ const agentRules = [
     const AGENT_STATUS_URL = "/api/cloud-ops-agent/status";
     const AGENT_HISTORY_URL = "/api/cloud-ops-agent/history";
     const AGENT_RUN_URL = "/api/cloud-ops-agent/run";
+    const AGENT_APPROVAL_BASE_URL = "/api/cloud-ops-agent/approvals";
     const READONLY_TOOL_ALLOWLIST = new Set([
       "status.key_nodes",
       "health.autodrive_check",
@@ -2626,16 +2627,17 @@ const agentRules = [
       if (agentPageStatus) agentPageStatus.textContent = statusText;
       if (agentStatusNote) {
         agentStatusNote.textContent = payload?.can_chat
-          ? "服务端 key 已配置"
+          ? `服务端 key 已配置 · 推理 ${payload?.reasoning_effort || "high"}`
           : (payload?.missing_config?.length ? `缺少 ${payload.missing_config.join(", ")}` : "服务端未启用");
       }
       configureAgentModelSelectors(payload);
       if (agentRoute) agentRoute.textContent = payload?.upstream_base_url || "JGZJ / subapi";
       const codex = payload?.codex || {};
-      if (agentCodex) agentCodex.textContent = codex?.deployed ? "已部署" : "未就绪";
+      if (agentCodex) agentCodex.textContent = codex?.integrated ? "已接入" : (codex?.deployed ? "仅探测" : "未就绪");
       if (agentCodexNote) {
         const cliVersion = codex?.cli?.version ? ` · ${codex.cli.version}` : "";
-        agentCodexNote.textContent = codex?.listen ? `${codex.listen}${cliVersion}` : (codex?.app_server?.detail || "本机 App Server");
+        const codexModel = codex?.agent_model ? ` · 运维 ${agentModelLabel(codex.agent_model)}` : "";
+        agentCodexNote.textContent = codex?.listen ? `${codex.listen}${cliVersion}${codexModel}` : (codex?.app_server?.detail || "本机 App Server");
       }
       if (agentFleet) agentFleet.textContent = `${payload?.fleet?.vehicle_count ?? vehicles.length} 台`;
       if (agentFleetNote) {
@@ -2647,7 +2649,9 @@ const agentRules = [
           "自动调用清单：/api/cloud-ops/vehicles-lite、/api/cloud-ops-agent/status、/api/cloud-ops-agent/history",
           "禁止自动调用：/api/cloud-ops/execute、tool-list、vehicle_detail",
           "智能体对话：必须用户点击发送；后端只调用 subapi 兼容模型接口",
-          "控制类动作：未绑定执行",
+          `模型推理强度：${payload?.reasoning_effort || "high"}`,
+          "具体车辆状态：自动调用实时只读工具，缓存缺失时补充 Tailscale/SSH 只读巡检",
+          "控制类动作：必须单独确认后才能执行",
           "",
           "后端安全边界：",
           ...payload.safeguards.map((item) => `- ${item}`)
@@ -2790,8 +2794,72 @@ const agentRules = [
           }
         }
       }
+      if (event.approval?.approval_id) {
+        const approval = event.approval;
+        const list = run.node.querySelector('[data-role="agent-run-steps"]');
+        const existing = run.node.querySelector(`[data-agent-approval-id="${CSS.escape(approval.approval_id)}"]`);
+        if (list && !existing) {
+          const item = document.createElement("li");
+          item.className = "is-waiting is-approval";
+          item.dataset.agentApprovalId = approval.approval_id;
+          const heading = document.createElement("span");
+          heading.textContent = approval.title || "Codex 请求确认";
+          item.appendChild(heading);
+          const detail = document.createElement("small");
+          detail.textContent = [
+            approval.vehicle_id ? `车辆 ${approval.vehicle_id}` : "",
+            approval.tool_name ? `工具 ${approval.tool_name}` : "",
+            approval.reason || ""
+          ].filter(Boolean).join(" · ");
+          item.appendChild(detail);
+          if (approval.command) {
+            const command = document.createElement("code");
+            command.textContent = approval.command;
+            item.appendChild(command);
+          }
+          const actions = document.createElement("div");
+          actions.className = "cloud-ops-agent-approval-actions";
+          actions.innerHTML = `<button type="button" data-action="agent-approval" data-approval-id="${escapeHtml(approval.approval_id)}" data-decision="accept">批准一次</button><button type="button" data-action="agent-approval" data-approval-id="${escapeHtml(approval.approval_id)}" data-decision="decline">拒绝</button>`;
+          item.appendChild(actions);
+          list.appendChild(item);
+        }
+      }
       agentMessages.scrollTop = agentMessages.scrollHeight;
       syncAgentMessageViews();
+    };
+
+    const sendAgentApprovalDecision = async (approvalId, decision) => {
+      const normalizedId = String(approvalId || "").trim();
+      const normalizedDecision = decision === "accept" ? "accept" : "decline";
+      if (!normalizedId) return;
+      const approvalItems = [...shell.querySelectorAll(`[data-agent-approval-id="${CSS.escape(normalizedId)}"]`)];
+      approvalItems.forEach((item) => {
+        item.classList.add("is-submitting");
+        item.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+      });
+      try {
+        const response = await fetch(`${AGENT_APPROVAL_BASE_URL}/${encodeURIComponent(normalizedId)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ decision: normalizedDecision })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+        approvalItems.forEach((item) => {
+          item.classList.remove("is-waiting", "is-submitting");
+          item.classList.add(normalizedDecision === "accept" ? "is-completed" : "is-declined");
+          const actions = item.querySelector(".cloud-ops-agent-approval-actions");
+          if (actions) actions.textContent = normalizedDecision === "accept" ? "已批准，Codex 继续执行并验证" : "已拒绝，Codex 将继续给出建议";
+        });
+        setStatus(normalizedDecision === "accept" ? "已批准本次操作，等待 Codex 执行与回读。" : "已拒绝本次操作。", normalizedDecision === "accept" ? "loading" : "ok");
+      } catch (error) {
+        approvalItems.forEach((item) => {
+          item.classList.remove("is-submitting");
+          item.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+        });
+        setStatus(`审批提交失败：${error?.message || "未知错误"}`, "error");
+      }
     };
 
     const finishAgentRunMessage = (run, payload) => {
@@ -2818,7 +2886,11 @@ const agentRules = [
       }
       const meta = run.node.querySelector('[data-role="agent-run-meta"]');
       if (meta) {
-        const kind = payload?.run_kind === "vehicle_diagnosis" ? "自动车辆诊断" : "一体化对话";
+        const kind = payload?.run_kind === "codex_operations"
+          ? "Codex 运维"
+          : payload?.run_kind === "vehicle_diagnosis"
+            ? "自动车辆诊断"
+            : "一体化对话";
         meta.textContent = `${agentModelLabel(payload?.model || selectedAgentModel())} · ${formatAgentDuration(elapsedMs)} · ${kind}`;
       }
       syncAgentMessageViews();
@@ -2915,6 +2987,7 @@ const agentRules = [
           body: JSON.stringify({
             message: text,
             model: selectedAgentModel(),
+            selected_vehicle_id: selectedVehicleId(),
             history: priorHistory
           })
         });
@@ -2949,7 +3022,9 @@ const agentRules = [
         finishAgentRunMessage(run, finalPayload);
         if (agentLatency) agentLatency.textContent = `${finalPayload?.model_error ? "证据摘要" : "完成"} · ${formatAgentDuration(finalPayload.latency_ms)}`;
         setStatus(
-          finalPayload?.run_kind === "vehicle_diagnosis"
+          finalPayload?.run_kind === "codex_operations"
+            ? "Codex 运维完成；已记录调查、审批、执行与验证过程。"
+            : finalPayload?.run_kind === "vehicle_diagnosis"
             ? (finalPayload?.model_error ? "车辆证据采集完成；模型总结未完成，已返回可审计摘要。" : "车辆诊断完成；未执行任何车辆变更。")
             : "山海智枢回复完成；车辆上下文由消息自动识别。",
           finalPayload?.model_error ? "loading" : "ok"
@@ -3729,6 +3804,8 @@ const agentRules = [
       } else if (action === "agent-send") {
         const composerInput = actionButton.closest('[data-role="agent-composer"]')?.querySelector("textarea");
         sendAgentMessage(composerInput?.value || agentInput?.value || agentPageInput?.value || "");
+      } else if (action === "agent-approval") {
+        sendAgentApprovalDecision(actionButton.dataset.approvalId, actionButton.dataset.decision);
       } else if (action === "agent-page-open") {
         setAgentRailOpen(!agentRail?.classList.contains("is-open"));
       } else if (action === "agent-page-pin") {
