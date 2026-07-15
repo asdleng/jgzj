@@ -135,12 +135,12 @@ const agentRules = [
         <article>
           <span>模型</span>
           <strong data-role="agent-model">--</strong>
-          <small data-role="agent-route">Codex App Server</small>
+          <small data-role="agent-route">山海智枢引擎</small>
         </article>
         <article>
-          <span>Codex</span>
+          <span>工具链</span>
           <strong data-role="agent-codex">检查中</strong>
-          <small data-role="agent-codex-note">本机 App Server</small>
+          <small data-role="agent-codex-note">搜索 · 系统 · 车辆</small>
         </article>
         <article>
           <span>车队</span>
@@ -169,9 +169,9 @@ const agentRules = [
         ></textarea>
         <div class="cloud-ops-agent-composer-footer">
           <div class="cloud-ops-agent-composer-options">
-            <span class="cloud-ops-agent-composer-scope" title="所有对话统一进入 Codex；联网搜索自动执行，系统与车辆变更仍需人工确认">
+            <span class="cloud-ops-agent-composer-scope" title="所有对话由山海智枢统一处理">
               <i aria-hidden="true"></i>
-              GPT-5.6 Codex 统一智能体
+              GPT-5.6 统一智能体
             </span>
             <label class="cloud-ops-agent-composer-select">
               <span>模型</span>
@@ -182,6 +182,14 @@ const agentRules = [
                 <option value="gpt-5.5">GPT-5.5</option>
                 <option value="gpt-5.4">GPT-5.4</option>
                 <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+              </select>
+            </label>
+            <label class="cloud-ops-agent-composer-select is-permission">
+              <span>权限</span>
+              <select data-role="agent-permission-select" aria-label="选择山海智枢运行权限">
+                <option value="on_request" selected>请求批准</option>
+                <option value="auto_review">替我审批</option>
+                <option value="full_access">完全访问权限</option>
               </select>
             </label>
           </div>
@@ -199,8 +207,8 @@ const agentRules = [
         <p class="cloud-ops-test-agent-history-count">历史：<span data-role="agent-history-count">--</span></p>
         <pre class="cloud-ops-test-json cloud-ops-test-json--compact" data-role="agent-audit">自动调用清单：/api/cloud-ops/vehicles-lite、/api/cloud-ops-agent/status、/api/cloud-ops-agent/history
 只读自动能力：实时 Web Search、只读 shell、tool-list、vehicle_detail、车辆状态工具
-智能体对话：必须用户点击发送；所有消息统一进入 Codex App Server
-Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆工具与受控 SSH
+智能体对话：必须用户点击发送；所有消息统一进入山海智枢
+工具能力：实时搜索、shell、文件与命令审批、车辆工具与受控 SSH
 控制类动作：逐项审批；高危车辆控制硬阻断</pre>
       </details>
     </div>
@@ -569,13 +577,13 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
               class="cloud-ops-test-agent-input cloud-ops-agent-page-input"
               data-role="agent-page-input"
               rows="4"
-              placeholder="像 Codex 一样直接输入；提到哪辆车，就自动读取并分析哪辆车。"
+              placeholder="直接输入需求；提到哪辆车，就自动读取并分析哪辆车。"
             ></textarea>
             <div class="cloud-ops-agent-composer-footer">
               <div class="cloud-ops-agent-composer-options">
-                <span class="cloud-ops-agent-composer-scope" title="所有对话统一进入 Codex；联网搜索自动执行，系统与车辆变更仍需人工确认">
+                <span class="cloud-ops-agent-composer-scope" title="所有对话由山海智枢统一处理">
                   <i aria-hidden="true"></i>
-                  GPT-5.6 Codex 统一智能体
+                  GPT-5.6 统一智能体
                 </span>
                 <label class="cloud-ops-agent-composer-select">
                   <span>模型</span>
@@ -586,6 +594,14 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
                     <option value="gpt-5.5">GPT-5.5</option>
                     <option value="gpt-5.4">GPT-5.4</option>
                     <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+                  </select>
+                </label>
+                <label class="cloud-ops-agent-composer-select is-permission">
+                  <span>权限</span>
+                  <select data-role="agent-permission-select" aria-label="选择智能体运行权限">
+                    <option value="on_request" selected>请求批准</option>
+                    <option value="auto_review">替我审批</option>
+                    <option value="full_access">完全访问权限</option>
                   </select>
                 </label>
               </div>
@@ -739,6 +755,7 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
     const agentStatusNote = shell.querySelector('[data-role="agent-status-note"]');
     const agentModel = shell.querySelector('[data-role="agent-model"]');
     const agentModelSelects = [...shell.querySelectorAll('[data-role="agent-model-select"]')];
+    const agentPermissionSelects = [...shell.querySelectorAll('[data-role="agent-permission-select"]')];
     const agentSendButtons = [...shell.querySelectorAll('[data-action="agent-send"]')];
     const agentComposers = [...shell.querySelectorAll('[data-role="agent-composer"]')];
     const agentModelNote = shell.querySelector('[data-role="agent-model-note"]');
@@ -790,6 +807,12 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
     let agentDefaultModel = "gpt-5.6-terra";
     let agentAvailableModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
     const agentModelStorageKey = "cloudOpsTestAgentModel";
+    const agentPermissionStorageKey = "cloudOpsTestAgentPermissionMode";
+    const agentPermissionLabels = {
+      on_request: "请求批准",
+      auto_review: "替我审批",
+      full_access: "完全访问权限"
+    };
     const agentConversationHistory = [];
     let agentRequestInFlight = false;
 
@@ -2583,6 +2606,33 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
       return next;
     };
 
+    const selectedAgentPermissionMode = () => {
+      const selected = String(agentPermissionSelects[0]?.value || "").trim();
+      return Object.prototype.hasOwnProperty.call(agentPermissionLabels, selected) ? selected : "on_request";
+    };
+
+    const setAgentPermissionSelection = (mode, persist = false) => {
+      const next = Object.prototype.hasOwnProperty.call(agentPermissionLabels, mode) ? mode : "on_request";
+      agentPermissionSelects.forEach((select) => { select.value = next; });
+      if (persist) {
+        try { localStorage.setItem(agentPermissionStorageKey, next); } catch (_error) {}
+      }
+      return next;
+    };
+
+    const configureAgentPermissionSelectors = (payload) => {
+      const canUseAutonomous = payload?.can_use_autonomous_permissions !== false;
+      agentPermissionSelects.forEach((select) => {
+        [...select.options].forEach((option) => {
+          option.disabled = option.value !== "on_request" && !canUseAutonomous;
+        });
+      });
+      let stored = "";
+      try { stored = localStorage.getItem(agentPermissionStorageKey) || ""; } catch (_error) {}
+      const requested = Object.prototype.hasOwnProperty.call(agentPermissionLabels, stored) ? stored : "on_request";
+      setAgentPermissionSelection(canUseAutonomous || requested === "on_request" ? requested : "on_request");
+    };
+
     const configureAgentModelSelectors = (payload) => {
       const models = Array.isArray(payload?.available_models)
         ? payload.available_models.map((item) => String(item || "").trim()).filter(Boolean)
@@ -2612,6 +2662,9 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
         button.disabled = agentRequestInFlight;
         button.setAttribute("aria-busy", agentRequestInFlight ? "true" : "false");
       });
+      [...agentModelSelects, ...agentPermissionSelects].forEach((select) => {
+        select.disabled = agentRequestInFlight || Boolean(select.selectedOptions[0]?.disabled);
+      });
       agentComposers.forEach((composer) => composer.classList.toggle("is-busy", agentRequestInFlight));
     };
 
@@ -2628,17 +2681,16 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
       if (agentPageStatus) agentPageStatus.textContent = statusText;
       if (agentStatusNote) {
         agentStatusNote.textContent = payload?.can_chat
-          ? `Codex 已就绪 · 推理 ${payload?.reasoning_effort || "xhigh"}`
+          ? `山海智枢已就绪 · 推理 ${payload?.reasoning_effort || "xhigh"}`
           : (payload?.missing_config?.length ? `缺少 ${payload.missing_config.join(", ")}` : "服务端未启用");
       }
       configureAgentModelSelectors(payload);
-      if (agentRoute) agentRoute.textContent = payload?.execution_route_label || payload?.upstream_base_url || "Codex App Server";
+      configureAgentPermissionSelectors(payload);
+      if (agentRoute) agentRoute.textContent = payload?.execution_route_label || payload?.upstream_base_url || "山海智枢引擎";
       const codex = payload?.codex || {};
       if (agentCodex) agentCodex.textContent = codex?.integrated ? "已接入" : (codex?.deployed ? "仅探测" : "未就绪");
       if (agentCodexNote) {
-        const cliVersion = codex?.cli?.version ? ` · ${codex.cli.version}` : "";
-        const codexModel = codex?.agent_model ? ` · 统一 ${agentModelLabel(codex.agent_model)}` : "";
-        agentCodexNote.textContent = codex?.listen ? `${codex.listen}${cliVersion}${codexModel}` : (codex?.app_server?.detail || "本机 App Server");
+        agentCodexNote.textContent = codex?.integrated ? "搜索 · 系统 · 车辆工具" : "运行时状态异常";
       }
       if (agentFleet) agentFleet.textContent = `${payload?.fleet?.vehicle_count ?? vehicles.length} 台`;
       if (agentFleetNote) {
@@ -2649,11 +2701,11 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
         agentAudit.textContent = [
           "自动调用清单：/api/cloud-ops/vehicles-lite、/api/cloud-ops-agent/status、/api/cloud-ops-agent/history",
           "只读自动能力：实时 Web Search、只读 shell、tool-list、vehicle_detail、车辆状态工具",
-          "智能体对话：必须用户点击发送；所有消息统一进入 Codex App Server",
+          "智能体对话：必须用户点击发送；所有消息统一进入山海智枢",
           `模型推理强度：${payload?.reasoning_effort || "xhigh"}`,
-          `实时信息：Codex 原生 Web Search ${payload?.web_search || "live"}`,
-          "具体车辆状态：Codex 自主调用实时只读工具，缓存缺失时补充 Tailscale/SSH 只读巡检",
-          "控制类动作：必须单独确认后才能执行",
+          `实时信息：内置实时搜索 ${payload?.web_search || "live"}`,
+          "具体车辆状态：自主调用实时只读工具，缓存缺失时补充 Tailscale/SSH 只读巡检",
+          "变更类动作：按当前权限模式和账号权限执行",
           "",
           "后端安全边界：",
           ...payload.safeguards.map((item) => `- ${item}`)
@@ -2695,7 +2747,7 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
           <span>${escapeHtml(ok ? "OK" : "ERR")} · ${escapeHtml(item?.vehicle_id || "全局")}</span>
           <strong>${escapeHtml(item?.prompt_snippet || "--")}</strong>
           <p>${escapeHtml(item?.answer_snippet || item?.error || "--")}</p>
-          <small>${escapeHtml(item?.at || "")} · ${escapeHtml(item?.model || "--")} · ${escapeHtml(item?.latency_ms ? `${item.latency_ms}ms` : "--")}</small>
+          <small>${escapeHtml(item?.at || "")} · ${escapeHtml(item?.model || "--")} · ${escapeHtml(agentPermissionLabels[item?.permission_mode] || "请求批准")} · ${escapeHtml(item?.latency_ms ? `${item.latency_ms}ms` : "--")}</small>
         </article>`;
       }).join("");
     };
@@ -2714,20 +2766,104 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
       }
     };
 
-    const syncAgentMessageViews = () => {
+    const isAgentScrollerNearBottom = (node, threshold = 36) => {
+      if (!node) return true;
+      return node.scrollHeight - node.scrollTop - node.clientHeight <= threshold;
+    };
+
+    const captureAgentPageScrollState = () => {
+      if (!agentPageMessages) return null;
+      const runs = new Map();
+      agentPageMessages.querySelectorAll('[data-agent-run-id]').forEach((node) => {
+        const id = node.dataset.agentRunId;
+        const reasoning = node.querySelector('[data-role="agent-run-reasoning"]');
+        const trace = node.querySelector('[data-role="agent-run-trace"]');
+        if (!id) return;
+        runs.set(id, {
+          reasoningTop: reasoning?.scrollTop || 0,
+          reasoningFollow: isAgentScrollerNearBottom(reasoning, 24),
+          traceOpen: trace?.open !== false
+        });
+      });
+      return {
+        outerTop: agentPageMessages.scrollTop,
+        outerFollow: isAgentScrollerNearBottom(agentPageMessages),
+        runs
+      };
+    };
+
+    const syncAgentMessageViews = ({ forceBottom = false } = {}) => {
       if (!agentMessages || !agentPageMessages) return;
-      agentPageMessages.innerHTML = agentMessages.innerHTML;
-      agentPageMessages.scrollTop = agentPageMessages.scrollHeight;
+      const state = captureAgentPageScrollState();
+      const sources = [...agentMessages.children];
+      while (agentPageMessages.children.length > sources.length) agentPageMessages.lastElementChild?.remove();
+      sources.forEach((source, index) => {
+        let target = agentPageMessages.children[index];
+        const runId = source.dataset.agentRunId || "";
+        if (!target || (runId && target.dataset.agentRunId !== runId)) {
+          const clone = source.cloneNode(true);
+          if (target) target.replaceWith(clone);
+          else agentPageMessages.appendChild(clone);
+          target = clone;
+        } else if (!runId) {
+          if (target.outerHTML !== source.outerHTML) target.replaceWith(source.cloneNode(true));
+          return;
+        }
+
+        const saved = state?.runs?.get(runId);
+        target.className = source.className;
+        const copyNode = (selector, { html = false } = {}) => {
+          const from = source.querySelector(selector);
+          const to = target.querySelector(selector);
+          if (!from || !to) return;
+          if (html) {
+            if (to.innerHTML !== from.innerHTML) to.innerHTML = from.innerHTML;
+          } else if (to.textContent !== from.textContent) {
+            to.textContent = from.textContent;
+          }
+          if ("hidden" in from) to.hidden = from.hidden;
+          if (from.className) to.className = from.className;
+        };
+        copyNode('[data-role="agent-run-title"]');
+        copyNode('[data-role="agent-run-elapsed"]');
+        copyNode('[data-role="agent-run-answer"]');
+        copyNode('[data-role="agent-run-meta"]');
+        copyNode('[data-role="agent-run-activity-title"]');
+        copyNode('[data-role="agent-run-activity-detail"]');
+        copyNode('[data-role="agent-run-approvals"]', { html: true });
+
+        const sourceActivity = source.querySelector('[data-role="agent-run-activity"]');
+        const targetActivity = target.querySelector('[data-role="agent-run-activity"]');
+        if (sourceActivity && targetActivity) targetActivity.className = sourceActivity.className;
+        const sourceTrace = source.querySelector('[data-role="agent-run-trace"]');
+        const targetTrace = target.querySelector('[data-role="agent-run-trace"]');
+        if (sourceTrace && targetTrace) {
+          copyNode('[data-role="agent-run-trace"] > summary');
+          targetTrace.open = saved ? saved.traceOpen : sourceTrace.open;
+        }
+        const sourceReasoning = source.querySelector('[data-role="agent-run-reasoning"]');
+        const targetReasoning = target.querySelector('[data-role="agent-run-reasoning"]');
+        if (sourceReasoning && targetReasoning && targetReasoning.textContent !== sourceReasoning.textContent) {
+          const followReasoning = saved?.reasoningFollow ?? true;
+          targetReasoning.textContent = sourceReasoning.textContent;
+          targetReasoning.scrollTop = followReasoning ? targetReasoning.scrollHeight : (saved?.reasoningTop || 0);
+        } else if (targetReasoning && saved && !saved.reasoningFollow) {
+          targetReasoning.scrollTop = saved.reasoningTop;
+        }
+      });
+      if (forceBottom || !state || state.outerFollow) agentPageMessages.scrollTop = agentPageMessages.scrollHeight;
+      else agentPageMessages.scrollTop = state.outerTop;
     };
 
     const appendAgentMessage = (role, text, meta = "") => {
       if (!agentMessages) return;
+      const followPrimary = isAgentScrollerNearBottom(agentMessages);
       const node = document.createElement("div");
       node.className = `cloud-ops-test-agent-message is-${role}`;
       const title = role === "user" ? "你" : (role === "error" ? "接口错误" : "山海智枢");
       node.innerHTML = `<strong>${escapeHtml(title)}</strong><p>${escapeHtml(text || "")}</p>${meta ? `<small>${escapeHtml(meta)}</small>` : ""}`;
       agentMessages.appendChild(node);
-      agentMessages.scrollTop = agentMessages.scrollHeight;
+      if (followPrimary) agentMessages.scrollTop = agentMessages.scrollHeight;
       syncAgentMessageViews();
     };
 
@@ -2739,26 +2875,34 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
 
     const createAgentRunMessage = (model) => {
       if (!agentMessages) return null;
+      const followPrimary = isAgentScrollerNearBottom(agentMessages);
+      const runId = `agent-run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const node = document.createElement("div");
       node.className = "cloud-ops-test-agent-message is-agent is-running";
+      node.dataset.agentRunId = runId;
       node.innerHTML = `<div class="cloud-ops-agent-run-head">
         <span class="cloud-ops-agent-run-spinner" aria-hidden="true"></span>
         <strong data-role="agent-run-title">正在思考</strong>
         <time data-role="agent-run-elapsed">0.0 秒</time>
       </div>
-      <details class="cloud-ops-agent-run-trace" open>
-        <summary>思考与执行过程</summary>
-        <ol data-role="agent-run-steps"></ol>
+      <details class="cloud-ops-agent-run-trace" data-role="agent-run-trace" open>
+        <summary>思考过程</summary>
+        <pre class="cloud-ops-agent-run-reasoning" data-role="agent-run-reasoning">正在形成思路...</pre>
+        <div class="cloud-ops-agent-run-activity is-running" data-role="agent-run-activity">
+          <span data-role="agent-run-activity-title">正在准备</span>
+          <small data-role="agent-run-activity-detail"></small>
+        </div>
+        <div class="cloud-ops-agent-run-approvals" data-role="agent-run-approvals"></div>
       </details>
       <p data-role="agent-run-answer" hidden></p>
-      <small data-role="agent-run-meta">${escapeHtml(agentModelLabel(model))} · 一体化 AI 运维</small>`;
+      <small data-role="agent-run-meta">${escapeHtml(agentModelLabel(model))} · ${escapeHtml(agentPermissionLabels[selectedAgentPermissionMode()])} · 山海智枢</small>`;
       agentMessages.appendChild(node);
-      agentMessages.scrollTop = agentMessages.scrollHeight;
+      if (followPrimary) agentMessages.scrollTop = agentMessages.scrollHeight;
       const run = {
         node,
+        id: runId,
         startedAt: Date.now(),
         lastElapsedMs: 0,
-        seenSteps: new Set(),
         timer: null
       };
       run.timer = window.setInterval(() => {
@@ -2782,30 +2926,35 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
         const title = run.node.querySelector('[data-role="agent-run-title"]');
         if (title) title.textContent = event.title;
       }
-      if (event.stage || event.title) {
-        const stepKey = `${event.stage || "step"}:${event.tool || event.title || ""}:${event.analysis_index ?? event.completed ?? ""}:${event.status || ""}`;
-        if (!run.seenSteps.has(stepKey)) {
-          run.seenSteps.add(stepKey);
-          const list = run.node.querySelector('[data-role="agent-run-steps"]');
-          if (list) {
-            const item = document.createElement("li");
-            item.className = `is-${event.status || "running"}`;
-            if (event.stage === "model_analysis") item.classList.add("is-model-analysis");
-            item.innerHTML = `<span>${escapeHtml(event.title || "处理中")}</span>${event.detail ? `<small>${escapeHtml(event.detail)}</small>` : ""}<time>${escapeHtml(formatAgentDuration(elapsedMs))}</time>`;
-            list.appendChild(item);
-          }
+      const followPrimary = isAgentScrollerNearBottom(agentMessages);
+      if (event.stage === "codex_reasoning" && event.detail) {
+        const reasoning = run.node.querySelector('[data-role="agent-run-reasoning"]');
+        if (reasoning) {
+          const followReasoning = isAgentScrollerNearBottom(reasoning, 24);
+          reasoning.textContent = event.detail;
+          if (followReasoning) reasoning.scrollTop = reasoning.scrollHeight;
+        }
+      } else if (event.stage || event.title) {
+        const activity = run.node.querySelector('[data-role="agent-run-activity"]');
+        const activityTitle = run.node.querySelector('[data-role="agent-run-activity-title"]');
+        const activityDetail = run.node.querySelector('[data-role="agent-run-activity-detail"]');
+        if (activity) activity.className = `cloud-ops-agent-run-activity is-${event.status || "running"}`;
+        if (activityTitle) activityTitle.textContent = event.title || "处理中";
+        if (activityDetail) {
+          activityDetail.textContent = event.detail || "";
+          activityDetail.hidden = !event.detail;
         }
       }
       if (event.approval?.approval_id) {
         const approval = event.approval;
-        const list = run.node.querySelector('[data-role="agent-run-steps"]');
+        const list = run.node.querySelector('[data-role="agent-run-approvals"]');
         const existing = run.node.querySelector(`[data-agent-approval-id="${CSS.escape(approval.approval_id)}"]`);
         if (list && !existing) {
-          const item = document.createElement("li");
+          const item = document.createElement("article");
           item.className = "is-waiting is-approval";
           item.dataset.agentApprovalId = approval.approval_id;
           const heading = document.createElement("span");
-          heading.textContent = approval.title || "Codex 请求确认";
+          heading.textContent = approval.title || "山海智枢请求确认";
           item.appendChild(heading);
           const detail = document.createElement("small");
           detail.textContent = [
@@ -2826,7 +2975,7 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
           list.appendChild(item);
         }
       }
-      agentMessages.scrollTop = agentMessages.scrollHeight;
+      if (followPrimary) agentMessages.scrollTop = agentMessages.scrollHeight;
       syncAgentMessageViews();
     };
 
@@ -2852,9 +3001,9 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
           item.classList.remove("is-waiting", "is-submitting");
           item.classList.add(normalizedDecision === "accept" ? "is-completed" : "is-declined");
           const actions = item.querySelector(".cloud-ops-agent-approval-actions");
-          if (actions) actions.textContent = normalizedDecision === "accept" ? "已批准，Codex 继续执行并验证" : "已拒绝，Codex 将继续给出建议";
+          if (actions) actions.textContent = normalizedDecision === "accept" ? "已批准，山海智枢继续执行并验证" : "已拒绝，山海智枢将继续给出建议";
         });
-        setStatus(normalizedDecision === "accept" ? "已批准本次操作，等待 Codex 执行与回读。" : "已拒绝本次操作。", normalizedDecision === "accept" ? "loading" : "ok");
+        setStatus(normalizedDecision === "accept" ? "已批准本次操作，等待山海智枢执行与回读。" : "已拒绝本次操作。", normalizedDecision === "accept" ? "loading" : "ok");
       } catch (error) {
         approvalItems.forEach((item) => {
           item.classList.remove("is-submitting");
@@ -2866,6 +3015,7 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
 
     const finishAgentRunMessage = (run, payload) => {
       if (!run?.node) return;
+      const followPrimary = isAgentScrollerNearBottom(agentMessages);
       window.clearInterval(run.timer);
       const elapsedMs = Number(payload?.latency_ms || run.lastElapsedMs || (Date.now() - run.startedAt));
       run.lastElapsedMs = elapsedMs;
@@ -2880,28 +3030,44 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
         answer.hidden = false;
         answer.textContent = payload?.answer || "模型没有返回文本。";
       }
+      const reasoning = run.node.querySelector('[data-role="agent-run-reasoning"]');
+      if (reasoning && payload?.reasoning_summary) {
+        const followReasoning = isAgentScrollerNearBottom(reasoning, 24);
+        reasoning.textContent = payload.reasoning_summary;
+        if (followReasoning) reasoning.scrollTop = reasoning.scrollHeight;
+      } else if (reasoning) {
+        reasoning.textContent = "本次任务未返回可展示的思考摘要。";
+      }
+      const activity = run.node.querySelector('[data-role="agent-run-activity"]');
+      const activityTitle = run.node.querySelector('[data-role="agent-run-activity-title"]');
+      const activityDetail = run.node.querySelector('[data-role="agent-run-activity-detail"]');
+      if (activity) activity.className = "cloud-ops-agent-run-activity is-completed";
+      if (activityTitle) activityTitle.textContent = "处理完成";
+      if (activityDetail) activityDetail.hidden = true;
       const trace = run.node.querySelector(".cloud-ops-agent-run-trace");
       if (trace) {
-        trace.open = false;
         const summary = trace.querySelector("summary");
-        if (summary) summary.textContent = `查看思考与执行过程 · ${formatAgentDuration(elapsedMs)}`;
+        if (summary) summary.textContent = `思考过程 · ${formatAgentDuration(elapsedMs)}`;
       }
       const meta = run.node.querySelector('[data-role="agent-run-meta"]');
       if (meta) {
         const kind = payload?.run_kind === "codex_operations"
-          ? "Codex 运维"
+          ? "智能运维"
           : payload?.run_kind === "codex_general"
-            ? "Codex 通用智能体"
+            ? "通用智能体"
           : payload?.run_kind === "vehicle_diagnosis"
             ? "自动车辆诊断"
             : "一体化对话";
-        meta.textContent = `${agentModelLabel(payload?.model || selectedAgentModel())} · ${formatAgentDuration(elapsedMs)} · ${kind}`;
+        const permissionLabel = payload?.permission_label || agentPermissionLabels[payload?.permission_mode] || agentPermissionLabels[selectedAgentPermissionMode()];
+        meta.textContent = `${agentModelLabel(payload?.model || selectedAgentModel())} · ${permissionLabel} · ${formatAgentDuration(elapsedMs)} · ${kind}`;
       }
+      if (followPrimary) agentMessages.scrollTop = agentMessages.scrollHeight;
       syncAgentMessageViews();
     };
 
     const failAgentRunMessage = (run, error) => {
       if (!run?.node) return;
+      const followPrimary = isAgentScrollerNearBottom(agentMessages);
       window.clearInterval(run.timer);
       const elapsedMs = Date.now() - run.startedAt;
       run.node.classList.remove("is-running");
@@ -2917,6 +3083,7 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
       }
       const trace = run.node.querySelector(".cloud-ops-agent-run-trace");
       if (trace) trace.open = true;
+      if (followPrimary) agentMessages.scrollTop = agentMessages.scrollHeight;
       syncAgentMessageViews();
     };
 
@@ -2960,8 +3127,8 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
         return;
       }
       if (!agentCanChat) {
-        appendAgentMessage("error", "Codex App Server 尚未就绪，不能发起对话。");
-        setStatus("智能体 Codex 链路未就绪", "error");
+        appendAgentMessage("error", "山海智枢尚未就绪，不能发起对话。");
+        setStatus("山海智枢链路未就绪", "error");
         return;
       }
 
@@ -2977,7 +3144,7 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
         resizeAgentInput(agentPageInput);
       }
       if (agentLatency) agentLatency.textContent = "正在思考 · 0.0 秒";
-      setStatus("GPT-5.6 Terra 正在深度思考；Codex 会按需搜索网页、读取系统或调用车辆工具。", "loading");
+      setStatus(`GPT-5.6 Terra 正在深度思考 · ${agentPermissionLabels[selectedAgentPermissionMode()]}`, "loading");
       setAgentComposerBusy(true);
       const run = createAgentRunMessage(selectedAgentModel());
       let finalPayload = null;
@@ -2991,6 +3158,7 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
           body: JSON.stringify({
             message: text,
             model: selectedAgentModel(),
+            permission_mode: selectedAgentPermissionMode(),
             selected_vehicle_id: selectedVehicleId(),
             history: priorHistory
           })
@@ -3027,9 +3195,9 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
         if (agentLatency) agentLatency.textContent = `${finalPayload?.model_error ? "证据摘要" : "完成"} · ${formatAgentDuration(finalPayload.latency_ms)}`;
         setStatus(
           finalPayload?.run_kind === "codex_operations"
-            ? "Codex 运维完成；已记录调查、审批、执行与验证过程。"
+            ? "智能运维完成；已记录调查、审批、执行与验证过程。"
             : finalPayload?.run_kind === "codex_general"
-            ? "Codex 智能体回复完成；网页搜索与工具过程已记录。"
+            ? "山海智枢回复完成；实时搜索与工具过程已记录。"
             : finalPayload?.run_kind === "vehicle_diagnosis"
             ? (finalPayload?.model_error ? "车辆证据采集完成；模型总结未完成，已返回可审计摘要。" : "车辆诊断完成；未执行任何车辆变更。")
             : "山海智枢回复完成；车辆上下文由消息自动识别。",
@@ -3866,6 +4034,12 @@ Codex 工具：实时 Web Search、只读 shell、文件与命令审批、车辆
       select.addEventListener("change", () => {
         const model = setAgentModelSelection(select.value, true);
         setStatus(`山海智枢后续请求将使用 ${agentModelLabel(model)}。`, "ok");
+      });
+    });
+    agentPermissionSelects.forEach((select) => {
+      select.addEventListener("change", () => {
+        const mode = setAgentPermissionSelection(select.value, true);
+        setStatus(`山海智枢后续请求将使用“${agentPermissionLabels[mode]}”模式。`, "ok");
       });
     });
     const handleAgentComposerKeydown = (event, input) => {

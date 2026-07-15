@@ -347,6 +347,29 @@ const cloudOpsCodexWebSearchMode = (() => {
 const cloudOpsCodexAgentCwd = path.resolve(process.env.CLOUD_OPS_CODEX_AGENT_CWD || projectRoot);
 const cloudOpsCodexAgentTimeoutMs = Number(process.env.CLOUD_OPS_CODEX_AGENT_TIMEOUT_MS || 20 * 60 * 1000);
 const cloudOpsCodexApprovalTimeoutMs = Number(process.env.CLOUD_OPS_CODEX_APPROVAL_TIMEOUT_MS || 10 * 60 * 1000);
+const cloudOpsAgentPermissionModes = Object.freeze({
+  on_request: {
+    label: '请求批准',
+    approvalPolicy: 'on-request',
+    approvalsReviewer: 'user',
+    sandbox: 'read-only',
+    sandboxPolicy: { type: 'readOnly', networkAccess: false }
+  },
+  auto_review: {
+    label: '替我审批',
+    approvalPolicy: 'on-request',
+    approvalsReviewer: 'auto_review',
+    sandbox: 'read-only',
+    sandboxPolicy: { type: 'readOnly', networkAccess: false }
+  },
+  full_access: {
+    label: '完全访问权限',
+    approvalPolicy: 'never',
+    approvalsReviewer: 'user',
+    sandbox: 'danger-full-access',
+    sandboxPolicy: { type: 'dangerFullAccess' }
+  }
+});
 const cloudOpsAgentDiagnoseToolTimeoutS = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_TOOL_TIMEOUT_S || 45);
 const cloudOpsAgentDiagnoseSshTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_SSH_TIMEOUT_MS || 8000);
 const cloudOpsAgentDiagnoseModelTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_MODEL_TIMEOUT_MS || 240000);
@@ -1308,10 +1331,10 @@ async function getCloudOpsCodexDeploymentStatus() {
     app_server: appServer,
     cli,
     safety: [
-      '所有山海智枢对话统一进入 Codex App Server；浏览器不能直接连接 App Server。',
-      `Codex 原生 Web Search 为 ${cloudOpsCodexWebSearchMode}；项目 shell 保持只读 sandbox，宿主机访问通过受控 cloud_shell。`,
+      '所有山海智枢对话统一进入服务端智能体引擎，浏览器不直接持有模型凭据。',
+      `实时搜索为 ${cloudOpsCodexWebSearchMode}；宿主机访问通过受控 cloud_shell。`,
       '车辆访问只通过后端 vehicle_tool / vehicle_ssh 动态工具，不允许本地 shell 绕过车辆安全网关。',
-      '只读检查自动执行；写入、重启、部署和非白名单 SSH 命令需要 vehicle:control 权限逐项审批。'
+      '只读检查自动执行；自动审批和完全访问模式只对具备相应操作权限的账号开放。'
     ]
   };
 }
@@ -6375,7 +6398,8 @@ function cloudOpsAgentHistoryRecord(record) {
     prompt_snippet: prompt.slice(0, 500),
     answer_snippet: answer.slice(0, 900),
     error: error ? error.slice(0, 500) : null,
-    mode: record.mode || 'integrated_ai_ops'
+    mode: record.mode || 'integrated_ai_ops',
+    permission_mode: normalizeCloudOpsAgentPermissionMode(record.permission_mode)
   };
 }
 
@@ -7037,6 +7061,16 @@ function shouldRunCloudOpsCodexAgent(message) {
   return /(自修复|修复|处理(?:一下)?|解决|恢复|重启|重新启动|修改|调整|配置|部署|更新代码|回滚|清理|安装|卸载|执行命令|执行操作|登录|ssh|进入(?:车端|主控|media)|重发任务|重新下发|启动服务|停止服务)/i.test(text);
 }
 
+function normalizeCloudOpsAgentPermissionMode(value) {
+  const mode = String(value || '').trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(cloudOpsAgentPermissionModes, mode) ? mode : 'on_request';
+}
+
+function cloudOpsAgentPermissionConfig(value) {
+  const mode = normalizeCloudOpsAgentPermissionMode(value);
+  return { mode, ...cloudOpsAgentPermissionModes[mode] };
+}
+
 function sanitizeCloudOpsCodexCommandForDisplay(command) {
   return String(command || '')
     .replace(/((?:password|passwd|token|secret|api[_-]?key|authorization)\s*[=:]\s*)([^\s'";]+)/gi, '$1<redacted>')
@@ -7055,6 +7089,33 @@ function isCloudOpsCodexForbiddenCommand(command) {
     /\brostopic\s+pub\b.*(?:cmd_vel|vehicleControl|chassis|remote_control|control_command)/i.test(text) ||
     /\brm\s+-[^\n]*r[^\n]*f[^\n]*\s+\/(?:\s|$)/i.test(text) ||
     /\bdd\s+[^\n]*\bof=\/dev\//i.test(text);
+}
+
+function isCloudOpsCodexForbiddenVehicleTool(toolName, args) {
+  const name = String(toolName || '').trim().toLowerCase();
+  if (
+    /^(?:can\.(?:send|raw)|vehicle\.(?:drive|motion)|chassis\.(?:command|control)|remote_control(?:\.|$))/.test(name)
+  ) {
+    return true;
+  }
+  const serializedArgs = safeJsonStringify(args || {}, 6000);
+  return /\b(?:cansend|cmd_vel|vehicleControl|chassis_command|motion_control|bypass_(?:estop|safety))\b/i.test(serializedArgs);
+}
+
+function isCloudOpsCodexAutoReviewHighRisk(kind, detail) {
+  const command = String(detail?.command || '').trim();
+  if (command && (
+    /(^|[;&|]\s*)(?:sudo\s+)?(?:rm|shred|wipefs|mkfs|fdisk|parted|dd)(?:\s|$)/i.test(command) ||
+    /\b(?:shutdown|poweroff|halt|init\s+[06]|userdel|groupdel|passwd|chpasswd|iptables|nft|ufw)\b/i.test(command) ||
+    /(?:^|\s)(?:chmod|chown)\s+-R\b[^\n]*(?:\s\/|\s\/etc|\s\/home)(?:\s|$)/i.test(command) ||
+    /(?:>|tee\s+)(?:\s*)(?:\/etc\/(?:passwd|shadow|sudoers)|\/root\/\.ssh)/i.test(command)
+  )) {
+    return true;
+  }
+  if (kind === 'vehicle_tool') {
+    return isCloudOpsCodexForbiddenVehicleTool(detail?.tool_name, detail?.arguments);
+  }
+  return false;
 }
 
 function isCloudOpsCodexReadOnlySshCommand(command) {
@@ -7130,7 +7191,7 @@ function createCloudOpsCodexApproval({ runId, actor, kind, detail, onProgress })
     approval_id: approvalId,
     run_id: runId,
     kind,
-    title: detail.title || 'Codex 请求执行变更',
+    title: detail.title || '山海智枢请求执行变更',
     reason: detail.reason || null,
     command: detail.command ? sanitizeCloudOpsCodexCommandForDisplay(detail.command) : null,
     cwd: detail.cwd || null,
@@ -7291,19 +7352,27 @@ async function executeCloudOpsCodexCloudShell(argumentsPayload) {
   }
 }
 
-function buildCloudOpsCodexInstructions({ vehicleId, summary, tailscalePeer }) {
+function buildCloudOpsCodexInstructions({ vehicleId, summary, tailscalePeer, permissionMode }) {
+  const permission = cloudOpsAgentPermissionConfig(permissionMode);
+  const permissionInstruction = permission.mode === 'on_request'
+    ? '写入、重启、部署和非白名单命令必须暂停并等待网页审批。'
+    : permission.mode === 'auto_review'
+      ? '变更由安全审查器根据风险代为审批；被拒绝时不得绕过。'
+      : '用户已授予完全访问权限；可在完成需求所必需的范围内直接执行变更，但车辆安全硬限制仍不可绕过。';
   return [
-    '你是“山海智枢”，完整运行在 OpenAI Codex App Server 上，由 GPT-5.6 Terra 统一驱动。你不是简单问答接口，而是可以自主规划、搜索、读取文件、执行 shell、调用车辆工具并在审批后完成变更的通用智能体。',
+    '你是“山海智枢”，由 GPT-5.6 Terra 统一驱动。你不是简单问答接口，而是可以自主规划、搜索、读取文件、执行 shell、调用车辆工具并完成变更的通用智能体。',
     '普通知识问答、写作、翻译、总结、编程和方案讨论应像完整的通用 AI 助手一样自然回答，不要机械套用车辆运维模板。',
     '涉及“今天、最新、目前、刚刚、实时、新闻、天气、价格、政策、版本”等时效信息时，必须优先调用原生 Web Search 核实；回答要标注信息日期并给出可点击的来源 URL。只有工具确实失败时才能说明无法联网，不得把模型知识截止时间冒充实时结果。',
-    '使用 Codex 原生 shell 读取项目文件和执行 sandbox 内命令；需要读取宿主机 systemd、Docker、端口、进程或日志时使用 cloud_shell。cloud_shell 的严格只读命令自动执行，写文件、安装、重启、部署等动作必须发起网页审批；审批被拒绝时不得声称已执行。',
+    '使用内置 shell 读取项目文件和执行命令；需要读取宿主机 systemd、Docker、端口、进程或日志时使用 cloud_shell。严格遵循当前权限模式，操作被拒绝时不得声称已执行。',
     '车辆问题必须先调查再变更。车辆实时数据和远程操作只允许使用 vehicle_tool 或 vehicle_ssh 动态工具；不要用本地 curl、ssh、scp 绕过车辆安全网关。',
-    'vehicle_tool 的只读工具会自动执行；写入、重启、部署、任务或车身控制工具会暂停并请求网页审批。',
-    'vehicle_ssh 的严格只读命令会自动执行；其他命令会暂停并展示完整命令等待审批。不得把密码、Token、私钥或 Cookie 放进命令。',
+    `vehicle_tool 和 vehicle_ssh 的严格只读操作会自动执行。${permissionInstruction}`,
+    '不得把密码、Token、私钥或 Cookie 放进命令。',
     'vehicle_ssh 做只读检查时使用直接命令或分号分隔的简单命令，例如 hostname、date、uptime、ping、pgrep、pidof、ss、systemctl status、journalctl；不要套 bash -lc，不要使用管道、重定向、命令替换或后台符号，否则会被视为需要审批。',
     '不得执行原始 CAN 帧、车辆运动控制、绕过急停或其他可能造成人身/车辆风险的命令。此类需求只说明需要现场安全流程。',
     '修复后必须回读状态并说明：根因、执行内容、验证证据、剩余风险。审批被拒绝时继续提供可执行建议，不要声称已经修复。',
     '需要澄清时直接在最终回复中向用户提问，不调用当前网页无法呈现的交互式用户输入工具。默认使用用户正在使用的语言，避免输出隐藏思维链。',
+    '除非用户明确询问系统实现或运行时诊断，最终回复不得提及 Codex、OpenAI、App Server、CLI 或其他底层产品名，统一以“山海智枢”的身份回复。',
+    `当前权限模式：${permission.label}。`,
     `当前服务器时间：${new Date().toISOString()}`,
     `当前目标车辆：${vehicleId || '未指定'}`,
     `车辆注册摘要：${safeJsonStringify(summary, 8000)}`,
@@ -7311,7 +7380,7 @@ function buildCloudOpsCodexInstructions({ vehicleId, summary, tailscalePeer }) {
   ].join('\n');
 }
 
-async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicleId, actor, operationIntent, onProgress }) {
+async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicleId, actor, actorUser, permissionMode, operationIntent, onProgress }) {
   if (!cloudOpsCodexAgentEnabled) {
     const error = new Error('cloud_ops_codex_agent_disabled');
     error.status = 503;
@@ -7324,6 +7393,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
   const summary = rawVehicle ? makeCloudOpsAgentVehicleSummary(rawVehicle) : null;
   const mediaTarget = vehicleId ? await resolveCloudOpsVehicleMediaSshTarget(vehicleId, rawVehicle) : null;
   const codexModel = cloudOpsCodexAgentModel;
+  const permission = cloudOpsAgentPermissionConfig(permissionMode);
   const child = spawn(cloudOpsCodexBin, [
     '-c', `web_search=${JSON.stringify(cloudOpsCodexWebSearchMode)}`,
     'app-server',
@@ -7338,6 +7408,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
   let stderr = '';
   let answer = '';
   let reasoningSummary = '';
+  let lastReasoningEmissionLength = 0;
   let webSearchCount = 0;
   let completed = false;
   let closing = false;
@@ -7366,6 +7437,24 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
   const respond = (id, result) => send({ id, result });
 
   const requestCustomApproval = async (kind, detail) => {
+    const requiredPermission = detail.required_permission || 'vehicle:control';
+    if (permission.mode !== 'on_request') {
+      const hasPermission = authStore.hasPermission(actorUser, requiredPermission);
+      const riskDenied = permission.mode === 'auto_review' && isCloudOpsCodexAutoReviewHighRisk(kind, detail);
+      const approved = hasPermission && !riskDenied;
+      cloudOpsAgentProgress(onProgress, {
+        stage: 'permission_review',
+        status: approved ? 'completed' : 'declined',
+        title: approved
+          ? `${permission.label}已放行本次操作`
+          : riskDenied
+            ? '安全审查已拒绝高风险操作'
+            : '当前账号无权执行本次操作',
+        detail: detail.command || detail.tool_name || requiredPermission,
+        elapsed_ms: Date.now() - startedAt
+      });
+      return approved;
+    }
     const outcome = await createCloudOpsCodexApproval({ runId, actor, kind, detail, onProgress });
     return outcome.decision === 'accept';
   };
@@ -7387,7 +7476,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         if (!autoRead) {
           const approved = await requestCustomApproval('cloud_shell', {
             title: '确认执行云服务器命令',
-            reason: args.reason || 'Codex 请求修改云服务器状态',
+            reason: args.reason || '山海智枢请求修改云服务器状态',
             command,
             cwd: cloudOpsCodexAgentCwd,
             required_permission: 'vehicle:control'
@@ -7400,7 +7489,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         cloudOpsAgentProgress(onProgress, {
           stage: 'codex_cloud_shell',
           status: 'running',
-          title: autoRead ? 'Codex 正在执行宿主机只读命令' : 'Codex 正在执行已批准的宿主机命令',
+          title: autoRead ? '正在执行宿主机只读命令' : '正在执行已授权的宿主机命令',
           detail: sanitizeCloudOpsCodexCommandForDisplay(command),
           elapsed_ms: Date.now() - startedAt
         });
@@ -7417,11 +7506,18 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
       }
       if (params.tool === 'vehicle_tool') {
         const toolName = String(args.tool_name || '').trim();
+        if (isCloudOpsCodexForbiddenVehicleTool(toolName, args.args)) {
+          respond(messagePayload.id, cloudOpsCodexDynamicToolResponse(false, {
+            ok: false,
+            error: 'tool_blocked_by_vehicle_safety_policy'
+          }));
+          return;
+        }
         const autoRead = toolName === 'tool_list' || toolName === 'vehicle_detail' || cloudOpsCodexAutoReadToolNames.has(toolName);
         if (!autoRead) {
           const approved = await requestCustomApproval('vehicle_tool', {
             title: `确认执行车辆工具 ${toolName || 'unknown'}`,
-            reason: args.reason || 'Codex 根据诊断提出车辆变更',
+            reason: args.reason || '山海智枢根据诊断提出车辆变更',
             vehicle_id: args.vehicle_id || vehicleId,
             tool_name: toolName,
             arguments: args.args || {},
@@ -7452,7 +7548,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         if (!autoRead) {
           const approved = await requestCustomApproval('vehicle_ssh', {
             title: `确认在 ${args.target || 'media'} 执行 SSH 命令`,
-            reason: args.reason || 'Codex 根据诊断提出远程修复命令',
+            reason: args.reason || '山海智枢根据诊断提出远程修复命令',
             vehicle_id: args.vehicle_id || vehicleId,
             command
           });
@@ -7487,7 +7583,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         cloudOpsAgentProgress(onProgress, {
           stage: 'codex_tool',
           status: 'running',
-          title: 'Codex 只读主机命令已自动放行',
+          title: '只读主机命令已自动放行',
           detail: sanitizeCloudOpsCodexCommandForDisplay(command),
           elapsed_ms: Date.now() - startedAt
         });
@@ -7495,7 +7591,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         return;
       }
       requestCustomApproval('codex_command', {
-        title: '确认 Codex 本地命令',
+        title: '确认执行本地命令',
         reason: params.reason || '命令超出当前只读 sandbox',
         command,
         cwd: params.cwd || null,
@@ -7505,7 +7601,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
     }
     if (messagePayload.method === 'item/fileChange/requestApproval') {
       requestCustomApproval('codex_file_change', {
-        title: '确认 Codex 文件变更',
+        title: '确认执行文件变更',
         reason: messagePayload.params?.reason || '文件变更超出当前只读 sandbox',
         cwd: cloudOpsCodexAgentCwd,
         vehicle_id: vehicleId,
@@ -7524,12 +7620,13 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
     }
     if (messagePayload.method === 'item/reasoning/summaryTextDelta') {
       reasoningSummary += String(params.delta || '');
-      if (reasoningSummary.length % 120 < String(params.delta || '').length) {
+      if (reasoningSummary.length - lastReasoningEmissionLength >= 80) {
+        lastReasoningEmissionLength = reasoningSummary.length;
         cloudOpsAgentProgress(onProgress, {
           stage: 'codex_reasoning',
           status: 'running',
-          title: 'Codex 正在推理',
-          detail: normalizeReply(reasoningSummary).slice(-600),
+          title: '正在深度思考',
+          detail: normalizeReply(reasoningSummary).slice(-4000),
           elapsed_ms: Date.now() - startedAt
         });
       }
@@ -7544,7 +7641,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         cloudOpsAgentProgress(onProgress, {
           stage: 'codex_web_search',
           status: messagePayload.method === 'item/completed' ? 'completed' : 'running',
-          title: messagePayload.method === 'item/completed' ? '实时网页检索已完成' : 'Codex 正在检索实时信息',
+          title: messagePayload.method === 'item/completed' ? '实时网页检索已完成' : '正在检索实时信息',
           detail: normalizeReply(detail) || 'Web Search',
           elapsed_ms: Date.now() - startedAt
         });
@@ -7553,7 +7650,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         cloudOpsAgentProgress(onProgress, {
           stage: 'codex_tool',
           status: messagePayload.method === 'item/completed' ? 'completed' : 'running',
-          title: messagePayload.method === 'item/completed' ? 'Codex 命令已完成' : 'Codex 正在执行只读命令',
+          title: messagePayload.method === 'item/completed' ? '命令已完成' : '正在执行只读命令',
           detail: sanitizeCloudOpsCodexCommandForDisplay(item.command || ''),
           elapsed_ms: Date.now() - startedAt
         });
@@ -7565,6 +7662,16 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
     }
     if (messagePayload.method === 'turn/completed') {
       completed = true;
+      if (reasoningSummary.length > lastReasoningEmissionLength) {
+        lastReasoningEmissionLength = reasoningSummary.length;
+        cloudOpsAgentProgress(onProgress, {
+          stage: 'codex_reasoning',
+          status: 'completed',
+          title: '思考完成',
+          detail: normalizeReply(reasoningSummary).slice(-4000),
+          elapsed_ms: Date.now() - startedAt
+        });
+      }
       const turn = params.turn || {};
       if (turn.status === 'completed') turnCompletionResolve(turn);
       else turnCompletionReject(new Error(turn.error?.message || `codex_turn_${turn.status || 'failed'}`));
@@ -7607,8 +7714,8 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
     cloudOpsAgentProgress(onProgress, {
       stage: 'codex',
       status: 'running',
-      title: '正在启动山海智枢 Codex 线程',
-      detail: `${codexModel} · ${cloudOpsAgentReasoningEffort} · Web Search ${cloudOpsCodexWebSearchMode} · 变更逐项审批`,
+      title: '正在启动山海智枢任务',
+      detail: `${codexModel} · ${cloudOpsAgentReasoningEffort} · 实时搜索 ${cloudOpsCodexWebSearchMode} · ${permission.label}`,
       elapsed_ms: 0
     });
     await request('initialize', {
@@ -7618,19 +7725,20 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
     const thread = await request('thread/start', {
       model: codexModel,
       cwd: cloudOpsCodexAgentCwd,
-      approvalPolicy: 'on-request',
-      approvalsReviewer: 'user',
-      sandbox: 'read-only',
+      approvalPolicy: permission.approvalPolicy,
+      approvalsReviewer: permission.approvalsReviewer,
+      sandbox: permission.sandbox,
       ephemeral: true,
       developerInstructions: buildCloudOpsCodexInstructions({
         vehicleId,
         summary,
-        tailscalePeer: mediaTarget?.peer || null
+        tailscalePeer: mediaTarget?.peer || null,
+        permissionMode: permission.mode
       }),
       dynamicTools: [
         {
           name: 'cloud_shell',
-          description: '在当前云服务器宿主机执行命令。hostname、uptime、systemctl status/is-active、journalctl、docker ps/logs 等严格只读命令自动执行；写入、重启、部署、安装等操作必须等待网页审批。禁止携带密码、Token、Cookie 或私钥。',
+          description: '在当前云服务器宿主机执行命令。hostname、uptime、systemctl status/is-active、journalctl、docker ps/logs 等严格只读命令自动执行；其他操作按当前权限模式处理。禁止携带密码、Token、Cookie 或私钥。',
           inputSchema: {
             type: 'object',
             required: ['command', 'reason'],
@@ -7644,7 +7752,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         },
         {
           name: 'vehicle_tool',
-          description: '调用 cloud-agent 注册的车辆工具。只读工具自动执行；写入、重启、部署和车辆控制工具会等待网页审批。',
+          description: '调用 cloud-agent 注册的车辆工具。只读工具自动执行；变更工具按当前权限模式和账号权限处理。',
           inputSchema: {
             type: 'object',
             required: ['vehicle_id', 'tool_name'],
@@ -7660,7 +7768,7 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
         },
         {
           name: 'vehicle_ssh',
-          description: '通过后端受控 SSH 进入车辆 media 或主控。严格只读命令自动执行，其他命令等待网页审批。禁止携带密码、Token 或私钥。',
+          description: '通过后端受控 SSH 进入车辆 media 或主控。严格只读命令自动执行，其他命令按当前权限模式处理。禁止携带密码、Token 或私钥。',
           inputSchema: {
             type: 'object',
             required: ['vehicle_id', 'target', 'command', 'reason'],
@@ -7694,12 +7802,12 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
       }],
       effort: cloudOpsAgentReasoningEffort,
       summary: 'detailed',
-      sandboxPolicy: { type: 'readOnly', networkAccess: false }
+      sandboxPolicy: permission.sandboxPolicy
     });
     await turnCompletion;
     return {
       ok: true,
-      answer: normalizeReply(answer) || 'Codex 已完成运维流程，但没有返回最终文本。',
+      answer: normalizeReply(answer) || '山海智枢已完成任务，但没有返回最终文本。',
       model: codexModel,
       requested_model: requestedModel || null,
       reasoning_effort: cloudOpsAgentReasoningEffort,
@@ -7707,8 +7815,10 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
       mode: 'codex_app_server',
       run_kind: (operationIntent || vehicleId) ? 'codex_operations' : 'codex_general',
       codex_run_id: runId,
+      permission_mode: permission.mode,
+      permission_label: permission.label,
       context: { vehicle_id: vehicleId || null, web_search_count: webSearchCount },
-      reasoning_summary: normalizeReply(reasoningSummary).slice(0, 6000)
+      reasoning_summary: normalizeReply(reasoningSummary).slice(-6000)
     };
   } finally {
     closing = true;
@@ -14993,7 +15103,7 @@ app.get('/api/cloud-ops/vehicles-lite', authStore.requirePermission('vehicle:rea
   }
 });
 
-app.get('/api/cloud-ops-agent/status', authStore.requirePermission('vehicle:read'), async (_req, res) => {
+app.get('/api/cloud-ops-agent/status', authStore.requirePermission('vehicle:read'), async (req, res) => {
   const [codexDeployment, vehicles] = await Promise.all([
     getCloudOpsCodexDeploymentStatus(),
     listCloudOpsAgentVehicleSummaries().catch(() => [])
@@ -15008,7 +15118,7 @@ app.get('/api/cloud-ops-agent/status', authStore.requirePermission('vehicle:read
     provider: cloudOpsCodexUnifiedRouteEnabled ? 'openai_codex_app_server' : 'subapi_openai_compatible',
     route: cloudOpsCodexUnifiedRouteEnabled ? 'unified_codex' : 'server_side_only',
     execution_route_label: cloudOpsCodexUnifiedRouteEnabled
-      ? `Codex App Server · Web Search ${cloudOpsCodexWebSearchMode}`
+      ? `山海智枢 · 实时搜索 ${cloudOpsCodexWebSearchMode}`
       : publicCloudOpsAgentBaseLabel(),
     public_entry_hint: '7791 -> JGZJ -> /api/cloud-ops-agent/*',
     upstream_base_url: publicCloudOpsAgentBaseLabel(),
@@ -15022,22 +15132,28 @@ app.get('/api/cloud-ops-agent/status', authStore.requirePermission('vehicle:read
     can_chat: cloudOpsAgentEnabled && configured,
     unified_codex: cloudOpsCodexUnifiedRouteEnabled,
     web_search: cloudOpsCodexWebSearchMode,
+    permission_modes: Object.entries(cloudOpsAgentPermissionModes).map(([value, item]) => ({
+      value,
+      label: item.label,
+      requires_control: value !== 'on_request'
+    })),
+    can_use_autonomous_permissions: authStore.hasPermission(req.jgzjAuth?.user, 'vehicle:control'),
     legacy_subapi_configured: legacySubapiConfigured,
     codex: codexDeployment,
     codex_app_server: codexDeployment.app_server,
     fleet: summarizeCloudOpsAgentFleet(vehicles),
     safeguards: [
-      '页面加载只读取车辆缓存、智能体状态、Codex 部署状态和对话历史。',
-      '所有用户消息统一由 GPT-5.6 Terra + Codex App Server 执行；浏览器不能直接连接 App Server。',
-      `时效性问题可调用 Codex 原生 Web Search（${cloudOpsCodexWebSearchMode}），结果必须给出可核验来源。`,
-      '具体车辆状态问题由 Codex 自主调用实时只读工具；注册缓存缺失时可补充 Tailscale 和 SSH 只读巡检。',
-      'Codex 只读工具自动执行；写入、重启、部署和非白名单 SSH 命令逐项请求网页审批。',
+      '页面加载只读取车辆缓存、智能体状态和对话历史。',
+      '所有用户消息统一由 GPT-5.6 Terra 智能体引擎执行；模型凭据不下发到浏览器。',
+      `时效性问题可调用实时搜索（${cloudOpsCodexWebSearchMode}），结果必须给出可核验来源。`,
+      '具体车辆状态问题由山海智枢自主调用实时只读工具；注册缓存缺失时可补充 Tailscale 和 SSH 只读巡检。',
+      '请求批准模式下，写入、重启、部署和非白名单 SSH 命令逐项请求网页审批。',
       '审批接口要求 vehicle:control 权限；原始 CAN、运动控制和绕过安全停止不开放。',
       'API key 只允许保存在服务器环境变量，不下发到前端。'
     ],
     missing_config: configured
       ? []
-      : [cloudOpsCodexUnifiedRouteEnabled ? 'Codex CLI/App Server' : 'CLOUD_OPS_AGENT_API_KEY or CLOUD_OPS_AGENT_SUBAPI_KEY']
+      : [cloudOpsCodexUnifiedRouteEnabled ? '山海智枢运行时' : 'CLOUD_OPS_AGENT_API_KEY or CLOUD_OPS_AGENT_SUBAPI_KEY']
   });
 });
 
@@ -15076,6 +15192,8 @@ app.get('/api/cloud-ops-agent/history', authStore.requirePermission('vehicle:rea
 app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read'), async (req, res) => {
   const message = normalizeReply(req.body?.message || req.body?.question || '');
   const requestedModel = String(req.body?.model || '').trim().slice(0, 120);
+  const permissionMode = normalizeCloudOpsAgentPermissionMode(req.body?.permission_mode);
+  const permission = cloudOpsAgentPermissionConfig(permissionMode);
   const selectedVehicleId = normalizeCloudOpsExplicitVehicleId(req.body?.selected_vehicle_id || '');
   const conversationHistory = req.body?.history;
   if (!message) {
@@ -15083,6 +15201,14 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
   }
   if (message.length > 6000) {
     return res.status(400).json({ ok: false, error: 'message_too_long', detail: 'message must be <= 6000 characters.' });
+  }
+  if (permissionMode !== 'on_request' && !authStore.hasPermission(req.jgzjAuth?.user, 'vehicle:control')) {
+    return res.status(403).json({
+      ok: false,
+      error: 'permission_mode_denied',
+      required_permission: 'vehicle:control',
+      detail: `当前账号无权使用“${permission.label}”模式。`
+    });
   }
 
   res.status(200);
@@ -15105,6 +15231,8 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
     ok: true,
     mode: 'integrated_ai_ops',
     model: cloudOpsCodexUnifiedRouteEnabled ? cloudOpsCodexAgentModel : resolveCloudOpsAgentModel(requestedModel),
+    permission_mode: permissionMode,
+    permission_label: permission.label,
     title: '山海智枢已开始处理',
     elapsed_ms: 0
   });
@@ -15140,14 +15268,14 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
       stage: 'intent',
       status: 'completed',
       title: runCodex
-        ? `${codexRequested ? '自动进入 Codex 运维' : '自动进入统一 Codex 智能体'}${vehicleId ? ` · ${vehicleId}` : ''}`
+        ? `${codexRequested ? '自动进入智能运维' : '山海智枢正在处理'}${vehicleId ? ` · ${vehicleId}` : ''}`
         : runDiagnosis
           ? `自动进入 ${vehicleId} 车辆诊断`
           : '自动进入一体化对话',
       detail: runCodex
         ? codexRequested
-          ? 'Codex 将自主调查并调用所需工具，所有变更逐项等待网页审批'
-          : `GPT-5.6 Terra + Codex App Server · Web Search ${cloudOpsCodexWebSearchMode} · ${cloudOpsAgentReasoningEffort}`
+          ? `山海智枢将自主调查并调用所需工具 · ${permission.label}`
+          : `GPT-5.6 Terra · 实时搜索 ${cloudOpsCodexWebSearchMode} · ${cloudOpsAgentReasoningEffort} · ${permission.label}`
         : runDiagnosis
         ? `${vehicleSource === 'registry_match' ? '已匹配车辆注册缓存' : '已确定目标车辆'}，将调用实时只读工具采集证据`
         : diagnosisRequested && !vehicleId
@@ -15167,6 +15295,8 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
           history: normalizedHistory,
           vehicleId,
           actor,
+          actorUser: req.jgzjAuth?.user,
+          permissionMode,
           operationIntent: codexRequested,
           onProgress
         })
@@ -15195,7 +15325,8 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
       latency_ms: result.latency_ms,
       mode: result.mode || 'integrated_ai_ops',
       prompt: message,
-      answer: result.answer
+      answer: result.answer,
+      permission_mode: permissionMode
     });
     await appendCloudOpsAgentHistory(historyRecord).catch((error) => {
       console.info('cloud_ops_agent_history_write_failed', JSON.stringify({ error: error.message }));
@@ -15207,6 +15338,8 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
       run_kind: result.run_kind || (runDiagnosis ? 'vehicle_diagnosis' : 'conversation'),
       audit_id: historyRecord.id,
       ...result,
+      permission_mode: result.permission_mode || permissionMode,
+      permission_label: result.permission_label || permission.label,
       latency_ms: Date.now() - startedAt,
       evidence: result.evidence ? sanitizeCloudOpsPayload(result.evidence) : undefined
     });
@@ -15218,6 +15351,7 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
       vehicle_id: null,
       model: requestedModel || cloudOpsAgentModel,
       prompt: message,
+      permission_mode: permissionMode,
       error: error?.message || 'cloud_ops_agent_run_failed'
     }).catch((writeError) => {
       console.info('cloud_ops_agent_history_write_failed', JSON.stringify({ error: writeError.message }));
