@@ -340,10 +340,10 @@ const cloudOpsCodexAgentModel = process.env.CLOUD_OPS_CODEX_AGENT_MODEL || 'gpt-
 const cloudOpsCodexAgentCwd = path.resolve(process.env.CLOUD_OPS_CODEX_AGENT_CWD || projectRoot);
 const cloudOpsCodexAgentTimeoutMs = Number(process.env.CLOUD_OPS_CODEX_AGENT_TIMEOUT_MS || 20 * 60 * 1000);
 const cloudOpsCodexApprovalTimeoutMs = Number(process.env.CLOUD_OPS_CODEX_APPROVAL_TIMEOUT_MS || 10 * 60 * 1000);
-const cloudOpsAgentDiagnoseToolTimeoutS = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_TOOL_TIMEOUT_S || 18);
+const cloudOpsAgentDiagnoseToolTimeoutS = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_TOOL_TIMEOUT_S || 45);
 const cloudOpsAgentDiagnoseSshTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_SSH_TIMEOUT_MS || 8000);
 const cloudOpsAgentDiagnoseModelTimeoutMs = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_MODEL_TIMEOUT_MS || 240000);
-const cloudOpsAgentDiagnoseConcurrency = Math.min(8, Math.max(1, Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_CONCURRENCY || 8) || 8));
+const cloudOpsAgentDiagnoseConcurrency = Math.min(6, Math.max(1, Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_CONCURRENCY || 4) || 4));
 const cloudOpsAgentDiagnoseSshKey = process.env.CLOUD_OPS_AGENT_DIAGNOSE_SSH_KEY || '/home/admin1/.ssh/jgzj_vehicle_diag_ed25519';
 const cloudOpsAgentDiagnoseMaxEvidenceChars = Number(process.env.CLOUD_OPS_AGENT_DIAGNOSE_MAX_EVIDENCE_CHARS || 26000);
 const cloudOpsAgentTailscaleBin = process.env.CLOUD_OPS_AGENT_TAILSCALE_BIN || '/usr/bin/tailscale';
@@ -6742,20 +6742,36 @@ function cloudOpsAgentReadOnlyDiagnosticTools() {
   return [
     { action: 'vehicle_detail', label: '车辆详情缓存', timeout_s: 15 },
     { action: 'tool_list', label: '车端工具列表', timeout_s: 15 },
-    { action: 'tool_call', tool_name: 'health.autodrive_check', label: '自动驾驶一键健康检查', args: {}, timeout_s: 22 },
-    { action: 'tool_call', tool_name: 'vehicle.snapshot', label: '整车状态快照', args: { include_topic_samples: true }, timeout_s: 20 },
-    { action: 'tool_call', tool_name: 'health.snapshot', label: '系统健康快照', args: {}, timeout_s: 18 },
-    { action: 'tool_call', tool_name: 'network.master_probe', label: '主控链路探测', args: { include_ssh: true }, timeout_s: 18 },
-    { action: 'tool_call', tool_name: 'ros.overview', label: 'ROS 总览', args: {}, timeout_s: 18 },
-    { action: 'tool_call', tool_name: 'route.list', label: '巡逻路线库存', args: {}, timeout_s: 18 },
-    { action: 'tool_call', tool_name: 'status.localization', label: '定位状态', args: {}, timeout_s: 18 },
-    { action: 'tool_call', tool_name: 'status.planning', label: '规划状态', args: {}, timeout_s: 18 },
-    { action: 'tool_call', tool_name: 'status.routing', label: 'Routing 状态', args: {}, timeout_s: 18 },
-    { action: 'tool_call', tool_name: 'status.control', label: '控制状态', args: {}, timeout_s: 18 },
-    { action: 'tool_call', tool_name: 'status.can', label: '底盘 CAN 状态', args: {}, timeout_s: 18 },
-    { action: 'tool_call', tool_name: 'status.obstacle_processor', label: '障碍物处理状态', args: {}, timeout_s: 18 },
-    { action: 'tool_call', tool_name: 'status.camera', label: '相机状态', args: { include_rate: true, sample_seconds: 1 }, timeout_s: 18 }
+    { action: 'tool_call', tool_name: 'health.autodrive_check', label: '自动驾驶一键健康检查', args: {}, timeout_s: 55 },
+    { action: 'tool_call', tool_name: 'vehicle.snapshot', label: '整车状态快照', args: { include_topic_samples: true }, timeout_s: 55 },
+    { action: 'tool_call', tool_name: 'health.snapshot', label: '系统健康快照', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'network.master_probe', label: '主控链路探测', args: { include_ssh: true }, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'ros.overview', label: 'ROS 总览', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'route.list', label: '巡逻路线库存', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'status.localization', label: '定位状态', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'status.planning', label: '规划状态', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'status.routing', label: 'Routing 状态', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'status.control', label: '控制状态', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'status.can', label: '底盘 CAN 状态', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'status.obstacle_processor', label: '障碍物处理状态', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'status.camera', label: '相机状态', args: { include_rate: true, sample_seconds: 1 }, timeout_s: 45 }
   ];
+}
+
+function cloudOpsAgentReadOnlyStatusTools() {
+  return [
+    { action: 'vehicle_detail', label: '车辆详情缓存', timeout_s: 15 },
+    { action: 'tool_call', tool_name: 'health.autodrive_check', label: '自动驾驶健康检查', args: {}, timeout_s: 55 },
+    { action: 'tool_call', tool_name: 'vehicle.snapshot', label: '整车实时快照', args: { include_topic_samples: true }, timeout_s: 55 },
+    { action: 'tool_call', tool_name: 'status.localization', label: '定位状态', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'status.planning', label: '规划状态', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'status.routing', label: 'Routing 状态', args: {}, timeout_s: 45 },
+    { action: 'tool_call', tool_name: 'status.can', label: '底盘 CAN 状态', args: {}, timeout_s: 45 }
+  ];
+}
+
+function shouldRunCloudOpsAgentComprehensiveDiagnosis(question) {
+  return /(深度|诊断|排查|故障|异常|为什么|无法|不能|不工作|掉线|离线|停车|停止|卡住|阻塞|任务失败|任务异常)/i.test(String(question || ''));
 }
 
 function compactCloudOpsExecutionForDiagnosis(item, limit = 4500) {
@@ -7027,7 +7043,11 @@ function isCloudOpsCodexForbiddenCommand(command) {
 function isCloudOpsCodexReadOnlySshCommand(command) {
   const text = String(command || '').trim();
   if (!text || text.length > 3000 || cloudOpsCodexCommandContainsSecret(text)) return false;
-  if (/[;\n\r|&><`$()]/.test(text)) return false;
+  if (/[\n\r|&><`$()]/.test(text)) return false;
+  if (text.includes(';')) {
+    const commands = text.split(';').map((item) => item.trim()).filter(Boolean);
+    return commands.length > 0 && commands.length <= 8 && commands.every(isCloudOpsCodexReadOnlySshCommand);
+  }
   if (/(\/etc\/shadow|\/proc\/\d+\/environ|\.env\b|id_rsa|id_ed25519|credentials|auth-store)/i.test(text)) return false;
   if (/\b(-delete|-exec|-execdir|--delete|--remove|--force|-rf)\b/i.test(text)) return false;
 
@@ -7043,6 +7063,9 @@ function isCloudOpsCodexReadOnlySshCommand(command) {
     return new Set(['status', 'show', 'is-active', 'is-enabled', 'list-units', 'list-unit-files']).has(subcommand);
   }
   if (commandName === 'journalctl') return true;
+  if (commandName === 'hostnamectl' || commandName === 'timedatectl') {
+    return !subcommand || subcommand === 'status' || subcommand === 'show';
+  }
   if (commandName === 'docker') {
     return new Set(['ps', 'logs', 'inspect', 'top', 'stats']).has(subcommand) && (subcommand !== 'stats' || parts.includes('--no-stream'));
   }
@@ -7631,7 +7654,13 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
     vehicle_id: resolvedVehicleId,
     elapsed_ms: Date.now() - startedAt
   });
-  const diagnosticTools = cloudOpsAgentReadOnlyDiagnosticTools();
+  const comprehensiveDiagnosis = shouldRunCloudOpsAgentComprehensiveDiagnosis(question);
+  const diagnosticTools = comprehensiveDiagnosis
+    ? cloudOpsAgentReadOnlyDiagnosticTools()
+    : cloudOpsAgentReadOnlyStatusTools();
+  const diagnosticConcurrency = comprehensiveDiagnosis
+    ? cloudOpsAgentDiagnoseConcurrency
+    : Math.min(3, cloudOpsAgentDiagnoseConcurrency);
   const toolsStartedAt = Date.now();
   let completedToolCount = 0;
   cloudOpsAgentProgress(onProgress, {
@@ -7701,7 +7730,7 @@ async function runCloudOpsAgentDeepDiagnosis({ question, vehicleId, actor, inclu
   };
   await Promise.all(
     Array.from(
-      { length: Math.min(cloudOpsAgentDiagnoseConcurrency, diagnosticTools.length) },
+      { length: Math.min(diagnosticConcurrency, diagnosticTools.length) },
       () => runDiagnosticToolWorker()
     )
   );
