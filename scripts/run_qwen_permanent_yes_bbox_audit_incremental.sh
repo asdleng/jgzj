@@ -13,6 +13,9 @@ SERVICE_URL="${QWEN_LABEL_SERVICE_URL:-http://127.0.0.1:18016}"
 PERMANENT_ROOT="${QWEN_PERMANENT_YES_ROOT:-/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/permanent_yes_frames}"
 LABEL_ROOT="${QWEN_PERMANENT_YES_LABEL_OUTPUT_ROOT:-/home/admin1/jgzj/.runtime/yolo_label_review/qwen_permanent_yes_bbox_labels_v1}"
 OUTPUT_ROOT="${QWEN_PERMANENT_YES_AUDIT_OUTPUT_ROOT:-/home/admin1/jgzj/.runtime/yolo_label_review/qwen_permanent_yes_bbox_audits_v1}"
+SOURCE_FILTER="${QWEN_PERMANENT_YES_SOURCE:-qwen_permanent_yes_frame}"
+INCLUDE_BARE_IMAGES="${QWEN_PERMANENT_YES_INCLUDE_BARE_IMAGES:-0}"
+SHA_INDEX="${QWEN_PERMANENT_YES_SHA_INDEX:-}"
 MAX_NEW="${QWEN_PERMANENT_YES_AUDIT_MAX_NEW:-80}"
 WORKERS="${QWEN_PERMANENT_YES_AUDIT_WORKERS:-1}"
 TIMEOUT_S="${QWEN_PERMANENT_YES_AUDIT_TIMEOUT_S:-120}"
@@ -54,14 +57,22 @@ timestamp() {
   if [ -n "$CLASS_FILTER" ]; then
     CLASS_ARGS=(--class-filter "$CLASS_FILTER")
   fi
+  BARE_ARGS=()
+  if [ "$INCLUDE_BARE_IMAGES" = "1" ]; then
+    BARE_ARGS=(--include-bare-images)
+    if [ -n "$SHA_INDEX" ]; then
+      BARE_ARGS+=(--sha-index "$SHA_INDEX")
+    fi
+  fi
 
-  echo "[$(timestamp)] start qwen_permanent_yes_bbox_audit max_new=$MAX_NEW workers=$WORKERS class_filter=${CLASS_FILTER:-all}"
+  echo "[$(timestamp)] start qwen_permanent_yes_bbox_audit max_new=$MAX_NEW workers=$WORKERS class_filter=${CLASS_FILTER:-all} root=$PERMANENT_ROOT source=$SOURCE_FILTER bare=$INCLUDE_BARE_IMAGES"
   if command -v ionice >/dev/null 2>&1; then
     ionice -c2 -n7 nice -n 10 python3 scripts/patrol_qwen_audit_permanent_yes_frames.py \
       --permanent-root "$PERMANENT_ROOT" \
       --label-root "$LABEL_ROOT" \
       --output-root "$OUTPUT_ROOT" \
       --service-url "$SERVICE_URL" \
+      --source "$SOURCE_FILTER" \
       --only-missing \
       "${CLASS_ARGS[@]}" \
       --limit "$MAX_NEW" \
@@ -70,6 +81,7 @@ timestamp() {
       --max-tokens "$MAX_TOKENS" \
       "${PROMPT_ARGS[@]}" \
       "${DAY_ARGS[@]}" \
+      "${BARE_ARGS[@]}" \
       $EXTRA_ARGS
   else
     nice -n 10 python3 scripts/patrol_qwen_audit_permanent_yes_frames.py \
@@ -77,6 +89,7 @@ timestamp() {
       --label-root "$LABEL_ROOT" \
       --output-root "$OUTPUT_ROOT" \
       --service-url "$SERVICE_URL" \
+      --source "$SOURCE_FILTER" \
       --only-missing \
       "${CLASS_ARGS[@]}" \
       --limit "$MAX_NEW" \
@@ -85,6 +98,7 @@ timestamp() {
       --max-tokens "$MAX_TOKENS" \
       "${PROMPT_ARGS[@]}" \
       "${DAY_ARGS[@]}" \
+      "${BARE_ARGS[@]}" \
       $EXTRA_ARGS
   fi
   echo "[$(timestamp)] done qwen_permanent_yes_bbox_audit"

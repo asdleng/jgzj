@@ -2,6 +2,7 @@
 import argparse
 import concurrent.futures
 import json
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -28,6 +29,8 @@ from patrol_qwen_label_vehicle_uploads import (
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 SOURCE = "qwen_permanent_yes_frame"
+BARE_SOURCE_SCHEMA = "jgzj_pulled_image_bare_source.v1"
+SHA_INDEX_SCHEMA = "jgzj_bare_image_sha_index.v1"
 
 
 def ms_to_iso(value):
@@ -36,6 +39,61 @@ def ms_to_iso(value):
     except Exception:
         return None
     return datetime.fromtimestamp(ms / 1000.0, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_collected_at_from_name(path):
+    match = re.search(r"(20\d{2})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})", path.name)
+    if match:
+        year, month, day, hour, minute, second = match.groups()
+        return f"{year}-{month}-{day}T{hour}:{minute}:{second}+08:00"
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return None
+
+
+def load_sha_index(path):
+    if not path:
+        return {}
+    payload = load_json(path)
+    if not isinstance(payload, dict):
+        return {}
+    items = payload.get("items")
+    return items if isinstance(items, dict) else {}
+
+
+def save_sha_index(path, root, items):
+    if not path:
+        return
+    payload = {
+        "schema": SHA_INDEX_SCHEMA,
+        "root": str(root),
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "items": items,
+    }
+    save_json_atomic(path, payload)
+
+
+def indexed_sha256(image_path, image_rel, sha_index, dirty):
+    if sha_index is None:
+        return sha256_file(image_path)
+    stat = image_path.stat()
+    current = {
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+    cached = sha_index.get(image_rel)
+    if (
+        isinstance(cached, dict)
+        and cached.get("size") == current["size"]
+        and cached.get("mtime_ns") == current["mtime_ns"]
+        and cached.get("sha256")
+    ):
+        return cached["sha256"]
+    image_sha = sha256_file(image_path)
+    sha_index[image_rel] = {**current, "sha256": image_sha}
+    dirty[0] = True
+    return image_sha
 
 
 def permanent_image_for_meta(meta_path, meta, permanent_root):
@@ -49,7 +107,55 @@ def permanent_image_for_meta(meta_path, meta, permanent_root):
     return image_path
 
 
-def iter_rows(permanent_root, source, day):
+def has_sidecar_meta(image_path):
+    return (
+        image_path.with_suffix(image_path.suffix + ".json").exists()
+        or image_path.with_suffix(".json").exists()
+    )
+
+
+def iter_bare_image_rows(permanent_root, source, day, sha_index, sha_index_dirty):
+    row_source = source or SOURCE
+    for image_path in sorted(permanent_root.glob("**/*")):
+        if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        if has_sidecar_meta(image_path):
+            continue
+        day_name = image_path.parent.name
+        if day and day_name != day:
+            continue
+        image_rel = normalize_rel(image_path.relative_to(permanent_root))
+        image_sha = indexed_sha256(image_path, image_rel, sha_index, sha_index_dirty)
+        device_id = image_path.name.split("__", 1)[0] if "__" in image_path.name else None
+        meta = {
+            "schema": BARE_SOURCE_SCHEMA,
+            "source": row_source,
+            "image_sha256": image_sha,
+            "image_path": image_rel,
+            "source_image_path": str(image_path),
+            "permanent_image_path": image_rel,
+            "image_url": "",
+            "vehicle_id": device_id,
+            "device_id": device_id,
+            "camera_id": None,
+            "collected_at": parse_collected_at_from_name(image_path),
+            "collected_at_ms": None,
+            "capture_id": image_path.stem,
+            "sample_id": image_path.stem,
+            "qwen_yes_tasks": [],
+            "qwen_archived_at": None,
+        }
+        yield {
+            "meta_path": image_path,
+            "image_path": image_path,
+            "image_rel": image_rel,
+            "meta": meta,
+        }
+
+
+def iter_rows(permanent_root, source, day, include_bare_images=False, sha_index=None, sha_index_dirty=None):
+    if sha_index_dirty is None:
+        sha_index_dirty = [False]
     for meta_path in sorted(permanent_root.glob("**/*.json")):
         meta = load_json(meta_path)
         if not isinstance(meta, dict):
@@ -92,6 +198,8 @@ def iter_rows(permanent_root, source, day):
             "image_rel": image_rel,
             "meta": normalized_meta,
         }
+    if include_bare_images:
+        yield from iter_bare_image_rows(permanent_root, source, day, sha_index, sha_index_dirty)
 
 
 def annotate_one(row, args):
@@ -175,13 +283,26 @@ def main():
     parser.add_argument("--max-tokens", type=int, default=768)
     parser.add_argument("--only-missing", action="store_true")
     parser.add_argument("--image-list", type=Path, default=None, help="Optional image_path list relative to permanent root.")
+    parser.add_argument("--include-bare-images", action="store_true", help="Also scan image files without sidecar JSON metadata.")
+    parser.add_argument("--sha-index", type=Path, default=None, help="Optional cache for SHA256 of bare images.")
     args = parser.parse_args()
 
     if not args.permanent_root.exists():
         log(f"permanent_root_missing={args.permanent_root}")
         return 0
 
-    rows = list(iter_rows(args.permanent_root, args.source, args.day))
+    sha_index = load_sha_index(args.sha_index) if args.include_bare_images else None
+    sha_index_dirty = [False]
+    rows = list(iter_rows(
+        args.permanent_root,
+        args.source,
+        args.day,
+        include_bare_images=args.include_bare_images,
+        sha_index=sha_index,
+        sha_index_dirty=sha_index_dirty,
+    ))
+    if args.include_bare_images and args.sha_index and sha_index_dirty[0]:
+        save_sha_index(args.sha_index, args.permanent_root, sha_index)
     image_filter = load_image_list(args.image_list)
     if image_filter is not None:
         rows = [row for row in rows if row["image_rel"] in image_filter]
