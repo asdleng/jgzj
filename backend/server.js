@@ -12422,7 +12422,15 @@ async function executeCloudOpsAction(plan, vehicles = []) {
           payload: result.data
         };
       }
-      if (toolName === 'vehicle.clear_collision_stop' && toolStatus === 'error') {
+      if (
+        [
+          'vehicle.clear_collision_stop',
+          'vehicle.body_control',
+          'audio.system_volume.set',
+          'audio.microphone_gain.set'
+        ].includes(toolName) &&
+        ['error', 'failed'].includes(toolStatus)
+      ) {
         return {
           ok: false,
           action: plan.action,
@@ -12432,7 +12440,7 @@ async function executeCloudOpsAction(plan, vehicles = []) {
           detail:
             result?.data?.response?.result?.message ||
             result?.data?.response?.result?.detail ||
-            'vehicle.clear_collision_stop returned status=error',
+            `${toolName} returned status=${toolStatus || 'error'}`,
           payload: result.data
         };
       }
@@ -14659,7 +14667,7 @@ function cloudOpsPermissionForTool(toolName) {
     name === 'vehicle.clear_collision_stop' ||
     name === 'controller.reboot_master' ||
     name === 'controller.reboot_media' ||
-    name.startsWith('audio.uplink.')
+    name.startsWith('audio.')
   ) {
     return 'vehicle:control';
   }

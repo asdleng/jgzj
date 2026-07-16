@@ -73,16 +73,16 @@ const specialistDiagnosticGroups = [
   }
 ];
 
+const controlActions = [
+  { label: "重启主控接口", tool: "controller.reboot_master", kind: "reboot-master", desc: "中断主控服务并重新启动", risk: "高风险 · 输入车辆编号确认", timeout: 25 },
+  { label: "重启 Media 接口", tool: "controller.reboot_media", kind: "reboot-media", desc: "中断 Media 服务并重新启动", risk: "高风险 · 输入车辆编号确认", timeout: 25 },
+  { label: "碰撞停复位", tool: "vehicle.clear_collision_stop", kind: "collision-reset", desc: "静止校验后执行安全复位", risk: "高风险 · 输入车辆编号确认", timeout: 45 },
+  { label: "广告屏/灯光控制", tool: "vehicle.body_control", kind: "body-control", desc: "设置屏幕、灯光和转向灯", risk: "逐项选择目标状态", timeout: 35 },
+  { label: "系统音量", tool: "audio.system_volume.set", kind: "system-volume", desc: "调节 Ubuntu 扬声器音量", risk: "写入后立即回读", timeout: 25 },
+  { label: "麦克风收音", tool: "audio.microphone_gain.set", kind: "microphone-gain", desc: "调节 USB 麦克风采集增益", risk: "写入后立即回读", timeout: 25 }
+];
+
 const blockedActionGroups = [
-  {
-    title: "控制 / 重启",
-    actions: [
-      ["重启主控接口", "controller.reboot_master", "高风险：会中断主控 auto_ad_ai 接口"],
-      ["重启 Media 接口", "controller.reboot_media", "高风险：会中断 media auto_ad_ai 接口"],
-      ["碰撞停复位", "vehicle.clear_collision_stop", "需要现场安全确认"],
-      ["广告屏/灯光控制", "vehicle.body_control", "需人工确认"]
-    ]
-  },
   {
     title: "任务 / 地图 / 参数写入",
     actions: [
@@ -368,6 +368,29 @@ const agentRules = [
               </div>
             </details>
 
+            <details class="cloud-ops-test-disclosure cloud-ops-test-control-disclosure">
+              <summary>控制 / 重启</summary>
+              <div class="cloud-ops-test-command-grid cloud-ops-test-command-grid--blocked">
+                {controlActions.map((item) => (
+                  <button
+                    class="cloud-ops-test-command-button cloud-ops-test-command-button--control"
+                    type="button"
+                    data-action="control-open"
+                    data-control-kind={item.kind}
+                    data-tool={item.tool}
+                    data-timeout-s={String(item.timeout)}
+                    data-control-label={item.label}
+                    data-control-desc={item.desc}
+                  >
+                    <strong>{item.label}</strong>
+                    <span>{item.tool}</span>
+                    <small>{item.desc}</small>
+                    <em>{item.risk}</em>
+                  </button>
+                ))}
+              </div>
+            </details>
+
             {blockedActionGroups.map((group) => (
               <details class="cloud-ops-test-disclosure cloud-ops-test-disabled-disclosure">
                 <summary>{group.title}</summary>
@@ -435,6 +458,35 @@ const agentRules = [
             <img data-role="media-viewer-image" alt="" />
             <figcaption data-role="media-viewer-meta"></figcaption>
           </figure>
+        </div>
+      </dialog>
+
+      <dialog class="cloud-ops-test-control-dialog" data-role="control-dialog" aria-labelledby="cloud-ops-test-control-title">
+        <div class="cloud-ops-test-control-dialog-shell">
+          <div class="cloud-ops-test-control-dialog-head">
+            <div>
+              <p class="cloud-ops-test-kicker">VEHICLE CONTROL</p>
+              <h3 id="cloud-ops-test-control-title" data-role="control-title">车辆控制</h3>
+            </div>
+            <button type="button" data-action="control-close" aria-label="关闭控制面板" title="关闭">&times;</button>
+          </div>
+          <div class="cloud-ops-test-control-dialog-body">
+            <p data-role="control-description"></p>
+            <dl class="cloud-ops-test-control-context">
+              <div><dt>当前车辆</dt><dd data-role="control-vehicle">--</dd></div>
+              <div><dt>执行工具</dt><dd data-role="control-tool">--</dd></div>
+            </dl>
+            <div class="cloud-ops-test-control-fields" data-role="control-fields"></div>
+            <label class="cloud-ops-test-control-confirm" data-role="control-confirm" hidden>
+              <span>输入当前车辆编号以确认</span>
+              <input type="text" autocomplete="off" spellcheck="false" data-role="control-confirm-input" />
+            </label>
+            <p class="cloud-ops-test-control-warning" data-role="control-warning">操作会写入当前车辆，并记录账号、车辆、工具和参数审计。</p>
+          </div>
+          <div class="cloud-ops-test-control-dialog-actions">
+            <button type="button" data-action="control-close">取消</button>
+            <button class="is-danger" type="button" data-action="control-submit" data-role="control-submit">确认执行</button>
+          </div>
         </div>
       </dialog>
 
@@ -724,6 +776,7 @@ const agentRules = [
       "status.planning",
       "status.routing",
       "status.can",
+      "status.audio_alsa",
       "status.body_control",
       "status.control",
       "status.camera",
@@ -741,6 +794,19 @@ const agentRules = [
       "obstacle.preview",
       "route.list",
       "route.detail"
+    ]);
+    const CONTROL_TOOL_ALLOWLIST = new Set([
+      "controller.reboot_master",
+      "controller.reboot_media",
+      "vehicle.clear_collision_stop",
+      "vehicle.body_control",
+      "audio.system_volume.set",
+      "audio.microphone_gain.set"
+    ]);
+    const CONTROL_TYPED_CONFIRM_KINDS = new Set([
+      "reboot-master",
+      "reboot-media",
+      "collision-reset"
     ]);
     const MEDIA_EXPECTED_TOOLS = new Set([
       "status.camera",
@@ -804,6 +870,16 @@ const agentRules = [
     const mediaViewerImage = shell.querySelector('[data-role="media-viewer-image"]');
     const mediaViewerTitle = shell.querySelector('[data-role="media-viewer-title"]');
     const mediaViewerMeta = shell.querySelector('[data-role="media-viewer-meta"]');
+    const controlDialog = shell.querySelector('[data-role="control-dialog"]');
+    const controlTitle = shell.querySelector('[data-role="control-title"]');
+    const controlDescription = shell.querySelector('[data-role="control-description"]');
+    const controlVehicle = shell.querySelector('[data-role="control-vehicle"]');
+    const controlTool = shell.querySelector('[data-role="control-tool"]');
+    const controlFields = shell.querySelector('[data-role="control-fields"]');
+    const controlConfirm = shell.querySelector('[data-role="control-confirm"]');
+    const controlConfirmInput = shell.querySelector('[data-role="control-confirm-input"]');
+    const controlWarning = shell.querySelector('[data-role="control-warning"]');
+    const controlSubmit = shell.querySelector('[data-role="control-submit"]');
     const vehicleCount = shell.querySelector('[data-role="vehicle-count"]');
     const vehicleTableBody = shell.querySelector('[data-role="vehicle-table-body"]');
     const stopFaultCount = shell.querySelector('[data-role="stop-fault-count"]');
@@ -875,6 +951,8 @@ const agentRules = [
     let activeViewerFollowLabel = "";
     let mapRouteState = null;
     let mapRouteGeneration = 0;
+    let activeControlAction = null;
+    let controlActionInFlight = false;
     let agentCanChat = false;
     let agentDefaultModel = "gpt-5.6-terra";
     let agentAvailableModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
@@ -3694,6 +3772,89 @@ const agentRules = [
       const ok = payload?.ok !== false;
       const result = toolResultOfPayload(payload);
       const liveMediaCount = liveMediaPayload ? extractToolMediaItems(liveMediaPayload).length : 0;
+      if (normalizedTool === "controller.reboot_master" || normalizedTool === "controller.reboot_media") {
+        const target = normalizedTool === "controller.reboot_master" ? "主控" : "Media";
+        return {
+          title: `${target}重启已提交`,
+          tone: ok && String(result?.status || "").toLowerCase() !== "error" ? "ok" : "warn",
+          kv: [
+            ["车辆", vehicleId],
+            ["控制器", target],
+            ["调度状态", result?.status || (result?.scheduled ? "scheduled" : "已返回")],
+            ["延时", result?.delay_s != null ? `${result.delay_s} 秒` : "--"]
+          ],
+          lines: [result?.message || "重启期间车辆连接会短暂中断，请稍后刷新车辆状态。"]
+        };
+      }
+      if (normalizedTool === "vehicle.clear_collision_stop") {
+        const readback = toolResultOfPayload(payload?.control_readback);
+        const collision = readback?.summary?.collision_stop ?? findFirstByKey(readback, ["collision_stop"]);
+        return {
+          title: "碰撞停复位结果",
+          tone: ok && String(result?.status || "").toLowerCase() !== "error" && collision !== true ? "ok" : "warn",
+          kv: [
+            ["车辆", vehicleId],
+            ["执行状态", result?.status || "已返回"],
+            ["写后碰撞停", collision === undefined ? "未返回" : boolText(collision, "仍触发", "已解除")],
+            ["巡逻处理", result?.stop_patrol_first === false ? "未停止" : "已执行安全序列"]
+          ],
+          lines: [
+            ...(result?.message ? [result.message] : []),
+            ...(payload?.control_readback_error ? [`写后回读失败：${payload.control_readback_error}`] : [])
+          ]
+        };
+      }
+      if (normalizedTool === "vehicle.body_control") {
+        const request = result?.request || {};
+        const readback = toolResultOfPayload(payload?.control_readback);
+        const feedback = readback?.summary?.vehicle_feedback || result?.after?.summary?.vehicle_feedback || {};
+        const requested = [
+          request?.ad_screen !== undefined && request?.ad_screen !== null ? `广告屏${request.ad_screen ? "开" : "关"}` : "",
+          request?.front_lamp !== undefined && request?.front_lamp !== null ? `前照灯${request.front_lamp ? "开" : "关"}` : "",
+          request?.mood_lamp !== undefined && request?.mood_lamp !== null ? `氛围灯${request.mood_lamp ? "开" : "关"}` : "",
+          request?.steer_lamp || request?.steer_lamp_mode ? `转向灯${request.steer_lamp || request.steer_lamp_mode}` : ""
+        ].filter(Boolean);
+        return {
+          title: "车身控制与写后回读",
+          tone: ok && !payload?.control_readback_error && !["error", "partial"].includes(String(result?.status || "").toLowerCase()) ? "ok" : "warn",
+          kv: [
+            ["车辆", vehicleId],
+            ["执行状态", result?.status || "已返回"],
+            ["本次目标", requested.join("、") || "已提交"],
+            ["广告屏反馈", feedback?.ad_screen_on === undefined ? "--" : boolText(feedback.ad_screen_on, "开", "关")],
+            ["前照灯反馈", feedback?.front_lamp_on === undefined ? "--" : boolText(feedback.front_lamp_on, "开", "关")],
+            ["氛围灯反馈", feedback?.mood_lamp_on === undefined ? "--" : boolText(feedback.mood_lamp_on, "开", "关")],
+            ["转向灯反馈", feedback?.steer_lamp_mode || "--"]
+          ],
+          lines: [
+            ...(result?.message ? [result.message] : []),
+            ...(payload?.control_readback_error ? [`写后回读失败：${payload.control_readback_error}`] : [])
+          ]
+        };
+      }
+      if (normalizedTool === "audio.system_volume.set" || normalizedTool === "audio.microphone_gain.set") {
+        const isSpeaker = normalizedTool === "audio.system_volume.set";
+        const readback = toolResultOfPayload(payload?.control_readback) || {};
+        const readbackChannel = isSpeaker
+          ? (readback?.system_volume || readback?.speaker)
+          : (readback?.microphone_input || readback?.mic || readback?.microphone);
+        const appliedPercent = result?.volume_percent ?? result?.applied_percent ?? result?.after_percent;
+        return {
+          title: isSpeaker ? "Ubuntu 系统音量写入结果" : "麦克风收音大小写入结果",
+          tone: ok && result?.verified !== false && !payload?.control_readback_error ? "ok" : "warn",
+          kv: [
+            ["车辆", vehicleId],
+            ["目标值", appliedPercent != null ? `${appliedPercent}%` : "已提交"],
+            ["写后回读", readbackChannel?.percent != null ? `${readbackChannel.percent}%` : "未返回"],
+            ["音频设备", result?.selected_device?.card_name || result?.selected_device || readback?.selected_device?.card_name || "自动选择"],
+            ["持久设置", result?.persisted === false ? "未持久" : "已同步"]
+          ],
+          lines: [
+            ...(result?.message ? [result.message] : []),
+            ...(payload?.control_readback_error ? [`写后回读失败：${payload.control_readback_error}`] : [])
+          ]
+        };
+      }
       if (normalizedTool === "status.camera" && result && typeof result === "object") {
         const cameras = Array.isArray(result?.cameras) ? result.cameras : [];
         const offline = Array.isArray(result?.offline_cameras) ? result.offline_cameras : [];
@@ -3872,7 +4033,7 @@ const agentRules = [
       toolSummary.dataset.tone = summary.tone || "ok";
     };
 
-    const requestReadOnlyToolPayload = async (vehicleId, toolName, args = {}, timeout_s = 30, requestKind = "readonly") => {
+    const requestToolPayload = async (vehicleId, toolName, args = {}, timeout_s = 30, requestKind = "tool") => {
       const response = await fetch(EXECUTE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -3891,6 +4052,260 @@ const agentRules = [
         throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
       }
       return payload;
+    };
+
+    const requestReadOnlyToolPayload = async (vehicleId, toolName, args = {}, timeout_s = 30, requestKind = "readonly") => {
+      if (!READONLY_TOOL_ALLOWLIST.has(toolName)) {
+        throw new Error(`工具 ${toolName} 不在只读白名单内`);
+      }
+      return requestToolPayload(vehicleId, toolName, args, timeout_s, requestKind);
+    };
+
+    const controlFieldsMarkup = (kind) => {
+      if (kind === "body-control") {
+        const options = '<option value="">保持不变</option><option value="true">开启</option><option value="false">关闭</option>';
+        return `
+          <div class="cloud-ops-test-control-field-grid">
+            <label><span>广告屏</span><select data-control-arg="ad_screen">${options}</select></label>
+            <label><span>前照灯</span><select data-control-arg="front_lamp">${options}</select></label>
+            <label><span>氛围灯</span><select data-control-arg="mood_lamp">${options}</select></label>
+            <label><span>转向灯</span><select data-control-arg="steer_lamp"><option value="">保持不变</option><option value="off">关闭</option><option value="left">左转</option><option value="right">右转</option><option value="hazard">双闪</option></select></label>
+          </div>
+          <label class="cloud-ops-test-control-check"><input type="checkbox" data-control-arg="stop_patrol_first" /><span>执行前先停止当前巡逻任务</span></label>`;
+      }
+      if (kind === "system-volume" || kind === "microphone-gain") {
+        const label = kind === "system-volume" ? "Ubuntu 系统音量" : "麦克风收音大小";
+        const defaultValue = kind === "system-volume" ? 90 : 80;
+        return `
+          <label class="cloud-ops-test-control-volume">
+            <span>${label}</span>
+            <div>
+              <input type="range" min="0" max="100" step="1" value="${defaultValue}" data-role="control-volume-range" />
+              <input type="number" min="0" max="100" step="1" value="${defaultValue}" data-role="control-volume-number" />
+              <b>%</b>
+            </div>
+          </label>`;
+      }
+      if (kind === "collision-reset") {
+        return '<p class="cloud-ops-test-control-safety">系统会先停止巡逻、确认车辆静止，再执行碰撞停复位并补发 STOP。</p>';
+      }
+      return '<p class="cloud-ops-test-control-safety">重启会短暂中断对应控制器连接。命令提交后，页面会保留调度结果和审计记录。</p>';
+    };
+
+    const closeControlDialog = () => {
+      if (!controlDialog || controlActionInFlight) return;
+      activeControlAction = null;
+      if (controlDialog.open) controlDialog.close();
+    };
+
+    const setControlVolumeValue = (value) => {
+      if (!controlFields) return;
+      const normalized = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+      const range = controlFields.querySelector('[data-role="control-volume-range"]');
+      const number = controlFields.querySelector('[data-role="control-volume-number"]');
+      if (range) range.value = String(normalized);
+      if (number) number.value = String(normalized);
+    };
+
+    const openControlDialog = async (button) => {
+      const vehicleId = selectedVehicleId();
+      const toolName = String(button?.dataset?.tool || "").trim();
+      const kind = String(button?.dataset?.controlKind || "").trim();
+      if (!vehicleId) {
+        setStatus("请先选择车辆", "error");
+        return;
+      }
+      if (!CONTROL_TOOL_ALLOWLIST.has(toolName) || !kind || !controlDialog) {
+        setStatus("该控制操作未通过页面白名单校验", "error");
+        return;
+      }
+      activeControlAction = {
+        vehicleId,
+        toolName,
+        kind,
+        label: String(button?.dataset?.controlLabel || toolName),
+        description: String(button?.dataset?.controlDesc || ""),
+        timeoutS: Number.parseInt(button?.dataset?.timeoutS || "30", 10) || 30
+      };
+      if (controlTitle) controlTitle.textContent = activeControlAction.label;
+      if (controlDescription) controlDescription.textContent = activeControlAction.description;
+      if (controlVehicle) controlVehicle.textContent = vehicleId;
+      if (controlTool) controlTool.textContent = toolName;
+      if (controlFields) controlFields.innerHTML = controlFieldsMarkup(kind);
+      const needsTypedConfirm = CONTROL_TYPED_CONFIRM_KINDS.has(kind);
+      if (controlConfirm) controlConfirm.hidden = !needsTypedConfirm;
+      if (controlConfirmInput) {
+        controlConfirmInput.value = "";
+        controlConfirmInput.placeholder = vehicleId;
+      }
+      if (controlWarning) {
+        controlWarning.textContent = "操作会写入当前车辆，并记录账号、车辆、工具和参数审计。";
+      }
+      if (controlSubmit) {
+        controlSubmit.disabled = false;
+        controlSubmit.textContent = needsTypedConfirm ? "确认并执行" : "确认执行";
+        controlSubmit.classList.toggle("is-danger", needsTypedConfirm);
+      }
+      controlDialog.showModal();
+
+      if (kind === "system-volume" || kind === "microphone-gain") {
+        if (controlWarning) controlWarning.textContent = "正在读取当前 ALSA 音量...";
+        try {
+          const statusPayload = await requestReadOnlyToolPayload(
+            vehicleId,
+            "status.audio_alsa",
+            { preferred_keywords: ["Yundea", "Jabra"], speaker_min_percent: 0, include_controls: true },
+            20,
+            "control-audio-status"
+          );
+          if (!activeControlAction || activeControlAction.vehicleId !== vehicleId || activeControlAction.kind !== kind) return;
+          const result = toolResultOfPayload(statusPayload) || {};
+          const current = kind === "system-volume"
+            ? (result?.system_volume?.percent ?? result?.speaker?.percent)
+            : (result?.microphone_input?.percent ?? result?.mic?.percent);
+          if (Number.isFinite(Number(current))) setControlVolumeValue(current);
+          if (controlWarning) {
+            controlWarning.textContent = Number.isFinite(Number(current))
+              ? `当前值 ${Math.round(Number(current))}%。确认后写入并立即回读。`
+              : "当前设备未返回可读音量；仍可提交目标值，车端会校验设备与控件。";
+          }
+        } catch (error) {
+          if (controlWarning) controlWarning.textContent = `当前音量读取失败：${error?.message || "未知错误"}。提交时仍会由车端校验。`;
+        }
+      }
+    };
+
+    const controlArgsFromDialog = (action) => {
+      if (action.kind === "reboot-master") {
+        return { confirm: "REBOOT_MASTER", delay_s: 2, reason: "云端运维网页人工确认" };
+      }
+      if (action.kind === "reboot-media") {
+        return { confirm: "REBOOT_MEDIA", delay_s: 2, reason: "云端运维网页人工确认" };
+      }
+      if (action.kind === "collision-reset") {
+        return { dry_run: false, stop_patrol_first: true };
+      }
+      if (action.kind === "body-control") {
+        const args = { dry_run: false, persistent: true, require_stationary: true };
+        controlFields?.querySelectorAll("select[data-control-arg]").forEach((select) => {
+          const value = String(select.value || "");
+          if (!value) return;
+          args[select.dataset.controlArg] = value === "true" ? true : value === "false" ? false : value;
+        });
+        const stopPatrol = controlFields?.querySelector('input[data-control-arg="stop_patrol_first"]');
+        args.stop_patrol_first = Boolean(stopPatrol?.checked);
+        const selectedTargets = ["ad_screen", "front_lamp", "mood_lamp", "steer_lamp"].filter((key) => Object.prototype.hasOwnProperty.call(args, key));
+        if (!selectedTargets.length) throw new Error("请至少选择一项要改变的车身状态");
+        return args;
+      }
+      if (action.kind === "system-volume" || action.kind === "microphone-gain") {
+        const number = controlFields?.querySelector('[data-role="control-volume-number"]');
+        const volumePercent = Number(number?.value);
+        if (!Number.isFinite(volumePercent) || volumePercent < 0 || volumePercent > 100) {
+          throw new Error("音量必须是 0–100 的整数");
+        }
+        return {
+          volume_percent: Math.round(volumePercent),
+          preferred_keywords: ["Yundea", "Jabra"],
+          persist: true,
+          verify: true
+        };
+      }
+      throw new Error("未知控制操作");
+    };
+
+    const controlReadbackTool = (kind) => {
+      if (kind === "body-control") return "status.body_control";
+      if (kind === "collision-reset") return "status.can";
+      if (kind === "system-volume" || kind === "microphone-gain") return "status.audio_alsa";
+      return "";
+    };
+
+    const runControlAction = async () => {
+      const action = activeControlAction;
+      if (!action || controlActionInFlight) return;
+      if (selectedVehicleId() !== action.vehicleId) {
+        setStatus("当前车辆已变化，请关闭后重新发起操作", "error");
+        return;
+      }
+      if (CONTROL_TYPED_CONFIRM_KINDS.has(action.kind)) {
+        const confirmedVehicle = String(controlConfirmInput?.value || "").trim().toUpperCase();
+        if (confirmedVehicle !== action.vehicleId.toUpperCase()) {
+          setStatus(`请输入车辆编号 ${action.vehicleId} 以确认`, "error");
+          controlConfirmInput?.focus();
+          return;
+        }
+      }
+      let args;
+      try {
+        args = controlArgsFromDialog(action);
+      } catch (error) {
+        setStatus(error?.message || "控制参数不完整", "error");
+        return;
+      }
+      controlActionInFlight = true;
+      if (controlSubmit) {
+        controlSubmit.disabled = true;
+        controlSubmit.textContent = "正在执行...";
+      }
+      if (controlWarning) controlWarning.textContent = `正在向 ${action.vehicleId} 提交 ${action.label}...`;
+      stopLiveMonitor({ hideControl: true });
+      closeMediaViewer();
+      clearToolMedia();
+      if (lastToolLabel) lastToolLabel.textContent = `${action.vehicleId} · ${action.toolName}`;
+      if (toolSummary) toolSummary.textContent = `正在执行写操作：${action.label}`;
+      setStatus(`正在执行：${action.label}`, "loading");
+      try {
+        const payload = await requestToolPayload(
+          action.vehicleId,
+          action.toolName,
+          args,
+          action.timeoutS,
+          "control"
+        );
+        const readbackTool = controlReadbackTool(action.kind);
+        let readbackPayload = null;
+        let readbackError = "";
+        if (readbackTool) {
+          if (controlWarning) controlWarning.textContent = "写入已返回，正在回读车辆状态...";
+          try {
+            const readbackArgs = readbackTool === "status.audio_alsa"
+              ? { preferred_keywords: ["Yundea", "Jabra"], speaker_min_percent: 0, include_controls: true }
+              : {};
+            readbackPayload = await requestReadOnlyToolPayload(
+              action.vehicleId,
+              readbackTool,
+              readbackArgs,
+              25,
+              "control-readback"
+            );
+          } catch (error) {
+            readbackError = error?.message || "写后回读失败";
+          }
+        }
+        const resultPayload = { ...payload, control_readback: readbackPayload, control_readback_error: readbackError };
+        renderToolSummary(action.toolName, resultPayload, action.vehicleId);
+        setStatus(
+          `${action.label}已执行${readbackTool ? (readbackError ? ` · 回读失败：${readbackError}` : " · 写后回读完成") : ""}`,
+          readbackError ? "error" : "ok"
+        );
+        controlActionInFlight = false;
+        activeControlAction = null;
+        if (controlDialog?.open) controlDialog.close();
+      } catch (error) {
+        const detail = error?.message || "未知错误";
+        if (toolSummary) {
+          toolSummary.innerHTML = `<strong>${escapeHtml(action.label)}执行失败</strong><ul><li>${escapeHtml(detail)}</li></ul>`;
+          toolSummary.dataset.tone = "warn";
+        }
+        setStatus(`${action.label}执行失败：${detail}`, "error");
+        if (controlWarning) controlWarning.textContent = `执行失败：${detail}`;
+        controlActionInFlight = false;
+        if (controlSubmit) {
+          controlSubmit.disabled = false;
+          controlSubmit.textContent = CONTROL_TYPED_CONFIRM_KINDS.has(action.kind) ? "确认并执行" : "确认执行";
+        }
+      }
     };
 
     const renderSelectedMapRoute = async (routeId) => {
@@ -4353,6 +4768,12 @@ const agentRules = [
         loadVehicles();
       } else if (action === "readonly-tool") {
         runReadOnlyTool(actionButton);
+      } else if (action === "control-open") {
+        openControlDialog(actionButton);
+      } else if (action === "control-close") {
+        closeControlDialog();
+      } else if (action === "control-submit") {
+        runControlAction();
       } else if (action === "live-monitor-toggle") {
         if (liveMonitorRunning) stopLiveMonitor({ message: "监控已暂停" });
         else startLiveMonitor();
@@ -4389,6 +4810,22 @@ const agentRules = [
         try { localStorage.removeItem(paramDraftStorageKey()); } catch (_error) {}
         resetParamDraft();
       }
+    });
+    controlFields?.addEventListener("input", (event) => {
+      const target = event.target;
+      if (target?.matches?.('[data-role="control-volume-range"], [data-role="control-volume-number"]')) {
+        setControlVolumeValue(target.value);
+      }
+    });
+    controlDialog?.addEventListener("cancel", (event) => {
+      if (controlActionInFlight) {
+        event.preventDefault();
+        return;
+      }
+      activeControlAction = null;
+    });
+    controlDialog?.addEventListener("close", () => {
+      if (!controlActionInFlight) activeControlAction = null;
     });
     paramDraftInputs.forEach((input) => {
       input.addEventListener("input", renderParamDraft);
