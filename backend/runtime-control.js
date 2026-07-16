@@ -446,7 +446,6 @@ function buildTargets() {
     LLM_URL: 'http://127.0.0.1:8041/chat'
   };
   const dedicatedTtsWorkers = [
-    { id: 'tts-worker-8804', label: 'TTS worker gpu3', port: '8804', visible: '3' },
     { id: 'tts-worker-8795', label: 'TTS worker gpu6', port: '8795', visible: '6' },
     { id: 'tts-worker-8796', label: 'TTS worker gpu4', port: '8796', visible: '4' },
     { id: 'tts-worker-8805', label: 'TTS worker gpu0', port: '8805', visible: '0' },
@@ -531,7 +530,7 @@ function buildTargets() {
       id: 'cloudvoice-7790-prod',
       label: 'CloudVoice 生产对话链',
       group: '语音对话',
-      description: '公网 7790：生产文本对话、工具/RAG、LLM failover 与 TTS 输出主链路。',
+      description: '公网 7790：生产文本对话、工具/RAG、LLM failover 与 4 路 4090 TTS 输出主链路。',
       local_ports: ['8040', '8041', '8043', '8022', '8050', '8799'],
       public_ports: ['7790'],
       script: formatAutoStartScript('02_cloudvoice_7790_prod.sh'),
@@ -556,13 +555,6 @@ function buildTargets() {
         { label: '8041 Qwen3.5 compat /healthz', url: 'http://127.0.0.1:8041/healthz', required: true },
         { label: '8040 Qwen3.5 fallback /v1/models', url: 'http://127.0.0.1:8040/v1/models', required: false },
         { label: '18000 Qwen3.6 text tunnel TCP', type: 'tcp', host: '127.0.0.1', port: 18000, required: false },
-        {
-          label: '8804 TTS worker gpu3',
-          url: 'http://127.0.0.1:8804/healthz',
-          required: false,
-          restart_target_id: 'tts-worker-8804',
-          restart_target_label: 'TTS worker gpu3'
-        },
         {
           label: '8795 TTS worker gpu6',
           url: 'http://127.0.0.1:8795/healthz',
@@ -648,7 +640,7 @@ function buildTargets() {
       label: 'TTS pool 8799',
       group: '语音对话',
       hidden: true,
-      description: '7790 主链使用的 TTS 负载均衡池，可单独重启，不影响 8050/8022/8043。',
+      description: '7790 主链使用的 4 路 4090 TTS 负载均衡池，可单独重启，不影响 8050/8022/8043；GPU3/8804 预留为空闲卡。',
       local_ports: ['8799'],
       public_ports: [],
       script: dedicatedTtsPoolScript,
