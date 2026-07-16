@@ -17,7 +17,7 @@ MAX_NEW="${QWEN_PERMANENT_YES_AUDIT_MAX_NEW:-80}"
 WORKERS="${QWEN_PERMANENT_YES_AUDIT_WORKERS:-1}"
 TIMEOUT_S="${QWEN_PERMANENT_YES_AUDIT_TIMEOUT_S:-120}"
 MAX_TOKENS="${QWEN_PERMANENT_YES_AUDIT_MAX_TOKENS:-768}"
-CLASS_FILTER="${QWEN_PERMANENT_YES_AUDIT_CLASS_FILTER:-fire,smoke,pet,trash,stall,phone,smoking}"
+CLASS_FILTER="${QWEN_PERMANENT_YES_AUDIT_CLASS_FILTER-fire,smoke,pet,trash,stall,phone,smoking}"
 EXTRA_ARGS="${QWEN_PERMANENT_YES_AUDIT_EXTRA_ARGS:-}"
 PROMPT_FILE="${QWEN_PERMANENT_YES_AUDIT_PROMPT_FILE:-}"
 DAY_FILTER="${QWEN_PERMANENT_YES_DAY:-}"
@@ -50,8 +50,12 @@ timestamp() {
   if [ -n "$DAY_FILTER" ]; then
     DAY_ARGS=(--day "$DAY_FILTER")
   fi
+  CLASS_ARGS=()
+  if [ -n "$CLASS_FILTER" ]; then
+    CLASS_ARGS=(--class-filter "$CLASS_FILTER")
+  fi
 
-  echo "[$(timestamp)] start qwen_permanent_yes_bbox_audit max_new=$MAX_NEW workers=$WORKERS class_filter=$CLASS_FILTER"
+  echo "[$(timestamp)] start qwen_permanent_yes_bbox_audit max_new=$MAX_NEW workers=$WORKERS class_filter=${CLASS_FILTER:-all}"
   if command -v ionice >/dev/null 2>&1; then
     ionice -c2 -n7 nice -n 10 python3 scripts/patrol_qwen_audit_permanent_yes_frames.py \
       --permanent-root "$PERMANENT_ROOT" \
@@ -59,7 +63,7 @@ timestamp() {
       --output-root "$OUTPUT_ROOT" \
       --service-url "$SERVICE_URL" \
       --only-missing \
-      --class-filter "$CLASS_FILTER" \
+      "${CLASS_ARGS[@]}" \
       --limit "$MAX_NEW" \
       --workers "$WORKERS" \
       --timeout-s "$TIMEOUT_S" \
@@ -74,7 +78,7 @@ timestamp() {
       --output-root "$OUTPUT_ROOT" \
       --service-url "$SERVICE_URL" \
       --only-missing \
-      --class-filter "$CLASS_FILTER" \
+      "${CLASS_ARGS[@]}" \
       --limit "$MAX_NEW" \
       --workers "$WORKERS" \
       --timeout-s "$TIMEOUT_S" \

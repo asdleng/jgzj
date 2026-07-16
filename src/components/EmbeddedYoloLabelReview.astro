@@ -141,6 +141,12 @@
         <option value="">全部</option>
       </select>
     </label>
+    <label class="yolo-review-field yolo-review-field--advanced" for="yolo-review-event-name" hidden>
+      <span>事件类别</span>
+      <select id="yolo-review-event-name">
+        <option value="">全部事件</option>
+      </select>
+    </label>
     <label class="yolo-review-field yolo-review-field--advanced" for="yolo-review-class">
       <span>AI标类别</span>
       <select id="yolo-review-class">
@@ -204,7 +210,7 @@
   </div>
 </section>
 
-<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260715-source-layout" defer></script>
+<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260716-event-filter" defer></script>
 
 <style is:global>
   @media (max-width: 720px) {

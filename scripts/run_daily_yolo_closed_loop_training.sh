@@ -10,6 +10,10 @@ mkdir -p "$RUNTIME"
 LOCK="$RUNTIME/daily_yolo_closed_loop.lock"
 LOG="$RUNTIME/daily_yolo_closed_loop.log"
 
+# Cron can narrow this with YOLO_DAILY_TASKS. Default manual runs may cover
+# person_yolo, vehicle_yolo, and pet_yolo.
+export YOLO_DAILY_MAX_TASKS="${YOLO_DAILY_MAX_TASKS:-3}"
+
 timestamp() {
   date '+%Y-%m-%d %H:%M:%S'
 }

@@ -4276,6 +4276,14 @@ async function buildYoloDatasetList() {
       const classes = await readYoloClasses(datasetDir, summary);
       const stats = normalizeYoloDatasetSummaryStats(summary, classes);
       const sourceType = stats.web_crawler ? 'web_crawler' : 'checker_archive';
+      const feedback = summary.feedback && typeof summary.feedback === 'object'
+        ? {
+            total_images: Number(summary.feedback.total_images || 0),
+            status_counts: summary.feedback.status_counts || null,
+            event_counts: summary.feedback.event_counts || null,
+            training_eligible_images: Number(summary.feedback.training_eligible_images || 0)
+          }
+        : null;
       datasets.push({
         id,
         source: spec.alias,
@@ -4296,6 +4304,7 @@ async function buildYoloDatasetList() {
         max_task_id: summary.max_task_id ?? null,
         total_images: stats.total_images,
         web_crawler: stats.web_crawler || null,
+        feedback,
         training_eligible: stats.web_crawler ? stats.web_crawler.training_eligible : null
       });
     }
@@ -4825,6 +4834,59 @@ async function yoloBaseItems(dataset) {
   ));
 }
 
+function yoloItemEventNames(item) {
+  const names = [];
+  const addName = (value) => {
+    const text = String(value || '').trim();
+    if (text) {
+      names.push(text);
+    }
+  };
+  addName(item?.event_name);
+  if (Array.isArray(item?.manifest?.tasks)) {
+    for (const task of item.manifest.tasks) {
+      addName(task?.event_name);
+    }
+  }
+  const seen = new Set();
+  return names.filter((name) => {
+    const token = normalizeClassToken(name);
+    if (!token || seen.has(token)) {
+      return false;
+    }
+    seen.add(token);
+    return true;
+  });
+}
+
+function yoloItemEventNameTokens(item) {
+  return yoloItemEventNames(item).map((name) => normalizeClassToken(name)).filter(Boolean);
+}
+
+function yoloAvailableEventOptions(items) {
+  const counts = new Map();
+  const labels = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    const itemTokens = new Set();
+    for (const name of yoloItemEventNames(item)) {
+      const token = normalizeClassToken(name);
+      if (!token || itemTokens.has(token)) {
+        continue;
+      }
+      itemTokens.add(token);
+      labels.set(token, labels.get(token) || name);
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([value, count]) => ({
+      value,
+      label: labels.get(value) || value,
+      count
+    }))
+    .sort((left, right) => (right.count - left.count) || left.label.localeCompare(right.label, 'zh-CN'));
+}
+
 function yoloItemMatchesQuery(item, q) {
   const needle = String(q || '').trim().toLowerCase();
   if (!needle) {
@@ -4927,6 +4989,10 @@ async function listYoloReviewItems(datasetId, query = {}) {
     .split(',')
     .map((item) => normalizeClassToken(item))
     .filter(Boolean);
+  const eventNames = String(query.event_name || query.event || '')
+    .split(',')
+    .map((item) => normalizeClassToken(item))
+    .filter(Boolean);
   const qwenLabel = normalizeClassToken(query.qwen_label || '');
   const qwenAudit = normalizeClassToken(query.qwen_audit || query.audit || '');
   const aiAnswer = String(query.ai_answer || '').trim().toUpperCase();
@@ -4949,6 +5015,12 @@ async function listYoloReviewItems(datasetId, query = {}) {
   items = items.filter((item) => {
     if (split && item.split !== split) {
       return false;
+    }
+    if (eventNames.length) {
+      const itemEventNames = yoloItemEventNameTokens(item);
+      if (!itemEventNames.some((value) => eventNames.includes(value))) {
+        return false;
+      }
     }
     if (classNames.length && !needsLabelBeforePagination) {
       if (dataset.source === 'patrol') {
@@ -5078,6 +5150,7 @@ async function listYoloReviewItems(datasetId, query = {}) {
     total,
     total_pages: totalPages,
     available_splits: splits,
+    available_events: yoloAvailableEventOptions(prefilteredItems),
     items: enrichedItems
   };
 }

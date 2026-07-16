@@ -180,6 +180,90 @@ async function sampleWeatherCacheStatus(options = {}) {
   };
 }
 
+async function sampleSub2apiProxyWatchdogStatus(options = {}) {
+  const statusPath = path.resolve(
+    options.path ||
+      process.env.SUB2API_PROXY_WATCHDOG_STATUS_PATH ||
+      '/home/admin1/jgzj/.runtime/sub2api-proxy-watchdog/status.json'
+  );
+  const staleThresholdSec = Math.max(
+    60,
+    Number.parseInt(String(options.stale_threshold_sec ?? process.env.SUB2API_PROXY_WATCHDOG_STALE_S ?? '120'), 10) ||
+      120
+  );
+
+  let payload;
+  try {
+    payload = JSON.parse(await fs.readFile(statusPath, 'utf8'));
+  } catch (error) {
+    return {
+      label: options.label || 'Sub2API 代理守护状态',
+      kind: 'sub2api-proxy-watchdog',
+      ok: false,
+      state: 'error',
+      path: statusPath,
+      summary: `代理守护状态读取失败：${error?.message || 'read_failed'}`
+    };
+  }
+
+  const checkedAtEpoch = Number(payload.checked_at_epoch || 0);
+  const ageSec = checkedAtEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000 - checkedAtEpoch)) : null;
+  const stale = ageSec === null || ageSec > staleThresholdSec;
+  const failStreak = Number(payload.fail_streak || 0);
+  const failStreakThreshold = Number(payload.fail_streak_threshold || 0);
+  const rawState = String(payload.state || (payload.ok === false ? 'error' : 'ok')).trim() || 'ok';
+  const transientError =
+    !stale &&
+    rawState === 'error' &&
+    failStreakThreshold > 0 &&
+    failStreak > 0 &&
+    failStreak < failStreakThreshold;
+  const state = stale ? 'warn' : transientError ? 'warn' : rawState;
+  const recentErrors = payload.recent_errors && typeof payload.recent_errors === 'object' ? payload.recent_errors : {};
+  const currentDelay = payload.checks?.current_delay || {};
+  const proxyPath = payload.checks?.proxy_path_openai || {};
+  const lastAction = payload.last_action && typeof payload.last_action === 'object' ? payload.last_action : null;
+  const currentNode = String(payload.current_node || '').trim() || '-';
+  const delayText = Number.isFinite(Number(currentDelay.delay_ms)) ? `${Number(currentDelay.delay_ms)}ms` : currentDelay.summary || '-';
+  const ageText = ageSec === null ? '-' : formatDuration(ageSec);
+  const switchText = lastAction?.type === 'switch' ? `，最近切到 ${lastAction.node || '-'}（${lastAction.at || '-'}）` : '';
+  const failText = failStreak > 0 ? `，连续失败 ${failStreak}/${failStreakThreshold || '-'}` : '';
+  const summary = stale
+    ? `代理守护状态过期 ${ageText}，当前节点 ${currentNode}`
+    : `当前 ${currentNode}，OpenAI 探测 ${proxyPath.summary || '-'}，节点延迟 ${delayText}，11号近${recentErrors.window_s || '-'}秒错误 ${recentErrors.count ?? 0}${switchText}${failText}`;
+
+  return {
+    label: options.label || 'Sub2API 代理守护状态',
+    kind: 'sub2api-proxy-watchdog',
+    ok: (payload.ok !== false || transientError) && !stale && state !== 'error',
+    state,
+    path: statusPath,
+    summary,
+    stale,
+    age_sec: ageSec,
+    stale_threshold_sec: staleThresholdSec,
+    current_node: currentNode,
+    checked_at: payload.checked_at || '',
+    last_switch_at: payload.last_switch_at || '',
+    switch_count: Number(payload.switch_count || 0),
+    fail_streak: failStreak,
+    recent_errors: {
+      count: Number(recentErrors.count || 0),
+      window_s: Number(recentErrors.window_s || 0),
+      threshold: Number(recentErrors.threshold || 0),
+      last_error_at: recentErrors.last_error_at || ''
+    },
+    checks: {
+      current_delay: currentDelay,
+      proxy_path_openai: proxyPath,
+      bridge_tcp: payload.checks?.bridge_tcp || null,
+      mihomo_api_tcp: payload.checks?.mihomo_api_tcp || null,
+      selector_mismatch: Boolean(payload.checks?.selector_mismatch)
+    },
+    last_action: lastAction
+  };
+}
+
 async function execCommand(file, args = [], options = {}) {
   try {
     const result = await execFileAsync(file, args, {
@@ -470,6 +554,36 @@ function buildTargets() {
       checks: [
         { label: '18000 Qwen3.6 text tunnel TCP', type: 'tcp', host: '127.0.0.1', port: 18000, required: true },
         { label: '18001 Qwen3.6 MM tunnel TCP', type: 'tcp', host: '127.0.0.1', port: 18001, required: true }
+      ]
+    },
+    {
+      id: 'sub2api-proxy-watchdog',
+      label: 'Sub2API GPT代理守护',
+      group: '模型入口',
+      description:
+        '守护账号 11/GLM 16 共用的 18092 -> Mihomo 美国节点链路；发现 11 号上游错误或代理探测失败时自动切换美国节点，不重启 Sub2API 或 Codex。',
+      action_label: '重启守护',
+      action_busy_label: '重启中...',
+      local_ports: ['18092', '7897', '9097'],
+      public_ports: [],
+      script: '/usr/local/bin/sub2api-proxy-watchdog.py',
+      controller: { type: 'systemd', service_name: 'sub2api-proxy-watchdog.service' },
+      restart: {
+        type: 'systemd',
+        service_name: 'sub2api-proxy-watchdog.service',
+        timeout_ms: 45000
+      },
+      checks: [
+        {
+          label: '代理守护状态',
+          type: 'sub2api-proxy-watchdog',
+          path: '/home/admin1/jgzj/.runtime/sub2api-proxy-watchdog/status.json',
+          stale_threshold_sec: 120,
+          required: true
+        },
+        { label: '18092 bridge TCP', type: 'tcp', host: '172.19.0.1', port: 18092, required: true },
+        { label: '7897 Mihomo mixed-port TCP', type: 'tcp', host: '127.0.0.1', port: 7897, required: true },
+        { label: '9097 Mihomo API TCP', type: 'tcp', host: '127.0.0.1', port: 9097, required: true }
       ]
     },
     {
@@ -829,6 +943,12 @@ function summarizeTargetState(controller, checks, target) {
   }
 
   if ((optionalChecks.length && !optionalOk) || hasWarn) {
+    if (target.id === 'sub2api-proxy-watchdog') {
+      return {
+        state: 'warn',
+        status_text: `${target.label} 代理链路波动`
+      };
+    }
     return {
       state: 'warn',
       status_text: `${target.label} 部分端口异常`
@@ -848,6 +968,8 @@ async function sampleTarget(target) {
       ...item,
       ...(item.type === 'weather-cache'
         ? await sampleWeatherCacheStatus(item)
+        : item.type === 'sub2api-proxy-watchdog'
+          ? await sampleSub2apiProxyWatchdogStatus(item)
         : item.type === 'tcp'
           ? await probeTcp(item)
         : await probeHttp(item.url, { label: item.label }))

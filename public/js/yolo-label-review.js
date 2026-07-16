@@ -18,6 +18,7 @@
     source: document.getElementById("yolo-review-source"),
     dataset: document.getElementById("yolo-review-dataset"),
     split: document.getElementById("yolo-review-split"),
+    eventName: document.getElementById("yolo-review-event-name"),
     className: document.getElementById("yolo-review-class"),
     answer: document.getElementById("yolo-review-answer"),
     qwenLabel: document.getElementById("yolo-review-qwen-label"),
@@ -664,6 +665,78 @@
     ].map((value) => String(value || "").toLowerCase()).join(" ");
   }
 
+  function datasetFeedback(dataset) {
+    return dataset?.feedback || dataset?.summary?.feedback || null;
+  }
+
+  function isEventFeedbackDataset(dataset) {
+    const text = datasetSearchText(dataset);
+    return Boolean(
+      datasetFeedback(dataset) ||
+      text.includes("yolo_event_feedback") ||
+      text.includes("yolo事件原图反馈候选集")
+    );
+  }
+
+  function feedbackEventCounts(dataset) {
+    const feedback = datasetFeedback(dataset);
+    return feedback?.event_counts && typeof feedback.event_counts === "object" && !Array.isArray(feedback.event_counts)
+      ? feedback.event_counts
+      : null;
+  }
+
+  function normalizeEventNameOptions(source) {
+    const rawItems = Array.isArray(source)
+      ? source
+      : Object.entries(source && typeof source === "object" ? source : {}).map(([name, count]) => ({ value: name, label: name, count }));
+    const byValue = new Map();
+    rawItems.forEach((item) => {
+      const isPlainValue = typeof item === "string" || typeof item === "number";
+      const label = String(isPlainValue ? item : (item?.label || item?.name || item?.value || "")).trim();
+      const value = normalizeClassToken(isPlainValue ? item : (item?.value || label));
+      if (!value) return;
+      const count = Number(isPlainValue ? 0 : (item?.count || 0));
+      const previous = byValue.get(value);
+      if (previous) {
+        previous.count += Number.isFinite(count) ? count : 0;
+        if (!previous.label && label) previous.label = label;
+      } else {
+        byValue.set(value, {
+          value,
+          label: label || value,
+          count: Number.isFinite(count) ? count : 0
+        });
+      }
+    });
+    return [...byValue.values()]
+      .sort((left, right) => (right.count - left.count) || left.label.localeCompare(right.label, "zh-CN"))
+      .map((item) => ({
+        value: item.value,
+        label: item.count > 0 ? `${item.label} ${compactNumber(item.count)}` : item.label
+      }));
+  }
+
+  function setEventNameVisibility(visible) {
+    const field = refs.eventName?.closest(".yolo-review-field");
+    if (field) field.hidden = !visible;
+    if (refs.eventName) refs.eventName.disabled = !visible;
+  }
+
+  function updateEventNameOptions(availableEvents = null) {
+    const dataset = selectedDataset();
+    if (!isEventFeedbackDataset(dataset)) {
+      setSelectOptions(refs.eventName, [], { allLabel: "全部事件" });
+      if (refs.eventName) refs.eventName.value = "";
+      setEventNameVisibility(false);
+      return;
+    }
+    const options = normalizeEventNameOptions(
+      Array.isArray(availableEvents) ? availableEvents : feedbackEventCounts(dataset)
+    );
+    setSelectOptions(refs.eventName, options, { allLabel: "全部事件" });
+    setEventNameVisibility(options.length > 0);
+  }
+
   function datasetSourceGroup(dataset) {
     if (dataset?.source_type === "vehicle_collection") return "vehicle_collection";
     if (dataset?.source_type === "web_crawler" || dataset?.web_crawler || dataset?.summary?.web_crawler) return "web_crawler";
@@ -1055,6 +1128,7 @@
     const eventClassTokens = datasetEventClassTokens(preset);
 
     if (refs.split) refs.split.value = "";
+    if (refs.eventName) refs.eventName.value = "";
     if (refs.query) refs.query.value = "";
     if (refs.qwenLabel) refs.qwenLabel.value = "";
     if (refs.qwenAudit) refs.qwenAudit.value = preset.qwenAudit || "";
@@ -1105,6 +1179,7 @@
     updateClassOptions();
     updateQwenOptions();
     applyEventFiltersForDataset(selectedDataset());
+    updateEventNameOptions();
     renderSummary(selectedDataset());
     renderDatasetCards();
     updateEventButtons();
@@ -1120,6 +1195,7 @@
     updateClassOptions();
     updateQwenOptions();
     applyEventFiltersForDataset(selectedDataset());
+    updateEventNameOptions();
     renderSummary(selectedDataset());
     renderDatasetCards();
     updateEventButtons();
@@ -1199,6 +1275,7 @@
         updateClassOptions();
         updateQwenOptions();
         applyEventFiltersForDataset(selectedDataset());
+        updateEventNameOptions();
         renderSummary(selectedDataset());
         renderDatasetCards();
         loadItems({ resetPage: true }).catch(() => {});
@@ -1671,6 +1748,7 @@
       updateClassOptions();
       updateQwenOptions();
       applyEventFiltersForDataset(selectedDataset());
+      updateEventNameOptions();
       renderDatasetCards();
       renderSummary(selectedDataset());
       updateEventButtons();
@@ -1732,6 +1810,7 @@
     params.set("page", String(state.page));
     params.set("page_size", String(state.pageSize));
     if (refs.split.value) params.set("split", refs.split.value);
+    if (refs.eventName?.value && isEventFeedbackDataset(dataset)) params.set("event_name", refs.eventName.value);
     const eventClassFilter = ["vehicle_collection", "web_crawler"].includes(datasetSourceGroup(dataset)) && reviewTaskKind(dataset) === "detect"
       ? matchingDatasetEventClassTokens(dataset, preset).join(",")
       : "";
@@ -1762,6 +1841,7 @@
     const requestDatasetId = state.datasetId;
     const requestEvent = state.activeEvent;
     const requestSource = refs.source?.value || "";
+    const requestEventName = refs.eventName?.value || "";
     setStatus("加载样本...", "loading");
     refs.list.classList.add("is-loading");
     refs.list.innerHTML = "";
@@ -1771,13 +1851,19 @@
     refs.list.appendChild(loading);
     try {
       const data = await requestJson(buildItemsUrl());
-      if (requestDatasetId !== state.datasetId || requestEvent !== state.activeEvent || requestSource !== (refs.source?.value || "")) {
+      if (
+        requestDatasetId !== state.datasetId ||
+        requestEvent !== state.activeEvent ||
+        requestSource !== (refs.source?.value || "") ||
+        requestEventName !== (refs.eventName?.value || "")
+      ) {
         return;
       }
       refs.list.classList.remove("is-loading");
       state.page = data.page || 1;
       state.totalPages = data.total_pages || 1;
       updateSplitOptions(data.available_splits || []);
+      updateEventNameOptions(data.available_events || []);
       renderList(data.items || []);
       refs.page.textContent = `第 ${state.page} / ${state.totalPages} 页 · ${compactNumber(data.total)} 条`;
       refs.prev.disabled = state.page <= 1;
@@ -1787,7 +1873,12 @@
         resetDetail("点击左侧样本后加载原图和标注框。");
       }
     } catch (error) {
-      if (requestDatasetId !== state.datasetId || requestEvent !== state.activeEvent || requestSource !== (refs.source?.value || "")) {
+      if (
+        requestDatasetId !== state.datasetId ||
+        requestEvent !== state.activeEvent ||
+        requestSource !== (refs.source?.value || "") ||
+        requestEventName !== (refs.eventName?.value || "")
+      ) {
         return;
       }
       refs.list.classList.remove("is-loading");
@@ -2850,6 +2941,7 @@
     updateClassOptions();
     updateQwenOptions();
     applyEventFiltersForDataset(selectedDataset());
+    updateEventNameOptions();
     renderSummary(selectedDataset());
     renderDatasetCards();
     loadItems({ resetPage: true }).catch(() => {});
@@ -2858,6 +2950,10 @@
     applySourceSelection(refs.source?.value || "");
   });
   refs.split?.addEventListener("change", () => {
+    markCustomEventFilter();
+    scheduleReload();
+  });
+  refs.eventName?.addEventListener("change", () => {
     markCustomEventFilter();
     scheduleReload();
   });

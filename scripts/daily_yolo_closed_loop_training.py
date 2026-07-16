@@ -72,7 +72,38 @@ TASKS = [
         "imgsz": 640,
         "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/vehicle_yolo_best.pt",
     },
+    {
+        "task_id": "pet_yolo",
+        "build_task": "pet",
+        "classes": {"pet"},
+        "min_boxes": 80,
+        "min_positive_images": 60,
+        "empty_to_positive_ratio": 2.0,
+        "epochs": 8,
+        "patience": 4,
+        "batch": 64,
+        "imgsz": 640,
+        "base_weight": "/home/sari/ai_detection_dino_yolo_eval_20260703/weights/pet_yolo_best.pt",
+    },
 ]
+
+
+def selected_tasks(task_filter: str) -> list[dict]:
+    tokens = {item.strip() for item in str(task_filter or "").split(",") if item.strip()}
+    if not tokens:
+        return TASKS
+    matched = [
+        task for task in TASKS
+        if task["task_id"] in tokens or task["build_task"] in tokens
+    ]
+    matched_tokens = {
+        token for token in tokens
+        if any(task["task_id"] == token or task["build_task"] == token for task in matched)
+    }
+    missing = sorted(tokens - matched_tokens)
+    if missing:
+        raise SystemExit(f"unknown_tasks:{','.join(missing)}")
+    return matched
 
 
 def run(cmd: list[str], *, timeout: int = 600, check: bool = False) -> subprocess.CompletedProcess:
@@ -147,7 +178,8 @@ def row_day(row: dict) -> str:
         return ""
 
 
-def summarize_index(allowed_days: set[str]) -> dict:
+def summarize_index(allowed_days: set[str], tasks: list[dict] | None = None) -> dict:
+    tasks = tasks or TASKS
     data = load_json(INDEX_PATH, {})
     rows = data.get("rows") or []
     manual_annotations = load_manual_annotations(MANUAL_ANNOTATION_ROOT)
@@ -178,10 +210,10 @@ def summarize_index(allowed_days: set[str]) -> dict:
             if not name:
                 continue
             stat["boxes_by_class"][name] += 1
-            for task in TASKS:
+            for task in tasks:
                 if name in task["classes"]:
                     stat["boxes_by_task"][task["task_id"]] += 1
-        for task in TASKS:
+        for task in tasks:
             task_id = task["task_id"]
             if names & task["classes"]:
                 stat["positive_images_by_task"][task_id] += 1
@@ -225,11 +257,12 @@ def task_date_state(state: dict, task_id: str, day: str) -> str:
     return str(((state.get("task_dates") or {}).get(task_id) or {}).get(day, {}).get("status") or "")
 
 
-def choose_tasks(day_stats: dict, candidate_days: list[str], state: dict, max_tasks: int, max_dates_per_task: int) -> tuple[list[dict], list[dict]]:
+def choose_tasks(day_stats: dict, candidate_days: list[str], state: dict, max_tasks: int, max_dates_per_task: int, tasks: list[dict] | None = None) -> tuple[list[dict], list[dict]]:
+    tasks = tasks or TASKS
     selected = []
     skipped = []
     all_days = sorted(candidate_days)
-    for task in TASKS:
+    for task in tasks:
         task_id = task["task_id"]
         pending = [day for day in all_days if task_date_state(state, task_id, day) not in {"scheduled", "completed"}]
         if not pending:
@@ -454,22 +487,24 @@ def main() -> None:
     parser.add_argument("--lookback-days", type=int, default=int(os.environ.get("YOLO_DAILY_LOOKBACK_DAYS", "5")))
     parser.add_argument("--replay-lookback-days", type=int, default=int(os.environ.get("YOLO_DAILY_REPLAY_LOOKBACK_DAYS", "7")))
     parser.add_argument("--replay-max-days", type=int, default=int(os.environ.get("YOLO_DAILY_REPLAY_MAX_DAYS", "4")))
-    parser.add_argument("--max-tasks", type=int, default=int(os.environ.get("YOLO_DAILY_MAX_TASKS", "2")))
+    parser.add_argument("--max-tasks", type=int, default=int(os.environ.get("YOLO_DAILY_MAX_TASKS", "3")))
     parser.add_argument("--max-dates-per-task", type=int, default=int(os.environ.get("YOLO_DAILY_MAX_DATES_PER_TASK", "3")))
     parser.add_argument("--train-today-after-hour", type=int, default=int(os.environ.get("YOLO_DAILY_TRAIN_TODAY_AFTER_HOUR", "22")))
     parser.add_argument("--gpu-max-mem-mib", type=int, default=int(os.environ.get("YOLO_DAILY_GPU_MAX_MEM_MIB", "2000")))
     parser.add_argument("--gpu-max-util", type=int, default=int(os.environ.get("YOLO_DAILY_GPU_MAX_UTIL", "15")))
     parser.add_argument("--start-day", default=os.environ.get("YOLO_DAILY_START_DAY", ""))
+    parser.add_argument("--tasks", default=os.environ.get("YOLO_DAILY_TASKS", ""))
     args = parser.parse_args()
 
     now = cn_now()
     default_start = compact_day(now - timedelta(days=1))
     start_day = args.start_day or default_start
+    active_tasks = selected_tasks(args.tasks)
     state = load_json(STATE_PATH, {"schema": "jgzj_yolo_daily_closed_loop_state.v1", "task_dates": {}, "runs": []})
     days = day_range(start_day, args.lookback_days, args.train_today_after_hour)
     replay_candidate_days = recent_day_range(args.replay_lookback_days, args.train_today_after_hour)
-    day_stats = summarize_index(set(days) | set(replay_candidate_days))
-    selected, skipped = choose_tasks(day_stats, days, state, args.max_tasks, args.max_dates_per_task)
+    day_stats = summarize_index(set(days) | set(replay_candidate_days), active_tasks)
+    selected, skipped = choose_tasks(day_stats, days, state, args.max_tasks, args.max_dates_per_task, active_tasks)
     attach_replay_dates(selected, day_stats, args.replay_max_days)
     gpu_status = a100_gpu_status(args.gpu_max_mem_mib, args.gpu_max_util)
 
@@ -478,6 +513,7 @@ def main() -> None:
         "dry_run": args.dry_run,
         "checked_at": now.isoformat(),
         "start_day": start_day,
+        "task_filter": [task["task_id"] for task in active_tasks],
         "candidate_days": days,
         "replay_candidate_days": replay_candidate_days,
         "day_stats": day_stats,
