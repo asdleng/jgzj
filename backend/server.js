@@ -137,6 +137,12 @@ const openClawAuthTtlMs = Number(
 );
 const cloudAgentBaseUrl = process.env.CLOUD_AGENT_BASE_URL || 'http://127.0.0.1:8000';
 const cloudAgentTimeoutMs = Number(process.env.CLOUD_AGENT_TIMEOUT_MS || 25000);
+const configuredCloudOpsSnapshotTimeoutS = Number(
+  process.env.CLOUD_OPS_SNAPSHOT_TIMEOUT_S || 90
+);
+const cloudOpsSnapshotTimeoutS = Number.isFinite(configuredCloudOpsSnapshotTimeoutS)
+  ? Math.min(120, Math.max(60, Math.ceil(configuredCloudOpsSnapshotTimeoutS)))
+  : 90;
 
 function readSecretFromEnvOrFile(valueNames, fileName, defaultPath) {
   for (const valueName of valueNames) {
@@ -12075,13 +12081,14 @@ function validateCloudOpsPlan(plan) {
     return null;
   }
 
+  const timeout_s = toFiniteInteger(plan.timeout_s, 20, { min: 3, max: 120 });
   return {
     action,
     vehicle_id: String(plan.vehicle_id || '').trim(),
     request_id: String(plan.request_id || '').trim(),
     tool_name: String(plan.tool_name || '').trim(),
     args: normalizeCloudOpsArgs(plan.args),
-    timeout_s: toFiniteInteger(plan.timeout_s, 20, { min: 3, max: 120 }),
+    timeout_s: action === 'snapshot_request' ? Math.max(timeout_s, cloudOpsSnapshotTimeoutS) : timeout_s,
     reason: String(plan.reason || '').trim()
   };
 }
@@ -12175,7 +12182,10 @@ async function executeCloudOpsAction(plan, vehicles = []) {
       : '');
 
   const vehicleId = inferredVehicleId || plan.vehicle_id;
-  const timeout_s = toFiniteInteger(plan.timeout_s, 20, { min: 3, max: 120 });
+  const requestedTimeoutS = toFiniteInteger(plan.timeout_s, 20, { min: 3, max: 120 });
+  const timeout_s = plan.action === 'snapshot_request'
+    ? Math.max(requestedTimeoutS, cloudOpsSnapshotTimeoutS)
+    : requestedTimeoutS;
 
   if (plan.action === 'none') {
     return {
