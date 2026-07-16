@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -99,6 +100,167 @@ def load_jsonl(path: Path) -> list[dict]:
     return records
 
 
+def find_map_visual_root(root: Path) -> Path | None:
+    candidates: list[Path] = []
+    direct = root / "trajectories" / "camera_poses.jsonl"
+    if direct.is_file() and (root / "image_capture" / "image_keyframes.jsonl").is_file():
+        candidates.append(root)
+    for pose_path in root.rglob("camera_poses.jsonl"):
+        if pose_path.parent.name != "trajectories":
+            continue
+        candidate = pose_path.parent.parent
+        if (candidate / "image_capture" / "image_keyframes.jsonl").is_file():
+            candidates.append(candidate)
+    if not candidates:
+        return None
+    return min(set(candidates), key=lambda item: (len(item.relative_to(root).parts), str(item)))
+
+
+def parse_fast_livo_calibration(path: Path) -> dict:
+    text = path.read_text(encoding="utf-8")
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        match = re.match(r"^\s*([A-Za-z][A-Za-z0-9_]*):\s*([^#\s]+)", line)
+        if match:
+            values[match.group(1)] = match.group(2)
+
+    required = ("cam_model", "cam_width", "cam_height", "cam_fx", "cam_fy", "cam_cx", "cam_cy")
+    missing = [key for key in required if key not in values]
+    if missing:
+        raise ValueError(f"calibration {path} missing fields: {', '.join(missing)}")
+
+    distortion = []
+    for index in range(8):
+        key = f"cam_d{index}"
+        if key not in values:
+            break
+        distortion.append(float(values[key]))
+    return {
+        "camera_model": values["cam_model"],
+        "distortion_model": values.get("distortion_model", "plumb_bob"),
+        "width": int(values["cam_width"]),
+        "height": int(values["cam_height"]),
+        "fx": float(values["cam_fx"]),
+        "fy": float(values["cam_fy"]),
+        "cx": float(values["cam_cx"]),
+        "cy": float(values["cam_cy"]),
+        "D": distortion,
+        "calibration_path": str(path),
+    }
+
+
+def load_map_visual_records(map_root: Path) -> tuple[dict, list[dict]]:
+    image_root = map_root / "image_capture"
+    pose_path = map_root / "trajectories" / "camera_poses.jsonl"
+    capture_path = image_root / "image_keyframes.jsonl"
+    calibration_dir = image_root / "calibration"
+
+    calibration: dict[str, dict] = {}
+    for path in sorted(calibration_dir.glob("camera*.txt")):
+        calibration[path.stem] = parse_fast_livo_calibration(path)
+    if not calibration:
+        raise ValueError(f"map_visual package has no camera calibration under {calibration_dir}")
+    required_cameras = {"camera1", "camera2", "camera3", "camera4"}
+    if set(calibration) != required_cameras:
+        raise ValueError(f"map_visual calibration must contain exactly {sorted(required_cameras)}")
+
+    capture_groups = load_jsonl(capture_path)
+    pose_groups = load_jsonl(pose_path)
+    capture_by_id: dict[int, dict] = {}
+    for group in capture_groups:
+        group_id = int(group["image_keyframe_id"])
+        if group_id in capture_by_id:
+            raise ValueError(f"duplicate image_keyframe_id in capture metadata: {group_id}")
+        capture_by_id[group_id] = group
+
+    expected_cameras = set(calibration)
+    flattened_by_camera: dict[str, list[dict]] = {name: [] for name in sorted(calibration)}
+    seen_group_ids: set[int] = set()
+    for pose_group in pose_groups:
+        if pose_group.get("schema") != "auto_ad_mapping_final_camera_poses.v1":
+            raise ValueError(f"unsupported map_visual pose schema: {pose_group.get('schema')}")
+        group_id = int(pose_group["image_keyframe_id"])
+        if group_id in seen_group_ids:
+            raise ValueError(f"duplicate image_keyframe_id in final camera poses: {group_id}")
+        seen_group_ids.add(group_id)
+        capture_group = capture_by_id.get(group_id)
+        if capture_group is None:
+            raise ValueError(f"final camera pose group {group_id} has no capture metadata")
+
+        pose_cameras = pose_group.get("cameras")
+        capture_cameras = capture_group.get("cameras")
+        if not isinstance(pose_cameras, dict) or set(pose_cameras) != expected_cameras:
+            raise ValueError(f"final camera pose group {group_id} does not contain exactly {sorted(expected_cameras)}")
+        if not isinstance(capture_cameras, dict) or set(capture_cameras) != expected_cameras:
+            raise ValueError(f"capture group {group_id} does not contain exactly {sorted(expected_cameras)}")
+
+        group_timestamp_ns = int(pose_group["image_timestamp_ns"])
+        if int(capture_group["image_timestamp_ns"]) != group_timestamp_ns:
+            raise ValueError(f"timestamp mismatch for image group {group_id}")
+
+        for camera_name in sorted(expected_cameras):
+            pose_camera = pose_cameras[camera_name]
+            capture_camera = capture_cameras[camera_name]
+            image_path = str(pose_camera.get("image_path") or capture_camera.get("relative_path") or "")
+            capture_image_path = str(capture_camera.get("relative_path") or "")
+            if not image_path or image_path != capture_image_path:
+                raise ValueError(f"image path mismatch for group {group_id} {camera_name}")
+            if int(capture_camera["timestamp_ns"]) != group_timestamp_ns:
+                raise ValueError(f"camera timestamp mismatch for group {group_id} {camera_name}")
+            if matrix_from_value(pose_camera.get("T_camera_map")) is None:
+                raise ValueError(f"missing T_camera_map for group {group_id} {camera_name}")
+            if matrix_from_value(pose_camera.get("T_map_camera")) is None:
+                raise ValueError(f"missing T_map_camera for group {group_id} {camera_name}")
+
+            calib = calibration[camera_name]
+            flattened_by_camera[camera_name].append(
+                {
+                    "schema": pose_group["schema"],
+                    "camera_id": camera_name,
+                    "camera_name": camera_name,
+                    "image_keyframe_id": group_id,
+                    "image_path": image_path,
+                    "image_timestamp_ns": group_timestamp_ns,
+                    "pose_timestamp_ns": group_timestamp_ns,
+                    "trajectory_query_timestamp_ns": int(pose_group.get("trajectory_query_timestamp_ns", group_timestamp_ns)),
+                    "trajectory_method": pose_group.get("trajectory_method"),
+                    "T_camera_map": pose_camera["T_camera_map"],
+                    "T_map_camera": pose_camera["T_map_camera"],
+                    "pose_source": "map_visual_final_pgo_continuous_spline",
+                    "camera_model": calib["camera_model"],
+                    "distortion_model": calib["distortion_model"],
+                    "width": calib["width"],
+                    "height": calib["height"],
+                    "fx": calib["fx"],
+                    "fy": calib["fy"],
+                    "cx": calib["cx"],
+                    "cy": calib["cy"],
+                    "D": calib["D"],
+                    "__map_visual_final_pose": True,
+                    "__record_root": str(image_root),
+                }
+            )
+
+    if seen_group_ids != set(capture_by_id):
+        missing = sorted(set(capture_by_id) - seen_group_ids)
+        raise ValueError(f"capture groups missing final camera poses: {missing[:10]}")
+
+    records = [record for camera_name in sorted(flattened_by_camera) for record in flattened_by_camera[camera_name]]
+    manifest = {
+        "schema": "jgzj.three_dgs.map_visual_adapter.v1",
+        "source_schema": "auto_ad_mapping_final_camera_poses.v1",
+        "map_visual_root": str(map_root),
+        "image_keyframe_groups": len(pose_groups),
+        "camera_pose_rows": len(records),
+        "camera_time_offset_ns": 0,
+        "camera_time_offset_calibrated": False,
+        "calibration": calibration,
+    }
+    for record in records:
+        record["__manifest"] = manifest
+    return manifest, records
+
+
 def load_pose_time_offsets(path: str | None) -> dict[str, float]:
     if not path:
         return {}
@@ -117,6 +279,16 @@ def load_pose_time_offsets(path: str | None) -> dict[str, float]:
             continue
         offsets[str(camera_name)] = float(value) / 1000.0
     return offsets
+
+
+def validate_pose_time_offsets(records: list[dict], offsets_s: dict[str, float]) -> bool:
+    is_map_visual = bool(records and all(record.get("__map_visual_final_pose") for record in records))
+    nonzero_offsets = {key: value for key, value in offsets_s.items() if abs(value) > 1e-12}
+    if is_map_visual and nonzero_offsets:
+        raise ValueError(
+            "map_visual records already contain final per-image spline poses; legacy pose time offsets must not be applied"
+        )
+    return is_map_visual
 
 
 def extract_archive(source: Path, work_dir: Path) -> Path:
@@ -178,6 +350,10 @@ def find_dataset_root(root: Path) -> Path:
 
 
 def load_records(root: Path) -> tuple[dict, list[dict]]:
+    map_visual_root = find_map_visual_root(root)
+    if map_visual_root is not None:
+        return load_map_visual_records(map_visual_root)
+
     dataset_root = find_dataset_root(root)
     manifest_path = find_first(dataset_root, ("manifest.json", "metadata.json", "summary.json"))
     manifest: dict = {}
@@ -489,6 +665,8 @@ def record_group_key(record: dict, image_id: int) -> str:
 
 
 def record_pose_mode(record: dict) -> str:
+    if record.get("__map_visual_final_pose"):
+        return "map_visual_final_pgo_spline_pose"
     if isinstance(record.get("pose_context"), dict):
         return "vehicle_timestamp_interpolated_pose"
     if any(key in record for key in ("pose_history", "pose_buffer", "ndt_pose_history")):
@@ -504,6 +682,8 @@ def record_pointcloud_context_available(record: dict) -> bool:
 
 
 def pose_interpolation_note_for_mode(mode: str) -> str:
+    if mode == "map_visual_final_pgo_spline_pose":
+        return "Used the final per-image T_camera_map from map_visual: dense frontend cubic/SO(3) motion plus the final-PGO correction spline. No cloud interpolation or legacy time offset was applied."
     if mode == "cloud_pose_history_interpolated":
         return "Cloud interpolated shared_context/pose_history.jsonl to each image timestamp, then computed T_map_camera = T_map_lidar * inv(T_cam_lidar)."
     if mode == "vehicle_timestamp_interpolated_pose":
@@ -810,6 +990,11 @@ def camera_sources(record: dict, manifest: dict) -> list[object]:
     return sources
 
 
+def camera_distortion_model(record: dict, manifest: dict) -> str:
+    raw = first_key(camera_sources(record, manifest), ("distortion_model", "camera_model", "model"))
+    return str(raw or "plumb_bob").strip().lower()
+
+
 def camera_params(record: dict, manifest: dict, image_path: Path) -> tuple[int, int, float, float, float, float, list[float]]:
     sources = camera_sources(record, manifest)
     k_value = first_key(sources, ("K", "camera_matrix"))
@@ -876,6 +1061,7 @@ def undistort_or_copy(
     params: tuple[int, int, float, float, float, float, list[float]],
     undistort: bool,
     undistort_mode: str,
+    distortion_model: str = "plumb_bob",
 ) -> tuple[int, int, float, float, float, float, str]:
     width, height, fx, fy, cx, cy, distortion = params
     if not undistort or cv2 is None or not distortion or max(abs(item) for item in distortion) <= 1e-12:
@@ -891,13 +1077,42 @@ def undistort_or_copy(
     width, height = actual_width, actual_height
     camera_matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
     dist = np.array(distortion, dtype=np.float64).reshape(-1, 1)
-    if undistort_mode == "optimal":
+    is_fisheye = distortion_model in {"equidistant", "fisheye"}
+    if is_fisheye:
+        if dist.size < 4:
+            raise ValueError(f"fisheye calibration requires four coefficients, got {dist.size}")
+        dist = dist[:4]
+        if undistort_mode == "optimal":
+            new_matrix = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
+                camera_matrix,
+                dist,
+                (width, height),
+                np.eye(3),
+                balance=0.0,
+                new_size=(width, height),
+            )
+        else:
+            new_matrix = camera_matrix
+        map1, map2 = cv2.fisheye.initUndistortRectifyMap(
+            camera_matrix,
+            dist,
+            np.eye(3),
+            new_matrix,
+            (width, height),
+            cv2.CV_32FC1,
+        )
+        output = cv2.remap(image, map1, map2, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        applied_mode = f"fisheye-{undistort_mode}"
+    elif undistort_mode == "optimal":
         new_matrix, _roi = cv2.getOptimalNewCameraMatrix(camera_matrix, dist, (width, height), 0, (width, height))
         output = cv2.undistort(image, camera_matrix, dist, None, new_matrix)
+        applied_mode = undistort_mode
     else:
         new_matrix = camera_matrix
         output = cv2.undistort(image, camera_matrix, dist, None, camera_matrix)
-    cv2.imwrite(str(dst), output)
+        applied_mode = undistort_mode
+    if not cv2.imwrite(str(dst), output):
+        raise ValueError(f"failed to write undistorted image: {dst}")
     return (
         width,
         height,
@@ -905,7 +1120,7 @@ def undistort_or_copy(
         float(new_matrix[1, 1]),
         float(new_matrix[0, 2]),
         float(new_matrix[1, 2]),
-        undistort_mode,
+        applied_mode,
     )
 
 
@@ -1225,6 +1440,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
         manifest, records = load_records(image_root)
         pose_history = load_pose_history(image_root)
         pose_time_offsets_s = load_pose_time_offsets(args.pose_time_offsets_json)
+        is_map_visual = validate_pose_time_offsets(records, pose_time_offsets_s)
         write_progress(output, "images", 10.0, f"读取到 {len(records)} 条图像-位姿记录")
 
         camera_models: dict[tuple[str, int, int, float, float, float, float], int] = {}
@@ -1249,6 +1465,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             pose_ts_s = record_pose_timestamp_s(record)
             pose_delta_ms = record_pose_delta_ms(record, image_ts_s, pose_ts_s)
             params = camera_params(record, local_manifest, source_image)
+            distortion_model = camera_distortion_model(record, local_manifest)
             out_name = (
                 f"frame_{image_id:06d}_"
                 f"{sanitize_component(camera_name, 'camera')}_"
@@ -1263,6 +1480,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                 params,
                 args.undistort.lower() != "false",
                 args.undistort_mode,
+                distortion_model,
             )
             camera_key = (
                 camera_name,
@@ -1334,7 +1552,9 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     "source_index": record.get("index"),
                     "source_image_name": source_image.name,
                     "source_image_path": str(source_image),
-                    "source_image_relative_path": image_obj.get("relative_path") or image_obj.get("path"),
+                    "source_image_relative_path": image_obj.get("relative_path")
+                    or image_obj.get("path")
+                    or record.get("image_path"),
                     "image_ts_unix": image_ts_s,
                     "image_ts_ns": timestamp_ns(image_ts_s),
                     "pose_interpolation_ts_unix": pose_interpolation_ts_s,
@@ -1346,6 +1566,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     "pose_source": pose_obj.get("source") or record.get("pose_source"),
                     "pose_topic": pose_obj.get("topic"),
                     "pose_mode": pose_mode,
+                    "distortion_model": distortion_model,
                     "pose_interpolation": pose_mode,
                     "pose_interpolation_note": pose_interpolation_note_for_mode(pose_mode),
                     "pointcloud_context_available": has_pointcloud_context,
@@ -1377,7 +1598,9 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     "scene_name": args.scene_name,
                     "generated_at_unix": time.time(),
                     "pose_interpolation": {
-                        "mode": "cloud_pose_history_interpolated"
+                        "mode": "map_visual_final_pgo_spline_pose"
+                        if pose_mode_counts.get("map_visual_final_pgo_spline_pose")
+                        else "cloud_pose_history_interpolated"
                         if pose_mode_counts.get("cloud_pose_history_interpolated")
                         else "vehicle_timestamp_interpolated_pose"
                         if pose_mode_counts.get("vehicle_timestamp_interpolated_pose")
@@ -1386,7 +1609,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                         "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
                         "pose_mode_counts": pose_mode_counts,
                         "pose_time_offsets_ms": {key: value * 1000.0 for key, value in sorted(pose_time_offsets_s.items())},
-                        "note": "Each image uses its own timestamp. Optional per-camera pose_time_offsets_ms are applied before cloud pose-history interpolation.",
+                        "note": "map_visual final poses are used verbatim and reject legacy offsets; generic packages may optionally use cloud pose-history interpolation.",
                     },
                     "pointcloud_context": {
                         "available_frame_count": pointcloud_context_frame_count,
@@ -1416,8 +1639,11 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             "camera_count": len(camera_models),
             "colorization": colorization_summary,
             "frame_metadata_path": str(output / "frame_metadata.json"),
+            "source_format": "map_visual" if is_map_visual else "generic_records",
         "pose_interpolation": {
-            "mode": "cloud_pose_history_interpolated"
+            "mode": "map_visual_final_pgo_spline_pose"
+            if pose_mode_counts.get("map_visual_final_pgo_spline_pose")
+            else "cloud_pose_history_interpolated"
             if pose_mode_counts.get("cloud_pose_history_interpolated")
             else "vehicle_timestamp_interpolated_pose"
             if pose_mode_counts.get("vehicle_timestamp_interpolated_pose")
@@ -1426,7 +1652,7 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
             "pose_mode_counts": pose_mode_counts,
             "pose_time_offsets_ms": {key: value * 1000.0 for key, value in sorted(pose_time_offsets_s.items())},
-            "note": "Cloud applies optional per-camera pose_time_offsets_ms before pose-history interpolation; records with vehicle-supplied T_map_camera/T_camera_map keep that pose.",
+            "note": "map_visual final poses are used verbatim and reject legacy offsets; generic records keep the existing optional interpolation behavior.",
             },
             "pointcloud_context": {
                 "available": pointcloud_context_frame_count > 0,
