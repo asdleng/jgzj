@@ -226,11 +226,13 @@ async function sampleSub2apiProxyWatchdogStatus(options = {}) {
   const currentNode = String(payload.current_node || '').trim() || '-';
   const delayText = Number.isFinite(Number(currentDelay.delay_ms)) ? `${Number(currentDelay.delay_ms)}ms` : currentDelay.summary || '-';
   const ageText = ageSec === null ? '-' : formatDuration(ageSec);
-  const switchText = lastAction?.type === 'switch' ? `，最近切到 ${lastAction.node || '-'}（${lastAction.at || '-'}）` : '';
+  const switchText = ['switch', 'external_switch'].includes(lastAction?.type)
+    ? `，最近切到 ${lastAction.node || '-'}（${lastAction.at || '-'}）`
+    : '';
   const failText = failStreak > 0 ? `，连续失败 ${failStreak}/${failStreakThreshold || '-'}` : '';
   const summary = stale
     ? `代理守护状态过期 ${ageText}，当前节点 ${currentNode}`
-    : `当前 ${currentNode}，OpenAI 探测 ${proxyPath.summary || '-'}，节点延迟 ${delayText}，11号近${recentErrors.window_s || '-'}秒错误 ${recentErrors.count ?? 0}${switchText}${failText}`;
+    : `当前 ${currentNode}，OpenAI 探测 ${proxyPath.summary || '-'}，节点延迟 ${delayText}，asdleng近${recentErrors.window_s || '-'}秒错误 ${recentErrors.count ?? 0}${switchText}${failText}`;
 
   return {
     label: options.label || 'Sub2API 代理守护状态',
