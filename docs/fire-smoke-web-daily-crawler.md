@@ -2,7 +2,7 @@
 
 ## 1. 任务目标
 
-这项任务每天从 Wikimedia Commons 采集有许可证信息的烟雾、火焰和高风险负样本，去重后写入 JGZJ 的烟火网络候选集，再由 `Qwen3.6-27B-Labeler` 做检测和第二遍视觉复核。
+这项任务每天从 Wikimedia Commons 和 Openverse 采集有许可证信息的烟雾、火焰和高风险负样本，去重后写入 JGZJ 的烟火网络候选集，再由 `Qwen3.6-27B-Labeler` 做检测和第二遍视觉复核。Openverse 提供跨 Flickr、NASA、Geograph 等开放图库的统一检索，但每张图片仍保留原始落地页、作者和许可证 URL。
 
 它只维护人工审核候选集，不会自动加入 YOLO 的 train/val/test，也不会触发模型训练。以下文件及每条数据都必须保持 `training_eligible=false`：
 
@@ -20,7 +20,7 @@
 - 补跑规则：同一天第一次运行会固定当天的基线和目标；即使中途失败，重试仍使用同一个目标，不会再额外增加 50 张。
 - 断电补跑：timer 使用 `Persistent=true`，错过当天执行时间后会在系统恢复时补跑。
 
-每日配置会交错采集火灾、烟雾和 hard negative，包括建筑/车辆/住宅火灾、火灾烟雾，以及雾、尾气、烟囱、消防栓、灭火器、消防柜、扬尘、夜间灯光和晚霞。每个标题/事件系列最多保留 4 张，避免同一场事故连续照片占满数据集。
+每日配置会交错采集火灾、烟雾和 hard negative，包括建筑/车辆/住宅/垃圾桶/城市/森林火灾、火灾烟雾，以及雾、蒸汽、尾气、烟囱、消防栓、灭火器、消防柜、扬尘、夜间灯光和晚霞。Commons 不足时才惰性请求 Openverse；达到当日目标后不会继续请求后续 provider。每个标题/事件系列最多保留 4 张，避免同一场事故连续照片占满数据集。
 
 ## 3. 关键路径
 
@@ -49,6 +49,7 @@ scripts/run_fire_smoke_web_daily.py
 scripts/crawl_fire_smoke_candidates.py
 scripts/label_fire_smoke_candidates_qwen.py
 config/wikimedia_fire_smoke_queries_daily.json
+config/openverse_fire_smoke_queries_daily.json
 ```
 
 网页入口：
@@ -70,7 +71,7 @@ ALL_PROXY=http://127.0.0.1:7897
 NO_PROXY=127.0.0.1,localhost
 ```
 
-Commons API 和图片下载走代理；本机 Qwen 入口必须绕过代理：
+Commons、Openverse API 和图片下载走代理；本机 Qwen 入口必须绕过代理：
 
 ```text
 http://127.0.0.1:18016
@@ -84,6 +85,7 @@ model=Qwen3.6-27B-Labeler
 采集阶段执行以下检查：
 
 - 只接受 Public Domain、CC0、CC BY、CC BY-SA 等允许的许可证元数据。
+- Openverse 只检索 `cc0,pdm,by,by-sa`，并保留实际来源 provider、原始落地页和 attribution。
 - 校验 MIME、图片可解码性、最小尺寸、最大文件大小和单图下载超时。
 - 对 v2 和当前 v3 做来源 URL、SHA256、dHash 近重复去重。
 - 每个标准化标题/事件系列最多 4 张。
@@ -168,11 +170,11 @@ curl --noproxy '*' -fsS --max-time 10 http://127.0.0.1:18016/v1/models
 
 ### 当天没有新增到 50 张
 
-这通常表示当前查询窗口内的新图都已采集、许可证不符合、图片重复、属于同一标题系列，或下载失败。50 是上限，不是为了凑数而绕过质量门槛的硬指标。可从以下位置查看分类计数：
+这通常表示两个 provider 的当前查询窗口内的新图都已采集、许可证不符合、图片重复、属于同一标题系列，或下载失败。50 是上限，不是为了凑数而绕过质量门槛的硬指标。可从以下位置查看分类计数：
 
 ```text
 fire_smoke_web_candidates_v3/dataset_summary.json
 fire_smoke_web_candidates_v3/crawl_log.jsonl
 ```
 
-不要通过关闭许可证、去重、hard-negative 隔离或训练闸门来强行补足数量；需要扩充时应先增加精确 Commons 类别并执行小批量验证。
+不要通过关闭许可证、去重、hard-negative 隔离或训练闸门来强行补足数量；需要扩充时应先增加精确 Commons 类别或 Openverse 查询并执行小批量验证。

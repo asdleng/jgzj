@@ -5,7 +5,7 @@
 
 ## 1. 采集
 
-默认使用 Wikimedia Commons API，因为它能同时返回图片、作者、来源页和许可证。
+默认使用 Wikimedia Commons API，并可追加 Openverse API。Openverse 用来扩展到 Flickr、NASA、Geograph 等开放图库，同时返回图片、作者、原始来源页和许可证；两者进入同一授权白名单和去重链路。
 当前服务器到 Wikimedia 出口超时，因此也支持人工准备的 JSON/JSONL URL 清单；清单
 必须为每张图提供许可证。允许的默认许可证为 Public Domain、CC0、CC BY、CC BY-SA。
 

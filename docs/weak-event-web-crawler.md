@@ -13,7 +13,7 @@
 
 ## 数据边界
 
-- 数据源仅使用带可追溯授权信息的 Wikimedia Commons 图片。
+- 数据源使用带可追溯授权信息的 Wikimedia Commons 图片；通用爬虫也支持 Openverse，可在扩充配置后接入 Flickr、NASA、Geograph 等开放图库。
 - 搜索词和目录名不是标签，图片必须经过两遍独立 Qwen 复核。
 - 所有图片、标签、清单和汇总始终写入 `training_eligible=false`。
 - 难负样本桶中发现的正目标进入 `needs_human`，不会自动作为负样本使用。

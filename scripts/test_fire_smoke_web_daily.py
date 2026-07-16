@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import argparse
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ from run_fire_smoke_web_daily import (  # noqa: E402
     SCHEMA,
     plan_daily_state,
     validate_dataset,
+    main,
 )
 
 
@@ -24,6 +26,31 @@ def write_jsonl(path: Path, rows) -> None:
 
 
 class FireSmokeWebDailyTest(unittest.TestCase):
+    def test_dry_run_reports_both_search_providers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            commons = root / "commons.json"
+            openverse = root / "openverse.json"
+            commons.write_text('{"queries":[]}', encoding="utf-8")
+            openverse.write_text('{"queries":[]}', encoding="utf-8")
+            args = argparse.Namespace(
+                repo_root=root,
+                dataset=root / "dataset",
+                commons_config=commons,
+                openverse_config=openverse,
+                dedupe_manifest=[],
+                state=root / "state.json",
+                lock=root / "state.lock",
+                daily_limit=50,
+                endpoint="http://127.0.0.1:1",
+                model="test",
+                api_key="",
+                health_timeout=0.1,
+                python=sys.executable,
+                dry_run=True,
+            )
+            self.assertEqual(main(args), 0)
+
     def test_same_day_retry_reuses_original_target(self):
         first = plan_daily_state({}, "2026-07-14", 294, 50, "2026-07-14T02:20:00+08:00")
         self.assertEqual(first["baseline_count"], 294)

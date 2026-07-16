@@ -21,6 +21,8 @@ from crawl_fire_smoke_candidates import (
     download_deadline,
     license_allowed,
     load_seed_file,
+    openverse_candidates,
+    openverse_license_name,
     title_series_key,
 )
 from label_fire_smoke_candidates_qwen import apply_review_guards, extract_json, normalize_boxes
@@ -123,6 +125,67 @@ class FireSmokeWebPipelineTest(unittest.TestCase):
         self.assertEqual(session.params["gcmdir"], "descending")
         self.assertTrue(bucket_has_capacity(rows[0], {"fire_building": 4}))
         self.assertFalse(bucket_has_capacity(rows[0], {"fire_building": 5}))
+
+    def test_openverse_candidate_preserves_license_and_source_metadata(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "page_count": 1,
+                    "results": [{
+                        "id": "image-1",
+                        "title": "House on fire",
+                        "foreign_landing_url": "https://www.flickr.com/photos/example/1",
+                        "url": "https://live.staticflickr.com/example.jpg",
+                        "creator": "Example Author",
+                        "license": "by-sa",
+                        "license_version": "4.0",
+                        "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+                        "source": "flickr",
+                        "attribution": "House on fire by Example Author, CC BY-SA 4.0",
+                        "mature": False,
+                        "width": 1600,
+                        "height": 900,
+                    }],
+                }
+
+        class Session:
+            def __init__(self):
+                self.params = None
+
+            def get(self, _url, params, timeout):
+                self.params = params
+                self.timeout = timeout
+                return Response()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "openverse.json"
+            config.write_text(json.dumps({
+                "licenses": ["cc0", "pdm", "by", "by-sa"],
+                "queries": [{
+                    "bucket": "fire_building_openverse",
+                    "query": "building fire flames",
+                    "limit": 1,
+                    "max_accept": 6,
+                }],
+            }), encoding="utf-8")
+            session = Session()
+            rows = list(openverse_candidates(session, config, (3, 7)))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["provider"], "openverse:flickr")
+        self.assertEqual(rows[0]["license"], "CC BY-SA 4.0")
+        self.assertTrue(license_allowed(rows[0]["license"]))
+        self.assertEqual(rows[0]["source_page_url"], "https://www.flickr.com/photos/example/1")
+        self.assertEqual(rows[0]["max_accept"], 6)
+        self.assertEqual(session.params["license"], "cc0,pdm,by,by-sa")
+        self.assertEqual(session.params["mature"], "false")
+
+    def test_openverse_license_names_cover_allowed_codes(self):
+        self.assertEqual(openverse_license_name({"license": "cc0", "license_version": "1.0"}), "CC0 1.0")
+        self.assertEqual(openverse_license_name({"license": "pdm", "license_version": "1.0"}), "Public Domain Mark 1.0")
+        self.assertEqual(openverse_license_name({"license": "by", "license_version": "2.0"}), "CC BY 2.0")
 
     def test_title_series_key_groups_numbered_event_photos(self):
         first = title_series_key("File:House fire in Waikanae, 16 May 2026, P 09.jpg")

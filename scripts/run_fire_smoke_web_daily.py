@@ -198,11 +198,12 @@ def validate_dataset(dataset: Path) -> dict:
 def parse_args() -> argparse.Namespace:
     repo_default = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(
-        description="Run the idempotent daily fire/smoke Commons crawl and Qwen review."
+        description="Run the idempotent daily licensed fire/smoke crawl and Qwen review."
     )
     parser.add_argument("--repo-root", type=Path, default=repo_default)
     parser.add_argument("--dataset", type=Path)
     parser.add_argument("--commons-config", type=Path)
+    parser.add_argument("--openverse-config", type=Path)
     parser.add_argument("--dedupe-manifest", type=Path, action="append", default=[])
     parser.add_argument("--state", type=Path)
     parser.add_argument("--lock", type=Path)
@@ -221,6 +222,7 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
     repo_root = args.repo_root.resolve()
     dataset = (args.dataset or repo_root / ".runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3").resolve()
     commons_config = (args.commons_config or repo_root / "config/wikimedia_fire_smoke_queries_daily.json").resolve()
+    openverse_config = (args.openverse_config or repo_root / "config/openverse_fire_smoke_queries_daily.json").resolve()
     state_path = (args.state or repo_root / ".runtime/yolo_loop/fire_smoke_web_daily/state.json").resolve()
     lock_path = (args.lock or state_path.with_suffix(".lock")).resolve()
     dedupe_manifests = [path.resolve() for path in args.dedupe_manifest]
@@ -253,6 +255,7 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
             "dry_run": bool(args.dry_run),
             "dataset": str(dataset),
             "commons_config": str(commons_config),
+            "openverse_config": str(openverse_config),
             "dedupe_manifests": [str(path) for path in dedupe_manifests],
             "day": planned_state["day"],
             "baseline_count": planned_state["baseline_count"],
@@ -277,6 +280,7 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
                 str(repo_root / "scripts/crawl_fire_smoke_candidates.py"),
                 "--output", str(dataset),
                 "--commons-config", str(commons_config),
+                "--openverse-config", str(openverse_config),
                 "--max-images", str(planned_state["target_count"]),
                 "--max-per-series", "4",
             ]

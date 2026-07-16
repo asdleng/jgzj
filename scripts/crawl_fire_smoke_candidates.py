@@ -278,6 +278,93 @@ def commons_candidates(session: requests.Session, config_path: Path, timeout: Tu
                 break
 
 
+def openverse_license_name(item: dict) -> str:
+    code = clean_text(item.get("license"), 40).lower()
+    version = clean_text(item.get("license_version"), 20)
+    if code == "cc0":
+        return f"CC0 {version or '1.0'}"
+    if code == "pdm":
+        return f"Public Domain Mark {version or '1.0'}"
+    if code in {"by", "by-sa"}:
+        return f"CC {code.upper()} {version}".strip()
+    return clean_text(item.get("license"), 120)
+
+
+def openverse_candidates(session: requests.Session, config_path: Path, timeout: Tuple[float, float]) -> Iterator[dict]:
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    api_url = str(config.get("api_url") or "https://api.openverse.org/v1/images/")
+    default_licenses = config.get("licenses") or ["cc0", "pdm", "by", "by-sa"]
+    license_filter = ",".join(str(value).strip() for value in default_licenses if str(value).strip())
+    page_size_limit = min(80, max(1, int(config.get("page_size") or 80)))
+    global_exclude = str(config.get("exclude_title_regex") or "").strip()
+
+    for item in config.get("queries") or []:
+        query = clean_text(item.get("query"), 160)
+        bucket = clean_text(item.get("bucket") or "unclassified", 80)
+        remaining = max(0, int(item.get("limit") or 0))
+        if not query or remaining <= 0:
+            continue
+        include_pattern = str(item.get("include_title_regex") or "").strip()
+        exclude_parts = [part for part in (global_exclude, str(item.get("exclude_title_regex") or "").strip()) if part]
+        exclude_pattern = "|".join(f"(?:{part})" for part in exclude_parts)
+        page = max(1, int(item.get("start_page") or 1))
+
+        while remaining > 0:
+            page_size = min(page_size_limit, remaining)
+            params = {
+                "q": query,
+                "page": page,
+                "page_size": page_size,
+                "mature": "false",
+            }
+            if license_filter:
+                params["license"] = license_filter
+            response = session.get(api_url, params=params, timeout=timeout)
+            response.raise_for_status()
+            payload = response.json()
+            results = payload.get("results") or [] if isinstance(payload, dict) else []
+            if not results:
+                break
+            for result in results:
+                remaining -= 1
+                if not isinstance(result, dict) or result.get("mature") is True:
+                    continue
+                title = clean_text(result.get("title") or result.get("id") or query)
+                if include_pattern and not re.search(include_pattern, title, re.I):
+                    continue
+                if exclude_pattern and re.search(exclude_pattern, title, re.I):
+                    continue
+                image_url = str(result.get("url") or "").strip()
+                if not image_url.startswith(("http://", "https://")):
+                    image_url = str(result.get("thumbnail") or "").strip()
+                if not image_url.startswith(("http://", "https://")):
+                    continue
+                source = clean_text(result.get("source") or result.get("provider") or "unknown", 80)
+                attribution = clean_text(result.get("attribution"), 500)
+                yield {
+                    "provider": f"openverse:{source}",
+                    "url": image_url,
+                    "canonical_file_url": str(result.get("url") or image_url),
+                    "source_page_url": str(result.get("foreign_landing_url") or result.get("detail_url") or ""),
+                    "title": title,
+                    "query": query,
+                    "bucket": bucket,
+                    "max_accept": max(0, int(item.get("max_accept") or 0)),
+                    "license": openverse_license_name(result),
+                    "license_url": str(result.get("license_url") or ""),
+                    "author": clean_text(result.get("creator"), 300),
+                    "credit": attribution,
+                    "page_id": result.get("id"),
+                    "original_width": result.get("width"),
+                    "original_height": result.get("height"),
+                    "mime": result.get("filetype"),
+                }
+            page_count = int(payload.get("page_count") or page) if isinstance(payload, dict) else page
+            if page >= page_count:
+                break
+            page += 1
+
+
 def dhash64(image: Image.Image) -> int:
     sample = image.convert("L").resize((9, 8), LANCZOS)
     pixels = list(sample.getdata())
@@ -389,17 +476,42 @@ def crawl(args: argparse.Namespace) -> dict:
                 series_counts[series_key] = series_counts.get(series_key, 0) + 1
 
     session = retry_session(args.user_agent)
-    candidates: List[dict] = []
+    candidate_sources: List[Tuple[str, Iterable[dict]]] = []
     for seed_file in args.seed_file:
-        candidates.extend(load_seed_file(seed_file))
+        candidate_sources.append((f"seed:{seed_file.name}", load_seed_file(seed_file)))
     if args.commons_config:
-        candidates.extend(commons_candidates(session, args.commons_config, (args.connect_timeout, args.read_timeout)))
+        candidate_sources.append((
+            "wikimedia_commons",
+            commons_candidates(session, args.commons_config, (args.connect_timeout, args.read_timeout)),
+        ))
+    for openverse_config in args.openverse_config:
+        candidate_sources.append((
+            "openverse",
+            openverse_candidates(session, openverse_config, (args.connect_timeout, args.read_timeout)),
+        ))
 
     existing_images = sum(1 for _ in iter_jsonl(manifest_path))
     accepted = 0
     accepted_by_bucket: Dict[str, int] = {}
+    accepted_by_provider: Dict[str, int] = {}
     counts: Dict[str, int] = {}
-    for candidate in candidates:
+
+    def candidates() -> Iterator[dict]:
+        for source_name, source in candidate_sources:
+            try:
+                yield from source
+            except (OSError, ValueError, requests.RequestException) as exc:
+                key = f"source_error:{source_name}"
+                counts[key] = counts.get(key, 0) + 1
+                append_jsonl(log_path, {
+                    "schema": args.dataset_schema,
+                    "processed_at": now_iso(),
+                    "provider": source_name,
+                    "status": "source_error",
+                    "reason": str(exc)[:500],
+                })
+
+    for candidate in candidates():
         if existing_images + accepted >= args.max_images:
             break
         url = str(candidate.get("url") or "")
@@ -502,6 +614,8 @@ def crawl(args: argparse.Namespace) -> dict:
             if series_key:
                 series_counts[series_key] = series_counts.get(series_key, 0) + 1
             accepted_by_bucket[bucket] = accepted_by_bucket.get(bucket, 0) + 1
+            provider = str(candidate.get("provider") or "unknown")
+            accepted_by_provider[provider] = accepted_by_provider.get(provider, 0) + 1
             accepted += 1
             counts["accepted"] = counts.get("accepted", 0) + 1
         except Exception as exc:
@@ -532,6 +646,7 @@ def crawl(args: argparse.Namespace) -> dict:
         "crawl_new_images": accepted,
         "crawl_counts": counts,
         "crawl_accepted_by_bucket": accepted_by_bucket,
+        "crawl_accepted_by_provider": accepted_by_provider,
         "training_eligible": False,
         "training_policy": "qwen_prelabel_then_human_review",
         "source_policy": "license_metadata_required",
@@ -552,6 +667,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed-file", type=Path, action="append", default=[])
     parser.add_argument("--commons-config", type=Path)
+    parser.add_argument("--openverse-config", type=Path, action="append", default=[])
     parser.add_argument("--dedupe-manifest", type=Path, action="append", default=[])
     parser.add_argument("--dataset-schema", default=SCHEMA)
     parser.add_argument("--summary-schema", default=SUMMARY_SCHEMA)
@@ -575,8 +691,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user-agent", default=os.environ.get("JGZJ_CRAWLER_USER_AGENT", "JGZJ-FireSmoke-Collector/1.0 (dataset research)"))
     parser.add_argument("--allow-unknown-license", action="store_true", help="Keep unknown-license images quarantined for evaluation only.")
     args = parser.parse_args()
-    if not args.seed_file and not args.commons_config:
-        parser.error("at least one --seed-file or --commons-config is required")
+    if not args.seed_file and not args.commons_config and not args.openverse_config:
+        parser.error("at least one --seed-file, --commons-config, or --openverse-config is required")
     return args
 
 
