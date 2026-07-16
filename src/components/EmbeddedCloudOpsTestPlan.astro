@@ -79,19 +79,8 @@ const controlActions = [
   { label: "碰撞停复位", tool: "vehicle.clear_collision_stop", kind: "collision-reset", desc: "静止校验后执行安全复位", risk: "高风险 · 输入车辆编号确认", timeout: 45 },
   { label: "广告屏/灯光控制", tool: "vehicle.body_control", kind: "body-control", desc: "设置屏幕、灯光和转向灯", risk: "逐项选择目标状态", timeout: 35 },
   { label: "系统音量", tool: "audio.system_volume.set", kind: "system-volume", desc: "调节 Ubuntu 扬声器音量", risk: "写入后立即回读", timeout: 25 },
-  { label: "麦克风收音", tool: "audio.microphone_gain.set", kind: "microphone-gain", desc: "调节 USB 麦克风采集增益", risk: "写入后立即回读", timeout: 25 }
-];
-
-const blockedActionGroups = [
-  {
-    title: "任务 / 地图 / 参数写入",
-    actions: [
-      ["启动巡逻", "route.start_patrol", "任务重发必须人工确认后单独接"],
-      ["地图插件启动", "map_editor.start", "地图编辑会打开车端插件，当前禁用"],
-      ["地图插件关闭", "map_editor.stop", "当前禁用"],
-      ["参数写入", "param.write", "必须有白名单、差异预览、回滚和审计"]
-    ]
-  }
+  { label: "麦克风收音", tool: "audio.microphone_gain.set", kind: "microphone-gain", desc: "调节 USB 麦克风采集增益", risk: "写入后立即回读", timeout: 25 },
+  { label: "继续上一个任务", tool: "task.resume_previous", kind: "resume-previous", desc: "异常停止后继续未完成的任务计划", risk: "高风险 · 输入车辆编号确认", timeout: 65 }
 ];
 
 const agentRules = [
@@ -391,20 +380,6 @@ const agentRules = [
               </div>
             </details>
 
-            {blockedActionGroups.map((group) => (
-              <details class="cloud-ops-test-disclosure cloud-ops-test-disabled-disclosure">
-                <summary>{group.title}</summary>
-                <div class="cloud-ops-test-command-grid cloud-ops-test-command-grid--blocked">
-                  {group.actions.map(([label, tool, desc]) => (
-                    <button class="cloud-ops-test-command-button is-disabled" type="button" disabled>
-                      <strong>{label}</strong>
-                      <span>{tool}</span>
-                      <small>{desc}</small>
-                    </button>
-                  ))}
-                </div>
-              </details>
-            ))}
           </div>
 
           <section class="cloud-ops-test-panel cloud-ops-test-panel--result cloud-ops-test-sticky-result">
@@ -801,12 +776,14 @@ const agentRules = [
       "vehicle.clear_collision_stop",
       "vehicle.body_control",
       "audio.system_volume.set",
-      "audio.microphone_gain.set"
+      "audio.microphone_gain.set",
+      "task.resume_previous"
     ]);
     const CONTROL_TYPED_CONFIRM_KINDS = new Set([
       "reboot-master",
       "reboot-media",
-      "collision-reset"
+      "collision-reset",
+      "resume-previous"
     ]);
     const MEDIA_EXPECTED_TOOLS = new Set([
       "status.camera",
@@ -3804,6 +3781,50 @@ const agentRules = [
           ]
         };
       }
+      if (normalizedTool === "task.resume_previous") {
+        const before = result?.before || {};
+        const task = before?.task || {};
+        const safety = before?.safety || {};
+        const blockers = Array.isArray(before?.blockers) ? before.blockers : [];
+        const blockerLabels = {
+          can_driver_offline: "CAN 驱动离线",
+          planning_node_offline: "Planning 节点离线",
+          routing_node_offline: "Routing 节点离线",
+          location_not_reliable: "定位不可靠",
+          vehicle_speed_unavailable: "车速不可读",
+          vehicle_not_stationary: "车辆未静止",
+          emergency_stop_not_clear: "急停未解除",
+          collision_stop_not_clear: "碰撞停未解除",
+          ultrasonic_stop_active: "超声停仍触发",
+          joystick_takeover_active: "手柄仍接管",
+          trajectory_estop_active: "规划轨迹急停仍触发",
+          previous_task_context_unavailable: "上一个任务上下文已丢失",
+          previous_task_loop_total_unavailable: "任务总圈数不可读",
+          previous_task_loop_progress_unavailable: "任务进度不可读",
+          previous_task_already_completed: "上一个任务已经完成",
+          previous_task_already_running: "上一个任务仍在运行"
+        };
+        const status = String(result?.status || "").toLowerCase();
+        const accepted = status === "published" && result?.cmd_response === true;
+        return {
+          title: accepted ? "上一个未完成任务已继续" : "上一个任务未继续",
+          tone: ok && accepted && !Object.keys(result?.readback_errors || {}).length ? "ok" : "warn",
+          kv: [
+            ["车辆", vehicleId],
+            ["执行状态", result?.status || "已返回"],
+            ["当前路线", Array.isArray(task?.path_string_ids) ? task.path_string_ids.join("、") : "未返回"],
+            ["任务进度", task?.current_loop_index != null && task?.total_loop_sum != null ? `${task.current_loop_index} / ${task.total_loop_sum}` : "未返回"],
+            ["剩余圈数", task?.remaining_loop_count != null ? `${task.remaining_loop_count}` : "未返回"],
+            ["发送前车速", safety?.speed_kph != null ? `${safety.speed_kph} km/h` : "未返回"]
+          ],
+          lines: [
+            ...(blockers.length ? [`未执行原因：${blockers.map((item) => blockerLabels[item] || item).join("、")}`] : []),
+            ...(result?.message ? [result.message] : []),
+            ...(result?.error ? [result.error] : []),
+            ...(Object.keys(result?.readback_errors || {}).length ? [`写后回读失败：${Object.entries(result.readback_errors).map(([key, value]) => `${key} ${value}`).join("；")}`] : [])
+          ]
+        };
+      }
       if (normalizedTool === "vehicle.body_control") {
         const request = result?.request || {};
         const readback = toolResultOfPayload(payload?.control_readback);
@@ -4089,6 +4110,9 @@ const agentRules = [
       if (kind === "collision-reset") {
         return '<p class="cloud-ops-test-control-safety">系统会先停止巡逻、确认车辆静止，再执行碰撞停复位并补发 STOP。</p>';
       }
+      if (kind === "resume-previous") {
+        return '<p class="cloud-ops-test-control-safety">系统只会继续当前仍加载且进度未完成的任务。发送前会核验车辆静止、急停/碰撞停已解除、定位可靠，以及 Routing 和 Planning 在线；不会重新写入路线参数或重置任务进度。</p>';
+      }
       return '<p class="cloud-ops-test-control-safety">重启会短暂中断对应控制器连接。命令提交后，页面会保留调度结果和审计记录。</p>';
     };
 
@@ -4184,6 +4208,9 @@ const agentRules = [
       }
       if (action.kind === "collision-reset") {
         return { dry_run: false, stop_patrol_first: true };
+      }
+      if (action.kind === "resume-previous") {
+        return { dry_run: false, cmd_timeout_s: 3, post_check_delay_s: 0.8 };
       }
       if (action.kind === "body-control") {
         const args = { dry_run: false, persistent: true, require_stationary: true };
@@ -4285,9 +4312,18 @@ const agentRules = [
         }
         const resultPayload = { ...payload, control_readback: readbackPayload, control_readback_error: readbackError };
         renderToolSummary(action.toolName, resultPayload, action.vehicleId);
+        const returnedResult = toolResultOfPayload(payload) || {};
+        const returnedStatus = String(returnedResult?.status || "").toLowerCase();
+        const returnedError = returnedResult?.error || returnedResult?.message || "车端拒绝执行";
+        const operationFailed = returnedStatus === "error";
+        const operationPartial = returnedStatus === "partial";
         setStatus(
-          `${action.label}已执行${readbackTool ? (readbackError ? ` · 回读失败：${readbackError}` : " · 写后回读完成") : ""}`,
-          readbackError ? "error" : "ok"
+          operationFailed
+            ? `${action.label}未执行：${returnedError}`
+            : operationPartial
+              ? `${action.label}已发送，但结果未确认：${returnedError}`
+              : `${action.label}已执行${readbackTool ? (readbackError ? ` · 回读失败：${readbackError}` : " · 写后回读完成") : ""}`,
+          operationFailed || operationPartial || readbackError ? "error" : "ok"
         );
         controlActionInFlight = false;
         activeControlAction = null;

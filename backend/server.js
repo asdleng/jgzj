@@ -13813,6 +13813,12 @@ function renderCloudOpsFallbackReply(_message, execution) {
     if (toolName === 'route.stop_patrol') {
       return `${execution?.request?.vehicle_id || '该车辆'} 的停止巡逻请求已返回。`;
     }
+    if (toolName === 'task.resume_previous') {
+      const task = result?.before?.task || {};
+      return `${execution?.request?.vehicle_id || '该车辆'} 的上一个任务继续请求已返回，状态 ${
+        result?.status || 'unknown'
+      }，任务进度 ${task?.current_loop_index ?? '-'} / ${task?.total_loop_sum ?? '-'}。`;
+    }
     if (toolName === 'camera.capture' && result && typeof result === 'object') {
       const captureItems = pickCloudOpsList(result);
       return `${execution?.request?.vehicle_id || '该车辆'} 的相机抓拍已返回，共 ${
@@ -14663,6 +14669,7 @@ function cloudOpsPermissionForTool(toolName) {
   if (
     name === 'route.start_patrol' ||
     name === 'route.stop_patrol' ||
+    name === 'task.resume_previous' ||
     name === 'vehicle.body_control' ||
     name === 'vehicle.clear_collision_stop' ||
     name === 'controller.reboot_master' ||
