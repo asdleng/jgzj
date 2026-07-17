@@ -6280,9 +6280,10 @@ print(len(faces))
       body: JSON.stringify({
         model: greenInspectionModel,
         messages: [{ role: 'user', content }],
-        max_tokens: 1350,
+        max_tokens: 1500,
         temperature: 0,
         stream: false,
+        response_format: { type: 'json_object' },
         chat_template_kwargs: { enable_thinking: false }
       }),
       signal: AbortSignal.timeout(greenInspectionTimeoutMs)
@@ -6295,7 +6296,25 @@ print(len(faces))
       throw error;
     }
     const reply = String(payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.message?.reasoning || '').trim();
-    return normalizeGreenInspection(parseGreenInspectionJson(reply), {
+    const parsedInspection = parseGreenInspectionJson(reply);
+    const dimensionKeys = parsedInspection?.dimension_scores && typeof parsedInspection.dimension_scores === 'object'
+      ? Object.keys(parsedInspection.dimension_scores)
+      : [];
+    const viewAssessments = Array.isArray(parsedInspection?.view_assessments)
+      ? parsedInspection.view_assessments
+      : [];
+    const structurallyValid = typeof parsedInspection?.vegetation_present === 'boolean' && (
+      parsedInspection.vegetation_present === false || (
+        dimensionKeys.filter((key) => Object.prototype.hasOwnProperty.call(GREEN_INSPECTION_DIMENSIONS, key)).length === 5 &&
+        viewAssessments.length === evaluatedFrames
+      )
+    );
+    if (!structurallyValid) {
+      const error = new Error('green_inspection_invalid_model_json');
+      error.status = 502;
+      throw error;
+    }
+    return normalizeGreenInspection(parsedInspection, {
       sample_id: sample.sample_id,
       vehicle_id: sample.vehicle_id,
       collected_at: sample.collected_at,

@@ -156,6 +156,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw);
     assert.equal(body.model, 'Qwen3.6-27B-Labeler');
+    assert.deepEqual(body.response_format, { type: 'json_object' });
     assert.equal(body.messages[0].content.filter((item) => item.type === 'image_url').length, 4);
     assert.match(body.messages[0].content[0].text, /不要默认给 90 分/);
     assert.match(body.messages[0].content[0].text, /view_assessments/);
@@ -204,6 +205,24 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
                 condition: 'fair',
                 confidence: 'high',
                 observation: '左向画面绿篱覆盖连续，但修剪边缘略不整齐。'
+              },
+              {
+                camera_id: 'camera3',
+                vegetation_visible: true,
+                vegetation_types: { trees: true, shrubs: false, lawn_or_groundcover: false },
+                green_coverage_percent: 36,
+                condition: 'good',
+                confidence: 'medium',
+                observation: '后向画面可见乔木枝叶，结构完整。'
+              },
+              {
+                camera_id: 'camera4',
+                vegetation_visible: false,
+                vegetation_types: { trees: false, shrubs: false, lawn_or_groundcover: false },
+                green_coverage_percent: 0,
+                condition: 'not_assessable',
+                confidence: 'high',
+                observation: '右向画面未见可评估植被。'
               }
             ],
             observations: [
@@ -311,7 +330,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     assert.equal(payload.inspection.dimension_scores.pest_status.score, 91);
     assert.equal(payload.inspection.dimension_scores.branch_structure.score, null);
     assert.equal(payload.inspection.observations.length, 2);
-    assert.equal(payload.inspection.view_assessments.length, 2);
+    assert.equal(payload.inspection.view_assessments.length, 4);
 
     response = await fetch(`${baseUrl}/api/park-pcm/green/inspect`, {
       method: 'POST',
