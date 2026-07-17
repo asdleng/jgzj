@@ -45,6 +45,14 @@ const CROWD_HEATMAP_DAY_AXIS_COUNT = 30;
 const GREEN_INSPECTION_SCHEMA = 'park_green_inspection.v1';
 const GREEN_INSPECTION_IMAGE_MAX_SIZE = 640;
 const GREEN_INSPECTION_IMAGE_QUALITY = 78;
+const DEFAULT_GREEN_INSPECTION_AUTO_INTERVAL_MS = 1000;
+const DEFAULT_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS = 5000;
+const DEFAULT_GREEN_INSPECTION_AUTO_LOOKBACK_HOURS = 48;
+const DEFAULT_GREEN_INSPECTION_AUTO_SCAN_LIMIT = 20000;
+const DEFAULT_GREEN_INSPECTION_AUTO_MAX_ATTEMPTS = 5;
+const DEFAULT_GREEN_INSPECTION_AUTO_RETRY_BASE_MS = 60 * 1000;
+const DEFAULT_GREEN_INSPECTION_AUTO_RETRY_MAX_MS = 60 * 60 * 1000;
+const DEFAULT_GREEN_INSPECTION_AUTO_LEASE_MS = 5 * 60 * 1000;
 const GREEN_INSPECTION_ISSUE_TYPES = new Set([
   'yellowing_or_wilting',
   'drought_stress',
@@ -1195,6 +1203,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   const crowdMonitorStatePath = path.join(runtimeRoot, 'crowd-monitor-state.json');
   const crowdAnalysisStatePath = path.join(runtimeRoot, 'crowd-analysis-state.json');
   const greenInspectionStatePath = path.join(runtimeRoot, 'green-inspection-state.json');
+  const greenInspectionWorkerStatePath = path.join(runtimeRoot, 'green-inspection-worker-state.json');
   const crowdUploadStatePath = path.join(runtimeRoot, 'patrol-flow-upload-state.json');
   const crowdUploadIndexLogPath = path.join(runtimeRoot, 'patrol-flow-uploads.jsonl');
   const crowdStorageStatusPath = path.join(runtimeRoot, 'crowd-storage-status.json');
@@ -1377,6 +1386,49 @@ module.exports = function registerParkPcmRoutes(app, options) {
     32,
     { min: 1, max: 200 }
   );
+  const greenInspectionAutoEnabled = String(
+    process.env.PARK_GREEN_INSPECTION_AUTO_ENABLED || 'true'
+  ).toLowerCase() !== 'false';
+  const greenInspectionAutoIntervalMs = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_AUTO_INTERVAL_MS,
+    DEFAULT_GREEN_INSPECTION_AUTO_INTERVAL_MS,
+    { min: 250, max: 60 * 1000 }
+  );
+  const greenInspectionAutoBootDelayMs = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS,
+    DEFAULT_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS,
+    { min: 250, max: 60 * 60 * 1000 }
+  );
+  const greenInspectionAutoLookbackHours = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_AUTO_LOOKBACK_HOURS,
+    DEFAULT_GREEN_INSPECTION_AUTO_LOOKBACK_HOURS,
+    { min: 1, max: 30 * 24 }
+  );
+  const greenInspectionAutoScanLimit = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_AUTO_SCAN_LIMIT,
+    DEFAULT_GREEN_INSPECTION_AUTO_SCAN_LIMIT,
+    { min: 100, max: 20000 }
+  );
+  const greenInspectionAutoMaxAttempts = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_AUTO_MAX_ATTEMPTS,
+    DEFAULT_GREEN_INSPECTION_AUTO_MAX_ATTEMPTS,
+    { min: 1, max: 20 }
+  );
+  const greenInspectionAutoRetryBaseMs = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_AUTO_RETRY_BASE_MS,
+    DEFAULT_GREEN_INSPECTION_AUTO_RETRY_BASE_MS,
+    { min: 1000, max: 60 * 60 * 1000 }
+  );
+  const greenInspectionAutoRetryMaxMs = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_AUTO_RETRY_MAX_MS,
+    DEFAULT_GREEN_INSPECTION_AUTO_RETRY_MAX_MS,
+    { min: greenInspectionAutoRetryBaseMs, max: 24 * 60 * 60 * 1000 }
+  );
+  const greenInspectionAutoLeaseMs = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_AUTO_LEASE_MS,
+    DEFAULT_GREEN_INSPECTION_AUTO_LEASE_MS,
+    { min: 60 * 1000, max: 30 * 60 * 1000 }
+  );
   const crowdStorageRetentionDays = toFiniteNumber(
     process.env.PARK_CROWD_STORAGE_RETENTION_DAYS || process.env.PARK_PCM_CROWD_STORAGE_RETENTION_DAYS,
     DEFAULT_CROWD_STORAGE_RETENTION_DAYS,
@@ -1435,11 +1487,15 @@ module.exports = function registerParkPcmRoutes(app, options) {
   const greenInspectionInFlight = new Map();
   const greenInspectionQueue = [];
   let greenInspectionActive = 0;
+  let greenInspectionWorkerInFlight = false;
+  let greenInspectionWorkerCurrentSampleId = '';
+  const greenInspectionWorkerOwner = `${process.pid}:${crypto.randomBytes(6).toString('hex')}`;
   let crowdStorageCleanupInFlight = null;
   let crowdStorageStatusCache = null;
   let reportTimer = null;
   let crowdMonitorTimer = null;
   let crowdAnalysisTimer = null;
+  let greenInspectionWorkerTimer = null;
   let crowdStorageCleanupTimer = null;
 
   async function ensureRuntimeDir() {
@@ -1811,6 +1867,76 @@ module.exports = function registerParkPcmRoutes(app, options) {
           ...(latest.samples || {}),
           ...incomingSamples
         },
+        updated_at: nowIso()
+      });
+    });
+  }
+
+  async function readGreenInspectionWorkerState() {
+    const parsed = await readJsonFile(greenInspectionWorkerStatePath);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return {
+        version: 1,
+        failures: {},
+        ...parsed,
+        failures: parsed.failures && typeof parsed.failures === 'object' ? parsed.failures : {}
+      };
+    }
+    return {
+      version: 1,
+      failures: {},
+      lease: null,
+      updated_at: nowIso()
+    };
+  }
+
+  async function writeGreenInspectionWorkerState(state) {
+    await withJsonFileLock(greenInspectionWorkerStatePath, async () => {
+      const latest = await readGreenInspectionWorkerState();
+      const failures = state && state.failures && typeof state.failures === 'object'
+        ? state.failures
+        : latest.failures || {};
+      await atomicWriteJson(greenInspectionWorkerStatePath, {
+        version: 1,
+        ...latest,
+        ...(state || {}),
+        failures,
+        updated_at: nowIso()
+      });
+    });
+  }
+
+  async function claimGreenInspectionWorkerLease() {
+    let claimed = false;
+    await withJsonFileLock(greenInspectionWorkerStatePath, async () => {
+      const latest = await readGreenInspectionWorkerState();
+      const now = Date.now();
+      const leaseOwner = String(latest.lease?.owner || '');
+      const leaseExpiresAt = Date.parse(latest.lease?.expires_at || '');
+      if (leaseOwner && leaseOwner !== greenInspectionWorkerOwner && leaseExpiresAt > now) {
+        return;
+      }
+      await atomicWriteJson(greenInspectionWorkerStatePath, {
+        ...latest,
+        lease: {
+          owner: greenInspectionWorkerOwner,
+          acquired_at: nowIso(),
+          expires_at: new Date(now + greenInspectionAutoLeaseMs).toISOString()
+        },
+        updated_at: nowIso()
+      });
+      claimed = true;
+    });
+    return claimed;
+  }
+
+  async function releaseGreenInspectionWorkerLease() {
+    await withJsonFileLock(greenInspectionWorkerStatePath, async () => {
+      const latest = await readGreenInspectionWorkerState();
+      if (String(latest.lease?.owner || '') !== greenInspectionWorkerOwner) return;
+      await atomicWriteJson(greenInspectionWorkerStatePath, {
+        ...latest,
+        lease: null,
         updated_at: nowIso()
       });
     });
@@ -5915,6 +6041,263 @@ print(len(faces))
     });
   }
 
+  function isCurrentGreenInspection(inspection) {
+    return Boolean(
+      inspection &&
+      inspection.schema === GREEN_INSPECTION_SCHEMA &&
+      String(inspection.model || '') === greenInspectionModel
+    );
+  }
+
+  function greenInspectionCandidateSamples(samples, nowMs = Date.now()) {
+    const cutoffMs = nowMs - greenInspectionAutoLookbackHours * 60 * 60 * 1000;
+    const rows = new Map();
+    (Array.isArray(samples) ? samples : []).forEach((sample) => {
+      const sampleId = String(sample?.sample_id || '').trim();
+      const collectedAtMs = Date.parse(sample?.collected_at || '');
+      const frames = (Array.isArray(sample?.frames) ? sample.frames : [])
+        .filter((frame) => String(frame?.image_path || '').trim())
+        .slice(0, 4);
+      if (
+        !sampleId ||
+        sample?.skipped ||
+        !Number.isFinite(collectedAtMs) ||
+        collectedAtMs < cutoffMs ||
+        !frames.length
+      ) {
+        return;
+      }
+      if (!rows.has(sampleId)) rows.set(sampleId, sample);
+    });
+    return [...rows.values()].sort((left, right) => (
+      (Date.parse(right.collected_at || '') || 0) - (Date.parse(left.collected_at || '') || 0)
+    ));
+  }
+
+  function greenInspectionFrameCount(samples) {
+    return (Array.isArray(samples) ? samples : []).reduce((sum, sample) => (
+      sum + (Array.isArray(sample?.frames)
+        ? sample.frames.filter((frame) => String(frame?.image_path || '').trim()).slice(0, 4).length
+        : 0)
+    ), 0);
+  }
+
+  async function buildGreenInspectionQueueSnapshot() {
+    const [inspectionState, workerState, samples] = await Promise.all([
+      readGreenInspectionState(),
+      readGreenInspectionWorkerState(),
+      readCrowdSampleLog(greenInspectionAutoScanLimit)
+    ]);
+    const candidates = greenInspectionCandidateSamples(samples);
+    const completed = [];
+    const pending = [];
+    const retryWaiting = [];
+    const failed = [];
+    const ready = [];
+    const now = Date.now();
+    candidates.forEach((sample) => {
+      const sampleId = String(sample.sample_id);
+      if (isCurrentGreenInspection(inspectionState.samples?.[sampleId])) {
+        completed.push(sample);
+        return;
+      }
+      const failure = workerState.failures?.[sampleId];
+      const attempts = Number(failure?.attempts) || 0;
+      if (attempts >= greenInspectionAutoMaxAttempts) {
+        failed.push(sample);
+        return;
+      }
+      pending.push(sample);
+      const nextRetryAt = Date.parse(failure?.next_retry_at || '');
+      if (Number.isFinite(nextRetryAt) && nextRetryAt > now) {
+        retryWaiting.push(sample);
+      } else {
+        ready.push(sample);
+      }
+    });
+    return {
+      inspectionState,
+      workerState,
+      candidates,
+      completed,
+      pending,
+      retryWaiting,
+      failed,
+      ready,
+      public: {
+        enabled: greenInspectionAutoEnabled,
+        model: greenInspectionModel,
+        base_url: greenInspectionBaseUrl,
+        lookback_hours: greenInspectionAutoLookbackHours,
+        scan_limit: greenInspectionAutoScanLimit,
+        source_node_count: candidates.length,
+        source_frame_count: greenInspectionFrameCount(candidates),
+        analyzed_node_count: completed.length,
+        analyzed_frame_count: greenInspectionFrameCount(completed),
+        pending_node_count: pending.length,
+        pending_frame_count: greenInspectionFrameCount(pending),
+        ready_node_count: ready.length,
+        retry_waiting_node_count: retryWaiting.length,
+        failed_node_count: failed.length,
+        stale_result_node_count: candidates.reduce((count, sample) => {
+          const inspection = inspectionState.samples?.[sample.sample_id];
+          return count + (inspection && !isCurrentGreenInspection(inspection) ? 1 : 0);
+        }, 0),
+        worker_in_flight: greenInspectionWorkerInFlight,
+        current_sample_id: greenInspectionWorkerCurrentSampleId || workerState.current_sample_id || null,
+        process_queue_active: greenInspectionActive,
+        process_queue_waiting: greenInspectionQueue.length,
+        last_attempt_at: workerState.last_attempt_at || null,
+        last_success_at: workerState.last_success_at || null,
+        last_result: workerState.last_result || null,
+        updated_at: workerState.updated_at || null
+      }
+    };
+  }
+
+  function startGreenInspectionJob(sample) {
+    const sampleId = String(sample?.sample_id || '').trim();
+    if (!sampleId) {
+      const error = new Error('green_inspection_sample_id_required');
+      error.status = 400;
+      return Promise.reject(error);
+    }
+    const existing = greenInspectionInFlight.get(sampleId);
+    if (existing) return existing;
+    const job = enqueueGreenInspection(async () => {
+      const inspection = await analyzeGreenInspectionSample(sample);
+      await writeGreenInspectionState({ samples: { [sampleId]: inspection } });
+      return inspection;
+    });
+    const tracked = job.finally(() => {
+      if (greenInspectionInFlight.get(sampleId) === tracked) greenInspectionInFlight.delete(sampleId);
+    });
+    greenInspectionInFlight.set(sampleId, tracked);
+    return tracked;
+  }
+
+  async function runGreenInspectionWorkerTick(trigger = 'timer') {
+    if (!greenInspectionAutoEnabled || greenInspectionWorkerInFlight) return null;
+    greenInspectionWorkerInFlight = true;
+    const startedAt = Date.now();
+    let leaseClaimed = false;
+    try {
+      leaseClaimed = await claimGreenInspectionWorkerLease();
+      if (!leaseClaimed) return null;
+      const snapshot = await buildGreenInspectionQueueSnapshot();
+      const selected = snapshot.ready[0] || null;
+      const failures = { ...(snapshot.workerState.failures || {}) };
+      const candidateIds = new Set(snapshot.candidates.map((sample) => String(sample.sample_id)));
+      const completedIds = new Set(snapshot.completed.map((sample) => String(sample.sample_id)));
+      Object.keys(failures).forEach((sampleId) => {
+        if (!candidateIds.has(sampleId) || completedIds.has(sampleId)) delete failures[sampleId];
+      });
+      if (!selected) {
+        const workerState = {
+          ...snapshot.workerState,
+          failures,
+          current_sample_id: null,
+          last_attempt_at: nowIso(),
+          last_result: {
+            ok: true,
+            trigger,
+            processed_count: 0,
+            reason: snapshot.pending.length ? 'retry_backoff' : 'queue_empty',
+            pending_node_count: snapshot.pending.length,
+            retry_waiting_node_count: snapshot.retryWaiting.length,
+            failed_node_count: snapshot.failed.length,
+            elapsed_ms: Date.now() - startedAt
+          },
+          config: snapshot.public
+        };
+        await writeGreenInspectionWorkerState(workerState);
+        return workerState;
+      }
+
+      const sampleId = String(selected.sample_id);
+      greenInspectionWorkerCurrentSampleId = sampleId;
+      await writeGreenInspectionWorkerState({
+        ...snapshot.workerState,
+        failures,
+        current_sample_id: sampleId,
+        last_attempt_at: nowIso(),
+        config: snapshot.public
+      });
+      try {
+        const inspection = await startGreenInspectionJob(selected);
+        delete failures[sampleId];
+        const workerState = {
+          ...snapshot.workerState,
+          failures,
+          current_sample_id: null,
+          last_attempt_at: nowIso(),
+          last_success_at: nowIso(),
+          last_result: {
+            ok: true,
+            trigger,
+            processed_count: 1,
+            sample_id: sampleId,
+            vehicle_id: selected.vehicle_id || null,
+            status: inspection.status,
+            model: inspection.model,
+            pending_node_count: Math.max(0, snapshot.pending.length - 1),
+            retry_waiting_node_count: snapshot.retryWaiting.length,
+            failed_node_count: snapshot.failed.length,
+            elapsed_ms: Date.now() - startedAt
+          },
+          config: snapshot.public
+        };
+        await writeGreenInspectionWorkerState(workerState);
+        return workerState;
+      } catch (error) {
+        const previous = failures[sampleId] || {};
+        const attempts = (Number(previous.attempts) || 0) + 1;
+        const retryDelayMs = Math.min(
+          greenInspectionAutoRetryMaxMs,
+          greenInspectionAutoRetryBaseMs * (2 ** Math.max(0, attempts - 1))
+        );
+        failures[sampleId] = {
+          attempts,
+          last_attempt_at: nowIso(),
+          last_error: String(error.message || 'green_inspection_failed').slice(0, 500),
+          last_status: error.status || null,
+          next_retry_at: attempts >= greenInspectionAutoMaxAttempts
+            ? null
+            : new Date(Date.now() + retryDelayMs).toISOString()
+        };
+        const terminal = attempts >= greenInspectionAutoMaxAttempts;
+        const workerState = {
+          ...snapshot.workerState,
+          failures,
+          current_sample_id: null,
+          last_attempt_at: nowIso(),
+          last_result: {
+            ok: false,
+            trigger,
+            processed_count: 0,
+            sample_id: sampleId,
+            vehicle_id: selected.vehicle_id || null,
+            error: failures[sampleId].last_error,
+            status: error.status || null,
+            attempts,
+            terminal,
+            pending_node_count: terminal ? Math.max(0, snapshot.pending.length - 1) : snapshot.pending.length,
+            retry_waiting_node_count: snapshot.retryWaiting.length + (terminal ? 0 : 1),
+            failed_node_count: snapshot.failed.length + (terminal ? 1 : 0),
+            elapsed_ms: Date.now() - startedAt
+          },
+          config: snapshot.public
+        };
+        await writeGreenInspectionWorkerState(workerState);
+        return workerState;
+      }
+    } finally {
+      greenInspectionWorkerCurrentSampleId = '';
+      if (leaseClaimed) await releaseGreenInspectionWorkerLease().catch(() => {});
+      greenInspectionWorkerInFlight = false;
+    }
+  }
+
   async function getCrowdAnalysisIdleStatus() {
     if (!crowdAnalysisIdleOnly) {
       return {
@@ -6487,6 +6870,23 @@ print(len(faces))
     }
   }
 
+  function scheduleNextGreenInspection(delayMs) {
+    if (!greenInspectionAutoEnabled) return;
+    if (greenInspectionWorkerTimer) clearTimeout(greenInspectionWorkerTimer);
+    greenInspectionWorkerTimer = setTimeout(() => {
+      void runGreenInspectionWorkerTick('timer')
+        .catch((error) => {
+          console.warn(`green_inspection_worker_failed: ${error.message}`);
+        })
+        .finally(() => {
+          scheduleNextGreenInspection(greenInspectionAutoIntervalMs);
+        });
+    }, delayMs);
+    if (typeof greenInspectionWorkerTimer.unref === 'function') {
+      greenInspectionWorkerTimer.unref();
+    }
+  }
+
   function scheduleNextCrowdStorageCleanup(delayMs) {
     if (crowdStorageCleanupTimer) {
       clearTimeout(crowdStorageCleanupTimer);
@@ -6777,6 +7177,37 @@ print(len(faces))
     }
   });
 
+  app.get('/api/park-pcm/green/status', requirePermission('vehicle:read'), async (_req, res) => {
+    try {
+      const snapshot = await buildGreenInspectionQueueSnapshot();
+      return res.json({ ok: true, queue: snapshot.public });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'green_inspection_status_failed'
+      });
+    }
+  });
+
+  app.post('/api/park-pcm/green/worker/run', requirePermission('vehicle:read'), async (_req, res) => {
+    try {
+      const worker = await runGreenInspectionWorkerTick('manual');
+      const snapshot = await buildGreenInspectionQueueSnapshot();
+      return res.json({
+        ok: true,
+        worker: worker
+          ? { updated_at: worker.updated_at, last_result: worker.last_result }
+          : null,
+        queue: snapshot.public
+      });
+    } catch (error) {
+      return res.status(error.status || 502).json({
+        ok: false,
+        error: error.message || 'green_inspection_worker_failed'
+      });
+    }
+  });
+
   app.post('/api/park-pcm/green/inspect', requirePermission('vehicle:read'), async (req, res) => {
     try {
       const sampleId = String(req.body?.sample_id || '').trim();
@@ -6787,31 +7218,18 @@ print(len(faces))
       }
       const state = await readGreenInspectionState();
       const cached = state.samples?.[sampleId];
-      if (!force && cached && cached.schema === GREEN_INSPECTION_SCHEMA) {
+      if (!force && isCurrentGreenInspection(cached)) {
         return res.json({ ok: true, cached: true, inspection: cached });
       }
-      let job = greenInspectionInFlight.get(sampleId);
-      if (!job) {
-        job = enqueueGreenInspection(async () => {
-          const samples = await readCrowdSampleLog(20000, { vehicle_id: vehicleId });
-          const sample = samples.find((item) => String(item?.sample_id || '') === sampleId);
-          if (!sample) {
-            const error = new Error('green_inspection_sample_not_found');
-            error.status = 404;
-            throw error;
-          }
-          const inspection = await analyzeGreenInspectionSample(sample);
-          await writeGreenInspectionState({ samples: { [sampleId]: inspection } });
-          return inspection;
-        });
-        greenInspectionInFlight.set(sampleId, job);
+      const samples = await readCrowdSampleLog(20000, { vehicle_id: vehicleId });
+      const sample = samples.find((item) => String(item?.sample_id || '') === sampleId);
+      if (!sample) {
+        const error = new Error('green_inspection_sample_not_found');
+        error.status = 404;
+        throw error;
       }
-      try {
-        const inspection = await job;
-        return res.json({ ok: true, cached: false, inspection });
-      } finally {
-        if (greenInspectionInFlight.get(sampleId) === job) greenInspectionInFlight.delete(sampleId);
-      }
+      const inspection = await startGreenInspectionJob(sample);
+      return res.json({ ok: true, cached: false, inspection });
     } catch (error) {
       return res.status(error.status || 502).json({
         ok: false,
@@ -7060,5 +7478,6 @@ print(len(faces))
   scheduleNextReport(reportBootDelayMs);
   scheduleNextCrowdMonitor(crowdMonitorBootDelayMs);
   scheduleNextCrowdAnalysis(crowdAnalysisBootDelayMs);
+  scheduleNextGreenInspection(greenInspectionAutoBootDelayMs);
   scheduleNextCrowdStorageCleanup(crowdStorageCleanupBootDelayMs);
 };

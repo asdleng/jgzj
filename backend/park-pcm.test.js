@@ -53,12 +53,14 @@ test('patrol status is authenticated, cached, read-only, and cloud calls use ops
     report: process.env.PARK_PCM_REPORT_ENABLED,
     monitor: process.env.PARK_CROWD_MONITOR_ENABLED,
     analysis: process.env.PARK_CROWD_ANALYSIS_ENABLED,
+    greenAuto: process.env.PARK_GREEN_INSPECTION_AUTO_ENABLED,
     cleanupDelay: process.env.PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS
   };
   process.env.PARK_CROWD_RUNTIME_ROOT = runtimeRoot;
   process.env.PARK_PCM_REPORT_ENABLED = 'false';
   process.env.PARK_CROWD_MONITOR_ENABLED = 'false';
   process.env.PARK_CROWD_ANALYSIS_ENABLED = 'false';
+  process.env.PARK_GREEN_INSPECTION_AUTO_ENABLED = 'false';
   process.env.PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS = '60000';
 
   const app = express();
@@ -100,6 +102,7 @@ test('patrol status is authenticated, cached, read-only, and cloud calls use ops
       PARK_PCM_REPORT_ENABLED: previousEnv.report,
       PARK_CROWD_MONITOR_ENABLED: previousEnv.monitor,
       PARK_CROWD_ANALYSIS_ENABLED: previousEnv.analysis,
+      PARK_GREEN_INSPECTION_AUTO_ENABLED: previousEnv.greenAuto,
       PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS: previousEnv.cleanupDelay
     })) {
       if (value == null) delete process.env[key];
@@ -132,9 +135,14 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     sample_id: 'green-sample-2',
     collected_at: '2026-07-17T08:00:10.000Z'
   };
+  const thirdSample = {
+    ...sample,
+    sample_id: 'green-sample-3',
+    collected_at: '2026-07-17T08:00:20.000Z'
+  };
   await fs.writeFile(
     path.join(runtimeRoot, 'crowd-samples.jsonl'),
-    `${JSON.stringify(sample)}\n${JSON.stringify(secondSample)}\n`
+    `${JSON.stringify(sample)}\n${JSON.stringify(secondSample)}\n${JSON.stringify(thirdSample)}\n`
   );
 
   let analysisRequests = 0;
@@ -215,6 +223,8 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     analysis: process.env.PARK_CROWD_ANALYSIS_ENABLED,
     greenBase: process.env.PARK_GREEN_INSPECTION_BASE_URL,
     greenModel: process.env.PARK_GREEN_INSPECTION_MODEL,
+    greenAutoEnabled: process.env.PARK_GREEN_INSPECTION_AUTO_ENABLED,
+    greenBootDelay: process.env.PARK_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS,
     cleanupDelay: process.env.PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS
   };
   process.env.PARK_CROWD_RUNTIME_ROOT = runtimeRoot;
@@ -223,6 +233,8 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
   process.env.PARK_CROWD_ANALYSIS_ENABLED = 'false';
   process.env.PARK_GREEN_INSPECTION_BASE_URL = `http://127.0.0.1:${analysisServer.address().port}/v1`;
   delete process.env.PARK_GREEN_INSPECTION_MODEL;
+  process.env.PARK_GREEN_INSPECTION_AUTO_ENABLED = 'true';
+  process.env.PARK_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS = '60000';
   process.env.PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS = '60000';
 
   const app = express();
@@ -268,6 +280,21 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     assert.equal(payload.summary.issue_count, 1);
     assert.equal(payload.items[0].schema, 'park_green_inspection.v1');
 
+    response = await fetch(`${baseUrl}/api/park-pcm/green/status`);
+    payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.queue.source_node_count, 3);
+    assert.equal(payload.queue.analyzed_node_count, 1);
+    assert.equal(payload.queue.pending_node_count, 2);
+
+    response = await fetch(`${baseUrl}/api/park-pcm/green/worker/run`, { method: 'POST' });
+    payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.worker.last_result.sample_id, thirdSample.sample_id);
+    assert.equal(payload.queue.analyzed_node_count, 2);
+    assert.equal(payload.queue.pending_node_count, 1);
+    assert.equal(analysisRequests, 2);
+
     const [forcedResponse, secondResponse] = await Promise.all([
       fetch(`${baseUrl}/api/park-pcm/green/inspect`, {
         method: 'POST',
@@ -282,8 +309,13 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     ]);
     assert.equal(forcedResponse.status, 200);
     assert.equal(secondResponse.status, 200);
-    assert.equal(analysisRequests, 3);
+    assert.equal(analysisRequests, 4);
     assert.equal(maxActiveAnalysisRequests, 1);
+
+    response = await fetch(`${baseUrl}/api/park-pcm/green/status`);
+    payload = await response.json();
+    assert.equal(payload.queue.analyzed_node_count, 3);
+    assert.equal(payload.queue.pending_node_count, 0);
   } finally {
     await close(server);
     await close(analysisServer);
@@ -295,6 +327,94 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
       PARK_CROWD_ANALYSIS_ENABLED: previousEnv.analysis,
       PARK_GREEN_INSPECTION_BASE_URL: previousEnv.greenBase,
       PARK_GREEN_INSPECTION_MODEL: previousEnv.greenModel,
+      PARK_GREEN_INSPECTION_AUTO_ENABLED: previousEnv.greenAutoEnabled,
+      PARK_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS: previousEnv.greenBootDelay,
+      PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS: previousEnv.cleanupDelay
+    })) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('green inspection auto worker moves terminal model errors to the failed queue', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'jgzj-green-worker-failure-'));
+  const runtimeRoot = path.join(directory, 'runtime');
+  const frameRoot = path.join(runtimeRoot, 'crowd-frames', '20260717', 'failed-sample');
+  await fs.mkdir(frameRoot, { recursive: true });
+  await fs.writeFile(path.join(frameRoot, 'camera1.jpg'), 'invalid-jpeg-for-mock');
+  const sample = {
+    sample_id: 'green-failed-sample',
+    vehicle_id: 'BIT-FAIL',
+    collected_at: new Date().toISOString(),
+    frames: [{ camera_id: 'camera1', image_path: '20260717/failed-sample/camera1.jpg' }]
+  };
+  await fs.writeFile(path.join(runtimeRoot, 'crowd-samples.jsonl'), `${JSON.stringify(sample)}\n`);
+
+  const analysisServer = http.createServer((_req, res) => {
+    res.statusCode = 503;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ error: { message: 'model_temporarily_unavailable' } }));
+  });
+  await new Promise((resolve) => analysisServer.listen(0, '127.0.0.1', resolve));
+
+  const previousEnv = {
+    runtime: process.env.PARK_CROWD_RUNTIME_ROOT,
+    report: process.env.PARK_PCM_REPORT_ENABLED,
+    monitor: process.env.PARK_CROWD_MONITOR_ENABLED,
+    analysis: process.env.PARK_CROWD_ANALYSIS_ENABLED,
+    greenBase: process.env.PARK_GREEN_INSPECTION_BASE_URL,
+    greenAutoEnabled: process.env.PARK_GREEN_INSPECTION_AUTO_ENABLED,
+    greenBootDelay: process.env.PARK_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS,
+    greenMaxAttempts: process.env.PARK_GREEN_INSPECTION_AUTO_MAX_ATTEMPTS,
+    cleanupDelay: process.env.PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS
+  };
+  process.env.PARK_CROWD_RUNTIME_ROOT = runtimeRoot;
+  process.env.PARK_PCM_REPORT_ENABLED = 'false';
+  process.env.PARK_CROWD_MONITOR_ENABLED = 'false';
+  process.env.PARK_CROWD_ANALYSIS_ENABLED = 'false';
+  process.env.PARK_GREEN_INSPECTION_BASE_URL = `http://127.0.0.1:${analysisServer.address().port}/v1`;
+  process.env.PARK_GREEN_INSPECTION_AUTO_ENABLED = 'true';
+  process.env.PARK_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS = '60000';
+  process.env.PARK_GREEN_INSPECTION_AUTO_MAX_ATTEMPTS = '1';
+  process.env.PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS = '60000';
+
+  const app = express();
+  app.use(express.json({ limit: '2mb' }));
+  registerParkPcmRoutes(app, {
+    requirePermission: () => (_req, _res, next) => next(),
+    cloudAgentBaseUrl: 'http://127.0.0.1:9',
+    rootDir: directory
+  });
+  const server = await listen(app);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/park-pcm/green/worker/run`, { method: 'POST' });
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.worker.last_result.ok, false);
+    assert.equal(payload.worker.last_result.terminal, true);
+    assert.equal(payload.queue.pending_node_count, 0);
+    assert.equal(payload.queue.failed_node_count, 1);
+    const workerState = JSON.parse(await fs.readFile(
+      path.join(runtimeRoot, 'green-inspection-worker-state.json'),
+      'utf8'
+    ));
+    assert.equal(workerState.failures[sample.sample_id].attempts, 1);
+  } finally {
+    await close(server);
+    await close(analysisServer);
+    await fs.rm(directory, { recursive: true, force: true });
+    for (const [key, value] of Object.entries({
+      PARK_CROWD_RUNTIME_ROOT: previousEnv.runtime,
+      PARK_PCM_REPORT_ENABLED: previousEnv.report,
+      PARK_CROWD_MONITOR_ENABLED: previousEnv.monitor,
+      PARK_CROWD_ANALYSIS_ENABLED: previousEnv.analysis,
+      PARK_GREEN_INSPECTION_BASE_URL: previousEnv.greenBase,
+      PARK_GREEN_INSPECTION_AUTO_ENABLED: previousEnv.greenAutoEnabled,
+      PARK_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS: previousEnv.greenBootDelay,
+      PARK_GREEN_INSPECTION_AUTO_MAX_ATTEMPTS: previousEnv.greenMaxAttempts,
       PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS: previousEnv.cleanupDelay
     })) {
       if (value == null) delete process.env[key];

@@ -22,7 +22,8 @@ if (root) {
     samples: "/api/park-pcm/crowd/samples",
     routes: "/api/park-pcm/crowd/routes",
     greenInspections: "/api/park-pcm/green/inspections",
-    greenInspect: "/api/park-pcm/green/inspect"
+    greenInspect: "/api/park-pcm/green/inspect",
+    greenStatus: "/api/park-pcm/green/status"
   };
   const SAMPLE_LIMIT = 8000;
   const INITIAL_SAMPLE_LIMIT = 1000;
@@ -77,6 +78,7 @@ if (root) {
     visibleSamples: [],
     routes: [],
     inspections: new Map(),
+    greenQueue: null,
     inspectionPending: new Set(),
     inspectionErrors: new Map(),
     selectedSampleId: "",
@@ -406,6 +408,26 @@ if (root) {
     if (el.metrics[key]) el.metrics[key].textContent = value;
   }
 
+  function updateQueueMetric() {
+    const queue = state.greenQueue;
+    if (!queue) return;
+    setMetric(
+      "analyzed",
+      `全园区 ${queue.analyzed_node_count || 0}/${queue.source_node_count || 0} · 待 ${queue.pending_node_count || 0}`
+    );
+  }
+
+  async function refreshGreenQueueStatus() {
+    if (!state.authenticated) return;
+    try {
+      const payload = await fetchJson(API.greenStatus);
+      state.greenQueue = payload.queue || null;
+      updateQueueMetric();
+    } catch (_error) {
+      // Keep the last known queue progress while the status endpoint is unavailable.
+    }
+  }
+
   function updateSummary(samples, routes) {
     const inspections = samples.map(inspectionFor).filter(Boolean);
     const imageCount = samples.reduce((sum, sample) => (
@@ -419,6 +441,7 @@ if (root) {
     setMetric("images", String(imageCount));
     setMetric("issues", String(issueCount));
     setMetric("analyzed", `${inspections.length}/${samples.length} 节点已分析`);
+    updateQueueMetric();
     if (el.mapMeta) {
       el.mapMeta.textContent = `${state.vehicleId || "-"} · ${formatDateKey(state.dateKey)} · ${samples.length} 节点 · ${inspections.length} 已分析`;
     }
@@ -603,6 +626,7 @@ if (root) {
         state.inspections.set(id, payload.inspection);
         updateNodeInspectionStyle(id, payload.inspection);
         updateSummary(state.visibleSamples, state.routes);
+        void refreshGreenQueueStatus();
       }
     } catch (error) {
       if (state.vehicleId === requestVehicleId) {
@@ -1246,7 +1270,9 @@ if (root) {
         .filter((sample) => !sample?.skipped && samplePosition(sample));
       const preferred = renderVehicleOptions(vehiclePayload.vehicles, initialSamples);
       if (!preferred) throw new Error("暂无可用巡逻车辆");
+      await refreshGreenQueueStatus();
       await selectVehicle(preferred);
+      window.setInterval(() => void refreshGreenQueueStatus(), 10 * 1000);
     } catch (error) {
       setStatus("初始化失败", "error");
       if (el.auth) {
