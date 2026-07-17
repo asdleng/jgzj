@@ -7268,9 +7268,17 @@ body.yolo-review-is-panning {
 }
 
 .yolo-review-editor-field textarea {
+  width: 100%;
+  min-width: 0;
   resize: vertical;
   min-height: 78px;
   line-height: 1.5;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.86);
+  background: rgba(2, 6, 23, 0.72);
+  color: #e2e8f0;
+  padding: 8px;
+  font: inherit;
 }
 
 .yolo-review-save {
@@ -7288,6 +7296,17 @@ body.yolo-review-is-panning {
 .yolo-review-editor-body {
   display: grid;
   gap: 10px;
+}
+
+.yolo-review-annotation-editor,
+.yolo-review-conclusion-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.yolo-review-conclusion-editor {
+  padding-top: 10px;
+  border-top: 1px solid rgba(71, 85, 105, 0.62);
 }
 
 .yolo-review-edit-toolbar,
@@ -10359,6 +10378,21 @@ body.yolo-review-is-panning {
 .cloud-ops-agent-task-item.is-active {
   border-color: rgba(52, 211, 153, 0.42);
   background: rgba(6, 78, 59, 0.24);
+}
+
+.cloud-ops-agent-task-item.is-running {
+  border-color: rgba(56, 189, 248, 0.46);
+  background: rgba(7, 89, 133, 0.18);
+  box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.84);
+}
+
+.cloud-ops-agent-task-item.is-running.is-active {
+  border-color: rgba(52, 211, 153, 0.5);
+  background: rgba(6, 78, 59, 0.3);
+}
+
+.cloud-ops-agent-task-item.is-running small {
+  color: #7dd3fc;
 }
 
 .cloud-ops-agent-task-item strong,

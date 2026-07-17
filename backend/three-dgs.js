@@ -6,6 +6,10 @@ const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 const { Readable, Transform } = require('stream');
 const { pipeline } = require('stream/promises');
+const {
+  cameraCenterFromImagePose,
+  cameraForwardInWorld
+} = require('./three-dgs-camera-math');
 
 const execFileAsync = promisify(execFile);
 
@@ -691,24 +695,6 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
       extent: summarizePreviewPoints(points),
       points
     };
-  }
-
-  function qvecToRotmat(qvec) {
-    const [qw, qx, qy, qz] = qvec.map(Number);
-    return [
-      [1 - 2 * qy * qy - 2 * qz * qz, 2 * qx * qy - 2 * qz * qw, 2 * qx * qz + 2 * qy * qw],
-      [2 * qx * qy + 2 * qz * qw, 1 - 2 * qx * qx - 2 * qz * qz, 2 * qy * qz - 2 * qx * qw],
-      [2 * qx * qz - 2 * qy * qw, 2 * qy * qz + 2 * qx * qw, 1 - 2 * qx * qx - 2 * qy * qy]
-    ];
-  }
-
-  function cameraCenterFromImagePose(qvec, tvec) {
-    const rotation = qvecToRotmat(qvec);
-    return [
-      -(rotation[0][0] * tvec[0] + rotation[1][0] * tvec[1] + rotation[2][0] * tvec[2]),
-      -(rotation[0][1] * tvec[0] + rotation[1][1] * tvec[1] + rotation[2][1] * tvec[2]),
-      -(rotation[0][2] * tvec[0] + rotation[1][2] * tvec[1] + rotation[2][2] * tvec[2])
-    ];
   }
 
   function parseColmapImagesText(text) {
@@ -1499,21 +1485,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     };
   }
 
-  function normalizeVector(values, fallback = [1, 0, 0]) {
-    const length = Math.hypot(Number(values[0] || 0), Number(values[1] || 0), Number(values[2] || 0));
-    if (length < 0.001) {
-      return fallback;
-    }
-    return [values[0] / length, values[1] / length, values[2] / length];
-  }
-
   function cameraForwardFromQvec(qvec) {
-    const rotation = qvecToRotmat(qvec);
-    return normalizeVector([
-      viewerCameraForwardSign * rotation[0][2],
-      viewerCameraForwardSign * rotation[1][2],
-      viewerCameraForwardSign * rotation[2][2]
-    ]);
+    return cameraForwardInWorld(qvec, viewerCameraForwardSign);
   }
 
   function viewerLookDistanceFromExtent(extent) {

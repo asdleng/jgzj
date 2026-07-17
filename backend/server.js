@@ -36,6 +36,11 @@ const {
   normalizeYoloWebCrawlerStats,
   normalizeYoloWebReview
 } = require('./yolo-web-crawler');
+const {
+  isYoloManualReviewResolved,
+  isYoloManualReviewVerdict,
+  normalizeYoloManualReviewVerdict
+} = require('./yolo-manual-review');
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -433,6 +438,18 @@ const cloudOpsAgentConversationRoot = path.resolve(
     path.join(projectRoot, '.runtime/cloud-ops-agent/conversations')
 );
 const cloudOpsAgentConversationLocks = new Map();
+const cloudOpsAgentActiveRuns = new Map();
+const cloudOpsAgentMaxConcurrentPerUser = Math.min(
+  8,
+  Math.max(1, Number(process.env.CLOUD_OPS_AGENT_MAX_CONCURRENT_PER_USER || 4) || 4)
+);
+const cloudOpsAgentMaxConcurrentGlobal = Math.min(
+  32,
+  Math.max(
+    cloudOpsAgentMaxConcurrentPerUser,
+    Number(process.env.CLOUD_OPS_AGENT_MAX_CONCURRENT_GLOBAL || 12) || 12
+  )
+);
 const cloudOpsCodexPendingApprovals = new Map();
 const cloudOpsAgentEnabled =
   String(process.env.CLOUD_OPS_AGENT_ENABLED || 'true').toLowerCase() !== 'false';
@@ -2810,6 +2827,13 @@ function normalizeYoloManualLabels(dataset, labels) {
     return [];
   }
   return (Array.isArray(labels) ? labels : [])
+    .filter((label) => {
+      const x = Number(label?.x ?? label?.x_center);
+      const y = Number(label?.y ?? label?.y_center);
+      const w = Number(label?.w ?? label?.width);
+      const h = Number(label?.h ?? label?.height);
+      return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0;
+    })
     .map((label, index) => normalizeYoloManualLabel(dataset, label, index))
     .filter((label) => label.class_name && label.w > 0 && label.h > 0);
 }
@@ -2832,6 +2856,10 @@ function normalizeYoloManualAnnotationForResponse(annotation) {
     updated_by: annotation.updated_by || null,
     updated_at: annotation.updated_at || null,
     note: annotation.note || '',
+    review_verdict: normalizeYoloManualReviewVerdict(annotation.review_verdict),
+    reviewed_by: annotation.reviewed_by || null,
+    reviewed_at: annotation.reviewed_at || null,
+    review_note: annotation.review_note || '',
     base_label_source: annotation.base_label_source || null
   };
 }
@@ -2943,6 +2971,11 @@ async function writeYoloManualAnnotation(annotation) {
   };
 }
 
+function invalidateYoloReviewDatasetListCache() {
+  yoloReviewDatasetListCache.datasets = null;
+  yoloReviewDatasetListCache.loaded_at_ms = 0;
+}
+
 async function markYoloManualItemDeleted(dataset, itemKey, authUser, note = '') {
   const rel = normalizeApiRelPath(itemKey);
   const existing = await readYoloManualAnnotation(dataset.id, rel);
@@ -2953,14 +2986,23 @@ async function markYoloManualItemDeleted(dataset, itemKey, authUser, note = '') 
     item_key: rel,
     kind: dataset.kind,
     answer: existing?.answer || '',
+    class_name: existing?.class_name || '',
+    class_id: existing?.class_id ?? null,
     labels: Array.isArray(existing?.labels) ? existing.labels : [],
     deleted: true,
     delete_note: String(note || '').trim().slice(0, 500),
     updated_by: authUser?.username || null,
     updated_at: now,
+    note: existing?.note || '',
+    review_verdict: normalizeYoloManualReviewVerdict(existing?.review_verdict),
+    reviewed_by: existing?.reviewed_by || null,
+    reviewed_at: existing?.reviewed_at || null,
+    review_note: existing?.review_note || '',
+    source_image_path: existing?.source_image_path || null,
     base_label_source: existing?.base_label_source || null
   };
   const saved = await writeYoloManualAnnotation(annotation);
+  invalidateYoloReviewDatasetListCache();
   await fs.mkdir(path.dirname(yoloReviewManualDeletedLogPath), { recursive: true });
   await fs.appendFile(
     yoloReviewManualDeletedLogPath,
@@ -4277,7 +4319,7 @@ async function yoloWebReviewQueueCount(datasetDir, datasetId) {
       const manual = itemKey
         ? manualIndex?.get(yoloReviewManualAnnotationIndexKey(datasetId, itemKey))
         : null;
-      if (manual?.deleted) {
+      if (manual?.deleted || isYoloManualReviewResolved(manual)) {
         continue;
       }
       if (normalizeClassToken(effectiveYoloWebAuditVerdict(review)) === 'needs_human') {
@@ -4286,6 +4328,70 @@ async function yoloWebReviewQueueCount(datasetDir, datasetId) {
     } catch (_error) {
       // Ignore malformed review rows; item loading applies the same behavior.
     }
+  }
+  return total;
+}
+
+async function yoloEventFeedbackReviewQueueStats(datasetDir, datasetId) {
+  const manifestPath = path.join(datasetDir, 'manifest_selected_images.jsonl');
+  try {
+    const stat = await fs.stat(manifestPath);
+    if (!stat.isFile()) {
+      return null;
+    }
+  } catch (_error) {
+    return null;
+  }
+
+  const manualIndex = await loadYoloManualAnnotationIndex();
+  const input = fsSync.createReadStream(manifestPath, { encoding: 'utf8' });
+  const lines = readline.createInterface({ input, crlfDelay: Infinity });
+  const eventCounts = {};
+  let total = 0;
+
+  for await (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const manifest = JSON.parse(line);
+      const feedbackStatus = normalizeClassToken(manifest.feedback_status || '');
+      const rawVerdict = feedbackStatus === 'review_only'
+        ? ''
+        : normalizeClassToken(manifest.audit_verdict || '');
+      if (feedbackStatus !== 'needs_human' && !['suspect', 'needs_human', 'error'].includes(rawVerdict)) {
+        continue;
+      }
+      const itemKey = normalizeApiRelPath(manifest.image || '');
+      const manual = itemKey
+        ? manualIndex?.get(yoloReviewManualAnnotationIndexKey(datasetId, itemKey))
+        : null;
+      if (manual?.deleted || isYoloManualReviewResolved(manual)) {
+        continue;
+      }
+      total += 1;
+      for (const task of Array.isArray(manifest.tasks) ? manifest.tasks : []) {
+        const eventName = String(task?.event_name || 'unknown').trim() || 'unknown';
+        eventCounts[eventName] = (eventCounts[eventName] || 0) + 1;
+      }
+    } catch (_error) {
+      // Ignore malformed rows; item loading follows the same behavior.
+    }
+  }
+
+  return { total, event_counts: eventCounts };
+}
+
+async function yoloPatrolReviewQueueCount(dataset) {
+  const manualIndex = await loadYoloManualAnnotationIndex();
+  let total = 0;
+  for (const row of dataset.rows || []) {
+    if (!yoloItemMatchesQwenAudit(dataset, row, 'suspect')) {
+      continue;
+    }
+    const manual = manualIndex?.get(yoloReviewManualAnnotationIndexKey(dataset.id, row.image_rel_path));
+    if (manual?.deleted || isYoloManualReviewResolved(manual)) {
+      continue;
+    }
+    total += 1;
   }
   return total;
 }
@@ -4330,6 +4436,13 @@ async function buildYoloDatasetList() {
             training_eligible_images: Number(summary.feedback.training_eligible_images || 0)
           }
         : null;
+      if (feedback && isYoloEventFeedbackSummary(summary)) {
+        const reviewStats = await yoloEventFeedbackReviewQueueStats(datasetDir, id);
+        if (reviewStats) {
+          feedback.review_queue_images = reviewStats.total;
+          feedback.review_event_counts = reviewStats.event_counts;
+        }
+      }
       datasets.push({
         id,
         source: spec.alias,
@@ -4358,6 +4471,11 @@ async function buildYoloDatasetList() {
 
   try {
     const patrolDataset = await resolveYoloPatrolDataset();
+    const patrolReviewQueue = await yoloPatrolReviewQueueCount(patrolDataset);
+    const patrolAudit = {
+      ...patrolDataset.summary.qwen_bbox_audit,
+      review_queue_images: patrolReviewQueue
+    };
     datasets.push({
       id: patrolDataset.id,
       source: patrolDataset.source,
@@ -4378,7 +4496,7 @@ async function buildYoloDatasetList() {
       total_images: patrolDataset.rows.length,
       auto_label: patrolDataset.summary.auto_label,
       qwen_bbox: patrolDataset.summary.qwen_bbox,
-      qwen_bbox_audit: patrolDataset.summary.qwen_bbox_audit,
+      qwen_bbox_audit: patrolAudit,
       qwen_label: patrolDataset.summary.qwen_label
     });
   } catch (error) {
@@ -5168,6 +5286,9 @@ async function listYoloReviewItems(datasetId, query = {}) {
     if (manual?.deleted) {
       continue;
     }
+    if (qwenAudit && ['suspect', 'needs_human', 'error'].includes(qwenAudit) && isYoloManualReviewResolved(manual)) {
+      continue;
+    }
     prefilteredItems.push(item);
   }
   items = prefilteredItems;
@@ -5474,33 +5595,63 @@ async function saveYoloManualAnnotationFromRequest(body, authUser) {
   const requestedKind = ['detect', 'classify'].includes(String(body?.kind || '').trim())
     ? String(body.kind).trim()
     : dataset.kind;
-  const labels = requestedKind === 'detect'
+  let labels = requestedKind === 'detect'
     ? normalizeYoloManualLabels(dataset, body?.labels || [])
     : [];
-  const className = String(body?.class_name || body?.ai_class || '').trim();
+  const hasReviewVerdict = Object.prototype.hasOwnProperty.call(body || {}, 'review_verdict');
+  if (hasReviewVerdict && !isYoloManualReviewVerdict(body.review_verdict)) {
+    throw Object.assign(new Error('invalid_review_verdict'), { status: 400 });
+  }
+  const reviewVerdict = hasReviewVerdict
+    ? normalizeYoloManualReviewVerdict(body.review_verdict)
+    : normalizeYoloManualReviewVerdict(existing?.review_verdict);
+  if (reviewVerdict === 'pass' && requestedKind === 'detect' && !labels.length) {
+    throw Object.assign(new Error('review_pass_requires_labels'), { status: 400 });
+  }
+  if (reviewVerdict === 'negative' || reviewVerdict === 'unusable') {
+    labels = [];
+  }
+  let className = String(body?.class_name || body?.ai_class || '').trim();
+  if (reviewVerdict === 'negative' || reviewVerdict === 'unusable') {
+    className = '';
+  }
   const classId = yoloManualClassIdForName(dataset, className, body?.class_id);
-  const fallbackAnswer = requestedKind === 'detect'
+  let fallbackAnswer = requestedKind === 'detect'
     ? (labels.length ? 'YES' : 'NO')
     : answerFromYoloItem('classify', className || existing?.class_name || '', labels);
+  if (reviewVerdict === 'negative' || reviewVerdict === 'unusable') {
+    fallbackAnswer = 'NO';
+  }
   const now = new Date().toISOString();
+  const reviewResolved = isYoloManualReviewResolved(reviewVerdict);
   const annotation = {
     schema: yoloReviewManualAnnotationSchema,
     dataset_id: dataset.id,
     item_key: rel,
     image_sha256: existing?.image_sha256 || null,
     kind: requestedKind,
-    answer: normalizeYoloManualAnswer(body?.answer, fallbackAnswer),
-    class_name: className || existing?.class_name || '',
+    answer: reviewVerdict === 'negative' || reviewVerdict === 'unusable'
+      ? 'NO'
+      : normalizeYoloManualAnswer(body?.answer, fallbackAnswer),
+    class_name: reviewVerdict === 'negative' || reviewVerdict === 'unusable'
+      ? ''
+      : (className || existing?.class_name || ''),
     class_id: classId,
     labels,
     deleted: false,
     note: String(body?.note || '').trim().slice(0, 500),
     updated_by: authUser?.username || null,
     updated_at: now,
+    review_verdict: reviewVerdict,
+    reviewed_by: reviewResolved ? (authUser?.username || existing?.reviewed_by || null) : null,
+    reviewed_at: reviewResolved ? now : null,
+    review_note: String(body?.review_note ?? existing?.review_note ?? '').trim().slice(0, 1000),
     source_image_path: toForwardSlashPath(absolutePath),
     base_label_source: existing?.base_label_source || baseLabels?.label_source || baseLabels?.auto_label_status || null
   };
-  return writeYoloManualAnnotation(annotation);
+  const saved = await writeYoloManualAnnotation(annotation);
+  invalidateYoloReviewDatasetListCache();
+  return saved;
 }
 
 function normalizeAiCheckTask(task) {
@@ -6859,6 +7010,77 @@ function cloudOpsAgentConversationOwnerKey(username) {
   return crypto.createHash('sha256').update(String(username || '').trim().toLowerCase()).digest('hex');
 }
 
+function cloudOpsAgentActiveRunKey(username, conversationId) {
+  return `${cloudOpsAgentConversationOwnerKey(username)}:${normalizeCloudOpsAgentConversationId(conversationId)}`;
+}
+
+function cloudOpsAgentRunCapacity(username) {
+  const ownerKey = cloudOpsAgentConversationOwnerKey(username);
+  let activeForUser = 0;
+  cloudOpsAgentActiveRuns.forEach((run) => {
+    if (run.owner_key === ownerKey) activeForUser += 1;
+  });
+  return {
+    active_for_user: activeForUser,
+    active_global: cloudOpsAgentActiveRuns.size,
+    max_per_user: cloudOpsAgentMaxConcurrentPerUser,
+    max_global: cloudOpsAgentMaxConcurrentGlobal
+  };
+}
+
+function cloudOpsAgentConversationRuntime(username, conversationId) {
+  const run = cloudOpsAgentActiveRuns.get(cloudOpsAgentActiveRunKey(username, conversationId));
+  return run
+    ? { run_status: 'running', run_started_at: run.started_at }
+    : { run_status: 'idle', run_started_at: null };
+}
+
+function createCloudOpsAgentRunCapacityError(code, detail, status) {
+  const error = new Error(detail);
+  error.code = code;
+  error.status = status;
+  return error;
+}
+
+function beginCloudOpsAgentRun(username, conversationId) {
+  const id = normalizeCloudOpsAgentConversationId(conversationId);
+  const key = cloudOpsAgentActiveRunKey(username, id);
+  if (cloudOpsAgentActiveRuns.has(key)) {
+    throw createCloudOpsAgentRunCapacityError(
+      'conversation_already_running',
+      '当前任务仍在运行，请等待完成后再发送下一条消息。',
+      409
+    );
+  }
+  const capacity = cloudOpsAgentRunCapacity(username);
+  if (capacity.active_for_user >= cloudOpsAgentMaxConcurrentPerUser) {
+    throw createCloudOpsAgentRunCapacityError(
+      'agent_user_concurrency_limit',
+      `当前账号最多同时运行 ${cloudOpsAgentMaxConcurrentPerUser} 个任务。`,
+      429
+    );
+  }
+  if (capacity.active_global >= cloudOpsAgentMaxConcurrentGlobal) {
+    throw createCloudOpsAgentRunCapacityError(
+      'agent_global_concurrency_limit',
+      '山海智枢当前并行任务已满，请稍后重试。',
+      429
+    );
+  }
+  const record = {
+    owner_key: cloudOpsAgentConversationOwnerKey(username),
+    conversation_id: id,
+    started_at: new Date().toISOString()
+  };
+  cloudOpsAgentActiveRuns.set(key, record);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (cloudOpsAgentActiveRuns.get(key) === record) cloudOpsAgentActiveRuns.delete(key);
+  };
+}
+
 function cloudOpsAgentConversationStorePath(username) {
   return path.join(cloudOpsAgentConversationRoot, `${cloudOpsAgentConversationOwnerKey(username)}.json`);
 }
@@ -6963,7 +7185,7 @@ function withCloudOpsAgentConversationLock(username, operation) {
   return current;
 }
 
-function cloudOpsAgentConversationSummary(conversation) {
+function cloudOpsAgentConversationSummary(conversation, username) {
   const lastMessage = [...conversation.messages].reverse().find((message) => message.content) || null;
   return {
     id: conversation.id,
@@ -6976,7 +7198,15 @@ function cloudOpsAgentConversationSummary(conversation) {
       : '',
     last_model: conversation.last_model,
     permission_mode: conversation.permission_mode,
-    selected_vehicle_id: conversation.selected_vehicle_id
+    selected_vehicle_id: conversation.selected_vehicle_id,
+    ...cloudOpsAgentConversationRuntime(username, conversation.id)
+  };
+}
+
+function cloudOpsAgentConversationView(conversation, username) {
+  return {
+    ...conversation,
+    ...cloudOpsAgentConversationRuntime(username, conversation.id)
   };
 }
 
@@ -6986,7 +7216,7 @@ async function listCloudOpsAgentConversations(username, limit = 50) {
     .slice()
     .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)))
     .slice(0, Math.max(1, Math.min(200, limit)))
-    .map(cloudOpsAgentConversationSummary);
+    .map((conversation) => cloudOpsAgentConversationSummary(conversation, username));
 }
 
 async function getCloudOpsAgentConversation(username, conversationId) {
@@ -7064,6 +7294,13 @@ async function deleteCloudOpsAgentConversation(username, conversationId) {
   return withCloudOpsAgentConversationLock(username, async () => {
     const store = await readCloudOpsAgentConversationStore(username);
     const id = normalizeCloudOpsAgentConversationId(conversationId);
+    if (cloudOpsAgentConversationRuntime(username, id).run_status === 'running') {
+      throw createCloudOpsAgentRunCapacityError(
+        'conversation_running',
+        '运行中的任务不能删除，请等待任务完成。',
+        409
+      );
+    }
     const index = store.conversations.findIndex((conversation) => conversation.id === id);
     if (index < 0) return false;
     store.conversations.splice(index, 1);
@@ -15865,6 +16102,7 @@ app.get('/api/cloud-ops-agent/status', authStore.requirePermission('vehicle:read
     diagnosis_model_timeout_ms: cloudOpsAgentDiagnoseModelTimeoutMs,
     mode: 'integrated_ai_ops',
     can_chat: cloudOpsAgentEnabled && configured,
+    concurrency: cloudOpsAgentRunCapacity(req.jgzjAuth?.user?.username),
     unified_codex: cloudOpsCodexUnifiedRouteEnabled,
     web_search: cloudOpsCodexWebSearchMode,
     permission_modes: Object.entries(cloudOpsAgentPermissionModes).map(([value, item]) => ({
@@ -15934,8 +16172,8 @@ app.post('/api/cloud-ops-agent/conversations', authStore.requirePermission('vehi
     });
     return res.status(201).json({
       ok: true,
-      conversation,
-      summary: cloudOpsAgentConversationSummary(conversation)
+      conversation: cloudOpsAgentConversationView(conversation, req.jgzjAuth.user.username),
+      summary: cloudOpsAgentConversationSummary(conversation, req.jgzjAuth.user.username)
     });
   } catch (error) {
     const status = Number(error?.status) || 502;
@@ -15956,7 +16194,10 @@ app.get('/api/cloud-ops-agent/conversations/:conversationId', authStore.requireP
     if (!conversation) {
       return res.status(404).json({ ok: false, error: 'conversation_not_found' });
     }
-    return res.json({ ok: true, conversation });
+    return res.json({
+      ok: true,
+      conversation: cloudOpsAgentConversationView(conversation, req.jgzjAuth.user.username)
+    });
   } catch (error) {
     return res.status(502).json({
       ok: false,
@@ -15978,8 +16219,8 @@ app.patch('/api/cloud-ops-agent/conversations/:conversationId', authStore.requir
     }
     return res.json({
       ok: true,
-      conversation,
-      summary: cloudOpsAgentConversationSummary(conversation)
+      conversation: cloudOpsAgentConversationView(conversation, req.jgzjAuth.user.username),
+      summary: cloudOpsAgentConversationSummary(conversation, req.jgzjAuth.user.username)
     });
   } catch (error) {
     return res.status(502).json({
@@ -16001,9 +16242,9 @@ app.delete('/api/cloud-ops-agent/conversations/:conversationId', authStore.requi
     }
     return res.json({ ok: true, deleted: true });
   } catch (error) {
-    return res.status(502).json({
+    return res.status(Number(error?.status) || 502).json({
       ok: false,
-      error: 'cloud_ops_agent_conversation_delete_failed',
+      error: error?.code || 'cloud_ops_agent_conversation_delete_failed',
       detail: error?.message || 'cloud_ops_agent_conversation_delete_failed'
     });
   }
@@ -16056,6 +16297,7 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
   const actor = req.jgzjAuth?.user?.username || null;
   let activeConversation;
   let normalizedHistory;
+  let releaseActiveRun = null;
   try {
     activeConversation = requestedConversationId
       ? await getCloudOpsAgentConversation(actor, requestedConversationId)
@@ -16068,6 +16310,7 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
     if (!activeConversation) {
       return res.status(404).json({ ok: false, error: 'conversation_not_found' });
     }
+    releaseActiveRun = beginCloudOpsAgentRun(actor, activeConversation.id);
     normalizedHistory = normalizeCloudOpsAgentConversationHistory(
       activeConversation.messages.length ? activeConversation.messages : conversationHistory
     );
@@ -16080,10 +16323,11 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
       selected_vehicle_id: selectedVehicleId
     });
   } catch (error) {
+    releaseActiveRun?.();
     const status = Number(error?.status) || 502;
     return res.status(status).json({
       ok: false,
-      error: 'cloud_ops_agent_conversation_prepare_failed',
+      error: error?.code || 'cloud_ops_agent_conversation_prepare_failed',
       detail: error?.message || 'cloud_ops_agent_conversation_prepare_failed'
     });
   }
@@ -16111,7 +16355,7 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
     permission_mode: permissionMode,
     permission_label: permission.label,
     conversation_id: activeConversation.id,
-    conversation: cloudOpsAgentConversationSummary(activeConversation),
+    conversation: cloudOpsAgentConversationSummary(activeConversation, actor),
     title: '山海智枢已开始处理',
     elapsed_ms: 0
   });
@@ -16224,6 +16468,7 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
     await appendCloudOpsAgentHistory(historyRecord).catch((error) => {
       console.info('cloud_ops_agent_history_write_failed', JSON.stringify({ error: error.message }));
     });
+    releaseActiveRun?.();
     sendEvent('result', {
       ok: true,
       provider: runCodex ? 'codex_app_server' : 'subapi_openai_compatible',
@@ -16231,7 +16476,7 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
       run_kind: runKind,
       audit_id: historyRecord.id,
       conversation_id: activeConversation.id,
-      conversation: cloudOpsAgentConversationSummary(activeConversation),
+      conversation: cloudOpsAgentConversationSummary(activeConversation, actor),
       ...result,
       permission_mode: result.permission_mode || permissionMode,
       permission_label: result.permission_label || permission.label,
@@ -16265,17 +16510,19 @@ app.post('/api/cloud-ops-agent/run', authStore.requirePermission('vehicle:read')
     }).catch((writeError) => {
       console.info('cloud_ops_agent_history_write_failed', JSON.stringify({ error: writeError.message }));
     });
+    releaseActiveRun?.();
     sendEvent('error', {
       ok: false,
       status,
       error: error?.code || 'cloud_ops_agent_run_failed',
       detail: error?.message || 'cloud_ops_agent_run_failed',
       conversation_id: activeConversation?.id || null,
-      conversation: activeConversation ? cloudOpsAgentConversationSummary(activeConversation) : null,
+      conversation: activeConversation ? cloudOpsAgentConversationSummary(activeConversation, actor) : null,
       elapsed_ms: Date.now() - startedAt
     });
   } finally {
     clearInterval(heartbeat);
+    releaseActiveRun?.();
     if (!responseClosed && !res.writableEnded) res.end();
   }
 });

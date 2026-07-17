@@ -946,7 +946,10 @@ const agentRules = [
     let currentAgentConversationId = "";
     let agentConversationsReady = false;
     let agentTaskDialogMode = "";
-    let agentRequestInFlight = false;
+    let agentMaxConcurrentRuns = 4;
+    const agentActiveRuns = new Map();
+    let agentConversationPollTimer = 0;
+    let agentConversationPollInFlight = false;
 
     const paramInputValue = (input) => input.type === "checkbox" ? String(input.checked) : String(input.value || "");
     const paramValueText = (input, value) => {
@@ -2788,19 +2791,35 @@ const agentRules = [
     };
 
 
-    const setAgentComposerBusy = (busy) => {
-      agentRequestInFlight = Boolean(busy);
+    const agentConversationIsRunning = (conversationId) => {
+      const id = String(conversationId || "").trim();
+      if (!id) return false;
+      if (agentActiveRuns.has(id)) return true;
+      return agentConversations.some((conversation) => conversation.id === id && conversation.run_status === "running");
+    };
+
+    const agentActiveRunCount = () => new Set([
+      ...agentActiveRuns.keys(),
+      ...agentConversations
+        .filter((conversation) => conversation.run_status === "running")
+        .map((conversation) => conversation.id)
+    ]).size;
+
+    const setAgentComposerBusy = () => {
+      const currentRunning = agentConversationIsRunning(currentAgentConversationId);
+      const atCapacity = agentActiveRunCount() >= agentMaxConcurrentRuns;
       agentSendButtons.forEach((button) => {
-        button.disabled = agentRequestInFlight;
-        button.setAttribute("aria-busy", agentRequestInFlight ? "true" : "false");
+        button.disabled = !agentCanChat || currentRunning || atCapacity;
+        button.setAttribute("aria-busy", currentRunning ? "true" : "false");
       });
       [...agentModelSelects, ...agentPermissionSelects].forEach((select) => {
-        select.disabled = agentRequestInFlight || Boolean(select.selectedOptions[0]?.disabled);
+        select.disabled = currentRunning || Boolean(select.selectedOptions[0]?.disabled);
       });
       shell.querySelectorAll('[data-action^="agent-task-"]').forEach((button) => {
-        button.disabled = agentRequestInFlight;
+        const action = button.dataset.action || "";
+        button.disabled = action === "agent-task-delete" && currentRunning;
       });
-      agentComposers.forEach((composer) => composer.classList.toggle("is-busy", agentRequestInFlight));
+      agentComposers.forEach((composer) => composer.classList.toggle("is-busy", currentRunning));
     };
 
     const resizeAgentInput = (input) => {
@@ -2811,6 +2830,7 @@ const agentRules = [
 
     const setAgentStatusCard = (payload) => {
       agentCanChat = Boolean(payload?.can_chat);
+      agentMaxConcurrentRuns = Math.max(1, Number(payload?.concurrency?.max_per_user || agentMaxConcurrentRuns) || 4);
       const statusText = payload?.can_chat ? "可对话" : (payload?.enabled ? "待配置" : "已禁用");
       if (agentStatus) agentStatus.textContent = statusText;
       if (agentPageStatus) agentPageStatus.textContent = statusText;
@@ -2846,6 +2866,7 @@ const agentRules = [
           ...payload.safeguards.map((item) => `- ${item}`)
         ].join("\n");
       }
+      setAgentComposerBusy();
     };
 
     const loadAgentStatus = async () => {
@@ -2864,6 +2885,7 @@ const agentRules = [
         if (agentModel) agentModel.textContent = "--";
         if (agentCodex) agentCodex.textContent = "未知";
         if (agentCodexNote) agentCodexNote.textContent = "状态接口异常";
+        setAgentComposerBusy();
       }
       updateAgentContext();
     };
@@ -2939,18 +2961,21 @@ const agentRules = [
         }
         list.innerHTML = agentConversations.map((conversation) => {
           const active = conversation.id === currentAgentConversationId;
-          const preview = conversation.last_message_preview || "尚未开始对话";
+          const running = agentConversationIsRunning(conversation.id);
+          const preview = running ? "正在处理..." : (conversation.last_message_preview || "尚未开始对话");
           const meta = [
+            running ? "运行中" : "",
             formatAgentConversationTime(conversation.updated_at),
             `${Number(conversation.message_count || 0)} 条消息`
           ].filter(Boolean).join(" · ");
-          return `<button class="cloud-ops-agent-task-item${active ? " is-active" : ""}" type="button" data-action="agent-task-select" data-conversation-id="${escapeHtml(conversation.id)}" aria-current="${active ? "true" : "false"}">
+          return `<button class="cloud-ops-agent-task-item${active ? " is-active" : ""}${running ? " is-running" : ""}" type="button" data-action="agent-task-select" data-conversation-id="${escapeHtml(conversation.id)}" data-run-status="${running ? "running" : "idle"}" aria-current="${active ? "true" : "false"}">
             <strong>${escapeHtml(conversation.title || "新任务")}</strong>
             <span>${escapeHtml(preview)}</span>
             <small>${escapeHtml(meta)}</small>
           </button>`;
         }).join("");
       });
+      setAgentComposerBusy();
     };
 
     const renderAgentConversationMessages = (conversation) => {
@@ -2984,6 +3009,40 @@ const agentRules = [
           agentMessages.appendChild(node);
         });
       }
+      const activeRun = agentActiveRuns.get(conversation?.id);
+      if (activeRun?.node) {
+        const hasPrompt = messages.some((message) => message?.role === "user" && String(message.content || "") === activeRun.message);
+        if (!hasPrompt && activeRun.message) {
+          const pendingUser = document.createElement("div");
+          pendingUser.className = "cloud-ops-test-agent-message is-user";
+          pendingUser.innerHTML = `<strong>你</strong><p>${escapeHtml(activeRun.message)}</p><small>一体化 AI 运维</small>`;
+          agentMessages.appendChild(pendingUser);
+        }
+        agentMessages.appendChild(activeRun.node);
+      } else if (conversation?.run_status === "running") {
+        const remoteRun = document.createElement("div");
+        const startedAt = new Date(conversation.run_started_at || "").getTime();
+        const elapsedMs = Number.isFinite(startedAt) ? Math.max(0, Date.now() - startedAt) : 0;
+        remoteRun.className = "cloud-ops-test-agent-message is-agent is-running";
+        remoteRun.dataset.agentRunId = `agent-run-remote-${conversation.id}`;
+        remoteRun.innerHTML = `<div class="cloud-ops-agent-run-head">
+          <span class="cloud-ops-agent-run-spinner" aria-hidden="true"></span>
+          <strong data-role="agent-run-title">后台运行中</strong>
+          <time data-role="agent-run-elapsed">${escapeHtml(formatAgentDuration(elapsedMs))}</time>
+        </div>
+        <details class="cloud-ops-agent-run-trace" data-role="agent-run-trace" open>
+          <summary>思考过程</summary>
+          <pre class="cloud-ops-agent-run-reasoning" data-role="agent-run-reasoning">任务正在服务器继续处理，完成后会自动恢复结果。</pre>
+          <div class="cloud-ops-agent-run-activity is-running" data-role="agent-run-activity">
+            <span data-role="agent-run-activity-title">正在处理</span>
+            <small data-role="agent-run-activity-detail" hidden></small>
+          </div>
+          <div class="cloud-ops-agent-run-approvals" data-role="agent-run-approvals"></div>
+        </details>
+        <p data-role="agent-run-answer" hidden></p>
+        <small data-role="agent-run-meta">山海智枢 · 后台任务</small>`;
+        agentMessages.appendChild(remoteRun);
+      }
       agentMessages.scrollTop = agentMessages.scrollHeight;
       syncAgentMessageViews({ forceBottom: true });
     };
@@ -3004,7 +3063,9 @@ const agentRules = [
           : (conversation.last_message_preview || ""),
         last_model: conversation.last_model,
         permission_mode: conversation.permission_mode,
-        selected_vehicle_id: conversation.selected_vehicle_id
+        selected_vehicle_id: conversation.selected_vehicle_id,
+        run_status: conversation.run_status || "idle",
+        run_started_at: conversation.run_started_at || null
       };
       if (index >= 0) agentConversations.splice(index, 1, summary);
       else agentConversations.unshift(summary);
@@ -3031,10 +3092,6 @@ const agentRules = [
     const selectAgentConversation = async (conversationId) => {
       const id = String(conversationId || "").trim();
       if (!id || id === currentAgentConversationId) return;
-      if (agentRequestInFlight) {
-        setStatus("当前任务仍在运行，完成后再切换任务。", "loading");
-        return;
-      }
       try {
         const conversation = await fetchAgentConversation(id);
         applyAgentConversation(conversation);
@@ -3045,6 +3102,11 @@ const agentRules = [
     };
 
     const refreshAgentConversationList = async () => {
+      const previousCurrent = currentAgentConversationSummary();
+      const shouldReloadCurrent = Boolean(
+        previousCurrent?.run_status === "running" &&
+        !agentActiveRuns.has(currentAgentConversationId)
+      );
       const response = await fetch(`${AGENT_CONVERSATIONS_URL}?limit=100`, {
         headers: { Accept: "application/json" },
         cache: "no-store",
@@ -3057,14 +3119,34 @@ const agentRules = [
       agentConversations = Array.isArray(payload.conversations) ? payload.conversations : [];
       agentConversationsReady = true;
       renderAgentConversationLists();
+      const nextCurrent = currentAgentConversationSummary();
+      if (shouldReloadCurrent && nextCurrent?.run_status !== "running" && currentAgentConversationId) {
+        applyAgentConversation(await fetchAgentConversation(currentAgentConversationId));
+      }
       return agentConversations;
     };
 
-    const createAgentConversation = async ({ announce = true } = {}) => {
-      if (agentRequestInFlight) {
-        setStatus("当前任务仍在运行，完成后再新建任务。", "loading");
-        return null;
+    const pollAgentConversations = async () => {
+      const hasRemoteRun = agentConversations.some((conversation) =>
+        conversation.run_status === "running" && !agentActiveRuns.has(conversation.id)
+      );
+      if (!hasRemoteRun || agentConversationPollInFlight || document.visibilityState === "hidden") return;
+      agentConversationPollInFlight = true;
+      try {
+        await refreshAgentConversationList();
+      } catch (_error) {
+        // The next polling interval retries transient status failures.
+      } finally {
+        agentConversationPollInFlight = false;
       }
+    };
+
+    const startAgentConversationPolling = () => {
+      if (agentConversationPollTimer) return;
+      agentConversationPollTimer = window.setInterval(pollAgentConversations, 2500);
+    };
+
+    const createAgentConversation = async ({ announce = true } = {}) => {
       const response = await fetch(AGENT_CONVERSATIONS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -3098,6 +3180,7 @@ const agentRules = [
         } else {
           await createAgentConversation({ announce: false });
         }
+        startAgentConversationPolling();
       } catch (error) {
         agentConversationsReady = true;
         renderAgentConversationLists();
@@ -3113,7 +3196,11 @@ const agentRules = [
     };
 
     const openAgentTaskDialog = (mode) => {
-      if (!agentTaskDialog || !currentAgentConversationId || agentRequestInFlight) return;
+      if (!agentTaskDialog || !currentAgentConversationId) return;
+      if (mode === "delete" && agentConversationIsRunning(currentAgentConversationId)) {
+        setStatus("运行中的任务不能删除，请等待任务完成。", "loading");
+        return;
+      }
       const current = currentAgentConversationSummary();
       agentTaskDialogMode = mode === "delete" ? "delete" : "rename";
       agentTaskDialog.hidden = false;
@@ -3140,8 +3227,9 @@ const agentRules = [
     };
 
     const submitAgentTaskDialog = async () => {
-      if (!currentAgentConversationId || !agentTaskDialogMode || agentRequestInFlight) return;
+      if (!currentAgentConversationId || !agentTaskDialogMode) return;
       const mode = agentTaskDialogMode;
+      if (mode === "delete" && agentConversationIsRunning(currentAgentConversationId)) return;
       if (mode === "rename" && !String(agentTaskDialogInput?.value || "").trim()) {
         agentTaskDialogInput?.focus();
         return;
@@ -3298,8 +3386,18 @@ const agentRules = [
       return `${(value / 1000).toFixed(value < 10000 ? 1 : 0)} 秒`;
     };
 
-    const createAgentRunMessage = (model) => {
-      if (!agentMessages) return null;
+    const agentRunIsCurrent = (run) => Boolean(
+      run?.conversationId && run.conversationId === currentAgentConversationId
+    );
+
+    const syncAgentRunMessageViews = (run, { forceBottom = false } = {}) => {
+      if (!agentRunIsCurrent(run)) return;
+      if (forceBottom && agentMessages) agentMessages.scrollTop = agentMessages.scrollHeight;
+      syncAgentMessageViews({ forceBottom });
+    };
+
+    const createAgentRunMessage = ({ conversationId, message, model, permissionMode }) => {
+      if (!agentMessages || !conversationId) return null;
       const followPrimary = isAgentScrollerNearBottom(agentMessages);
       const runId = `agent-run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const node = document.createElement("div");
@@ -3320,12 +3418,16 @@ const agentRules = [
         <div class="cloud-ops-agent-run-approvals" data-role="agent-run-approvals"></div>
       </details>
       <p data-role="agent-run-answer" hidden></p>
-      <small data-role="agent-run-meta">${escapeHtml(agentModelLabel(model))} · ${escapeHtml(agentPermissionLabels[selectedAgentPermissionMode()])} · 山海智枢</small>`;
+      <small data-role="agent-run-meta">${escapeHtml(agentModelLabel(model))} · ${escapeHtml(agentPermissionLabels[permissionMode])} · 山海智枢</small>`;
       agentMessages.appendChild(node);
       if (followPrimary) agentMessages.scrollTop = agentMessages.scrollHeight;
       const run = {
         node,
         id: runId,
+        conversationId,
+        message,
+        model,
+        permissionMode,
         startedAt: Date.now(),
         lastElapsedMs: 0,
         timer: null
@@ -3335,9 +3437,9 @@ const agentRules = [
         run.lastElapsedMs = elapsedMs;
         const elapsed = run.node.querySelector('[data-role="agent-run-elapsed"]');
         if (elapsed) elapsed.textContent = formatAgentDuration(elapsedMs);
-        syncAgentMessageViews();
+        syncAgentRunMessageViews(run);
       }, 500);
-      syncAgentMessageViews();
+      syncAgentRunMessageViews(run);
       return run;
     };
 
@@ -3351,7 +3453,8 @@ const agentRules = [
         const title = run.node.querySelector('[data-role="agent-run-title"]');
         if (title) title.textContent = event.title;
       }
-      const followPrimary = isAgentScrollerNearBottom(agentMessages);
+      const isCurrent = agentRunIsCurrent(run);
+      const followPrimary = isCurrent && isAgentScrollerNearBottom(agentMessages);
       if (event.stage === "codex_reasoning" && event.detail) {
         const reasoning = run.node.querySelector('[data-role="agent-run-reasoning"]');
         if (reasoning) {
@@ -3401,7 +3504,7 @@ const agentRules = [
         }
       }
       if (followPrimary) agentMessages.scrollTop = agentMessages.scrollHeight;
-      syncAgentMessageViews();
+      syncAgentRunMessageViews(run);
     };
 
     const sendAgentApprovalDecision = async (approvalId, decision) => {
@@ -3440,7 +3543,8 @@ const agentRules = [
 
     const finishAgentRunMessage = (run, payload) => {
       if (!run?.node) return;
-      const followPrimary = isAgentScrollerNearBottom(agentMessages);
+      const isCurrent = agentRunIsCurrent(run);
+      const followPrimary = isCurrent && isAgentScrollerNearBottom(agentMessages);
       window.clearInterval(run.timer);
       const elapsedMs = Number(payload?.latency_ms || run.lastElapsedMs || (Date.now() - run.startedAt));
       run.lastElapsedMs = elapsedMs;
@@ -3483,16 +3587,17 @@ const agentRules = [
           : payload?.run_kind === "vehicle_diagnosis"
             ? "自动车辆诊断"
             : "一体化对话";
-        const permissionLabel = payload?.permission_label || agentPermissionLabels[payload?.permission_mode] || agentPermissionLabels[selectedAgentPermissionMode()];
-        meta.textContent = `${agentModelLabel(payload?.model || selectedAgentModel())} · ${permissionLabel} · ${formatAgentDuration(elapsedMs)} · ${kind}`;
+        const permissionLabel = payload?.permission_label || agentPermissionLabels[payload?.permission_mode] || agentPermissionLabels[run.permissionMode];
+        meta.textContent = `${agentModelLabel(payload?.model || run.model)} · ${permissionLabel} · ${formatAgentDuration(elapsedMs)} · ${kind}`;
       }
       if (followPrimary) agentMessages.scrollTop = agentMessages.scrollHeight;
-      syncAgentMessageViews();
+      syncAgentRunMessageViews(run);
     };
 
     const failAgentRunMessage = (run, error) => {
       if (!run?.node) return;
-      const followPrimary = isAgentScrollerNearBottom(agentMessages);
+      const isCurrent = agentRunIsCurrent(run);
+      const followPrimary = isCurrent && isAgentScrollerNearBottom(agentMessages);
       window.clearInterval(run.timer);
       const elapsedMs = Date.now() - run.startedAt;
       run.node.classList.remove("is-running");
@@ -3509,7 +3614,7 @@ const agentRules = [
       const trace = run.node.querySelector(".cloud-ops-agent-run-trace");
       if (trace) trace.open = true;
       if (followPrimary) agentMessages.scrollTop = agentMessages.scrollHeight;
-      syncAgentMessageViews();
+      syncAgentRunMessageViews(run);
     };
 
     const readAgentEventStream = async (response, onEvent) => {
@@ -3547,10 +3652,6 @@ const agentRules = [
         setStatus("请输入智能体问题", "error");
         return;
       }
-      if (agentRequestInFlight) {
-        setStatus("山海智枢正在处理上一条消息，请稍候。", "loading");
-        return;
-      }
       if (!agentCanChat) {
         appendAgentMessage("error", "山海智枢尚未就绪，不能发起对话。");
         setStatus("山海智枢链路未就绪", "error");
@@ -3566,8 +3667,20 @@ const agentRules = [
         }
       }
 
-      const priorHistory = agentConversationHistory.slice(-12);
       const requestConversationId = currentAgentConversationId;
+      if (agentConversationIsRunning(requestConversationId)) {
+        setStatus("当前任务仍在运行；可以切换或新建其他任务继续处理。", "loading");
+        return;
+      }
+      if (agentActiveRunCount() >= agentMaxConcurrentRuns) {
+        setStatus(`当前账号最多同时运行 ${agentMaxConcurrentRuns} 个任务。`, "error");
+        return;
+      }
+
+      const priorHistory = agentConversationHistory.slice(-12);
+      const requestModel = selectedAgentModel();
+      const requestPermissionMode = selectedAgentPermissionMode();
+      const requestVehicleId = selectedVehicleId();
       appendAgentMessage("user", text, "一体化 AI 运维");
       agentConversationHistory.push({ role: "user", content: text });
       if (agentInput) {
@@ -3579,9 +3692,25 @@ const agentRules = [
         resizeAgentInput(agentPageInput);
       }
       if (agentLatency) agentLatency.textContent = "正在思考 · 0.0 秒";
-      setStatus(`GPT-5.6 Terra 正在深度思考 · ${agentPermissionLabels[selectedAgentPermissionMode()]}`, "loading");
-      setAgentComposerBusy(true);
-      const run = createAgentRunMessage(selectedAgentModel());
+      setStatus(`GPT-5.6 Terra 正在深度思考 · ${agentPermissionLabels[requestPermissionMode]}`, "loading");
+      const run = createAgentRunMessage({
+        conversationId: requestConversationId,
+        message: text,
+        model: requestModel,
+        permissionMode: requestPermissionMode
+      });
+      if (!run) {
+        setStatus("无法创建任务运行视图。", "error");
+        return;
+      }
+      agentActiveRuns.set(requestConversationId, run);
+      mergeAgentConversationSummary({
+        ...(agentConversations.find((conversation) => conversation.id === requestConversationId) || {}),
+        id: requestConversationId,
+        run_status: "running",
+        run_started_at: new Date(run.startedAt).toISOString()
+      });
+      setAgentComposerBusy();
       let finalPayload = null;
       let streamFailure = null;
 
@@ -3592,9 +3721,9 @@ const agentRules = [
           credentials: "same-origin",
           body: JSON.stringify({
             message: text,
-            model: selectedAgentModel(),
-            permission_mode: selectedAgentPermissionMode(),
-            selected_vehicle_id: selectedVehicleId(),
+            model: requestModel,
+            permission_mode: requestPermissionMode,
+            selected_vehicle_id: requestVehicleId,
             conversation_id: requestConversationId,
             history: priorHistory
           })
@@ -3605,15 +3734,18 @@ const agentRules = [
         }
         await readAgentEventStream(response, (eventName, payload) => {
           if (eventName === "heartbeat") {
-            if (agentLatency) agentLatency.textContent = `正在思考 · ${formatAgentDuration(payload?.elapsed_ms)}`;
+            if (agentRunIsCurrent(run) && agentLatency) {
+              agentLatency.textContent = `正在思考 · ${formatAgentDuration(payload?.elapsed_ms)}`;
+            }
             updateAgentRunMessage(run, { elapsed_ms: payload?.elapsed_ms });
             return;
           }
           if (eventName === "start" || eventName === "progress") {
-            if (payload?.conversation_id) currentAgentConversationId = payload.conversation_id;
             if (payload?.conversation) mergeAgentConversationSummary(payload.conversation);
             updateAgentRunMessage(run, payload);
-            if (agentLatency) agentLatency.textContent = `${payload?.title || "正在思考"} · ${formatAgentDuration(payload?.elapsed_ms)}`;
+            if (agentRunIsCurrent(run) && agentLatency) {
+              agentLatency.textContent = `${payload?.title || "正在思考"} · ${formatAgentDuration(payload?.elapsed_ms)}`;
+            }
             return;
           }
           if (eventName === "result") {
@@ -3628,31 +3760,36 @@ const agentRules = [
         if (!finalPayload) throw new Error("智能体流式响应未返回最终结果");
 
         const answer = finalPayload.answer || "模型没有返回文本。";
-        agentConversationHistory.push({ role: "assistant", content: answer });
-        if (finalPayload?.conversation_id) currentAgentConversationId = finalPayload.conversation_id;
+        if (agentRunIsCurrent(run)) agentConversationHistory.push({ role: "assistant", content: answer });
         if (finalPayload?.conversation) mergeAgentConversationSummary(finalPayload.conversation);
         finishAgentRunMessage(run, finalPayload);
-        if (agentLatency) agentLatency.textContent = `${finalPayload?.model_error ? "证据摘要" : "完成"} · ${formatAgentDuration(finalPayload.latency_ms)}`;
-        setStatus(
-          finalPayload?.run_kind === "codex_operations"
-            ? "智能运维完成；已记录调查、审批、执行与验证过程。"
-            : finalPayload?.run_kind === "codex_general"
-            ? "山海智枢回复完成；实时搜索与工具过程已记录。"
-            : finalPayload?.run_kind === "vehicle_diagnosis"
-            ? (finalPayload?.model_error ? "车辆证据采集完成；模型总结未完成，已返回可审计摘要。" : "车辆诊断完成；未执行任何车辆变更。")
-            : "山海智枢回复完成；车辆上下文由消息自动识别。",
-          finalPayload?.model_error ? "loading" : "ok"
-        );
+        if (agentRunIsCurrent(run)) {
+          if (agentLatency) agentLatency.textContent = `${finalPayload?.model_error ? "证据摘要" : "完成"} · ${formatAgentDuration(finalPayload.latency_ms)}`;
+          setStatus(
+            finalPayload?.run_kind === "codex_operations"
+              ? "智能运维完成；已记录调查、审批、执行与验证过程。"
+              : finalPayload?.run_kind === "codex_general"
+              ? "山海智枢回复完成；实时搜索与工具过程已记录。"
+              : finalPayload?.run_kind === "vehicle_diagnosis"
+              ? (finalPayload?.model_error ? "车辆证据采集完成；模型总结未完成，已返回可审计摘要。" : "车辆诊断完成；未执行任何车辆变更。")
+              : "山海智枢回复完成；车辆上下文由消息自动识别。",
+            finalPayload?.model_error ? "loading" : "ok"
+          );
+        }
         loadAgentHistory();
-        refreshAgentConversationList().catch(() => {});
       } catch (error) {
         failAgentRunMessage(run, error);
-        if (agentLatency) agentLatency.textContent = "调用失败";
-        setStatus(`智能体调用失败：${error?.message || "未知错误"}`, "error");
+        if (agentRunIsCurrent(run)) {
+          if (agentLatency) agentLatency.textContent = "调用失败";
+          setStatus(`智能体调用失败：${error?.message || "未知错误"}`, "error");
+        }
         loadAgentHistory();
-        refreshAgentConversationList().catch(() => {});
       } finally {
-        setAgentComposerBusy(false);
+        if (agentActiveRuns.get(requestConversationId) === run) {
+          agentActiveRuns.delete(requestConversationId);
+        }
+        setAgentComposerBusy();
+        refreshAgentConversationList().catch(() => {});
       }
     };
 

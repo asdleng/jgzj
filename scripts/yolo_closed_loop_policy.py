@@ -10,6 +10,7 @@ PATROL_DATASET_ID = "patrol:vehicle-self-collected"
 EXPECTED_AUDIT_PROMPT_VERSION = "qwen_bbox_audit_prompt_v2_training_all_classes"
 DEFAULT_QUALITIES = {"good", "blur"}
 TRAINING_SOURCE = "auto_ad_patrol_flow_upload"
+MANUAL_REVIEW_RESOLVED = {"pass", "negative"}
 
 
 def normalize_rel(value) -> str:
@@ -96,6 +97,9 @@ def training_row_decision(
             return False, "manual_deleted", manual
         if str(manual.get("kind") or "detect") != "detect" or not isinstance(manual.get("labels"), list):
             return False, "manual_invalid", manual
+        review_verdict = str(manual.get("review_verdict") or "pending").strip().lower()
+        if review_verdict not in MANUAL_REVIEW_RESOLVED:
+            return False, f"manual_review_{review_verdict or 'pending'}", manual
         return True, "manual", manual
 
     accepted_qualities = DEFAULT_QUALITIES if qualities is None else qualities

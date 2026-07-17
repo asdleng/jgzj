@@ -178,7 +178,7 @@ def row_day(row: dict) -> str:
         return ""
 
 
-def summarize_index(allowed_days: set[str], tasks: list[dict] | None = None) -> dict:
+def summarize_index(allowed_days: set[str] | None, tasks: list[dict] | None = None) -> dict:
     tasks = tasks or TASKS
     data = load_json(INDEX_PATH, {})
     rows = data.get("rows") or []
@@ -194,7 +194,7 @@ def summarize_index(allowed_days: set[str], tasks: list[dict] | None = None) -> 
     })
     for row in rows:
         day = row_day(row)
-        if day not in allowed_days:
+        if not day or (allowed_days is not None and day not in allowed_days):
             continue
         stat = by_day[day]
         eligible, reason, manual = training_row_decision(row, manual_annotations, qualities=GOOD_QUALITIES)
@@ -253,11 +253,29 @@ def recent_day_range(lookback_days: int, train_today_after_hour: int) -> list[st
     return day_range("00000000", lookback_days, train_today_after_hour)
 
 
+def all_candidate_days(day_stats: dict, start_day: str, train_today_after_hour: int) -> list[str]:
+    now = cn_now()
+    today = compact_day(now)
+    return [
+        day for day in sorted(day_stats)
+        if day >= start_day and (day != today or now.hour >= train_today_after_hour)
+    ]
+
+
 def task_date_state(state: dict, task_id: str, day: str) -> str:
     return str(((state.get("task_dates") or {}).get(task_id) or {}).get(day, {}).get("status") or "")
 
 
-def choose_tasks(day_stats: dict, candidate_days: list[str], state: dict, max_tasks: int, max_dates_per_task: int, tasks: list[dict] | None = None) -> tuple[list[dict], list[dict]]:
+def choose_tasks(
+    day_stats: dict,
+    candidate_days: list[str],
+    state: dict,
+    max_tasks: int,
+    max_dates_per_task: int,
+    tasks: list[dict] | None = None,
+    *,
+    aggregate_all_dates: bool = False,
+) -> tuple[list[dict], list[dict]]:
     tasks = tasks or TASKS
     selected = []
     skipped = []
@@ -275,10 +293,15 @@ def choose_tasks(day_stats: dict, candidate_days: list[str], state: dict, max_ta
             positive_images = int((stat.get("positive_images_by_task") or {}).get(task_id) or 0)
             if boxes >= task["min_boxes"] and positive_images >= task["min_positive_images"]:
                 enough_single.append(day)
-        if enough_single:
+        if aggregate_all_dates:
+            dates = all_days
+            target_dates = pending
+        elif enough_single:
             dates = [enough_single[0]]
+            target_dates = dates
         else:
             dates = pending[-max_dates_per_task:]
+            target_dates = dates
         eligible_images = sum(int((day_stats.get(day) or {}).get("eligible_images") or 0) for day in dates)
         positive_images = sum(int(((day_stats.get(day) or {}).get("positive_images_by_task") or {}).get(task_id) or 0) for day in dates)
         negative_images = sum(int(((day_stats.get(day) or {}).get("negative_images_by_task") or {}).get(task_id) or 0) for day in dates)
@@ -298,8 +321,9 @@ def choose_tasks(day_stats: dict, candidate_days: list[str], state: dict, max_ta
             continue
         selected.append({
             **task,
-            "dates": dates,
-            "target_dates": dates,
+            "dates": target_dates,
+            "target_dates": target_dates,
+            "train_dates": dates if aggregate_all_dates else target_dates,
             "eligible_images": eligible_images,
             "positive_images": positive_images,
             "negative_images": negative_images,
@@ -484,6 +508,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--all-dates",
+        action="store_true",
+        default=str(os.environ.get("YOLO_DAILY_ALL_DATES", "")).strip().lower() in {"1", "true", "yes", "on"},
+    )
     parser.add_argument("--lookback-days", type=int, default=int(os.environ.get("YOLO_DAILY_LOOKBACK_DAYS", "5")))
     parser.add_argument("--replay-lookback-days", type=int, default=int(os.environ.get("YOLO_DAILY_REPLAY_LOOKBACK_DAYS", "7")))
     parser.add_argument("--replay-max-days", type=int, default=int(os.environ.get("YOLO_DAILY_REPLAY_MAX_DAYS", "4")))
@@ -501,16 +530,34 @@ def main() -> None:
     start_day = args.start_day or default_start
     active_tasks = selected_tasks(args.tasks)
     state = load_json(STATE_PATH, {"schema": "jgzj_yolo_daily_closed_loop_state.v1", "task_dates": {}, "runs": []})
-    days = day_range(start_day, args.lookback_days, args.train_today_after_hour)
-    replay_candidate_days = recent_day_range(args.replay_lookback_days, args.train_today_after_hour)
-    day_stats = summarize_index(set(days) | set(replay_candidate_days), active_tasks)
-    selected, skipped = choose_tasks(day_stats, days, state, args.max_tasks, args.max_dates_per_task, active_tasks)
-    attach_replay_dates(selected, day_stats, args.replay_max_days)
+    if args.all_dates:
+        day_stats = summarize_index(None, active_tasks)
+        days = all_candidate_days(day_stats, start_day, args.train_today_after_hour)
+        replay_candidate_days = days
+    else:
+        days = day_range(start_day, args.lookback_days, args.train_today_after_hour)
+        replay_candidate_days = recent_day_range(args.replay_lookback_days, args.train_today_after_hour)
+        day_stats = summarize_index(set(days) | set(replay_candidate_days), active_tasks)
+    selected, skipped = choose_tasks(
+        day_stats,
+        days,
+        state,
+        args.max_tasks,
+        args.max_dates_per_task,
+        active_tasks,
+        aggregate_all_dates=args.all_dates,
+    )
+    if args.all_dates:
+        for task in selected:
+            task["replay_dates"] = []
+    else:
+        attach_replay_dates(selected, day_stats, args.replay_max_days)
     gpu_status = a100_gpu_status(args.gpu_max_mem_mib, args.gpu_max_util)
 
     payload = {
         "ok": True,
         "dry_run": args.dry_run,
+        "all_dates": args.all_dates,
         "checked_at": now.isoformat(),
         "start_day": start_day,
         "task_filter": [task["task_id"] for task in active_tasks],

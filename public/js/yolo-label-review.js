@@ -675,6 +675,34 @@
     return value || "-";
   }
 
+  const manualReviewVerdictOptions = [
+    { value: "pending", label: "待处理" },
+    { value: "pass", label: "审核通过" },
+    { value: "negative", label: "负样本" },
+    { value: "unusable", label: "图片不可用" }
+  ];
+
+  function normalizeManualReviewVerdict(value) {
+    const normalized = normalizeClassToken(value);
+    return manualReviewVerdictOptions.some((item) => item.value === normalized) ? normalized : "pending";
+  }
+
+  function manualReviewVerdictText(value) {
+    const verdict = normalizeManualReviewVerdict(value);
+    return manualReviewVerdictOptions.find((item) => item.value === verdict)?.label || "待处理";
+  }
+
+  function manualReviewVerdictResolved(value) {
+    return ["pass", "negative", "unusable"].includes(normalizeManualReviewVerdict(value));
+  }
+
+  function manualReviewVerdictTone(value) {
+    const verdict = normalizeManualReviewVerdict(value);
+    if (verdict === "pass") return "tone-yes";
+    if (verdict === "negative" || verdict === "unusable") return "tone-no";
+    return "tone-idle";
+  }
+
   function datasetLabel(dataset) {
     const profile = dataset.profile || dataset.name || "dataset";
     const detailName = datasetSourceGroup(dataset) === "web_crawler" ? dataset.name : dataset.parent_name;
@@ -1098,6 +1126,36 @@
       return Number(webCrawler.review_queue_images ?? webCrawler.audit_needs_human_images ?? webCrawler.needs_human_images ?? 0);
     }
     return Number(datasetQwenAudit(dataset)?.review_queue_images || 0);
+  }
+
+  function decrementResolvedReviewItem(dataset, item) {
+    if (!dataset || !item) return;
+    const feedback = datasetFeedback(dataset);
+    if (feedback) {
+      feedback.review_queue_images = Math.max(0, Number(feedback.review_queue_images || 0) - 1);
+      const counts = feedback.review_event_counts;
+      if (counts && typeof counts === "object") {
+        const tasks = Array.isArray(item.manifest?.tasks) && item.manifest.tasks.length
+          ? item.manifest.tasks
+          : [{ event_name: item.event_name }];
+        tasks.forEach((task) => {
+          const eventName = String(task?.event_name || "").trim();
+          if (eventName && Number(counts[eventName] || 0) > 0) {
+            counts[eventName] = Math.max(0, Number(counts[eventName]) - 1);
+          }
+        });
+      }
+    } else {
+      const webCrawler = dataset.web_crawler || dataset.summary?.web_crawler;
+      if (webCrawler) {
+        webCrawler.review_queue_images = Math.max(0, Number(webCrawler.review_queue_images || 0) - 1);
+      } else {
+        const audit = datasetQwenAudit(dataset);
+        if (audit) audit.review_queue_images = Math.max(0, Number(audit.review_queue_images || 0) - 1);
+      }
+    }
+    renderDatasetCards();
+    renderSummary(dataset);
   }
 
   function currentSourceGroups() {
@@ -2309,7 +2367,9 @@
       dirty: false,
       answer: answerDisplay(item.ai_answer) === "Yes" ? "YES" : answerDisplay(item.ai_answer) === "No" ? "NO" : (kind === "detect" ? (labels.length ? "YES" : "NO") : "YES"),
       className: item.manual_annotation?.class_name || item.ai_class || dataset.classes?.[0] || "",
-      newClassName: defaultClassName
+      newClassName: defaultClassName,
+      reviewVerdict: normalizeManualReviewVerdict(item.manual_annotation?.review_verdict),
+      reviewNote: String(item.manual_annotation?.review_note || "")
     };
   }
 
@@ -2321,6 +2381,8 @@
     editor.answer = source.answer;
     editor.className = source.className;
     editor.newClassName = source.newClassName;
+    editor.reviewVerdict = source.reviewVerdict;
+    editor.reviewNote = source.reviewNote;
   }
 
   function renumberLabels(editor) {
@@ -2608,6 +2670,39 @@
     panel.appendChild(field);
   }
 
+  function renderManualReviewConclusion({ editor, panel, saveButton }) {
+    panel.innerHTML = "";
+    const verdictField = createNode("label", "yolo-review-editor-field");
+    verdictField.appendChild(createNode("span", "", "人工审核结论"));
+    const verdictSelect = document.createElement("select");
+    manualReviewVerdictOptions.forEach(({ value, label }) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      verdictSelect.appendChild(option);
+    });
+    verdictSelect.value = editor.reviewVerdict;
+    verdictSelect.addEventListener("change", () => {
+      editor.reviewVerdict = normalizeManualReviewVerdict(verdictSelect.value);
+      markEditorDirty(editor, saveButton);
+    });
+    verdictField.appendChild(verdictSelect);
+    panel.appendChild(verdictField);
+
+    const noteField = createNode("label", "yolo-review-editor-field");
+    noteField.appendChild(createNode("span", "", "审核备注"));
+    const note = document.createElement("textarea");
+    note.maxLength = 1000;
+    note.rows = 3;
+    note.value = editor.reviewNote;
+    note.addEventListener("input", () => {
+      editor.reviewNote = note.value;
+      markEditorDirty(editor, saveButton);
+    });
+    noteField.appendChild(note);
+    panel.appendChild(noteField);
+  }
+
   function renderManualEditor(dataset, item, overlay) {
     const kind = reviewTaskKind(dataset);
     const editor = makeEditorState(dataset, item, kind);
@@ -2615,11 +2710,19 @@
     const wrap = createNode("div", "yolo-review-editor");
     const head = createNode("div", "yolo-review-section-head");
     head.appendChild(createNode("h3", "", "人工编辑"));
-    const stateChip = createNode("span", `ai-history-chip ${item.manual_annotation_status ? "tone-yes" : "tone-idle"}`, item.manual_annotation_status === "saved" ? "已人工保存" : "未人工保存");
+    const stateChip = createNode(
+      "span",
+      `ai-history-chip ${manualReviewVerdictTone(editor.reviewVerdict)}`,
+      manualReviewVerdictText(editor.reviewVerdict)
+    );
     head.appendChild(stateChip);
     wrap.appendChild(head);
 
     const body = createNode("div", "yolo-review-editor-body");
+    const annotationBody = createNode("div", "yolo-review-annotation-editor");
+    const conclusionBody = createNode("div", "yolo-review-conclusion-editor");
+    body.appendChild(annotationBody);
+    body.appendChild(conclusionBody);
     wrap.appendChild(body);
 
     const actions = createNode("div", "yolo-review-editor-actions");
@@ -2636,24 +2739,30 @@
     wrap.appendChild(actions);
 
     if (kind === "classify") {
-      renderClassifyEditor({ dataset, editor, panel: body, saveButton });
+      renderClassifyEditor({ dataset, editor, panel: annotationBody, saveButton });
     } else {
-      renderDetectEditor({ dataset, item, editor, overlay, panel: body, saveButton });
+      renderDetectEditor({ dataset, item, editor, overlay, panel: annotationBody, saveButton });
     }
+    renderManualReviewConclusion({ editor, panel: conclusionBody, saveButton });
 
     resetButton.addEventListener("click", () => {
       restoreEditorState(editor, initialEditor);
       saveButton.disabled = true;
       saveButton.textContent = "保存标注";
       if (kind === "classify") {
-        renderClassifyEditor({ dataset, editor, panel: body, saveButton });
+        renderClassifyEditor({ dataset, editor, panel: annotationBody, saveButton });
       } else {
-        renderDetectEditor({ dataset, item, editor, overlay, panel: body, saveButton });
+        renderDetectEditor({ dataset, item, editor, overlay, panel: annotationBody, saveButton });
       }
+      renderManualReviewConclusion({ editor, panel: conclusionBody, saveButton });
       setStatus("已恢复到本次人工编辑前的状态。", "idle");
     });
 
     saveButton.addEventListener("click", async () => {
+      if (kind === "detect" && editor.reviewVerdict === "pass" && !editor.labels.length) {
+        setStatus("审核通过的检测样本必须至少保留一个有效框。", "error");
+        return;
+      }
       saveButton.disabled = true;
       saveButton.textContent = "保存中...";
       setStatus("保存人工标注...", "loading");
@@ -2664,6 +2773,8 @@
           kind,
           answer: kind === "detect" ? (editor.labels.length ? "YES" : "NO") : editor.answer,
           class_name: kind === "classify" ? editor.className : "",
+          review_verdict: editor.reviewVerdict,
+          review_note: editor.reviewNote,
           labels: editor.labels.map((label) => ({
             class_name: label.class_name,
             class_id: label.class_id,
@@ -2674,10 +2785,17 @@
           }))
         };
         const data = await postJson(endpoints.annotation, payload);
-        renderDetail(data.dataset, data.item);
-        await loadItems();
-        renderListActive(item.item_key);
-        setStatus("人工标注已保存", "ok");
+        if (isReviewQueueEvent() && manualReviewVerdictResolved(editor.reviewVerdict)) {
+          decrementResolvedReviewItem(selectedDataset() || dataset, item);
+          resetDetail(`审核结论已保存：${manualReviewVerdictText(editor.reviewVerdict)}。`);
+          await loadItems({ resetPage: false });
+          setStatus(`已完成审核：${manualReviewVerdictText(editor.reviewVerdict)}`, "ok");
+        } else {
+          renderDetail(data.dataset, data.item);
+          await loadItems();
+          renderListActive(item.item_key);
+          setStatus("人工标注与审核结论已保存", "ok");
+        }
       } catch (error) {
         saveButton.disabled = false;
         saveButton.textContent = "保存标注";
@@ -2969,6 +3087,10 @@
     meta.appendChild(metaItem("Qwen标注", qwenCountSummary(item)));
     meta.appendChild(metaItem("Qwen质量", item.qwen_quality ? qwenLabelText(`quality:${item.qwen_quality}`) : ""));
     meta.appendChild(metaItem("Qwen质检", qwenAuditSummary(item)));
+    meta.appendChild(metaItem("人工审核结论", manualReviewVerdictText(item.manual_annotation?.review_verdict)));
+    meta.appendChild(metaItem("审核人", item.manual_annotation?.reviewed_by));
+    meta.appendChild(metaItem("审核时间", formatDate(item.manual_annotation?.reviewed_at)));
+    meta.appendChild(metaItem("审核备注", item.manual_annotation?.review_note));
     meta.appendChild(metaItem("Split", item.split));
     if (isWebCrawler) {
       meta.appendChild(metaItem("图片标题", item.web_review?.title));

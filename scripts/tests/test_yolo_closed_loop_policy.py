@@ -69,6 +69,7 @@ class ClosedLoopPolicyTest(unittest.TestCase):
                 "kind": "detect",
                 "labels": [],
                 "deleted": False,
+                "review_verdict": "negative",
             }
         }
         ok, reason, annotation = training_row_decision(row, manual)
@@ -81,6 +82,32 @@ class ClosedLoopPolicyTest(unittest.TestCase):
         manual = {row["image_rel_path"]: {"kind": "detect", "labels": [], "deleted": True}}
         self.assertEqual(training_row_decision(row, manual)[1], "manual_deleted")
 
+    def test_pending_and_unusable_manual_reviews_are_excluded(self):
+        row = base_row()
+        for verdict in (None, "pending", "unusable"):
+            manual = {
+                row["image_rel_path"]: {
+                    "kind": "detect",
+                    "labels": [],
+                    "deleted": False,
+                    "review_verdict": verdict,
+                }
+            }
+            expected = "manual_review_pending" if verdict in (None, "pending") else "manual_review_unusable"
+            self.assertEqual(training_row_decision(row, manual)[1], expected)
+
+    def test_manual_pass_is_training_eligible(self):
+        row = base_row()
+        manual = {
+            row["image_rel_path"]: {
+                "kind": "detect",
+                "labels": [{"class_name": "pet"}],
+                "deleted": False,
+                "review_verdict": "pass",
+            }
+        }
+        self.assertEqual(training_row_decision(row, manual)[:2], (True, "manual"))
+
     def test_loader_only_accepts_patrol_schema(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -92,6 +119,7 @@ class ClosedLoopPolicyTest(unittest.TestCase):
                 "kind": "detect",
                 "labels": [],
                 "deleted": False,
+                "review_verdict": "negative",
                 "updated_at": "2026-07-15T00:00:00Z",
             }
             (root / "aa" / "valid.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -126,6 +154,7 @@ class ClosedLoopPolicyTest(unittest.TestCase):
                 "answer": "NO",
                 "labels": [],
                 "deleted": False,
+                "review_verdict": "negative",
                 "updated_at": "2026-07-15T00:00:00Z",
             }
             (manual_root / "annotation.json").write_text(json.dumps(manual), encoding="utf-8")
