@@ -6350,11 +6350,23 @@ print(len(faces))
   }
 
   function isCurrentGreenInspection(inspection) {
-    return Boolean(
+    const basicMatch = Boolean(
       inspection &&
       inspection.schema === GREEN_INSPECTION_SCHEMA &&
       String(inspection.model || '') === greenInspectionModel
     );
+    if (!basicMatch) return false;
+    const assessedDimensionCount = Object.values(inspection.dimension_scores || {})
+      .filter((dimension) => dimension?.score != null && Number.isFinite(Number(dimension.score)))
+      .length;
+    if (inspection.health_score != null && assessedDimensionCount < 3) return false;
+    if (inspection.vegetation_present === true) {
+      const viewCount = Array.isArray(inspection.view_assessments) ? inspection.view_assessments.length : 0;
+      const expectedViewCount = Number(inspection.frame_count_evaluated) || 0;
+      if (!expectedViewCount || viewCount !== expectedViewCount) return false;
+      if (!Array.isArray(inspection.observations) || !inspection.observations.length) return false;
+    }
+    return true;
   }
 
   function greenInspectionCandidateSamples(samples, nowMs = Date.now()) {
