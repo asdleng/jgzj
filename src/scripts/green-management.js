@@ -20,7 +20,9 @@ if (root) {
     auth: "/api/auth/me",
     vehicles: "/api/park-pcm/crowd/vehicles",
     samples: "/api/park-pcm/crowd/samples",
-    routes: "/api/park-pcm/crowd/routes"
+    routes: "/api/park-pcm/crowd/routes",
+    greenInspections: "/api/park-pcm/green/inspections",
+    greenInspect: "/api/park-pcm/green/inspect"
   };
   const SAMPLE_LIMIT = 8000;
   const INITIAL_SAMPLE_LIMIT = 1000;
@@ -45,11 +47,18 @@ if (root) {
     tooltip: root.querySelector("[data-gm-tooltip]"),
     hitLayer: root.querySelector("[data-gm-hit-layer]"),
     nodeTitle: root.querySelector("[data-gm-node-title]"),
-    nodePeople: root.querySelector("[data-gm-node-people]"),
+    nodeHealth: root.querySelector("[data-gm-node-health]"),
     nodeMeta: root.querySelector("[data-gm-node-meta]"),
     frames: root.querySelector("[data-gm-frames]"),
-    trend: root.querySelector("[data-gm-trend]"),
-    trendSummary: root.querySelector("[data-gm-trend-summary]"),
+    healthPanel: root.querySelector(".gm-health-panel"),
+    healthScore: root.querySelector("[data-gm-health-score]"),
+    healthGrade: root.querySelector("[data-gm-health-grade]"),
+    indicators: root.querySelector("[data-gm-indicators]"),
+    inspectionSummary: root.querySelector("[data-gm-inspection-summary]"),
+    issues: root.querySelector("[data-gm-issues]"),
+    recommendations: root.querySelector("[data-gm-recommendations]"),
+    projects: root.querySelector("[data-gm-projects]"),
+    projectSummary: root.querySelector("[data-gm-project-summary]"),
     preview: root.querySelector("[data-gm-preview]"),
     previewTitle: root.querySelector("[data-gm-preview-title]"),
     previewMeta: root.querySelector("[data-gm-preview-meta]"),
@@ -59,10 +68,6 @@ if (root) {
   el.metrics = Object.fromEntries(
     [...root.querySelectorAll("[data-gm-metric]")].map((node) => [node.dataset.gmMetric, node])
   );
-  el.advice = Object.fromEntries(
-    [...root.querySelectorAll("[data-gm-advice]")].map((node) => [node.dataset.gmAdvice, node])
-  );
-
   const state = {
     busy: false,
     authenticated: false,
@@ -71,6 +76,9 @@ if (root) {
     allSamples: [],
     visibleSamples: [],
     routes: [],
+    inspections: new Map(),
+    inspectionPending: new Set(),
+    inspectionErrors: new Map(),
     selectedSampleId: "",
     viewMode: "perspective",
     mapBuildId: 0,
@@ -196,13 +204,67 @@ if (root) {
     return { longitude, latitude };
   }
 
-  function samplePeopleCount(sample) {
-    const direct = number(sample?.analysis?.people_count);
-    if (direct != null) return Math.max(0, direct);
-    const counts = (Array.isArray(sample?.frames) ? sample.frames : [])
-      .map((frame) => number(frame?.analysis?.people_count))
-      .filter((value) => value != null);
-    return counts.length ? counts.reduce((sum, value) => sum + value, 0) : null;
+  function inspectionFor(sample) {
+    return state.inspections.get(sampleId(sample)) || null;
+  }
+
+  function inspectionRequestKey(sample) {
+    return `${String(sample?.vehicle_id || "")}\n${sampleId(sample)}`;
+  }
+
+  function inspectionStatusLabel(inspection) {
+    if (!inspection) return "待分析";
+    return {
+      clear: "未见异常",
+      attention: "建议复核",
+      issue: "发现问题",
+      not_assessable: "无法判断"
+    }[inspection.status] || "待分析";
+  }
+
+  function healthGradeLabel(inspection) {
+    if (!inspection) return "等待四路图像分析";
+    const grade = {
+      good: "长势良好",
+      fair: "长势一般",
+      poor: "健康欠佳",
+      not_assessable: "可见植被不足"
+    }[inspection.health_grade] || "需要人工复核";
+    const confidence = { high: "高", medium: "中", low: "低" }[inspection.confidence] || "低";
+    return `${grade} · ${confidence}置信度`;
+  }
+
+  function issueTypeLabel(type) {
+    return {
+      yellowing_or_wilting: "枯黄或萎蔫",
+      drought_stress: "疑似缺水",
+      pest_or_disease: "疑似病虫害",
+      dead_or_broken_branch: "枯枝或断枝",
+      overgrowth_or_encroachment: "生长侵界",
+      missing_or_bare_patch: "缺株或裸斑",
+      support_or_tree_grate_problem: "支撑或树池异常"
+    }[type] || "绿化异常";
+  }
+
+  function indicatorValueLabel(key, value) {
+    const labels = {
+      canopy_density: { sparse: "偏稀疏", moderate: "适中", dense: "较茂密", unknown: "无法判断" },
+      leaf_color: { normal: "叶色正常", slight_yellowing: "轻微枯黄迹象", severe_yellowing: "明显枯黄", unknown: "无法判断" },
+      drought_stress: { none: "未见缺水", possible: "可能缺水", clear: "缺水迹象明显", unknown: "无法判断" },
+      pest_or_disease: { none: "未见病虫迹象", possible: "疑似病斑虫害", clear: "病虫迹象明显", unknown: "无法判断" },
+      dead_or_broken_branches: { none: "未见枯断枝", possible: "疑似枯断枝", clear: "枯断枝明显", unknown: "无法判断" },
+      shrub_condition: { good: "长势良好", fair: "长势一般", poor: "长势欠佳", unknown: "画面无灌木" },
+      groundcover_condition: { good: "覆盖良好", fair: "覆盖一般", poor: "覆盖欠佳", unknown: "画面无地被" },
+      overgrowth_or_encroachment: { none: "未见侵界", possible: "疑似侵界", clear: "侵界明显", unknown: "无法判断" }
+    };
+    return labels[key]?.[value] || "无法判断";
+  }
+
+  function indicatorState(key, value) {
+    if (["normal", "none", "good", "dense", "moderate"].includes(value)) return "good";
+    if (["possible", "fair", "slight_yellowing", "sparse"].includes(value)) return "fair";
+    if (["clear", "poor", "severe_yellowing"].includes(value)) return "poor";
+    return "unknown";
   }
 
   function sampleId(sample, index = 0) {
@@ -256,10 +318,9 @@ if (root) {
       if (!samplePosition(sample)) return;
       const vehicleId = String(sample?.vehicle_id || "").trim();
       if (!vehicleId) return;
-      const current = counts.get(vehicleId) || { count: 0, latest: 0, people: 0, routeCount: 0, routeLatest: 0 };
+      const current = counts.get(vehicleId) || { count: 0, latest: 0, routeCount: 0, routeLatest: 0 };
       current.count += 1;
       current.latest = Math.max(current.latest, Date.parse(sample.collected_at || "") || 0);
-      current.people += samplePeopleCount(sample) || 0;
       if (routeRequestItems([sample]).length) {
         current.routeCount += 1;
         current.routeLatest = Math.max(current.routeLatest, Date.parse(sample.collected_at || "") || 0);
@@ -304,7 +365,7 @@ if (root) {
     const recentRouteCandidates = routeCandidates.filter((entry) => entry[1].routeLatest >= newestRouteAt - 24 * 60 * 60 * 1000);
     const preferredPool = recentRouteCandidates.length ? recentRouteCandidates : [...sampleCounts.entries()];
     const preferred = preferredPool
-      .sort((left, right) => right[1].people - left[1].people || right[1].routeLatest - left[1].routeLatest || right[1].latest - left[1].latest)[0]?.[0];
+      .sort((left, right) => right[1].routeLatest - left[1].routeLatest || right[1].latest - left[1].latest)[0]?.[0];
     return preferred || ranked[0]?.vehicle_id || "";
   }
 
@@ -314,9 +375,8 @@ if (root) {
     samples.forEach((sample) => {
       const key = dateKey(sample.collected_at);
       if (!key || !samplePosition(sample)) return;
-      const current = days.get(key) || { count: 0, people: 0 };
+      const current = days.get(key) || { count: 0 };
       current.count += 1;
-      current.people += samplePeopleCount(sample) || 0;
       days.set(key, current);
     });
     const keys = [...days.keys()].sort().reverse();
@@ -347,140 +407,76 @@ if (root) {
   }
 
   function updateSummary(samples, routes) {
-    const counts = samples.map(samplePeopleCount).filter((value) => value != null);
-    const total = counts.reduce((sum, value) => sum + value, 0);
-    const peakSample = samples.reduce((best, sample) => {
-      const count = samplePeopleCount(sample);
-      if (count == null) return best;
-      return !best || count > best.count ? { sample, count } : best;
-    }, null);
+    const inspections = samples.map(inspectionFor).filter(Boolean);
+    const imageCount = samples.reduce((sum, sample) => (
+      sum + (Number(sample.frame_count) || (Array.isArray(sample.frames) ? sample.frames.length : 0))
+    ), 0);
+    const issueCount = inspections.reduce((sum, inspection) => (
+      sum + (Array.isArray(inspection.issues) ? inspection.issues.length : 0)
+    ), 0);
     setMetric("samples", String(samples.length));
     setMetric("routes", String(routes.length));
-    setMetric("people", counts.length ? `${formatNumber(total)} 人` : "待识别");
-    setMetric("peak", peakSample ? `${formatNumber(peakSample.count)} 人` : "-");
-    setMetric("peak-time", peakSample ? formatTime(peakSample.sample.collected_at) : "等待数据");
-
-    const average = counts.length ? total / counts.length : 0;
-    const peak = peakSample?.count || 0;
-    if (el.advice.priority) {
-      el.advice.priority.textContent = peak >= 8 || average >= 4
-        ? "高 · 加密步道与草坪边缘巡查"
-        : peak >= 3 || average >= 1.5
-          ? "中 · 按日检查踩踏与垃圾"
-          : "常规 · 保持计划养护";
-    }
-    const hourStats = new Map();
-    samples.forEach((sample) => {
-      const count = samplePeopleCount(sample);
-      const date = new Date(sample.collected_at || "");
-      if (count == null || Number.isNaN(date.getTime())) return;
-      const hourText = new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Asia/Shanghai",
-        hour: "2-digit",
-        hour12: false
-      }).format(date);
-      const hour = Number(hourText) % 24;
-      const current = hourStats.get(hour) || { sum: 0, count: 0 };
-      current.sum += count;
-      current.count += 1;
-      hourStats.set(hour, current);
-    });
-    const quietHour = [...hourStats.entries()]
-      .sort((left, right) => left[1].sum / left[1].count - right[1].sum / right[1].count || left[0] - right[0])[0]?.[0];
-    if (el.advice.window) {
-      el.advice.window.textContent = quietHour == null
-        ? "样本不足"
-        : `${String(quietHour).padStart(2, "0")}:00-${String((quietHour + 2) % 24).padStart(2, "0")}:00 · 样本低谷`;
-    }
-    const threshold = Math.max(3, Math.ceil(peak * 0.7));
-    const hotspots = peak ? samples.filter((sample) => (samplePeopleCount(sample) || 0) >= threshold).length : 0;
-    if (el.advice.hotspots) {
-      el.advice.hotspots.textContent = hotspots
-        ? `${hotspots} 个 · 优先检查草坪边界与灌木带`
-        : "暂无高人流节点";
-    }
+    setMetric("images", String(imageCount));
+    setMetric("issues", String(issueCount));
+    setMetric("analyzed", `${inspections.length}/${samples.length} 节点已分析`);
     if (el.mapMeta) {
-      el.mapMeta.textContent = `${state.vehicleId || "-"} · ${formatDateKey(state.dateKey)} · ${samples.length} 节点 · ${routes.length} 路线`;
+      el.mapMeta.textContent = `${state.vehicleId || "-"} · ${formatDateKey(state.dateKey)} · ${samples.length} 节点 · ${inspections.length} 已分析`;
     }
   }
 
-  function svgNode(tag, attributes = {}, text = null) {
-    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
-    Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
-    if (text != null) node.textContent = String(text);
-    return node;
+  function setProject(name, title, detail, projectState = "unknown") {
+    const project = el.projects?.querySelector(`[data-project="${name}"]`);
+    if (!project) return;
+    project.dataset.state = projectState;
+    const strong = project.querySelector("strong");
+    const paragraph = project.querySelector("p");
+    if (strong) strong.textContent = title;
+    if (paragraph) paragraph.textContent = detail;
   }
 
-  function renderTrend(samples) {
-    if (!el.trend) return;
-    el.trend.replaceChildren();
-    const raw = samples
-      .map((sample) => ({
-        time: Date.parse(sample.collected_at || ""),
-        people: samplePeopleCount(sample)
-      }))
-      .filter((point) => Number.isFinite(point.time) && point.people != null)
-      .sort((left, right) => left.time - right.time);
-    if (raw.length < 2) {
-      const empty = document.createElement("p");
-      empty.className = "gm-trend-empty";
-      empty.textContent = raw.length ? "当前日期只有一个有效时间点。" : "当前日期暂无可用人流识别结果。";
-      el.trend.appendChild(empty);
-      if (el.trendSummary) el.trendSummary.textContent = "等待更多识别样本";
+  function renderProjects(sample) {
+    const inspection = sample ? inspectionFor(sample) : null;
+    if (!inspection) {
+      setProject("trees", "待分析", "冠层密度、叶色和枝干状态");
+      setProject("shrubs", "待分析", "整齐度、长势和侵界迹象");
+      setProject("groundcover", "待分析", "覆盖状态、裸斑和枯黄迹象");
+      setProject("issues", "待分析", "仅显示中高可信度问题");
+      if (el.projectSummary) el.projectSummary.textContent = "正在读取当前节点四路绿化影像";
       return;
     }
-    const points = raw.length <= 36
-      ? raw
-      : Array.from({ length: 36 }, (_unused, index) => {
-          const start = Math.floor(index * raw.length / 36);
-          const end = Math.max(start + 1, Math.floor((index + 1) * raw.length / 36));
-          const bucket = raw.slice(start, end);
-          return {
-            time: bucket.reduce((sum, point) => sum + point.time, 0) / bucket.length,
-            people: bucket.reduce((sum, point) => sum + point.people, 0) / bucket.length
-          };
-        });
-    const width = 1000;
-    const height = 230;
-    const pad = { top: 16, right: 20, bottom: 34, left: 40 };
-    const plotWidth = width - pad.left - pad.right;
-    const plotHeight = height - pad.top - pad.bottom;
-    const maxPeople = Math.max(1, ...points.map((point) => point.people));
-    const minTime = points[0].time;
-    const maxTime = points[points.length - 1].time;
-    const timeSpan = Math.max(1, maxTime - minTime);
-    const coords = points.map((point) => ({
-      ...point,
-      x: pad.left + ((point.time - minTime) / timeSpan) * plotWidth,
-      y: pad.top + (1 - point.people / maxPeople) * plotHeight
-    }));
-    const baseY = pad.top + plotHeight;
-    const svg = svgNode("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "当日人流时间趋势" });
-    [0, 0.5, 1].forEach((ratio) => {
-      const y = pad.top + (1 - ratio) * plotHeight;
-      svg.appendChild(svgNode("line", { class: "gm-trend-grid", x1: pad.left, y1: y, x2: width - pad.right, y2: y }));
-      svg.appendChild(svgNode("text", { class: "gm-trend-label", x: pad.left - 8, y: y + 4, "text-anchor": "end" }, formatNumber(maxPeople * ratio)));
-    });
-    const linePoints = coords.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
-    const areaPath = [
-      `M ${coords[0].x.toFixed(2)} ${baseY.toFixed(2)}`,
-      ...coords.map((point) => `L ${point.x.toFixed(2)} ${point.y.toFixed(2)}`),
-      `L ${coords[coords.length - 1].x.toFixed(2)} ${baseY.toFixed(2)}`,
-      "Z"
-    ].join(" ");
-    svg.appendChild(svgNode("path", { class: "gm-trend-area", d: areaPath }));
-    svg.appendChild(svgNode("polyline", { class: "gm-trend-line", points: linePoints }));
-    coords.forEach((point) => {
-      const dot = svgNode("circle", { class: "gm-trend-dot", cx: point.x, cy: point.y, r: 3.5 });
-      dot.appendChild(svgNode("title", {}, `${formatTime(point.time)} · ${formatNumber(point.people)} 人`));
-      svg.appendChild(dot);
-    });
-    svg.appendChild(svgNode("text", { class: "gm-trend-label", x: pad.left, y: height - 9 }, formatTime(minTime, false)));
-    svg.appendChild(svgNode("text", { class: "gm-trend-label", x: width - pad.right, y: height - 9, "text-anchor": "end" }, formatTime(maxTime, false)));
-    el.trend.appendChild(svg);
-    const average = raw.reduce((sum, point) => sum + point.people, 0) / raw.length;
-    if (el.trendSummary) {
-      el.trendSummary.textContent = `${raw.length} 条识别样本 · 平均 ${formatNumber(average)} 人/节点 · 峰值 ${formatNumber(Math.max(...raw.map((point) => point.people)))} 人`;
+    const indicators = inspection.indicators || {};
+    const treeVisible = inspection.vegetation_types?.trees;
+    const shrubVisible = inspection.vegetation_types?.shrubs;
+    const groundVisible = inspection.vegetation_types?.lawn_or_groundcover;
+    const canopyLabel = treeVisible ? indicatorValueLabel("canopy_density", indicators.canopy_density) : "画面未见乔木";
+    const leafLabel = indicatorValueLabel("leaf_color", indicators.leaf_color);
+    setProject(
+      "trees",
+      canopyLabel,
+      treeVisible ? `${leafLabel} · ${indicatorValueLabel("dead_or_broken_branches", indicators.dead_or_broken_branches)}` : "当前四路画面没有足够乔木证据",
+      treeVisible ? indicatorState("leaf_color", indicators.leaf_color) : "unknown"
+    );
+    setProject(
+      "shrubs",
+      shrubVisible ? indicatorValueLabel("shrub_condition", indicators.shrub_condition) : "画面未见灌木",
+      shrubVisible ? indicatorValueLabel("overgrowth_or_encroachment", indicators.overgrowth_or_encroachment) : "当前四路画面没有足够灌木证据",
+      shrubVisible ? indicatorState("shrub_condition", indicators.shrub_condition) : "unknown"
+    );
+    setProject(
+      "groundcover",
+      groundVisible ? indicatorValueLabel("groundcover_condition", indicators.groundcover_condition) : "画面未见地被",
+      groundVisible ? `${leafLabel} · ${indicatorValueLabel("drought_stress", indicators.drought_stress)}` : "当前四路画面没有足够草坪地被证据",
+      groundVisible ? indicatorState("groundcover_condition", indicators.groundcover_condition) : "unknown"
+    );
+    const issues = Array.isArray(inspection.issues) ? inspection.issues : [];
+    setProject(
+      "issues",
+      issues.length ? `${issues.length} 项待复核` : "未见明显异常",
+      issues.length ? issues.map((issue) => issueTypeLabel(issue.type)).join("、") : "不为凑指标生成问题或建议",
+      issues.some((issue) => issue.severity === "high") ? "poor" : issues.length ? "fair" : "good"
+    );
+    if (el.projectSummary) {
+      el.projectSummary.textContent = `${formatTime(sample.collected_at)} · ${inspectionStatusLabel(inspection)} · ${inspection.frame_count_evaluated || 0} 路画面`;
     }
   }
 
@@ -499,17 +495,134 @@ if (root) {
     el.previewImage.alt = `${sample?.vehicle_id || ""} ${frame?.camera_id || "camera"}`;
     if (el.previewTitle) el.previewTitle.textContent = `${sample?.vehicle_id || "-"} · ${frame?.camera_id || "camera"}`;
     if (el.previewMeta) {
-      const count = number(frame?.analysis?.people_count);
-      el.previewMeta.textContent = `${formatTime(sample?.collected_at)} · ${count == null ? "人数待识别" : `${formatNumber(count)} 人`}`;
+      const inspection = inspectionFor(sample);
+      el.previewMeta.textContent = `${formatTime(sample?.collected_at)} · ${inspectionStatusLabel(inspection)} · 绿化巡检证据`;
     }
     if (typeof el.preview.showModal === "function") el.preview.showModal();
     else el.preview.setAttribute("open", "");
   }
 
+  function replaceFindingList(target, items, emptyText, clear = false) {
+    if (!target) return;
+    target.replaceChildren();
+    if (!items.length) {
+      const item = document.createElement("li");
+      item.className = clear ? "gm-clear" : "";
+      item.textContent = emptyText;
+      target.appendChild(item);
+      return;
+    }
+    items.forEach((text) => {
+      const item = document.createElement("li");
+      item.textContent = text;
+      target.appendChild(item);
+    });
+  }
+
+  function renderInspectionPanel(sample) {
+    const inspection = sample ? inspectionFor(sample) : null;
+    const requestKey = sample ? inspectionRequestKey(sample) : "";
+    const pending = Boolean(sample && state.inspectionPending.has(requestKey));
+    const inspectionError = sample ? state.inspectionErrors.get(requestKey) : "";
+    const panelState = inspection?.status || "pending";
+    if (el.healthPanel) el.healthPanel.dataset.state = panelState;
+    if (el.nodeHealth) {
+      el.nodeHealth.dataset.state = panelState;
+      el.nodeHealth.textContent = pending ? "分析中" : inspectionStatusLabel(inspection);
+    }
+    if (el.healthScore) el.healthScore.textContent = inspection?.health_score == null ? "-" : String(inspection.health_score);
+    if (el.healthGrade) {
+      el.healthGrade.textContent = pending ? "正在分析四路画面" : healthGradeLabel(inspection);
+    }
+    if (el.indicators) {
+      el.indicators.replaceChildren();
+      if (!inspection) {
+        const empty = document.createElement("p");
+        empty.className = "gm-empty";
+        empty.textContent = pending ? "正在分析四路绿化影像。" : "等待四路绿化巡检结果。";
+        el.indicators.appendChild(empty);
+      } else {
+        const rows = [
+          ["canopy_density", "乔木冠层"],
+          ["leaf_color", "叶色状态"],
+          ["drought_stress", "水分胁迫"],
+          ["pest_or_disease", "病虫迹象"]
+        ];
+        rows.forEach(([key, label]) => {
+          const value = inspection.indicators?.[key] || "unknown";
+          const item = document.createElement("div");
+          item.className = "gm-indicator";
+          item.dataset.state = indicatorState(key, value);
+          const name = document.createElement("span");
+          name.textContent = label;
+          const result = document.createElement("strong");
+          result.textContent = indicatorValueLabel(key, value);
+          item.append(name, result);
+          el.indicators.appendChild(item);
+        });
+      }
+    }
+    if (el.inspectionSummary) {
+      el.inspectionSummary.textContent = inspectionError
+        ? `绿化分析暂不可用：${inspectionError}`
+        : pending
+          ? "正在读取四路画面，仅保留有明确图像证据的结论。"
+          : inspection?.summary || "选择节点后读取巡检结论。";
+    }
+    const issues = Array.isArray(inspection?.issues) ? inspection.issues : [];
+    replaceFindingList(
+      el.issues,
+      issues.map((issue) => `${issueTypeLabel(issue.type)}：${issue.evidence}`),
+      inspection ? inspection.status === "not_assessable" ? "当前画面不足以判断" : "未发现中高可信度问题" : "暂无结论",
+      Boolean(inspection && !issues.length && inspection.status !== "not_assessable")
+    );
+    const recommendations = Array.isArray(inspection?.recommendations) ? inspection.recommendations : [];
+    replaceFindingList(
+      el.recommendations,
+      recommendations.map((item) => `${item.action}：${item.reason}`),
+      inspection && !issues.length ? "无明确问题，不生成养护建议" : "暂无建议",
+      Boolean(inspection && !issues.length)
+    );
+  }
+
+  async function ensureInspection(sample) {
+    const id = sampleId(sample);
+    const requestVehicleId = String(sample?.vehicle_id || "");
+    const requestKey = inspectionRequestKey(sample);
+    if (!id || state.inspections.has(id) || state.inspectionPending.has(requestKey)) return;
+    state.inspectionErrors.delete(requestKey);
+    state.inspectionPending.add(requestKey);
+    renderInspectionPanel(sample);
+    renderProjects(sample);
+    try {
+      const payload = await fetchJson(API.greenInspect, {
+        method: "POST",
+        body: { sample_id: id, vehicle_id: sample.vehicle_id, force: false }
+      });
+      if (payload.inspection && state.vehicleId === requestVehicleId) {
+        state.inspections.set(id, payload.inspection);
+        updateNodeInspectionStyle(id, payload.inspection);
+        updateSummary(state.visibleSamples, state.routes);
+      }
+    } catch (error) {
+      if (state.vehicleId === requestVehicleId) {
+        state.inspectionErrors.set(requestKey, error.message || "请求失败");
+      }
+    } finally {
+      state.inspectionPending.delete(requestKey);
+      if (
+        state.vehicleId === requestVehicleId &&
+        state.selectedSampleId === id
+      ) {
+        renderInspectionPanel(sample);
+        renderProjects(sample);
+      }
+    }
+  }
+
   function renderSampleDetail(sample) {
     if (!sample) {
       if (el.nodeTitle) el.nodeTitle.textContent = "采集节点";
-      if (el.nodePeople) el.nodePeople.textContent = "-";
       if (el.nodeMeta) el.nodeMeta.textContent = "在地图中选择采集节点。";
       if (el.frames) {
         const empty = document.createElement("p");
@@ -517,12 +630,12 @@ if (root) {
         empty.textContent = "等待四路现场图片。";
         el.frames.replaceChildren(empty);
       }
+      renderInspectionPanel(null);
+      renderProjects(null);
       return;
     }
     const position = samplePosition(sample);
-    const people = samplePeopleCount(sample);
     if (el.nodeTitle) el.nodeTitle.textContent = `${sample.vehicle_id || "-"} · ${formatTime(sample.collected_at)}`;
-    if (el.nodePeople) el.nodePeople.textContent = people == null ? "人数待识别" : `${formatNumber(people)} 人`;
     if (el.nodeMeta) {
       el.nodeMeta.textContent = position
         ? `高德坐标 ${formatCoord(position.longitude)}, ${formatCoord(position.latitude)} · ${sample.frame_count || sample.frames?.length || 0} 路现场图`
@@ -536,6 +649,7 @@ if (root) {
       empty.className = "gm-empty";
       empty.textContent = "该节点没有现场图片。";
       el.frames.appendChild(empty);
+      renderInspectionPanel(sample);
       return;
     }
     frames.forEach((frame) => {
@@ -572,12 +686,12 @@ if (root) {
       const camera = document.createElement("span");
       camera.textContent = frame.camera_id || "camera";
       const count = document.createElement("strong");
-      const framePeople = number(frame?.analysis?.people_count);
-      count.textContent = framePeople == null ? "待识别" : `${formatNumber(framePeople)} 人`;
+      count.textContent = "绿化视图";
       caption.append(camera, count);
       figure.append(button, caption);
       el.frames.appendChild(figure);
     });
+    renderInspectionPanel(sample);
   }
 
   function webMercatorPixel(longitude, latitude, zoom) {
@@ -757,7 +871,7 @@ if (root) {
         return;
       }
       const rect = el.stage.getBoundingClientRect();
-      el.tooltip.textContent = `${formatTime(sample.collected_at)} · ${samplePeopleCount(sample) == null ? "人数待识别" : `${formatNumber(samplePeopleCount(sample))} 人`} · 4 路现场图`;
+      el.tooltip.textContent = `${formatTime(sample.collected_at)} · ${inspectionStatusLabel(inspectionFor(sample))} · 4 路绿化影像`;
       el.tooltip.style.left = `${Math.max(0, Math.min(rect.width - 230, event.clientX - rect.left))}px`;
       el.tooltip.style.top = `${Math.max(0, Math.min(rect.height - 70, event.clientY - rect.top))}px`;
       el.tooltip.hidden = false;
@@ -884,6 +998,25 @@ if (root) {
     });
   }
 
+  function nodeInspectionColor(inspection, role) {
+    const palette = {
+      clear: role === "cap" ? 0x2a9a62 : 0x23744d,
+      attention: role === "cap" ? 0xd09a31 : 0xa96f1e,
+      issue: role === "cap" ? 0xc85b4f : 0x9f3e37,
+      not_assessable: role === "cap" ? 0x829188 : 0x66756c,
+      pending: role === "cap" ? 0x6a9b7e : 0x3e7d62
+    };
+    return palette[inspection?.status || "pending"] || palette.pending;
+  }
+
+  function updateNodeInspectionStyle(id, inspection) {
+    state.nodeMeshes
+      .filter((node) => node.userData.sampleId === id)
+      .forEach((node) => {
+        if (node.material?.color) node.material.color.setHex(nodeInspectionColor(inspection, node.userData.role));
+      });
+  }
+
   function createNodes(group, samples, project) {
     const densityScale = Math.max(0.5, Math.min(1, Math.sqrt(48 / Math.max(1, samples.length))));
     const stemGeometry = new THREE.CylinderGeometry(0.52 * densityScale, 0.68 * densityScale, 1, 12);
@@ -892,32 +1025,33 @@ if (root) {
       const position = samplePosition(sample);
       if (!position) return;
       const projected = project(position);
-      const people = samplePeopleCount(sample);
-      const height = 2.6 + Math.min(10, people || 0) * 0.24;
-      const color = people != null && people > 0 ? 0x20895a : 0x3e7d62;
-      const stem = new THREE.Mesh(stemGeometry, new THREE.MeshStandardMaterial({ color, roughness: 0.58 }));
+      const inspection = inspectionFor(sample);
+      const height = 3.2;
+      const stem = new THREE.Mesh(stemGeometry, new THREE.MeshStandardMaterial({ color: nodeInspectionColor(inspection, "stem"), roughness: 0.58 }));
       stem.scale.y = height;
       stem.position.set(projected.x, 0.35 + height / 2, projected.z);
       stem.castShadow = true;
       stem.userData.sampleId = sampleId(sample, index);
-      const cap = new THREE.Mesh(capGeometry, new THREE.MeshStandardMaterial({ color: people ? 0x2ab66f : 0x6a9b7e, roughness: 0.42 }));
+      stem.userData.role = "stem";
+      const cap = new THREE.Mesh(capGeometry, new THREE.MeshStandardMaterial({ color: nodeInspectionColor(inspection, "cap"), roughness: 0.42 }));
       cap.position.set(projected.x, 0.35 + height, projected.z);
       cap.castShadow = true;
       cap.userData.sampleId = stem.userData.sampleId;
+      cap.userData.role = "cap";
       group.add(stem, cap);
       state.nodeMeshes.push(stem, cap);
       if (el.hitLayer) {
         const hit = document.createElement("button");
         hit.type = "button";
         hit.className = "gm-node-hit";
-        hit.setAttribute("aria-label", `${formatTime(sample.collected_at)}，${people == null ? "人数待识别" : `${formatNumber(people)} 人`}，查看四路图片`);
+        hit.setAttribute("aria-label", `${formatTime(sample.collected_at)}，${inspectionStatusLabel(inspection)}，查看四路绿化图片`);
         hit.addEventListener("click", (event) => {
           event.stopPropagation();
           selectSample(stem.userData.sampleId, true);
         });
         hit.addEventListener("pointerenter", () => {
           if (!el.tooltip) return;
-          el.tooltip.textContent = `${formatTime(sample.collected_at)} · ${people == null ? "人数待识别" : `${formatNumber(people)} 人`} · 4 路现场图`;
+          el.tooltip.textContent = `${formatTime(sample.collected_at)} · ${inspectionStatusLabel(inspectionFor(sample))} · 4 路绿化影像`;
           el.tooltip.style.left = hit.style.left;
           el.tooltip.style.top = hit.style.top;
           el.tooltip.hidden = false;
@@ -988,6 +1122,8 @@ if (root) {
     }
     state.selectedSampleId = sampleId(sample, state.visibleSamples.indexOf(sample));
     renderSampleDetail(sample);
+    renderProjects(sample);
+    void ensureInspection(sample);
     const mesh = state.nodeMeshes.find((node) => node.userData.sampleId === state.selectedSampleId);
     if (state.selectedRing && mesh) {
       state.selectedRing.position.x = mesh.position.x;
@@ -1012,7 +1148,6 @@ if (root) {
       state.routes = [];
       clearSceneContent();
       updateSummary([], []);
-      renderTrend([]);
       renderSampleDetail(null);
       if (el.mapError) {
         el.mapError.textContent = `${state.vehicleId} 在 ${formatDateKey(state.dateKey)} 没有有效定位采集点。`;
@@ -1027,7 +1162,6 @@ if (root) {
         return [];
       });
       updateSummary(state.visibleSamples, state.routes);
-      renderTrend(state.visibleSamples);
       await buildMap(state.visibleSamples, state.routes);
       setStatus("数据已更新", "ok");
     } finally {
@@ -1038,6 +1172,8 @@ if (root) {
   async function selectVehicle(vehicleId, preferredDate = "") {
     state.vehicleId = String(vehicleId || "").trim();
     if (!state.vehicleId) return;
+    state.inspectionPending.clear();
+    state.inspectionErrors.clear();
     if (el.vehicle) el.vehicle.value = state.vehicleId;
     setBusy(true, "正在读取车辆采集记录");
     setStatus("数据加载中", "loading");
@@ -1047,7 +1183,16 @@ if (root) {
         source: "all",
         limit: String(SAMPLE_LIMIT)
       });
-      const payload = await fetchJson(`${API.samples}?${query.toString()}`);
+      const inspectionQuery = new URLSearchParams({ vehicle_id: state.vehicleId });
+      const [payload, inspectionPayload] = await Promise.all([
+        fetchJson(`${API.samples}?${query.toString()}`),
+        fetchJson(`${API.greenInspections}?${inspectionQuery.toString()}`).catch(() => ({ items: [] }))
+      ]);
+      state.inspections = new Map(
+        (Array.isArray(inspectionPayload.items) ? inspectionPayload.items : [])
+          .filter((item) => item?.sample_id)
+          .map((item) => [String(item.sample_id), item])
+      );
       state.allSamples = (Array.isArray(payload.samples) ? payload.samples : [])
         .filter((sample) => !sample?.skipped && samplePosition(sample));
       state.dateKey = renderDateOptions(state.allSamples, preferredDate);
@@ -1056,7 +1201,6 @@ if (root) {
         state.routes = [];
         clearSceneContent();
         updateSummary([], []);
-        renderTrend([]);
         renderSampleDetail(null);
         if (el.mapError) {
           el.mapError.textContent = `${state.vehicleId} 暂无可用采集记录。`;

@@ -42,6 +42,18 @@ const DEFAULT_CROWD_ROUTE_MAX_POINTS = 700;
 const PATROL_FLOW_SCHEMA_V1 = 'auto_ad_patrol_flow_session.v1';
 const VEHICLE_PATROL_FLOW_SAMPLE_SOURCE = 'auto_ad_patrol_flow_upload';
 const CROWD_HEATMAP_DAY_AXIS_COUNT = 30;
+const GREEN_INSPECTION_SCHEMA = 'park_green_inspection.v1';
+const GREEN_INSPECTION_IMAGE_MAX_SIZE = 640;
+const GREEN_INSPECTION_IMAGE_QUALITY = 78;
+const GREEN_INSPECTION_ISSUE_TYPES = new Set([
+  'yellowing_or_wilting',
+  'drought_stress',
+  'pest_or_disease',
+  'dead_or_broken_branch',
+  'overgrowth_or_encroachment',
+  'missing_or_bare_patch',
+  'support_or_tree_grate_problem'
+]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -1182,6 +1194,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   const crowdStatePath = path.join(runtimeRoot, 'crowd-capture-state.json');
   const crowdMonitorStatePath = path.join(runtimeRoot, 'crowd-monitor-state.json');
   const crowdAnalysisStatePath = path.join(runtimeRoot, 'crowd-analysis-state.json');
+  const greenInspectionStatePath = path.join(runtimeRoot, 'green-inspection-state.json');
   const crowdUploadStatePath = path.join(runtimeRoot, 'patrol-flow-upload-state.json');
   const crowdUploadIndexLogPath = path.join(runtimeRoot, 'patrol-flow-uploads.jsonl');
   const crowdStorageStatusPath = path.join(runtimeRoot, 'crowd-storage-status.json');
@@ -1342,6 +1355,18 @@ module.exports = function registerParkPcmRoutes(app, options) {
     DEFAULT_CROWD_ANALYSIS_IDLE_CHECK_TIMEOUT_MS,
     { min: 500, max: 10000 }
   );
+  const greenInspectionBaseUrl = String(
+    process.env.PARK_GREEN_INSPECTION_BASE_URL || crowdAnalysisBaseUrl
+  ).replace(/\/+$/, '');
+  const greenInspectionModel = String(
+    process.env.PARK_GREEN_INSPECTION_MODEL || 'qwen3-vl-4b-checker'
+  );
+  const greenInspectionChatUrl = new URL('chat/completions', `${greenInspectionBaseUrl}/`).toString();
+  const greenInspectionTimeoutMs = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_TIMEOUT_MS || crowdAnalysisTimeoutMs,
+    crowdAnalysisTimeoutMs,
+    { min: 10 * 1000, max: 5 * 60 * 1000 }
+  );
   const crowdStorageRetentionDays = toFiniteNumber(
     process.env.PARK_CROWD_STORAGE_RETENTION_DAYS || process.env.PARK_PCM_CROWD_STORAGE_RETENTION_DAYS,
     DEFAULT_CROWD_STORAGE_RETENTION_DAYS,
@@ -1397,6 +1422,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   let crowdCaptureInFlight = false;
   let crowdMonitorInFlight = false;
   let crowdAnalysisInFlight = false;
+  const greenInspectionInFlight = new Map();
   let crowdStorageCleanupInFlight = null;
   let crowdStorageStatusCache = null;
   let reportTimer = null;
@@ -1736,6 +1762,43 @@ module.exports = function registerParkPcmRoutes(app, options) {
         ...latest,
         ...(state || {}),
         samples: nextSamples,
+        updated_at: nowIso()
+      });
+    });
+  }
+
+  async function readGreenInspectionState() {
+    const parsed = await readJsonFile(greenInspectionStatePath);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return {
+        version: 1,
+        schema: GREEN_INSPECTION_SCHEMA,
+        samples: {},
+        ...parsed,
+        samples: parsed.samples && typeof parsed.samples === 'object' ? parsed.samples : {}
+      };
+    }
+    return {
+      version: 1,
+      schema: GREEN_INSPECTION_SCHEMA,
+      samples: {},
+      updated_at: nowIso()
+    };
+  }
+
+  async function writeGreenInspectionState(state) {
+    await withJsonFileLock(greenInspectionStatePath, async () => {
+      const latest = await readGreenInspectionState();
+      const incomingSamples = state && state.samples && typeof state.samples === 'object' ? state.samples : {};
+      await atomicWriteJson(greenInspectionStatePath, {
+        version: 1,
+        schema: GREEN_INSPECTION_SCHEMA,
+        ...latest,
+        ...(state || {}),
+        samples: {
+          ...(latest.samples || {}),
+          ...incomingSamples
+        },
         updated_at: nowIso()
       });
     });
@@ -5152,6 +5215,128 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return ['low', 'medium', 'high'].includes(normalized) ? normalized : 'low';
   }
 
+  function parseGreenInspectionJson(text) {
+    const raw = String(text || '').trim();
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    const body = fenced ? fenced[1].trim() : raw;
+    try {
+      return JSON.parse(body);
+    } catch (_error) {
+      return { raw_reply: raw.slice(0, 800) };
+    }
+  }
+
+  function normalizeGreenIndicator(value, allowedValues) {
+    const normalized = normalizeFeatureKey(value);
+    return allowedValues.includes(normalized) ? normalized : 'unknown';
+  }
+
+  function normalizeGreenInspection(raw, context) {
+    const payload = raw && typeof raw === 'object' ? raw : {};
+    const vegetationPresent = payload.vegetation_present === true;
+    const confidence = normalizeConfidence(payload.confidence);
+    const scoreValue = Number(payload.health_score);
+    const healthScore = vegetationPresent && Number.isFinite(scoreValue)
+      ? Math.max(0, Math.min(100, Math.round(scoreValue)))
+      : null;
+    const indicators = payload.indicators && typeof payload.indicators === 'object' ? payload.indicators : {};
+    const normalizedIndicators = {
+      canopy_density: normalizeGreenIndicator(indicators.canopy_density, ['sparse', 'moderate', 'dense', 'unknown']),
+      leaf_color: normalizeGreenIndicator(indicators.leaf_color, ['normal', 'slight_yellowing', 'severe_yellowing', 'unknown']),
+      drought_stress: normalizeGreenIndicator(indicators.drought_stress, ['none', 'possible', 'clear', 'unknown']),
+      pest_or_disease: normalizeGreenIndicator(indicators.pest_or_disease, ['none', 'possible', 'clear', 'unknown']),
+      dead_or_broken_branches: normalizeGreenIndicator(indicators.dead_or_broken_branches, ['none', 'possible', 'clear', 'unknown']),
+      shrub_condition: normalizeGreenIndicator(indicators.shrub_condition, ['good', 'fair', 'poor', 'unknown']),
+      groundcover_condition: normalizeGreenIndicator(indicators.groundcover_condition, ['good', 'fair', 'poor', 'unknown']),
+      overgrowth_or_encroachment: normalizeGreenIndicator(indicators.overgrowth_or_encroachment, ['none', 'possible', 'clear', 'unknown'])
+    };
+    const issues = (Array.isArray(payload.issues) ? payload.issues : [])
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const type = normalizeFeatureKey(item.type);
+        const issueConfidence = normalizeConfidence(item.confidence);
+        const severity = normalizeGreenIndicator(item.severity, ['low', 'medium', 'high']);
+        const evidence = String(item.evidence || '').trim().slice(0, 220);
+        if (!GREEN_INSPECTION_ISSUE_TYPES.has(type) || !['medium', 'high'].includes(issueConfidence) || !evidence) {
+          return null;
+        }
+        return {
+          type,
+          severity: severity === 'unknown' ? 'low' : severity,
+          confidence: issueConfidence,
+          camera_ids: normalizeStringListForAnalysis(item.camera_ids, 4)
+            .map((cameraId) => normalizeFeatureKey(cameraId))
+            .filter((cameraId) => /^camera[1-4]$/.test(cameraId)),
+          evidence
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 6);
+    const issueTypes = new Set(issues.map((issue) => issue.type));
+    const recommendations = issues.length
+      ? (Array.isArray(payload.recommendations) ? payload.recommendations : [])
+          .map((item) => {
+            if (!item || typeof item !== 'object') return null;
+            const relatedIssueType = normalizeFeatureKey(item.related_issue_type);
+            const action = String(item.action || '').trim().slice(0, 120);
+            const reason = String(item.reason || '').trim().slice(0, 180);
+            const priority = normalizeGreenIndicator(item.priority, ['routine', 'soon', 'urgent']);
+            if (!action || !reason || !issueTypes.has(relatedIssueType)) return null;
+            return {
+              action,
+              reason,
+              priority: priority === 'unknown' ? 'routine' : priority,
+              related_issue_type: relatedIssueType
+            };
+          })
+          .filter(Boolean)
+          .slice(0, 5)
+      : [];
+    const maxSeverity = issues.reduce((current, issue) => {
+      const rank = { low: 1, medium: 2, high: 3 };
+      return (rank[issue.severity] || 0) > (rank[current] || 0) ? issue.severity : current;
+    }, 'low');
+    const status = !vegetationPresent
+      ? 'not_assessable'
+      : issues.length
+        ? maxSeverity === 'high' ? 'issue' : 'attention'
+        : 'clear';
+    const vegetationTypes = payload.vegetation_types && typeof payload.vegetation_types === 'object'
+      ? {
+          trees: payload.vegetation_types.trees === true,
+          shrubs: payload.vegetation_types.shrubs === true,
+          lawn_or_groundcover: payload.vegetation_types.lawn_or_groundcover === true
+        }
+      : { trees: false, shrubs: false, lawn_or_groundcover: false };
+    const summary = !vegetationPresent
+      ? '植被在四路画面中不够清晰，暂不判断健康状态。'
+      : issues.length
+        ? String(payload.summary || issues[0].evidence).trim().slice(0, 260)
+        : '四路画面未发现中高可信度的明显绿化异常。';
+    return {
+      schema: GREEN_INSPECTION_SCHEMA,
+      sample_id: String(context.sample_id || ''),
+      vehicle_id: context.vehicle_id || null,
+      collected_at: context.collected_at || null,
+      position: context.position || null,
+      status,
+      vegetation_present: vegetationPresent,
+      vegetation_types: vegetationTypes,
+      confidence,
+      health_score: healthScore,
+      health_grade: !vegetationPresent || healthScore == null
+        ? 'not_assessable'
+        : healthScore >= 80 ? 'good' : healthScore >= 60 ? 'fair' : 'poor',
+      indicators: normalizedIndicators,
+      issues,
+      recommendations,
+      summary,
+      model: greenInspectionModel,
+      frame_count_evaluated: Number(context.frame_count_evaluated) || 0,
+      analyzed_at: nowIso()
+    };
+  }
+
   function normalizeRiskHints(value) {
     const rows = Array.isArray(value) ? value : [];
     return rows
@@ -5216,6 +5401,25 @@ module.exports = function registerParkPcmRoutes(app, options) {
     if (ext === '.png') return 'image/png';
     if (ext === '.webp') return 'image/webp';
     return 'image/jpeg';
+  }
+
+  async function prepareGreenInspectionImage(imageBuffer, imagePath) {
+    try {
+      const sharp = require('sharp');
+      const prepared = await sharp(imageBuffer)
+        .rotate()
+        .resize({
+          width: GREEN_INSPECTION_IMAGE_MAX_SIZE,
+          height: GREEN_INSPECTION_IMAGE_MAX_SIZE,
+          fit: 'inside',
+          withoutEnlargement: true
+        })
+        .jpeg({ quality: GREEN_INSPECTION_IMAGE_QUALITY, mozjpeg: true })
+        .toBuffer();
+      return { buffer: prepared, mime_type: 'image/jpeg' };
+    } catch (_error) {
+      return { buffer: imageBuffer, mime_type: imageMimeFromPath(imagePath) };
+    }
   }
 
   function isMissingCrowdFrameError(error) {
@@ -5591,6 +5795,86 @@ print(len(faces))
         note: '匿名聚合分析：people_count 与各类人群特征为四路相机可见结果合计；max_single_camera_people 为单路最大值，供重叠视角保守参考。'
       }
     };
+  }
+
+  async function analyzeGreenInspectionSample(sample) {
+    const frames = Array.isArray(sample?.frames) ? sample.frames.slice(0, 4) : [];
+    const content = [
+      {
+        type: 'text',
+        text:
+          '你是园区绿化养护巡检员。下面是同一采集节点车辆前后左右四路相机画面。只评估画面中可见的树木、灌木、绿篱、草坪和地被植物；忽略人、车、建筑和广告。' +
+          '四路可能有重叠，不要重复计数。不得猜测具体植物品种，不得凭模糊画面断言病虫害或缺水。光照、季节、阴影、逆光、落叶期和画质不足都要降低置信度。' +
+          '只有中高置信度且能指出具体画面证据的问题才能写入 issues；不确定迹象只放到 indicators 的 possible，不得写成问题。没有明确问题时 issues 和 recommendations 必须为空。' +
+          'health_score 为整体可见植被健康度 0-100；植被不足以判断时 vegetation_present=false 且 health_score=null。养护建议必须逐条对应 issues，不能为了完整而硬写。' +
+          '只输出 JSON，不要 Markdown。格式：' +
+          '{"vegetation_present":true,"vegetation_types":{"trees":true,"shrubs":false,"lawn_or_groundcover":false},"confidence":"low|medium|high","health_score":85,' +
+          '"indicators":{"canopy_density":"sparse|moderate|dense|unknown","leaf_color":"normal|slight_yellowing|severe_yellowing|unknown","drought_stress":"none|possible|clear|unknown",' +
+          '"pest_or_disease":"none|possible|clear|unknown","dead_or_broken_branches":"none|possible|clear|unknown","shrub_condition":"good|fair|poor|unknown",' +
+          '"groundcover_condition":"good|fair|poor|unknown","overgrowth_or_encroachment":"none|possible|clear|unknown"},' +
+          '"issues":[{"type":"yellowing_or_wilting|drought_stress|pest_or_disease|dead_or_broken_branch|overgrowth_or_encroachment|missing_or_bare_patch|support_or_tree_grate_problem",' +
+          '"severity":"low|medium|high","confidence":"medium|high","camera_ids":["camera1"],"evidence":"中文具体可见证据"}],' +
+          '"recommendations":[{"action":"中文养护动作","priority":"routine|soon|urgent","reason":"中文依据","related_issue_type":"对应问题英文键"}],"summary":"中文简短结论"}。'
+      }
+    ];
+    let evaluatedFrames = 0;
+    for (const frame of frames) {
+      const imageRelPath = String(frame?.image_path || '').trim();
+      if (!imageRelPath) continue;
+      const image = resolveCrowdFramePath(imageRelPath, crowdFramesRoot);
+      let imageBuffer;
+      try {
+        imageBuffer = await fsp.readFile(image.target_path);
+      } catch (_error) {
+        continue;
+      }
+      const preparedImage = await prepareGreenInspectionImage(imageBuffer, imageRelPath);
+      const cameraId = normalizeFeatureKey(frame?.camera_id || `camera${evaluatedFrames + 1}`);
+      content.push({ type: 'text', text: `视角 ${cameraId}` });
+      content.push({
+        type: 'image_url',
+        image_url: {
+          url: `data:${preparedImage.mime_type};base64,${preparedImage.buffer.toString('base64')}`
+        }
+      });
+      evaluatedFrames += 1;
+    }
+    if (!evaluatedFrames) {
+      const error = new Error('green_inspection_images_unavailable');
+      error.status = 404;
+      throw error;
+    }
+    const response = await fetch(greenInspectionChatUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: greenInspectionModel,
+        messages: [{ role: 'user', content }],
+        max_tokens: 1100,
+        temperature: 0,
+        stream: false,
+        chat_template_kwargs: { enable_thinking: false }
+      }),
+      signal: AbortSignal.timeout(greenInspectionTimeoutMs)
+    });
+    const rawText = await response.text();
+    const payload = safeJsonParse(rawText, null);
+    if (!response.ok) {
+      const error = new Error(rawText.slice(0, 240) || `green_inspection_http_${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    const reply = String(payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.message?.reasoning || '').trim();
+    return normalizeGreenInspection(parseGreenInspectionJson(reply), {
+      sample_id: sample.sample_id,
+      vehicle_id: sample.vehicle_id,
+      collected_at: sample.collected_at,
+      position: sample.position,
+      frame_count_evaluated: evaluatedFrames
+    });
   }
 
   async function getCrowdAnalysisIdleStatus() {
@@ -6411,6 +6695,89 @@ print(len(faces))
       return res.status(error.status || 502).json({
         ok: false,
         error: error.message || 'park_pcm_crowd_samples_failed'
+      });
+    }
+  });
+
+  app.get('/api/park-pcm/green/inspections', requirePermission('vehicle:read'), async (req, res) => {
+    try {
+      const vehicleId = String(req.query?.vehicle_id || '').trim();
+      const date = String(req.query?.date || '').trim();
+      const state = await readGreenInspectionState();
+      const items = Object.values(state.samples || {})
+        .filter((item) => item && item.schema === GREEN_INSPECTION_SCHEMA)
+        .filter((item) => !vehicleId || String(item.vehicle_id || '') === vehicleId)
+        .filter((item) => !date || crowdDayKey(new Date(item.collected_at || '')) === date)
+        .sort((left, right) => Date.parse(right.collected_at || '') - Date.parse(left.collected_at || ''));
+      const scored = items.map((item) => Number(item.health_score)).filter(Number.isFinite);
+      const statusCounts = items.reduce((counts, item) => {
+        const status = String(item.status || 'unknown');
+        counts[status] = (counts[status] || 0) + 1;
+        return counts;
+      }, {});
+      return res.json({
+        ok: true,
+        schema: GREEN_INSPECTION_SCHEMA,
+        vehicle_id: vehicleId || null,
+        date: date || null,
+        summary: {
+          analyzed_node_count: items.length,
+          issue_count: items.reduce((sum, item) => sum + (Array.isArray(item.issues) ? item.issues.length : 0), 0),
+          average_health_score: scored.length
+            ? Math.round(scored.reduce((sum, value) => sum + value, 0) / scored.length)
+            : null,
+          status_counts: statusCounts
+        },
+        items,
+        updated_at: state.updated_at || null
+      });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'green_inspections_failed'
+      });
+    }
+  });
+
+  app.post('/api/park-pcm/green/inspect', requirePermission('vehicle:read'), async (req, res) => {
+    try {
+      const sampleId = String(req.body?.sample_id || '').trim();
+      const vehicleId = String(req.body?.vehicle_id || '').trim();
+      const force = req.body?.force === true;
+      if (!sampleId) {
+        return res.status(400).json({ ok: false, error: 'green_inspection_sample_id_required' });
+      }
+      const state = await readGreenInspectionState();
+      const cached = state.samples?.[sampleId];
+      if (!force && cached && cached.schema === GREEN_INSPECTION_SCHEMA) {
+        return res.json({ ok: true, cached: true, inspection: cached });
+      }
+      let job = greenInspectionInFlight.get(sampleId);
+      if (!job) {
+        job = (async () => {
+          const samples = await readCrowdSampleLog(20000, { vehicle_id: vehicleId });
+          const sample = samples.find((item) => String(item?.sample_id || '') === sampleId);
+          if (!sample) {
+            const error = new Error('green_inspection_sample_not_found');
+            error.status = 404;
+            throw error;
+          }
+          const inspection = await analyzeGreenInspectionSample(sample);
+          await writeGreenInspectionState({ samples: { [sampleId]: inspection } });
+          return inspection;
+        })();
+        greenInspectionInFlight.set(sampleId, job);
+      }
+      try {
+        const inspection = await job;
+        return res.json({ ok: true, cached: false, inspection });
+      } finally {
+        if (greenInspectionInFlight.get(sampleId) === job) greenInspectionInFlight.delete(sampleId);
+      }
+    } catch (error) {
+      return res.status(error.status || 502).json({
+        ok: false,
+        error: error.message || 'green_inspection_failed'
       });
     }
   });

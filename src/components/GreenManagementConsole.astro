@@ -7,7 +7,7 @@
     <div class="gm-heading">
       <p class="gm-kicker">PARK LANDSCAPE OPERATIONS</p>
       <h1>绿化管理</h1>
-      <p>巡逻路线、现场采集与人流态势</p>
+      <p>四向影像、植被健康与养护复核</p>
     </div>
     <div class="gm-live-status" data-gm-status data-state="loading" role="status">
       <span aria-hidden="true"></span>
@@ -52,14 +52,14 @@
       <em>车端路线文件</em>
     </article>
     <article>
-      <span>识别人次</span>
-      <strong data-gm-metric="people">-</strong>
-      <em>视觉模型估计</em>
+      <span>现场图片</span>
+      <strong data-gm-metric="images">-</strong>
+      <em>前后左右四向证据</em>
     </article>
     <article>
-      <span>峰值节点</span>
-      <strong data-gm-metric="peak">-</strong>
-      <em data-gm-metric="peak-time">等待数据</em>
+      <span>待复核问题</span>
+      <strong data-gm-metric="issues">-</strong>
+      <em data-gm-metric="analyzed">等待分析</em>
     </article>
   </section>
 
@@ -90,31 +90,38 @@
           <p class="gm-kicker">CAPTURE NODE</p>
           <h2 data-gm-node-title>采集节点</h2>
         </div>
-        <span data-gm-node-people>-</span>
+        <span data-gm-node-health data-state="pending">待分析</span>
       </header>
       <p class="gm-node-meta" data-gm-node-meta>在地图中选择采集节点。</p>
       <div class="gm-frame-grid" data-gm-frames>
         <p class="gm-empty">等待四路现场图片。</p>
       </div>
+      <section class="gm-health-panel" data-state="pending">
+        <div class="gm-health-score">
+          <span>植被健康度</span>
+          <strong data-gm-health-score>-</strong>
+          <em data-gm-health-grade>选择节点后分析</em>
+        </div>
+        <div class="gm-indicator-grid" data-gm-indicators>
+          <p class="gm-empty">等待四路绿化巡检结果。</p>
+        </div>
+      </section>
       <section class="gm-operation-note">
         <header>
-          <p class="gm-kicker">MAINTENANCE SIGNAL</p>
-          <h3>人流与养护联动</h3>
+          <p class="gm-kicker">MAINTENANCE REVIEW</p>
+          <h3>问题与养护建议</h3>
         </header>
-        <dl>
+        <p class="gm-inspection-summary" data-gm-inspection-summary>选择节点后读取巡检结论。</p>
+        <div class="gm-finding-columns">
           <div>
-            <dt>巡查优先级</dt>
-            <dd data-gm-advice="priority">-</dd>
+            <h4>问题证据</h4>
+            <ul data-gm-issues><li class="gm-clear">暂无结论</li></ul>
           </div>
           <div>
-            <dt>建议养护窗口</dt>
-            <dd data-gm-advice="window">-</dd>
+            <h4>养护动作</h4>
+            <ul data-gm-recommendations><li class="gm-clear">暂无建议</li></ul>
           </div>
-          <div>
-            <dt>重点节点</dt>
-            <dd data-gm-advice="hotspots">-</dd>
-          </div>
-        </dl>
+        </div>
       </section>
     </aside>
   </section>
@@ -122,14 +129,19 @@
   <section class="gm-flow-band">
     <header>
       <div>
-        <p class="gm-kicker">PEOPLE FLOW</p>
-        <h2>人流时间趋势</h2>
+        <p class="gm-kicker">LANDSCAPE CHECKS</p>
+        <h2>当前节点巡检项目</h2>
       </div>
-      <p data-gm-trend-summary>等待人流识别结果</p>
+      <p data-gm-project-summary>选择地图节点查看四类绿化指标</p>
     </header>
-    <div class="gm-trend" data-gm-trend></div>
+    <div class="gm-project-grid" data-gm-projects>
+      <article data-project="trees"><span>乔木冠层</span><strong>待分析</strong><p>冠层密度、叶色和枝干状态</p></article>
+      <article data-project="shrubs"><span>灌木绿篱</span><strong>待分析</strong><p>整齐度、长势和侵界迹象</p></article>
+      <article data-project="groundcover"><span>草坪地被</span><strong>待分析</strong><p>覆盖状态、裸斑和枯黄迹象</p></article>
+      <article data-project="issues"><span>异常复核</span><strong>待分析</strong><p>仅显示中高可信度问题</p></article>
+    </div>
     <p class="gm-privacy">
-      人数和现场画像来自巡逻画面的视觉模型估计，仅用于园区养护排班参考；展示图片均走人脸脱敏链路，不做人脸身份识别。
+      健康度和问题判断仅基于当前节点四路可见画面；逆光、遮挡、季节变化或画质不足时会降低置信度，现场养护前需人工复核。
     </p>
   </section>
 
@@ -596,6 +608,21 @@
     font-weight: 900;
   }
 
+  .gm-inspector-head > span[data-state="attention"] {
+    background: #fff1cf;
+    color: #7d5510;
+  }
+
+  .gm-inspector-head > span[data-state="issue"] {
+    background: #fde5e1;
+    color: #963a32;
+  }
+
+  .gm-inspector-head > span[data-state="not_assessable"] {
+    background: #e9eeeb;
+    color: #59665e;
+  }
+
   .gm-node-meta {
     margin: 9px 0 16px;
     min-height: 38px;
@@ -671,6 +698,85 @@
     text-align: center;
   }
 
+  .gm-health-panel {
+    display: grid;
+    grid-template-columns: 118px minmax(0, 1fr);
+    gap: 12px;
+    margin-top: 14px;
+    padding: 13px;
+    border: 1px solid #d6dfd9;
+    background: #f2f6f3;
+  }
+
+  .gm-health-panel[data-state="clear"] {
+    border-color: #b9d9c6;
+    background: #edf7f1;
+  }
+
+  .gm-health-panel[data-state="attention"] {
+    border-color: #e3c786;
+    background: #fff8e8;
+  }
+
+  .gm-health-panel[data-state="issue"] {
+    border-color: #e1b1aa;
+    background: #fff2f0;
+  }
+
+  .gm-health-score {
+    display: grid;
+    align-content: center;
+    gap: 4px;
+    padding-right: 12px;
+    border-right: 1px solid rgba(87, 109, 95, 0.18);
+  }
+
+  .gm-health-score span,
+  .gm-health-score em {
+    color: var(--gm-muted);
+    font-size: 0.68rem;
+    font-style: normal;
+    line-height: 1.35;
+  }
+
+  .gm-health-score strong {
+    color: var(--gm-green-dark);
+    font-size: 2rem;
+    line-height: 1;
+  }
+
+  .gm-indicator-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .gm-indicator {
+    min-width: 0;
+    min-height: 54px;
+    display: grid;
+    align-content: center;
+    gap: 3px;
+    padding: 7px 9px;
+    border-left: 3px solid #a8b8ae;
+    background: rgba(255, 255, 255, 0.72);
+  }
+
+  .gm-indicator[data-state="good"] { border-left-color: #238a57; }
+  .gm-indicator[data-state="fair"] { border-left-color: #c58a22; }
+  .gm-indicator[data-state="poor"] { border-left-color: #c55349; }
+
+  .gm-indicator span {
+    color: var(--gm-muted);
+    font-size: 0.65rem;
+  }
+
+  .gm-indicator strong {
+    color: #26352c;
+    font-size: 0.76rem;
+    overflow-wrap: anywhere;
+  }
+
   .gm-operation-note {
     margin-top: 20px;
     padding-top: 18px;
@@ -682,34 +788,49 @@
     font-size: 1rem;
   }
 
-  .gm-operation-note dl {
-    display: grid;
-    gap: 0;
-    margin: 11px 0 0;
+  .gm-inspection-summary {
+    margin: 10px 0 0;
+    color: #35463b;
+    font-size: 0.76rem;
+    font-weight: 800;
+    line-height: 1.55;
   }
 
-  .gm-operation-note dl > div {
+  .gm-finding-columns {
     display: grid;
-    grid-template-columns: 106px minmax(0, 1fr);
-    gap: 10px;
-    padding: 9px 0;
-    border-bottom: 1px solid #e4e9e6;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 12px;
   }
 
-  .gm-operation-note dt,
-  .gm-operation-note dd {
+  .gm-finding-columns h4 {
+    margin: 0 0 6px;
+    color: var(--gm-muted);
+    font-size: 0.68rem;
+    font-weight: 900;
+  }
+
+  .gm-finding-columns ul {
+    display: grid;
+    gap: 6px;
     margin: 0;
-    font-size: 0.75rem;
+    padding: 0;
+    list-style: none;
+  }
+
+  .gm-finding-columns li {
+    padding: 7px 8px;
+    border-left: 3px solid var(--gm-amber);
+    background: #fff8e9;
+    color: #4a3a1c;
+    font-size: 0.7rem;
     line-height: 1.45;
   }
 
-  .gm-operation-note dt {
-    color: var(--gm-muted);
-  }
-
-  .gm-operation-note dd {
-    color: #24332a;
-    font-weight: 800;
+  .gm-finding-columns li.gm-clear {
+    border-left-color: #43a06b;
+    background: #edf7f1;
+    color: #285b3d;
   }
 
   .gm-flow-band {
@@ -738,51 +859,47 @@
     text-align: right;
   }
 
-  .gm-trend {
-    min-height: 230px;
-    margin-top: 14px;
-  }
-
-  .gm-trend svg {
-    width: 100%;
-    height: 230px;
-    display: block;
-    overflow: visible;
-  }
-
-  .gm-trend-grid {
-    stroke: #e1e7e3;
-    stroke-width: 1;
-  }
-
-  .gm-trend-area {
-    fill: rgba(22, 119, 184, 0.1);
-  }
-
-  .gm-trend-line {
-    fill: none;
-    stroke: var(--gm-blue);
-    stroke-width: 3;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-
-  .gm-trend-dot {
-    fill: #fff;
-    stroke: var(--gm-blue);
-    stroke-width: 2;
-  }
-
-  .gm-trend-label {
-    fill: #748178;
-    font-size: 11px;
-  }
-
-  .gm-trend-empty {
-    min-height: 230px;
+  .gm-project-grid {
     display: grid;
-    place-items: center;
-    color: #758179;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 16px;
+  }
+
+  .gm-project-grid article {
+    min-width: 0;
+    min-height: 132px;
+    display: grid;
+    align-content: center;
+    gap: 7px;
+    padding: 16px;
+    border: 1px solid #d9e1dc;
+    border-top: 4px solid #aab9b0;
+    background: #f8faf9;
+  }
+
+  .gm-project-grid article[data-state="good"] { border-top-color: #238a57; }
+  .gm-project-grid article[data-state="fair"] { border-top-color: #c58a22; }
+  .gm-project-grid article[data-state="poor"] { border-top-color: #c55349; }
+
+  .gm-project-grid span {
+    color: var(--gm-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+
+  .gm-project-grid strong {
+    color: #203128;
+    font-size: 1.12rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .gm-project-grid p {
+    margin: 0;
+    color: #6c7971;
+    font-size: 0.72rem;
+    line-height: 1.45;
   }
 
   .gm-privacy {
@@ -951,6 +1068,24 @@
 
     .gm-frame-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .gm-project-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .gm-health-panel {
+      grid-template-columns: 1fr;
+    }
+
+    .gm-health-score {
+      padding: 0 0 10px;
+      border-right: 0;
+      border-bottom: 1px solid rgba(87, 109, 95, 0.18);
+    }
+
+    .gm-finding-columns {
+      grid-template-columns: 1fr;
     }
 
     .gm-flow-band > header {
