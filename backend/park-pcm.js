@@ -42,7 +42,7 @@ const DEFAULT_CROWD_ROUTE_MAX_POINTS = 700;
 const PATROL_FLOW_SCHEMA_V1 = 'auto_ad_patrol_flow_session.v1';
 const VEHICLE_PATROL_FLOW_SAMPLE_SOURCE = 'auto_ad_patrol_flow_upload';
 const CROWD_HEATMAP_DAY_AXIS_COUNT = 30;
-const GREEN_INSPECTION_SCHEMA = 'park_green_inspection.v1';
+const GREEN_INSPECTION_SCHEMA = 'park_green_inspection.v2';
 const GREEN_INSPECTION_IMAGE_MAX_SIZE = 640;
 const GREEN_INSPECTION_IMAGE_QUALITY = 78;
 const DEFAULT_GREEN_INSPECTION_AUTO_INTERVAL_MS = 1000;
@@ -61,6 +61,24 @@ const GREEN_INSPECTION_ISSUE_TYPES = new Set([
   'overgrowth_or_encroachment',
   'missing_or_bare_patch',
   'support_or_tree_grate_problem'
+]);
+const GREEN_INSPECTION_DIMENSIONS = {
+  leaf_color: 0.28,
+  water_status: 0.22,
+  pest_status: 0.18,
+  branch_structure: 0.16,
+  maintenance_condition: 0.16
+};
+const GREEN_INSPECTION_OBSERVATION_CATEGORIES = new Set([
+  'canopy',
+  'leaf_color',
+  'water_status',
+  'pest_status',
+  'branch_structure',
+  'shrub',
+  'groundcover',
+  'maintenance',
+  'visibility'
 ]);
 
 function nowIso() {
@@ -5369,14 +5387,66 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return allowedValues.includes(normalized) ? normalized : 'unknown';
   }
 
+  function normalizeGreenScore(value) {
+    const score = Number(value);
+    return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null;
+  }
+
+  function normalizeGreenCameraIds(value) {
+    return [...new Set(
+      normalizeStringListForAnalysis(value, 4)
+        .map((cameraId) => normalizeFeatureKey(cameraId))
+        .filter((cameraId) => /^camera[1-4]$/.test(cameraId))
+    )];
+  }
+
+  function greenDimensionFallbackScores(indicators) {
+    const scoreFor = (value, mapping) => Object.prototype.hasOwnProperty.call(mapping, value)
+      ? mapping[value]
+      : null;
+    const maintenanceScores = [
+      scoreFor(indicators.shrub_condition, { good: 88, fair: 72, poor: 46 }),
+      scoreFor(indicators.groundcover_condition, { good: 88, fair: 72, poor: 46 }),
+      scoreFor(indicators.overgrowth_or_encroachment, { none: 90, possible: 72, clear: 45 })
+    ].filter(Number.isFinite);
+    return {
+      leaf_color: scoreFor(indicators.leaf_color, { normal: 88, slight_yellowing: 72, severe_yellowing: 42 }),
+      water_status: scoreFor(indicators.drought_stress, { none: 88, possible: 70, clear: 40 }),
+      pest_status: scoreFor(indicators.pest_or_disease, { none: 90, possible: 68, clear: 38 }),
+      branch_structure: scoreFor(indicators.dead_or_broken_branches, { none: 88, possible: 67, clear: 38 }),
+      maintenance_condition: maintenanceScores.length
+        ? Math.round(maintenanceScores.reduce((sum, score) => sum + score, 0) / maintenanceScores.length)
+        : null
+    };
+  }
+
+  function greenDimensionHealthScore(dimensions, confidence, issues) {
+    let weightedTotal = 0;
+    let weightTotal = 0;
+    Object.entries(GREEN_INSPECTION_DIMENSIONS).forEach(([key, weight]) => {
+      const score = normalizeGreenScore(dimensions?.[key]?.score);
+      if (score == null) return;
+      weightedTotal += score * weight;
+      weightTotal += weight;
+    });
+    if (!weightTotal) return null;
+    let score = Math.round(weightedTotal / weightTotal);
+    score = Math.min(score, { low: 84, medium: 92, high: 97 }[confidence] || 84);
+    const severityRank = { low: 1, medium: 2, high: 3 };
+    const highestSeverity = (Array.isArray(issues) ? issues : []).reduce(
+      (highest, issue) => Math.max(highest, severityRank[issue?.severity] || 0),
+      0
+    );
+    if (highestSeverity >= 3) score = Math.min(score, 59);
+    else if (highestSeverity === 2) score = Math.min(score, 74);
+    else if (highestSeverity === 1) score = Math.min(score, 84);
+    return score;
+  }
+
   function normalizeGreenInspection(raw, context) {
     const payload = raw && typeof raw === 'object' ? raw : {};
     const vegetationPresent = payload.vegetation_present === true;
     const confidence = normalizeConfidence(payload.confidence);
-    const scoreValue = Number(payload.health_score);
-    const healthScore = vegetationPresent && Number.isFinite(scoreValue)
-      ? Math.max(0, Math.min(100, Math.round(scoreValue)))
-      : null;
     const indicators = payload.indicators && typeof payload.indicators === 'object' ? payload.indicators : {};
     const normalizedIndicators = {
       canopy_density: normalizeGreenIndicator(indicators.canopy_density, ['sparse', 'moderate', 'dense', 'unknown']),
@@ -5402,9 +5472,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
           type,
           severity: severity === 'unknown' ? 'low' : severity,
           confidence: issueConfidence,
-          camera_ids: normalizeStringListForAnalysis(item.camera_ids, 4)
-            .map((cameraId) => normalizeFeatureKey(cameraId))
-            .filter((cameraId) => /^camera[1-4]$/.test(cameraId)),
+          camera_ids: normalizeGreenCameraIds(item.camera_ids),
           evidence
         };
       })
@@ -5446,11 +5514,111 @@ module.exports = function registerParkPcmRoutes(app, options) {
           lawn_or_groundcover: payload.vegetation_types.lawn_or_groundcover === true
         }
       : { trees: false, shrubs: false, lawn_or_groundcover: false };
+    const fallbackScores = greenDimensionFallbackScores(normalizedIndicators);
+    const rawDimensions = payload.dimension_scores && typeof payload.dimension_scores === 'object'
+      ? payload.dimension_scores
+      : {};
+    const dimensionScores = {};
+    Object.keys(GREEN_INSPECTION_DIMENSIONS).forEach((key) => {
+      const rawDimension = rawDimensions[key];
+      const dimension = rawDimension && typeof rawDimension === 'object'
+        ? rawDimension
+        : { score: rawDimension };
+      const score = normalizeGreenScore(dimension.score ?? fallbackScores[key]);
+      dimensionScores[key] = {
+        score: vegetationPresent ? score : null,
+        confidence: normalizeConfidence(dimension.confidence || confidence),
+        camera_ids: normalizeGreenCameraIds(dimension.camera_ids),
+        observation: String(dimension.observation || dimension.evidence || '').trim().slice(0, 180)
+      };
+    });
+    const viewAssessments = (Array.isArray(payload.view_assessments) ? payload.view_assessments : [])
+      .map((item, index) => {
+        if (!item || typeof item !== 'object') return null;
+        const cameraId = normalizeFeatureKey(item.camera_id || `camera${index + 1}`);
+        if (!/^camera[1-4]$/.test(cameraId)) return null;
+        const visible = item.vegetation_visible === true;
+        const types = item.vegetation_types && typeof item.vegetation_types === 'object'
+          ? {
+              trees: item.vegetation_types.trees === true,
+              shrubs: item.vegetation_types.shrubs === true,
+              lawn_or_groundcover: item.vegetation_types.lawn_or_groundcover === true
+            }
+          : { trees: false, shrubs: false, lawn_or_groundcover: false };
+        const coverage = normalizeGreenScore(item.green_coverage_percent);
+        const condition = normalizeGreenIndicator(
+          item.condition,
+          ['good', 'fair', 'poor', 'not_assessable']
+        );
+        return {
+          camera_id: cameraId,
+          vegetation_visible: visible,
+          vegetation_types: types,
+          green_coverage_percent: visible ? coverage : 0,
+          condition: visible && condition !== 'unknown' ? condition : 'not_assessable',
+          confidence: normalizeConfidence(item.confidence || confidence),
+          observation: String(item.observation || item.evidence || '').trim().slice(0, 220)
+        };
+      })
+      .filter(Boolean)
+      .filter((item, index, rows) => rows.findIndex((row) => row.camera_id === item.camera_id) === index)
+      .slice(0, 4);
+    let observations = (Array.isArray(payload.observations) ? payload.observations : [])
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const category = normalizeFeatureKey(item.category);
+        const sentiment = normalizeGreenIndicator(item.sentiment, ['positive', 'neutral', 'negative']);
+        const evidence = String(item.evidence || item.observation || '').trim().slice(0, 220);
+        if (!GREEN_INSPECTION_OBSERVATION_CATEGORIES.has(category) || sentiment === 'unknown' || !evidence) {
+          return null;
+        }
+        return {
+          category,
+          sentiment,
+          confidence: normalizeConfidence(item.confidence || confidence),
+          camera_ids: normalizeGreenCameraIds(item.camera_ids),
+          evidence
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+    if (vegetationPresent && !observations.length) {
+      observations = Object.entries(dimensionScores)
+        .filter(([, dimension]) => dimension.score != null && dimension.observation)
+        .map(([key, dimension]) => ({
+          category: key,
+          sentiment: dimension.score >= 82 ? 'positive' : dimension.score >= 65 ? 'neutral' : 'negative',
+          confidence: dimension.confidence,
+          camera_ids: dimension.camera_ids,
+          evidence: dimension.observation
+        }))
+        .slice(0, 8);
+    }
+    if (vegetationPresent && !observations.length) {
+      observations = viewAssessments
+        .filter((view) => view.vegetation_visible && view.observation)
+        .map((view) => ({
+          category: 'visibility',
+          sentiment: view.condition === 'good' ? 'positive' : view.condition === 'poor' ? 'negative' : 'neutral',
+          confidence: view.confidence,
+          camera_ids: [view.camera_id],
+          evidence: view.observation
+        }))
+        .slice(0, 8);
+    }
+    const healthScore = vegetationPresent
+      ? greenDimensionHealthScore(dimensionScores, confidence, issues) ?? normalizeGreenScore(payload.health_score)
+      : null;
+    const scoreReason = vegetationPresent
+      ? String(payload.score_reason || '').trim().slice(0, 260)
+      : '';
     const summary = !vegetationPresent
       ? '植被在四路画面中不够清晰，暂不判断健康状态。'
-      : issues.length
-        ? String(payload.summary || issues[0].evidence).trim().slice(0, 260)
-        : '四路画面未发现中高可信度的明显绿化异常。';
+      : String(
+          payload.summary ||
+          (issues.length ? issues[0].evidence : observations.slice(0, 2).map((item) => item.evidence).join('；')) ||
+          '已完成可见绿化巡检，当前画面未提供更具体的判断依据。'
+        ).trim().slice(0, 320);
     return {
       schema: GREEN_INSPECTION_SCHEMA,
       sample_id: String(context.sample_id || ''),
@@ -5464,14 +5632,120 @@ module.exports = function registerParkPcmRoutes(app, options) {
       health_score: healthScore,
       health_grade: !vegetationPresent || healthScore == null
         ? 'not_assessable'
-        : healthScore >= 80 ? 'good' : healthScore >= 60 ? 'fair' : 'poor',
+        : healthScore >= 82 ? 'good' : healthScore >= 65 ? 'fair' : 'poor',
+      score_reason: scoreReason,
+      dimension_scores: dimensionScores,
       indicators: normalizedIndicators,
+      view_assessments: viewAssessments,
+      observations,
       issues,
       recommendations,
       summary,
       model: greenInspectionModel,
       frame_count_evaluated: Number(context.frame_count_evaluated) || 0,
       analyzed_at: nowIso()
+    };
+  }
+
+  function summarizeGreenInspections(items) {
+    const rows = (Array.isArray(items) ? items : []).filter(Boolean);
+    const scores = rows
+      .map((item) => normalizeGreenScore(item.health_score))
+      .filter((value) => value != null)
+      .sort((left, right) => left - right);
+    const percentile = (ratio) => scores.length
+      ? scores[Math.min(scores.length - 1, Math.max(0, Math.round((scores.length - 1) * ratio)))]
+      : null;
+    const countValues = (values) => values.reduce((counts, value) => {
+      const key = String(value || 'unknown');
+      counts[key] = (counts[key] || 0) + 1;
+      return counts;
+    }, {});
+    const statusCounts = {
+      clear: 0,
+      attention: 0,
+      issue: 0,
+      not_assessable: 0,
+      ...countValues(rows.map((item) => item.status))
+    };
+    const confidenceCounts = {
+      low: 0,
+      medium: 0,
+      high: 0,
+      ...countValues(rows.map((item) => item.confidence))
+    };
+    const scoreBands = {
+      excellent: scores.filter((score) => score >= 90).length,
+      good: scores.filter((score) => score >= 80 && score < 90).length,
+      watch: scores.filter((score) => score >= 65 && score < 80).length,
+      poor: scores.filter((score) => score < 65).length,
+      not_assessable: rows.filter((item) => item.health_score == null).length
+    };
+    const vegetationTypeCounts = {
+      trees: rows.filter((item) => item.vegetation_types?.trees).length,
+      shrubs: rows.filter((item) => item.vegetation_types?.shrubs).length,
+      lawn_or_groundcover: rows.filter((item) => item.vegetation_types?.lawn_or_groundcover).length
+    };
+    const issueTypeCounts = {};
+    let issueCount = 0;
+    let issueNodeCount = 0;
+    rows.forEach((item) => {
+      const issues = Array.isArray(item.issues) ? item.issues : [];
+      if (issues.length) issueNodeCount += 1;
+      issueCount += issues.length;
+      issues.forEach((issue) => {
+        const type = normalizeFeatureKey(issue?.type) || 'unknown';
+        issueTypeCounts[type] = (issueTypeCounts[type] || 0) + 1;
+      });
+    });
+    const observationCounts = { positive: 0, neutral: 0, negative: 0 };
+    rows.forEach((item) => {
+      (Array.isArray(item.observations) ? item.observations : []).forEach((observation) => {
+        const sentiment = String(observation?.sentiment || '');
+        if (Object.prototype.hasOwnProperty.call(observationCounts, sentiment)) {
+          observationCounts[sentiment] += 1;
+        }
+      });
+    });
+    const dimensionAverageScores = {};
+    Object.keys(GREEN_INSPECTION_DIMENSIONS).forEach((key) => {
+      const values = rows
+        .map((item) => normalizeGreenScore(item.dimension_scores?.[key]?.score))
+        .filter((value) => value != null);
+      dimensionAverageScores[key] = values.length
+        ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1))
+        : null;
+    });
+    const coverageValues = rows.flatMap((item) => (
+      Array.isArray(item.view_assessments)
+        ? item.view_assessments.map((view) => normalizeGreenScore(view?.green_coverage_percent))
+        : []
+    )).filter((value) => value != null);
+    const analyzedDates = rows.map((item) => item.analyzed_at).filter(Boolean).sort();
+    return {
+      analyzed_node_count: rows.length,
+      analyzed_frame_count: rows.reduce((sum, item) => sum + (Number(item.frame_count_evaluated) || 0), 0),
+      scored_node_count: scores.length,
+      average_health_score: scores.length
+        ? Number((scores.reduce((sum, value) => sum + value, 0) / scores.length).toFixed(1))
+        : null,
+      min_health_score: scores.length ? scores[0] : null,
+      median_health_score: percentile(0.5),
+      p75_health_score: percentile(0.75),
+      max_health_score: scores.length ? scores[scores.length - 1] : null,
+      score_bands: scoreBands,
+      status_counts: statusCounts,
+      confidence_counts: confidenceCounts,
+      vegetation_type_counts: vegetationTypeCounts,
+      issue_node_count: issueNodeCount,
+      issue_count: issueCount,
+      issue_type_counts: issueTypeCounts,
+      observation_counts: observationCounts,
+      dimension_average_scores: dimensionAverageScores,
+      average_visual_green_coverage: coverageValues.length
+        ? Number((coverageValues.reduce((sum, value) => sum + value, 0) / coverageValues.length).toFixed(1))
+        : null,
+      latest_analyzed_at: analyzedDates.length ? analyzedDates[analyzedDates.length - 1] : null
     };
   }
 
@@ -5943,16 +6217,23 @@ print(len(faces))
         text:
           '你是园区绿化养护巡检员。下面是同一采集节点车辆前后左右四路相机画面。只评估画面中可见的树木、灌木、绿篱、草坪和地被植物；忽略人、车、建筑和广告。' +
           '四路可能有重叠，不要重复计数。不得猜测具体植物品种，不得凭模糊画面断言病虫害或缺水。光照、季节、阴影、逆光、落叶期和画质不足都要降低置信度。' +
-          '只有中高置信度且能指出具体画面证据的问题才能写入 issues；不确定迹象只放到 indicators 的 possible，不得写成问题。没有明确问题时 issues 和 recommendations 必须为空。' +
-          'health_score 为整体可见植被健康度 0-100；植被不足以判断时 vegetation_present=false 且 health_score=null。养护建议必须逐条对应 issues，不能为了完整而硬写。' +
-          '只输出 JSON，不要 Markdown。格式：' +
-          '{"vegetation_present":true,"vegetation_types":{"trees":true,"shrubs":false,"lawn_or_groundcover":false},"confidence":"low|medium|high","health_score":85,' +
+          '只要任一路看到植被，就必须对该视角写一条具体 view_assessments.observation；整体 observations 至少写两条有图像依据的观察，可以是长势良好、覆盖连续、修剪整齐等正向观察，也可以是中性限制或异常观察。没有问题不等于没有分析。' +
+          '分别对叶色、水分状态、病虫迹象、枝干结构、养护状态五个维度独立打 0-100 分，并写明依据和对应 camera_ids。不要把所有维度都打成同一个数，不要默认给 90 分，也不要机械只用 5 或 10 的倍数。' +
+          '分数标尺：95-100 仅用于画面证据非常充分且状态近乎优异；88-94 为健康且养护良好；78-87 为总体正常但存在轻微限制；65-77 为需要关注；低于 65 为有明确退化或问题。看不清的维度 score=null。总体 health_score 由系统根据五维分数计算，模型不要输出总体分。' +
+          '只有中高置信度且能指出具体画面证据的问题才能写入 issues；不确定迹象只放到 indicators 的 possible 或 observations 的 neutral，不得写成问题。没有明确问题时 issues 和 recommendations 必须为空，但 summary 仍要概括看到的植被类型、长势和画面限制。' +
+          '养护建议必须逐条对应 issues，不能为了完整而硬写。只输出一个 JSON 对象，不要 Markdown。必须包含以下键：' +
+          '{"vegetation_present":true,"vegetation_types":{"trees":true,"shrubs":false,"lawn_or_groundcover":false},"confidence":"low|medium|high",' +
+          '"dimension_scores":{"leaf_color":{"score":"0-100整数或null","confidence":"low|medium|high","camera_ids":["camera1"],"observation":"中文具体依据"},"water_status":{},"pest_status":{},"branch_structure":{},"maintenance_condition":{}},' +
+          'dimension_scores 中五个对象都必须按 leaf_color 的相同字段结构完整输出。' +
+          '"score_reason":"中文说明五维高低差异和主要依据",' +
           '"indicators":{"canopy_density":"sparse|moderate|dense|unknown","leaf_color":"normal|slight_yellowing|severe_yellowing|unknown","drought_stress":"none|possible|clear|unknown",' +
           '"pest_or_disease":"none|possible|clear|unknown","dead_or_broken_branches":"none|possible|clear|unknown","shrub_condition":"good|fair|poor|unknown",' +
           '"groundcover_condition":"good|fair|poor|unknown","overgrowth_or_encroachment":"none|possible|clear|unknown"},' +
+          '"view_assessments":[{"camera_id":"camera1","vegetation_visible":true,"vegetation_types":{"trees":true,"shrubs":false,"lawn_or_groundcover":false},"green_coverage_percent":"0-100整数","condition":"good|fair|poor|not_assessable","confidence":"low|medium|high","observation":"该视角的中文具体观察"}],' +
+          '"observations":[{"category":"canopy|leaf_color|water_status|pest_status|branch_structure|shrub|groundcover|maintenance|visibility","sentiment":"positive|neutral|negative","confidence":"low|medium|high","camera_ids":["camera1"],"evidence":"中文具体可见证据"}],' +
           '"issues":[{"type":"yellowing_or_wilting|drought_stress|pest_or_disease|dead_or_broken_branch|overgrowth_or_encroachment|missing_or_bare_patch|support_or_tree_grate_problem",' +
           '"severity":"low|medium|high","confidence":"medium|high","camera_ids":["camera1"],"evidence":"中文具体可见证据"}],' +
-          '"recommendations":[{"action":"中文养护动作","priority":"routine|soon|urgent","reason":"中文依据","related_issue_type":"对应问题英文键"}],"summary":"中文简短结论"}。'
+          '"recommendations":[{"action":"中文养护动作","priority":"routine|soon|urgent","reason":"中文依据","related_issue_type":"对应问题英文键"}],"summary":"两句中文实质结论"}。'
       }
     ];
     let evaluatedFrames = 0;
@@ -5991,7 +6272,7 @@ print(len(faces))
       body: JSON.stringify({
         model: greenInspectionModel,
         messages: [{ role: 'user', content }],
-        max_tokens: 1100,
+        max_tokens: 1900,
         temperature: 0,
         stream: false,
         chat_template_kwargs: { enable_thinking: false }
@@ -6115,6 +6396,10 @@ print(len(faces))
         ready.push(sample);
       }
     });
+    const completedInspections = completed
+      .map((sample) => inspectionState.samples?.[sample.sample_id])
+      .filter(isCurrentGreenInspection);
+    const analysisSummary = summarizeGreenInspections(completedInspections);
     return {
       inspectionState,
       workerState,
@@ -6134,6 +6419,10 @@ print(len(faces))
         source_frame_count: greenInspectionFrameCount(candidates),
         analyzed_node_count: completed.length,
         analyzed_frame_count: greenInspectionFrameCount(completed),
+        progress_percent: candidates.length
+          ? Number(((completed.length / candidates.length) * 100).toFixed(1))
+          : 0,
+        analysis_summary: analysisSummary,
         pending_node_count: pending.length,
         pending_frame_count: greenInspectionFrameCount(pending),
         ready_node_count: ready.length,
@@ -7147,25 +7436,12 @@ print(len(faces))
         .filter((item) => !vehicleId || String(item.vehicle_id || '') === vehicleId)
         .filter((item) => !date || crowdDayKey(new Date(item.collected_at || '')) === date)
         .sort((left, right) => Date.parse(right.collected_at || '') - Date.parse(left.collected_at || ''));
-      const scored = items.map((item) => Number(item.health_score)).filter(Number.isFinite);
-      const statusCounts = items.reduce((counts, item) => {
-        const status = String(item.status || 'unknown');
-        counts[status] = (counts[status] || 0) + 1;
-        return counts;
-      }, {});
       return res.json({
         ok: true,
         schema: GREEN_INSPECTION_SCHEMA,
         vehicle_id: vehicleId || null,
         date: date || null,
-        summary: {
-          analyzed_node_count: items.length,
-          issue_count: items.reduce((sum, item) => sum + (Array.isArray(item.issues) ? item.issues.length : 0), 0),
-          average_health_score: scored.length
-            ? Math.round(scored.reduce((sum, value) => sum + value, 0) / scored.length)
-            : null,
-          status_counts: statusCounts
-        },
+        summary: summarizeGreenInspections(items),
         items,
         updated_at: state.updated_at || null
       });

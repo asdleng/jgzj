@@ -157,6 +157,8 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     const body = JSON.parse(raw);
     assert.equal(body.model, 'Qwen3.6-27B-Labeler');
     assert.equal(body.messages[0].content.filter((item) => item.type === 'image_url').length, 4);
+    assert.match(body.messages[0].content[0].text, /不要默认给 90 分/);
+    assert.match(body.messages[0].content[0].text, /view_assessments/);
     await new Promise((resolve) => setTimeout(resolve, 30));
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({
@@ -166,7 +168,14 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
             vegetation_present: true,
             vegetation_types: { trees: true, shrubs: true, lawn_or_groundcover: false },
             confidence: 'high',
-            health_score: 74,
+            dimension_scores: {
+              leaf_color: { score: 72, confidence: 'high', camera_ids: ['camera1', 'camera2'], observation: '两路画面叶缘颜色偏黄。' },
+              water_status: { score: 70, confidence: 'medium', camera_ids: ['camera1'], observation: '局部叶片姿态略显下垂。' },
+              pest_status: { score: 91, confidence: 'medium', camera_ids: ['camera1', 'camera2'], observation: '可见叶面未见连续病斑或虫害。' },
+              branch_structure: { score: 88, confidence: 'high', camera_ids: ['camera1'], observation: '可见枝条结构完整。' },
+              maintenance_condition: { score: 76, confidence: 'high', camera_ids: ['camera2'], observation: '绿篱边缘略不整齐。' }
+            },
+            score_reason: '叶色和水分状态拉低综合分，枝干与病虫维度相对良好。',
             indicators: {
               canopy_density: 'moderate',
               leaf_color: 'slight_yellowing',
@@ -177,6 +186,42 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
               groundcover_condition: 'unknown',
               overgrowth_or_encroachment: 'none'
             },
+            view_assessments: [
+              {
+                camera_id: 'camera1',
+                vegetation_visible: true,
+                vegetation_types: { trees: true, shrubs: true, lawn_or_groundcover: false },
+                green_coverage_percent: 62,
+                condition: 'fair',
+                confidence: 'high',
+                observation: '前向画面乔木和灌木连续可见，局部叶缘偏黄。'
+              },
+              {
+                camera_id: 'camera2',
+                vegetation_visible: true,
+                vegetation_types: { trees: true, shrubs: true, lawn_or_groundcover: false },
+                green_coverage_percent: 48,
+                condition: 'fair',
+                confidence: 'high',
+                observation: '左向画面绿篱覆盖连续，但修剪边缘略不整齐。'
+              }
+            ],
+            observations: [
+              {
+                category: 'leaf_color',
+                sentiment: 'negative',
+                confidence: 'high',
+                camera_ids: ['camera1', 'camera2'],
+                evidence: '两个视角均可见连续叶缘偏黄。'
+              },
+              {
+                category: 'branch_structure',
+                sentiment: 'positive',
+                confidence: 'high',
+                camera_ids: ['camera1'],
+                evidence: '前向画面的可见枝条结构完整。'
+              }
+            ],
             issues: [
               {
                 type: 'yellowing_or_wilting',
@@ -262,6 +307,10 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     assert.equal(payload.inspection.recommendations.length, 1);
     assert.equal(payload.inspection.frame_count_evaluated, 4);
     assert.equal(payload.inspection.model, 'Qwen3.6-27B-Labeler');
+    assert.equal(payload.inspection.schema, 'park_green_inspection.v2');
+    assert.equal(payload.inspection.dimension_scores.pest_status.score, 91);
+    assert.equal(payload.inspection.observations.length, 2);
+    assert.equal(payload.inspection.view_assessments.length, 2);
 
     response = await fetch(`${baseUrl}/api/park-pcm/green/inspect`, {
       method: 'POST',
@@ -278,7 +327,9 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     assert.equal(response.status, 200);
     assert.equal(payload.summary.analyzed_node_count, 1);
     assert.equal(payload.summary.issue_count, 1);
-    assert.equal(payload.items[0].schema, 'park_green_inspection.v1');
+    assert.equal(payload.items[0].schema, 'park_green_inspection.v2');
+    assert.equal(payload.summary.score_bands.watch, 1);
+    assert.equal(payload.summary.observation_counts.positive, 1);
 
     response = await fetch(`${baseUrl}/api/park-pcm/green/status`);
     payload = await response.json();
@@ -286,6 +337,8 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     assert.equal(payload.queue.source_node_count, 3);
     assert.equal(payload.queue.analyzed_node_count, 1);
     assert.equal(payload.queue.pending_node_count, 2);
+    assert.equal(payload.queue.progress_percent, 33.3);
+    assert.equal(payload.queue.analysis_summary.average_health_score, 74);
 
     response = await fetch(`${baseUrl}/api/park-pcm/green/worker/run`, { method: 'POST' });
     payload = await response.json();

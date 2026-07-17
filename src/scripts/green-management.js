@@ -54,8 +54,10 @@ if (root) {
     healthPanel: root.querySelector(".gm-health-panel"),
     healthScore: root.querySelector("[data-gm-health-score]"),
     healthGrade: root.querySelector("[data-gm-health-grade]"),
+    scoreReason: root.querySelector("[data-gm-score-reason]"),
     indicators: root.querySelector("[data-gm-indicators]"),
     inspectionSummary: root.querySelector("[data-gm-inspection-summary]"),
+    observations: root.querySelector("[data-gm-observations]"),
     issues: root.querySelector("[data-gm-issues]"),
     recommendations: root.querySelector("[data-gm-recommendations]"),
     projects: root.querySelector("[data-gm-projects]"),
@@ -69,6 +71,19 @@ if (root) {
   el.metrics = Object.fromEntries(
     [...root.querySelectorAll("[data-gm-metric]")].map((node) => [node.dataset.gmMetric, node])
   );
+  el.overview = Object.fromEntries(
+    [...root.querySelectorAll("[data-gm-overview]")].map((node) => [node.dataset.gmOverview, node])
+  );
+  el.scoreBands = Object.fromEntries(
+    [...root.querySelectorAll("[data-gm-band]")].map((node) => [node.dataset.gmBand, node])
+  );
+  el.scoreBandCounts = Object.fromEntries(
+    [...root.querySelectorAll("[data-gm-band-count]")].map((node) => [node.dataset.gmBandCount, node])
+  );
+  el.vegetationTotals = Object.fromEntries(
+    [...root.querySelectorAll("[data-gm-vegetation]")].map((node) => [node.dataset.gmVegetation, node])
+  );
+  el.progressBar = root.querySelector("[data-gm-progress-bar]");
   const state = {
     busy: false,
     authenticated: false,
@@ -248,6 +263,39 @@ if (root) {
     }[type] || "绿化异常";
   }
 
+  function dimensionLabel(key) {
+    return {
+      leaf_color: "叶色活力",
+      water_status: "水分状态",
+      pest_status: "病虫风险",
+      branch_structure: "枝干结构",
+      maintenance_condition: "养护状态"
+    }[key] || "绿化维度";
+  }
+
+  function observationCategoryLabel(key) {
+    return {
+      canopy: "冠层",
+      leaf_color: "叶色",
+      water_status: "水分",
+      pest_status: "病虫",
+      branch_structure: "枝干",
+      shrub: "灌木",
+      groundcover: "草坪地被",
+      maintenance: "养护",
+      visibility: "画面"
+    }[key] || "观察";
+  }
+
+  function viewConditionLabel(condition) {
+    return {
+      good: "状态良好",
+      fair: "一般",
+      poor: "需关注",
+      not_assessable: "无法判断"
+    }[condition] || "待分析";
+  }
+
   function indicatorValueLabel(key, value) {
     const labels = {
       canopy_density: { sparse: "偏稀疏", moderate: "适中", dense: "较茂密", unknown: "无法判断" },
@@ -411,10 +459,45 @@ if (root) {
   function updateQueueMetric() {
     const queue = state.greenQueue;
     if (!queue) return;
-    setMetric(
-      "analyzed",
-      `全园区 ${queue.analyzed_node_count || 0}/${queue.source_node_count || 0} · 待 ${queue.pending_node_count || 0}`
-    );
+    const analyzed = Number(queue.analyzed_node_count) || 0;
+    const source = Number(queue.source_node_count) || 0;
+    const pending = Number(queue.pending_node_count) || 0;
+    const progress = number(queue.progress_percent) ?? (source ? analyzed / source * 100 : 0);
+    const summary = queue.analysis_summary || {};
+    const statuses = summary.status_counts || {};
+    const bands = summary.score_bands || {};
+    const vegetation = summary.vegetation_type_counts || {};
+    if (el.overview.progress) el.overview.progress.textContent = `${formatNumber(progress)}%`;
+    if (el.overview["progress-note"]) {
+      el.overview["progress-note"].textContent = `${formatNumber(analyzed)} / ${formatNumber(source)} 节点 · 待 ${formatNumber(pending)} · 失败 ${formatNumber(queue.failed_node_count || 0)}`;
+    }
+    if (el.progressBar) el.progressBar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+    if (el.overview["average-score"]) el.overview["average-score"].textContent = formatNumber(summary.average_health_score);
+    if (el.overview["score-range"]) {
+      el.overview["score-range"].textContent = summary.scored_node_count
+        ? `中位 ${formatNumber(summary.median_health_score)} · ${formatNumber(summary.min_health_score)}-${formatNumber(summary.max_health_score)}`
+        : "等待新版评分";
+    }
+    if (el.overview["clear-count"]) el.overview["clear-count"].textContent = formatNumber(statuses.clear || 0);
+    if (el.overview["review-count"]) {
+      el.overview["review-count"].textContent = formatNumber((statuses.attention || 0) + (statuses.issue || 0));
+    }
+    if (el.overview["issue-count"]) el.overview["issue-count"].textContent = formatNumber(summary.issue_count || 0);
+    if (el.overview["unassessable-count"]) {
+      el.overview["unassessable-count"].textContent = `无法判断 ${formatNumber(statuses.not_assessable || 0)}`;
+    }
+    if (el.overview["analyzed-images"]) {
+      el.overview["analyzed-images"].textContent = `${formatNumber(summary.analyzed_frame_count || queue.analyzed_frame_count || 0)} 张图已分析`;
+    }
+    const maxBandCount = Math.max(1, ...Object.keys(el.scoreBands).map((key) => Number(bands[key]) || 0));
+    Object.keys(el.scoreBands).forEach((key) => {
+      const count = Number(bands[key]) || 0;
+      el.scoreBands[key].style.width = `${count / maxBandCount * 100}%`;
+      if (el.scoreBandCounts[key]) el.scoreBandCounts[key].textContent = formatNumber(count);
+    });
+    Object.keys(el.vegetationTotals).forEach((key) => {
+      el.vegetationTotals[key].textContent = formatNumber(vegetation[key] || 0);
+    });
   }
 
   async function refreshGreenQueueStatus() {
@@ -440,7 +523,7 @@ if (root) {
     setMetric("routes", String(routes.length));
     setMetric("images", String(imageCount));
     setMetric("issues", String(issueCount));
-    setMetric("analyzed", `${inspections.length}/${samples.length} 节点已分析`);
+    setMetric("analyzed", `${inspections.length}/${samples.length}`);
     updateQueueMetric();
     if (el.mapMeta) {
       el.mapMeta.textContent = `${state.vehicleId || "-"} · ${formatDateKey(state.dateKey)} · ${samples.length} 节点 · ${inspections.length} 已分析`;
@@ -557,6 +640,11 @@ if (root) {
     if (el.healthGrade) {
       el.healthGrade.textContent = pending ? "正在分析四路画面" : healthGradeLabel(inspection);
     }
+    if (el.scoreReason) {
+      el.scoreReason.textContent = pending
+        ? "GPU4 正在计算五维评分与逐视角观察。"
+        : inspection?.score_reason || (inspection ? "综合当前可见植被的五维证据计算。" : "五维评分依据将在分析后显示。");
+    }
     if (el.indicators) {
       el.indicators.replaceChildren();
       if (!inspection) {
@@ -566,21 +654,29 @@ if (root) {
         el.indicators.appendChild(empty);
       } else {
         const rows = [
-          ["canopy_density", "乔木冠层"],
-          ["leaf_color", "叶色状态"],
-          ["drought_stress", "水分胁迫"],
-          ["pest_or_disease", "病虫迹象"]
+          "leaf_color",
+          "water_status",
+          "pest_status",
+          "branch_structure",
+          "maintenance_condition"
         ];
-        rows.forEach(([key, label]) => {
-          const value = inspection.indicators?.[key] || "unknown";
+        rows.forEach((key) => {
+          const dimension = inspection.dimension_scores?.[key] || {};
+          const score = number(dimension.score);
           const item = document.createElement("div");
           item.className = "gm-indicator";
-          item.dataset.state = indicatorState(key, value);
+          item.dataset.state = score == null ? "unknown" : score >= 82 ? "good" : score >= 65 ? "fair" : "poor";
           const name = document.createElement("span");
-          name.textContent = label;
+          name.textContent = dimensionLabel(key);
           const result = document.createElement("strong");
-          result.textContent = indicatorValueLabel(key, value);
-          item.append(name, result);
+          result.textContent = score == null ? "无法判断" : String(score);
+          const track = document.createElement("i");
+          const fill = document.createElement("b");
+          fill.style.width = `${score == null ? 0 : Math.max(0, Math.min(100, score))}%`;
+          track.appendChild(fill);
+          const note = document.createElement("p");
+          note.textContent = dimension.observation || "当前画面没有提供更具体的维度证据。";
+          item.append(name, result, track, note);
           el.indicators.appendChild(item);
         });
       }
@@ -592,6 +688,16 @@ if (root) {
           ? "正在读取四路画面，仅保留有明确图像证据的结论。"
           : inspection?.summary || "选择节点后读取巡检结论。";
     }
+    const observations = Array.isArray(inspection?.observations) ? inspection.observations : [];
+    replaceFindingList(
+      el.observations,
+      observations.map((item) => {
+        const cameras = Array.isArray(item.camera_ids) && item.camera_ids.length ? ` · ${item.camera_ids.join("/")}` : "";
+        return `${observationCategoryLabel(item.category)}${cameras}：${item.evidence}`;
+      }),
+      inspection ? inspection.status === "not_assessable" ? "当前画面没有足够清晰的植被证据" : "未返回具体观察，请重新分析该节点" : "暂无观察",
+      Boolean(inspection && observations.length)
+    );
     const issues = Array.isArray(inspection?.issues) ? inspection.issues : [];
     replaceFindingList(
       el.issues,
@@ -638,7 +744,7 @@ if (root) {
         state.vehicleId === requestVehicleId &&
         state.selectedSampleId === id
       ) {
-        renderInspectionPanel(sample);
+        renderSampleDetail(sample);
         renderProjects(sample);
       }
     }
@@ -677,8 +783,12 @@ if (root) {
       return;
     }
     frames.forEach((frame) => {
+      const inspection = inspectionFor(sample);
+      const assessment = (Array.isArray(inspection?.view_assessments) ? inspection.view_assessments : [])
+        .find((item) => item.camera_id === frame.camera_id);
       const figure = document.createElement("figure");
       figure.className = "gm-frame";
+      figure.dataset.state = assessment?.condition || "pending";
       const button = document.createElement("button");
       button.type = "button";
       button.className = "gm-frame-button";
@@ -710,8 +820,10 @@ if (root) {
       const camera = document.createElement("span");
       camera.textContent = frame.camera_id || "camera";
       const count = document.createElement("strong");
-      count.textContent = "绿化视图";
-      caption.append(camera, count);
+      count.textContent = assessment ? viewConditionLabel(assessment.condition) : "绿化视图";
+      const observation = document.createElement("small");
+      observation.textContent = assessment?.observation || (inspection ? "该视角未返回具体观察" : "等待逐视角分析");
+      caption.append(camera, count, observation);
       figure.append(button, caption);
       el.frames.appendChild(figure);
     });
