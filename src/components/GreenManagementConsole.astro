@@ -1,0 +1,971 @@
+<section
+  class="green-management"
+  data-green-management
+  data-amap-key="8c2f9f3401e8d0ddfd619074c5f034ef"
+>
+  <header class="gm-header">
+    <div class="gm-heading">
+      <p class="gm-kicker">PARK LANDSCAPE OPERATIONS</p>
+      <h1>绿化管理</h1>
+      <p>巡逻路线、现场采集与人流态势</p>
+    </div>
+    <div class="gm-live-status" data-gm-status data-state="loading" role="status">
+      <span aria-hidden="true"></span>
+      <strong>数据加载中</strong>
+    </div>
+  </header>
+
+  <div class="gm-auth" data-gm-auth hidden></div>
+
+  <section class="gm-toolbar" aria-label="绿化管理筛选">
+    <label class="gm-field gm-field--vehicle">
+      <span>巡逻车辆</span>
+      <select data-gm-vehicle>
+        <option value="">加载中...</option>
+      </select>
+    </label>
+    <label class="gm-field">
+      <span>采集日期</span>
+      <select data-gm-date disabled>
+        <option value="">暂无日期</option>
+      </select>
+    </label>
+    <div class="gm-mode-switch" aria-label="地图视角">
+      <button type="button" data-gm-view="perspective" aria-pressed="true">透视</button>
+      <button type="button" data-gm-view="top" aria-pressed="false">俯视</button>
+    </div>
+    <div class="gm-toolbar-actions">
+      <button type="button" class="gm-button" data-gm-reset>重置视角</button>
+      <button type="button" class="gm-button gm-button--primary" data-gm-refresh>刷新</button>
+    </div>
+  </section>
+
+  <section class="gm-metrics" aria-label="当日概览">
+    <article>
+      <span>采集节点</span>
+      <strong data-gm-metric="samples">-</strong>
+      <em>当日有效定位</em>
+    </article>
+    <article>
+      <span>巡逻路线</span>
+      <strong data-gm-metric="routes">-</strong>
+      <em>车端路线文件</em>
+    </article>
+    <article>
+      <span>识别人次</span>
+      <strong data-gm-metric="people">-</strong>
+      <em>视觉模型估计</em>
+    </article>
+    <article>
+      <span>峰值节点</span>
+      <strong data-gm-metric="peak">-</strong>
+      <em data-gm-metric="peak-time">等待数据</em>
+    </article>
+  </section>
+
+  <section class="gm-workspace">
+    <div class="gm-map-stage" data-gm-stage>
+      <div class="gm-map-canvas" data-gm-map aria-label="园区三维巡逻地图"></div>
+      <div class="gm-node-hit-layer" data-gm-hit-layer aria-label="采集节点"></div>
+      <div class="gm-map-loading" data-gm-loading>
+        <span aria-hidden="true"></span>
+        <strong>正在生成 3D 地图</strong>
+      </div>
+      <div class="gm-map-error" data-gm-map-error hidden></div>
+      <div class="gm-map-topline">
+        <div>
+          <span class="gm-legend gm-legend--route"><i></i>巡逻路线</span>
+          <span class="gm-legend gm-legend--node"><i></i>采集节点</span>
+          <span class="gm-legend gm-legend--active"><i></i>当前节点</span>
+        </div>
+        <p data-gm-map-meta>等待地图数据</p>
+      </div>
+      <div class="gm-map-tooltip" data-gm-tooltip hidden></div>
+      <div class="gm-map-source">高德静态地图</div>
+    </div>
+
+    <aside class="gm-inspector" aria-live="polite">
+      <header class="gm-inspector-head">
+        <div>
+          <p class="gm-kicker">CAPTURE NODE</p>
+          <h2 data-gm-node-title>采集节点</h2>
+        </div>
+        <span data-gm-node-people>-</span>
+      </header>
+      <p class="gm-node-meta" data-gm-node-meta>在地图中选择采集节点。</p>
+      <div class="gm-frame-grid" data-gm-frames>
+        <p class="gm-empty">等待四路现场图片。</p>
+      </div>
+      <section class="gm-operation-note">
+        <header>
+          <p class="gm-kicker">MAINTENANCE SIGNAL</p>
+          <h3>人流与养护联动</h3>
+        </header>
+        <dl>
+          <div>
+            <dt>巡查优先级</dt>
+            <dd data-gm-advice="priority">-</dd>
+          </div>
+          <div>
+            <dt>建议养护窗口</dt>
+            <dd data-gm-advice="window">-</dd>
+          </div>
+          <div>
+            <dt>重点节点</dt>
+            <dd data-gm-advice="hotspots">-</dd>
+          </div>
+        </dl>
+      </section>
+    </aside>
+  </section>
+
+  <section class="gm-flow-band">
+    <header>
+      <div>
+        <p class="gm-kicker">PEOPLE FLOW</p>
+        <h2>人流时间趋势</h2>
+      </div>
+      <p data-gm-trend-summary>等待人流识别结果</p>
+    </header>
+    <div class="gm-trend" data-gm-trend></div>
+    <p class="gm-privacy">
+      人数和现场画像来自巡逻画面的视觉模型估计，仅用于园区养护排班参考；展示图片均走人脸脱敏链路，不做人脸身份识别。
+    </p>
+  </section>
+
+  <dialog class="gm-preview" data-gm-preview>
+    <header>
+      <div>
+        <strong data-gm-preview-title>现场图片</strong>
+        <span data-gm-preview-meta></span>
+      </div>
+      <button type="button" data-gm-preview-close aria-label="关闭图片预览">×</button>
+    </header>
+    <img data-gm-preview-image alt="" />
+  </dialog>
+</section>
+
+<style is:global>
+  .green-management-main {
+    min-height: 100vh;
+    padding: calc(var(--gm-nav-height, 88px) + 14px) 0 0;
+    background: #eef2ef;
+    color: #17211b;
+  }
+
+  .green-management {
+    --gm-green: #177245;
+    --gm-green-dark: #0f5332;
+    --gm-blue: #1677b8;
+    --gm-amber: #c77a12;
+    --gm-ink: #17211b;
+    --gm-muted: #66736b;
+    --gm-line: #d7ded9;
+    width: min(1680px, 100%);
+    margin: 0 auto;
+    padding: 30px 28px 54px;
+  }
+
+  .green-management *,
+  .green-management *::before,
+  .green-management *::after {
+    box-sizing: border-box;
+    letter-spacing: 0;
+  }
+
+  .gm-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--gm-line);
+  }
+
+  .gm-heading h1,
+  .gm-heading p,
+  .gm-inspector h2,
+  .gm-flow-band h2,
+  .gm-operation-note h3,
+  .gm-kicker {
+    margin: 0;
+  }
+
+  .gm-heading h1 {
+    margin-top: 5px;
+    color: var(--gm-ink);
+    font-size: 2.3rem;
+    line-height: 1.1;
+    font-weight: 800;
+  }
+
+  .gm-heading > p:last-child {
+    margin-top: 9px;
+    color: var(--gm-muted);
+    font-size: 0.95rem;
+  }
+
+  .gm-kicker {
+    color: var(--gm-green);
+    font-size: 0.72rem;
+    line-height: 1.2;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .gm-live-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 36px;
+    color: #4c5a51;
+    font-size: 0.85rem;
+  }
+
+  .gm-live-status > span {
+    width: 9px;
+    height: 9px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #b0bab3;
+  }
+
+  .gm-live-status[data-state="ok"] > span {
+    background: #1d9a5c;
+    box-shadow: 0 0 0 5px rgba(29, 154, 92, 0.12);
+  }
+
+  .gm-live-status[data-state="error"] > span {
+    background: #c84d43;
+  }
+
+  .gm-auth {
+    margin-top: 18px;
+    padding: 15px 16px;
+    border-left: 3px solid #c84d43;
+    background: #fff3f1;
+    color: #8f312a;
+    font-weight: 700;
+  }
+
+  .gm-toolbar {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.2fr) minmax(180px, 0.8fr) auto auto;
+    gap: 12px;
+    align-items: end;
+    padding: 18px 0;
+  }
+
+  .gm-field {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .gm-field > span {
+    color: #59665e;
+    font-size: 0.76rem;
+    font-weight: 800;
+  }
+
+  .gm-field select {
+    width: 100%;
+    min-width: 0;
+    height: 42px;
+    padding: 0 38px 0 12px;
+    border: 1px solid #cbd5ce;
+    border-radius: 4px;
+    background: #fff;
+    color: var(--gm-ink);
+    font: inherit;
+  }
+
+  .gm-field select:focus-visible,
+  .gm-button:focus-visible,
+  .gm-mode-switch button:focus-visible,
+  .gm-frame-button:focus-visible {
+    outline: 2px solid rgba(22, 119, 184, 0.7);
+    outline-offset: 2px;
+  }
+
+  .gm-mode-switch {
+    display: inline-grid;
+    grid-template-columns: repeat(2, 1fr);
+    height: 42px;
+    padding: 3px;
+    border: 1px solid #cbd5ce;
+    border-radius: 4px;
+    background: #e5ebe7;
+  }
+
+  .gm-mode-switch button {
+    min-width: 66px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: #5f6d64;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .gm-mode-switch button[aria-pressed="true"] {
+    background: #fff;
+    color: var(--gm-green-dark);
+    box-shadow: 0 1px 4px rgba(33, 53, 41, 0.12);
+  }
+
+  .gm-toolbar-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .gm-button {
+    height: 42px;
+    padding: 0 15px;
+    border: 1px solid #bdc9c1;
+    border-radius: 4px;
+    background: #fff;
+    color: #33433a;
+    font-weight: 800;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .gm-button--primary {
+    border-color: var(--gm-green);
+    background: var(--gm-green);
+    color: #fff;
+  }
+
+  .gm-button:disabled,
+  .gm-field select:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .gm-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border: 1px solid var(--gm-line);
+    border-bottom: 0;
+    background: #fff;
+  }
+
+  .gm-metrics article {
+    min-width: 0;
+    min-height: 108px;
+    display: grid;
+    align-content: center;
+    gap: 4px;
+    padding: 16px 20px;
+    border-right: 1px solid var(--gm-line);
+  }
+
+  .gm-metrics article:last-child {
+    border-right: 0;
+  }
+
+  .gm-metrics span,
+  .gm-metrics em {
+    color: var(--gm-muted);
+    font-size: 0.75rem;
+    font-style: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .gm-metrics strong {
+    color: var(--gm-ink);
+    font-size: 1.7rem;
+    line-height: 1.15;
+  }
+
+  .gm-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(340px, 0.62fr);
+    min-height: 690px;
+    border: 1px solid var(--gm-line);
+    background: #fff;
+  }
+
+  .gm-map-stage {
+    position: relative;
+    min-width: 0;
+    min-height: 690px;
+    overflow: hidden;
+    background: #dfe7e2;
+  }
+
+  .gm-map-canvas,
+  .gm-map-canvas canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .gm-map-canvas {
+    touch-action: none;
+  }
+
+  .gm-node-hit-layer {
+    position: absolute;
+    z-index: 6;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .gm-node-hit {
+    position: absolute;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+    pointer-events: auto;
+    transform: translate(-50%, -50%);
+  }
+
+  .gm-node-hit:focus-visible {
+    outline: 3px solid rgba(199, 122, 18, 0.92);
+    outline-offset: 2px;
+    background: rgba(255, 255, 255, 0.32);
+  }
+
+  .gm-map-loading,
+  .gm-map-error {
+    position: absolute;
+    z-index: 5;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 12px;
+    padding: 24px;
+    background: rgba(237, 243, 239, 0.9);
+    color: #44534a;
+    text-align: center;
+  }
+
+  .gm-map-loading[hidden],
+  .gm-map-error[hidden] {
+    display: none;
+  }
+
+  .gm-map-loading > span {
+    width: 30px;
+    height: 30px;
+    border: 3px solid #c6d5cc;
+    border-top-color: var(--gm-green);
+    border-radius: 50%;
+    animation: gm-spin 0.9s linear infinite;
+  }
+
+  @keyframes gm-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .gm-map-error {
+    color: #8f312a;
+  }
+
+  .gm-map-topline {
+    position: absolute;
+    z-index: 4;
+    top: 14px;
+    left: 14px;
+    right: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    pointer-events: none;
+  }
+
+  .gm-map-topline > div,
+  .gm-map-topline > p,
+  .gm-map-source,
+  .gm-map-tooltip {
+    border: 1px solid rgba(37, 53, 43, 0.18);
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 4px 18px rgba(26, 46, 34, 0.12);
+  }
+
+  .gm-map-topline > div {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    min-height: 34px;
+    padding: 7px 10px;
+  }
+
+  .gm-map-topline > p {
+    max-width: 48%;
+    margin: 0;
+    padding: 8px 10px;
+    color: #4f5f55;
+    font-size: 0.74rem;
+    line-height: 1.35;
+    text-align: right;
+  }
+
+  .gm-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #435248;
+    font-size: 0.72rem;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .gm-legend i {
+    width: 15px;
+    height: 4px;
+    display: block;
+    border-radius: 3px;
+    background: var(--gm-blue);
+  }
+
+  .gm-legend--node i,
+  .gm-legend--active i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #1c9257;
+  }
+
+  .gm-legend--active i {
+    background: var(--gm-amber);
+  }
+
+  .gm-map-source {
+    position: absolute;
+    z-index: 4;
+    right: 12px;
+    bottom: 12px;
+    padding: 5px 8px;
+    color: #647069;
+    font-size: 0.66rem;
+    pointer-events: none;
+  }
+
+  .gm-map-tooltip {
+    position: absolute;
+    z-index: 7;
+    max-width: 220px;
+    padding: 8px 10px;
+    color: #29372f;
+    font-size: 0.74rem;
+    line-height: 1.45;
+    pointer-events: none;
+    transform: translate(12px, 12px);
+  }
+
+  .gm-inspector {
+    min-width: 0;
+    padding: 22px;
+    border-left: 1px solid var(--gm-line);
+    background: #f9fbfa;
+  }
+
+  .gm-inspector-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .gm-inspector h2 {
+    margin-top: 4px;
+    font-size: 1.25rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .gm-inspector-head > span {
+    flex: 0 0 auto;
+    padding: 6px 9px;
+    border-radius: 3px;
+    background: #e7f3ec;
+    color: var(--gm-green-dark);
+    font-size: 0.78rem;
+    font-weight: 900;
+  }
+
+  .gm-node-meta {
+    margin: 9px 0 16px;
+    min-height: 38px;
+    color: var(--gm-muted);
+    font-size: 0.78rem;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+  }
+
+  .gm-frame-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .gm-frame {
+    min-width: 0;
+    margin: 0;
+    border: 1px solid #d6dfd9;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #eef2ef;
+  }
+
+  .gm-frame-button {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    display: block;
+    padding: 0;
+    border: 0;
+    background: #dde5e0;
+    cursor: zoom-in;
+  }
+
+  .gm-frame img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+  }
+
+  .gm-frame figcaption {
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 5px;
+    padding: 6px 8px;
+    color: #526158;
+    font-size: 0.66rem;
+  }
+
+  .gm-frame figcaption span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .gm-frame figcaption strong {
+    flex: 0 0 auto;
+    color: #25342b;
+  }
+
+  .gm-frame-placeholder,
+  .gm-empty {
+    display: grid;
+    place-items: center;
+    min-height: 120px;
+    margin: 0;
+    padding: 14px;
+    color: #718078;
+    font-size: 0.78rem;
+    text-align: center;
+  }
+
+  .gm-operation-note {
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid var(--gm-line);
+  }
+
+  .gm-operation-note h3 {
+    margin-top: 4px;
+    font-size: 1rem;
+  }
+
+  .gm-operation-note dl {
+    display: grid;
+    gap: 0;
+    margin: 11px 0 0;
+  }
+
+  .gm-operation-note dl > div {
+    display: grid;
+    grid-template-columns: 106px minmax(0, 1fr);
+    gap: 10px;
+    padding: 9px 0;
+    border-bottom: 1px solid #e4e9e6;
+  }
+
+  .gm-operation-note dt,
+  .gm-operation-note dd {
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.45;
+  }
+
+  .gm-operation-note dt {
+    color: var(--gm-muted);
+  }
+
+  .gm-operation-note dd {
+    color: #24332a;
+    font-weight: 800;
+  }
+
+  .gm-flow-band {
+    margin-top: 18px;
+    padding: 22px;
+    border: 1px solid var(--gm-line);
+    background: #fff;
+  }
+
+  .gm-flow-band > header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .gm-flow-band h2 {
+    margin-top: 4px;
+    font-size: 1.18rem;
+  }
+
+  .gm-flow-band > header > p {
+    margin: 0;
+    color: var(--gm-muted);
+    font-size: 0.78rem;
+    text-align: right;
+  }
+
+  .gm-trend {
+    min-height: 230px;
+    margin-top: 14px;
+  }
+
+  .gm-trend svg {
+    width: 100%;
+    height: 230px;
+    display: block;
+    overflow: visible;
+  }
+
+  .gm-trend-grid {
+    stroke: #e1e7e3;
+    stroke-width: 1;
+  }
+
+  .gm-trend-area {
+    fill: rgba(22, 119, 184, 0.1);
+  }
+
+  .gm-trend-line {
+    fill: none;
+    stroke: var(--gm-blue);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .gm-trend-dot {
+    fill: #fff;
+    stroke: var(--gm-blue);
+    stroke-width: 2;
+  }
+
+  .gm-trend-label {
+    fill: #748178;
+    font-size: 11px;
+  }
+
+  .gm-trend-empty {
+    min-height: 230px;
+    display: grid;
+    place-items: center;
+    color: #758179;
+  }
+
+  .gm-privacy {
+    margin: 12px 0 0;
+    padding-top: 12px;
+    border-top: 1px solid #e5ebe7;
+    color: #7b867f;
+    font-size: 0.7rem;
+    line-height: 1.55;
+  }
+
+  .gm-preview {
+    width: min(1080px, calc(100vw - 32px));
+    max-width: none;
+    max-height: calc(100vh - 32px);
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+    overflow: hidden;
+    background: #111714;
+    color: #fff;
+  }
+
+  .gm-preview::backdrop {
+    background: rgba(4, 10, 7, 0.78);
+  }
+
+  .gm-preview header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 14px;
+    background: #17211b;
+  }
+
+  .gm-preview header > div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .gm-preview header strong,
+  .gm-preview header span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .gm-preview header span {
+    color: #aebbb3;
+    font-size: 0.74rem;
+  }
+
+  .gm-preview button {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    border: 1px solid #536158;
+    border-radius: 3px;
+    background: transparent;
+    color: #fff;
+    font-size: 1.45rem;
+    cursor: pointer;
+  }
+
+  .gm-preview img {
+    width: 100%;
+    max-height: calc(100vh - 102px);
+    display: block;
+    object-fit: contain;
+  }
+
+  @media (max-width: 1040px) {
+    .gm-toolbar {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .gm-mode-switch,
+    .gm-toolbar-actions {
+      width: 100%;
+    }
+
+    .gm-toolbar-actions .gm-button {
+      flex: 1 1 0;
+    }
+
+    .gm-workspace {
+      grid-template-columns: 1fr;
+    }
+
+    .gm-map-stage {
+      min-height: 620px;
+    }
+
+    .gm-inspector {
+      border-top: 1px solid var(--gm-line);
+      border-left: 0;
+    }
+
+    .gm-frame-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 700px) {
+    .green-management-main {
+      padding-top: calc(var(--gm-nav-height, 122px) + 14px);
+    }
+
+    .green-management {
+      padding: 20px 12px 40px;
+    }
+
+    .gm-header {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .gm-heading h1 {
+      font-size: 1.85rem;
+    }
+
+    .gm-toolbar {
+      grid-template-columns: 1fr;
+    }
+
+    .gm-metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .gm-metrics article {
+      min-height: 92px;
+      border-bottom: 1px solid var(--gm-line);
+    }
+
+    .gm-metrics article:nth-child(2) {
+      border-right: 0;
+    }
+
+    .gm-map-stage {
+      min-height: 66vh;
+      max-height: 720px;
+    }
+
+    .gm-map-topline {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .gm-map-topline > div {
+      max-width: 100%;
+      flex-wrap: wrap;
+    }
+
+    .gm-map-topline > p {
+      max-width: 76%;
+      text-align: left;
+    }
+
+    .gm-inspector,
+    .gm-flow-band {
+      padding: 17px;
+    }
+
+    .gm-frame-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .gm-flow-band > header {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .gm-flow-band > header > p {
+      text-align: left;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gm-map-loading > span {
+      animation: none;
+    }
+  }
+</style>

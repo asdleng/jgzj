@@ -1,0 +1,20 @@
+---
+import "../../styles/app.css";
+import GreenManagementConsole from "../../components/GreenManagementConsole.astro";
+import SiteLayout from "../../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="绿化管理"
+  description="园区巡逻路线、采集节点和人流辅助养护工作台。"
+  currentPath="/app/green-management"
+  noindex={true}
+>
+  <main class="page-main green-management-main">
+    <GreenManagementConsole />
+  </main>
+</SiteLayout>
+
+<script>
+  import "../../scripts/green-management.js";
+</script>

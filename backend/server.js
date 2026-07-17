@@ -18474,6 +18474,11 @@ const privateNavigationItems = [
     permissions: ['vehicle:read']
   },
   {
+    href: '/app/green-management',
+    label: '绿化管理',
+    permissions: ['vehicle:read']
+  },
+  {
     href: '/app/vehicle-devops',
     label: '车辆代码',
     permissions: ['vehicle:code:read', 'vehicle:code:write']
@@ -18585,6 +18590,11 @@ const protectedAppPages = [
   {
     paths: ['/app/park-pcm', '/app/park-pcm/'],
     file: 'app/park-pcm/index.html',
+    permissions: ['vehicle:read']
+  },
+  {
+    paths: ['/app/green-management', '/app/green-management/'],
+    file: 'app/green-management/index.html',
     permissions: ['vehicle:read']
   },
   {
