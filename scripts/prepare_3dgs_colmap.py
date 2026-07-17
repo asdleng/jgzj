@@ -1525,13 +1525,15 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             group_name = sanitize_component(raw_group_key, "group").replace("_", "-")
             image_ts_s = record_image_timestamp_s(record)
             if record.get("__map_visual_final_pose") and record.get("trajectory_query_timestamp_ns") is not None:
-                pose_interpolation_ts_s = float(record["trajectory_query_timestamp_ns"]) / 1e9
+                exact_image_ts_ns = int(record["image_timestamp_ns"])
+                exact_pose_interpolation_ts_ns = int(record["trajectory_query_timestamp_ns"])
+                pose_interpolation_ts_s = exact_pose_interpolation_ts_ns / 1e9
                 effective_pose_time_offset_ms = (
-                    (pose_interpolation_ts_s - image_ts_s) * 1000.0
-                    if image_ts_s is not None
-                    else None
-                )
+                    exact_pose_interpolation_ts_ns - exact_image_ts_ns
+                ) / 1e6
             else:
+                exact_image_ts_ns = None
+                exact_pose_interpolation_ts_ns = None
                 pose_interpolation_ts_s = image_ts_s + pose_time_offset_s if image_ts_s is not None else None
                 effective_pose_time_offset_ms = pose_time_offset_s * 1000.0
             pose_ts_s = record_pose_timestamp_s(record)
@@ -1628,9 +1630,13 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     or image_obj.get("path")
                     or record.get("image_path"),
                     "image_ts_unix": image_ts_s,
-                    "image_ts_ns": timestamp_ns(image_ts_s),
+                    "image_ts_ns": exact_image_ts_ns
+                    if exact_image_ts_ns is not None
+                    else timestamp_ns(image_ts_s),
                     "pose_interpolation_ts_unix": pose_interpolation_ts_s,
-                    "pose_interpolation_ts_ns": timestamp_ns(pose_interpolation_ts_s),
+                    "pose_interpolation_ts_ns": exact_pose_interpolation_ts_ns
+                    if exact_pose_interpolation_ts_ns is not None
+                    else timestamp_ns(pose_interpolation_ts_s),
                     "pose_time_offset_ms": round(effective_pose_time_offset_ms, 6)
                     if effective_pose_time_offset_ms is not None
                     else None,
