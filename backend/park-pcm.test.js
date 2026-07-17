@@ -172,7 +172,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
               leaf_color: { score: 72, confidence: 'high', camera_ids: ['camera1', 'camera2'], observation: '两路画面叶缘颜色偏黄。' },
               water_status: { score: 70, confidence: 'medium', camera_ids: ['camera1'], observation: '局部叶片姿态略显下垂。' },
               pest_status: { score: 91, confidence: 'medium', camera_ids: ['camera1', 'camera2'], observation: '可见叶面未见连续病斑或虫害。' },
-              branch_structure: { score: 88, confidence: 'high', camera_ids: ['camera1'], observation: '可见枝条结构完整。' },
+              branch_structure: { score: null, confidence: 'low', camera_ids: ['camera1'], observation: '枝条受叶片遮挡，无法可靠评分。' },
               maintenance_condition: { score: 76, confidence: 'high', camera_ids: ['camera2'], observation: '绿篱边缘略不整齐。' }
             },
             score_reason: '叶色和水分状态拉低综合分，枝干与病虫维度相对良好。',
@@ -309,6 +309,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     assert.equal(payload.inspection.model, 'Qwen3.6-27B-Labeler');
     assert.equal(payload.inspection.schema, 'park_green_inspection.v2');
     assert.equal(payload.inspection.dimension_scores.pest_status.score, 91);
+    assert.equal(payload.inspection.dimension_scores.branch_structure.score, null);
     assert.equal(payload.inspection.observations.length, 2);
     assert.equal(payload.inspection.view_assessments.length, 2);
 

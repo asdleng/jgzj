@@ -5388,6 +5388,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
   }
 
   function normalizeGreenScore(value) {
+    if (value == null || (typeof value === 'string' && !value.trim())) return null;
     const score = Number(value);
     return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null;
   }
@@ -5524,7 +5525,10 @@ module.exports = function registerParkPcmRoutes(app, options) {
       const dimension = rawDimension && typeof rawDimension === 'object'
         ? rawDimension
         : { score: rawDimension };
-      const score = normalizeGreenScore(dimension.score ?? fallbackScores[key]);
+      const rawScore = Object.prototype.hasOwnProperty.call(dimension, 'score')
+        ? dimension.score
+        : fallbackScores[key];
+      const score = normalizeGreenScore(rawScore);
       dimensionScores[key] = {
         score: vegetationPresent ? score : null,
         confidence: normalizeConfidence(dimension.confidence || confidence),
