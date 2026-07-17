@@ -127,15 +127,29 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
       image_path: `20260717/sample-1/${cameraId}.jpg`
     }))
   };
-  await fs.writeFile(path.join(runtimeRoot, 'crowd-samples.jsonl'), `${JSON.stringify(sample)}\n`);
+  const secondSample = {
+    ...sample,
+    sample_id: 'green-sample-2',
+    collected_at: '2026-07-17T08:00:10.000Z'
+  };
+  await fs.writeFile(
+    path.join(runtimeRoot, 'crowd-samples.jsonl'),
+    `${JSON.stringify(sample)}\n${JSON.stringify(secondSample)}\n`
+  );
 
   let analysisRequests = 0;
+  let activeAnalysisRequests = 0;
+  let maxActiveAnalysisRequests = 0;
   const analysisServer = http.createServer(async (req, res) => {
     analysisRequests += 1;
+    activeAnalysisRequests += 1;
+    maxActiveAnalysisRequests = Math.max(maxActiveAnalysisRequests, activeAnalysisRequests);
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw);
+    assert.equal(body.model, 'Qwen3.6-27B-Labeler');
     assert.equal(body.messages[0].content.filter((item) => item.type === 'image_url').length, 4);
+    await new Promise((resolve) => setTimeout(resolve, 30));
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({
       choices: [{
@@ -190,6 +204,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
         }
       }]
     }));
+    activeAnalysisRequests -= 1;
   });
   await new Promise((resolve) => analysisServer.listen(0, '127.0.0.1', resolve));
 
@@ -207,7 +222,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
   process.env.PARK_CROWD_MONITOR_ENABLED = 'false';
   process.env.PARK_CROWD_ANALYSIS_ENABLED = 'false';
   process.env.PARK_GREEN_INSPECTION_BASE_URL = `http://127.0.0.1:${analysisServer.address().port}/v1`;
-  process.env.PARK_GREEN_INSPECTION_MODEL = 'green-test-model';
+  delete process.env.PARK_GREEN_INSPECTION_MODEL;
   process.env.PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS = '60000';
 
   const app = express();
@@ -234,6 +249,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     assert.equal(payload.inspection.issues.length, 1);
     assert.equal(payload.inspection.recommendations.length, 1);
     assert.equal(payload.inspection.frame_count_evaluated, 4);
+    assert.equal(payload.inspection.model, 'Qwen3.6-27B-Labeler');
 
     response = await fetch(`${baseUrl}/api/park-pcm/green/inspect`, {
       method: 'POST',
@@ -251,6 +267,23 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     assert.equal(payload.summary.analyzed_node_count, 1);
     assert.equal(payload.summary.issue_count, 1);
     assert.equal(payload.items[0].schema, 'park_green_inspection.v1');
+
+    const [forcedResponse, secondResponse] = await Promise.all([
+      fetch(`${baseUrl}/api/park-pcm/green/inspect`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sample_id: sample.sample_id, vehicle_id: sample.vehicle_id, force: true })
+      }),
+      fetch(`${baseUrl}/api/park-pcm/green/inspect`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sample_id: secondSample.sample_id, vehicle_id: secondSample.vehicle_id })
+      })
+    ]);
+    assert.equal(forcedResponse.status, 200);
+    assert.equal(secondResponse.status, 200);
+    assert.equal(analysisRequests, 3);
+    assert.equal(maxActiveAnalysisRequests, 1);
   } finally {
     await close(server);
     await close(analysisServer);

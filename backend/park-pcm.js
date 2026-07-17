@@ -1356,16 +1356,26 @@ module.exports = function registerParkPcmRoutes(app, options) {
     { min: 500, max: 10000 }
   );
   const greenInspectionBaseUrl = String(
-    process.env.PARK_GREEN_INSPECTION_BASE_URL || crowdAnalysisBaseUrl
+    process.env.PARK_GREEN_INSPECTION_BASE_URL || 'http://127.0.0.1:18016/v1'
   ).replace(/\/+$/, '');
   const greenInspectionModel = String(
-    process.env.PARK_GREEN_INSPECTION_MODEL || 'qwen3-vl-4b-checker'
+    process.env.PARK_GREEN_INSPECTION_MODEL || 'Qwen3.6-27B-Labeler'
   );
   const greenInspectionChatUrl = new URL('chat/completions', `${greenInspectionBaseUrl}/`).toString();
   const greenInspectionTimeoutMs = toFiniteInteger(
-    process.env.PARK_GREEN_INSPECTION_TIMEOUT_MS || crowdAnalysisTimeoutMs,
-    crowdAnalysisTimeoutMs,
+    process.env.PARK_GREEN_INSPECTION_TIMEOUT_MS,
+    180 * 1000,
     { min: 10 * 1000, max: 5 * 60 * 1000 }
+  );
+  const greenInspectionConcurrency = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_CONCURRENCY,
+    1,
+    { min: 1, max: 4 }
+  );
+  const greenInspectionPendingLimit = toFiniteInteger(
+    process.env.PARK_GREEN_INSPECTION_PENDING_LIMIT,
+    32,
+    { min: 1, max: 200 }
   );
   const crowdStorageRetentionDays = toFiniteNumber(
     process.env.PARK_CROWD_STORAGE_RETENTION_DAYS || process.env.PARK_PCM_CROWD_STORAGE_RETENTION_DAYS,
@@ -1423,6 +1433,8 @@ module.exports = function registerParkPcmRoutes(app, options) {
   let crowdMonitorInFlight = false;
   let crowdAnalysisInFlight = false;
   const greenInspectionInFlight = new Map();
+  const greenInspectionQueue = [];
+  let greenInspectionActive = 0;
   let crowdStorageCleanupInFlight = null;
   let crowdStorageStatusCache = null;
   let reportTimer = null;
@@ -5877,6 +5889,32 @@ print(len(faces))
     });
   }
 
+  function drainGreenInspectionQueue() {
+    while (greenInspectionActive < greenInspectionConcurrency && greenInspectionQueue.length) {
+      const entry = greenInspectionQueue.shift();
+      greenInspectionActive += 1;
+      Promise.resolve()
+        .then(entry.task)
+        .then(entry.resolve, entry.reject)
+        .finally(() => {
+          greenInspectionActive = Math.max(0, greenInspectionActive - 1);
+          drainGreenInspectionQueue();
+        });
+    }
+  }
+
+  function enqueueGreenInspection(task) {
+    if (greenInspectionQueue.length >= greenInspectionPendingLimit) {
+      const error = new Error('green_inspection_queue_full');
+      error.status = 429;
+      return Promise.reject(error);
+    }
+    return new Promise((resolve, reject) => {
+      greenInspectionQueue.push({ task, resolve, reject });
+      drainGreenInspectionQueue();
+    });
+  }
+
   async function getCrowdAnalysisIdleStatus() {
     if (!crowdAnalysisIdleOnly) {
       return {
@@ -6754,7 +6792,7 @@ print(len(faces))
       }
       let job = greenInspectionInFlight.get(sampleId);
       if (!job) {
-        job = (async () => {
+        job = enqueueGreenInspection(async () => {
           const samples = await readCrowdSampleLog(20000, { vehicle_id: vehicleId });
           const sample = samples.find((item) => String(item?.sample_id || '') === sampleId);
           if (!sample) {
@@ -6765,7 +6803,7 @@ print(len(faces))
           const inspection = await analyzeGreenInspectionSample(sample);
           await writeGreenInspectionState({ samples: { [sampleId]: inspection } });
           return inspection;
-        })();
+        });
         greenInspectionInFlight.set(sampleId, job);
       }
       try {
