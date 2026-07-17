@@ -124,6 +124,49 @@ class MapVisualAdapterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "legacy pose time offsets"):
             PREPARE.validate_pose_time_offsets(records, {"camera1": 0.05})
 
+    def test_calibrated_offset_and_manifested_out_of_range_group_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            map_root = self.make_package(Path(tmp), group_count=2)
+            pose_path = map_root / "trajectories" / "camera_poses.jsonl"
+            poses = PREPARE.load_jsonl(pose_path)[1:]
+            poses[0]["camera_time_offset_ns"] = -177_500_000
+            poses[0]["camera_time_offset_calibrated"] = True
+            poses[0]["trajectory_query_timestamp_ns"] = (
+                poses[0]["image_timestamp_ns"] - 177_500_000
+            )
+            write_jsonl(pose_path, poses)
+            (map_root / "trajectories" / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "camera_time_offset_ns": -177_500_000,
+                        "camera_time_offset_calibrated": True,
+                        "counts": {
+                            "image_keyframe_groups": 2,
+                            "valid_camera_pose_groups": 1,
+                            "rejected_outside_trajectory_groups": 1,
+                            "camera_pose_rows": 4,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest, records = PREPARE.load_records(map_root)
+
+        self.assertEqual(len(records), 4)
+        self.assertEqual(manifest["image_keyframe_groups"], 1)
+        self.assertEqual(manifest["captured_image_keyframe_groups"], 2)
+        self.assertEqual(manifest["rejected_image_keyframe_group_ids"], [0])
+        self.assertEqual(manifest["camera_time_offset_ns"], -177_500_000)
+        self.assertTrue(manifest["camera_time_offset_calibrated"])
+        self.assertTrue(all(record["camera_time_offset_calibrated"] for record in records))
+        self.assertTrue(
+            all(
+                record["trajectory_query_timestamp_ns"]
+                == record["image_timestamp_ns"] - 177_500_000
+                for record in records
+            )
+        )
+
     @unittest.skipIf(PREPARE.cv2 is None, "OpenCV is unavailable")
     def test_equidistant_calibration_uses_fisheye_undistortion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -154,6 +154,10 @@ def load_map_visual_records(map_root: Path) -> tuple[dict, list[dict]]:
     pose_path = map_root / "trajectories" / "camera_poses.jsonl"
     capture_path = image_root / "image_keyframes.jsonl"
     calibration_dir = image_root / "calibration"
+    trajectory_manifest_path = map_root / "trajectories" / "manifest.json"
+    trajectory_manifest = (
+        load_json(trajectory_manifest_path) if trajectory_manifest_path.is_file() else {}
+    )
 
     calibration: dict[str, dict] = {}
     for path in sorted(calibration_dir.glob("camera*.txt")):
@@ -176,6 +180,8 @@ def load_map_visual_records(map_root: Path) -> tuple[dict, list[dict]]:
     expected_cameras = set(calibration)
     flattened_by_camera: dict[str, list[dict]] = {name: [] for name in sorted(calibration)}
     seen_group_ids: set[int] = set()
+    offset_values: set[int] = set()
+    calibrated_values: set[bool] = set()
     for pose_group in pose_groups:
         if pose_group.get("schema") != "auto_ad_mapping_final_camera_poses.v1":
             raise ValueError(f"unsupported map_visual pose schema: {pose_group.get('schema')}")
@@ -197,6 +203,29 @@ def load_map_visual_records(map_root: Path) -> tuple[dict, list[dict]]:
         group_timestamp_ns = int(pose_group["image_timestamp_ns"])
         if int(capture_group["image_timestamp_ns"]) != group_timestamp_ns:
             raise ValueError(f"timestamp mismatch for image group {group_id}")
+        camera_time_offset_ns = int(
+            pose_group.get(
+                "camera_time_offset_ns",
+                trajectory_manifest.get("camera_time_offset_ns", 0),
+            )
+        )
+        camera_time_offset_calibrated = parse_bool(
+            pose_group.get(
+                "camera_time_offset_calibrated",
+                trajectory_manifest.get("camera_time_offset_calibrated", False),
+            ),
+            False,
+        )
+        trajectory_query_timestamp_ns = int(
+            pose_group.get("trajectory_query_timestamp_ns", group_timestamp_ns)
+        )
+        if trajectory_query_timestamp_ns != group_timestamp_ns + camera_time_offset_ns:
+            raise ValueError(
+                f"trajectory query timestamp does not equal image timestamp plus offset "
+                f"for image group {group_id}"
+            )
+        offset_values.add(camera_time_offset_ns)
+        calibrated_values.add(camera_time_offset_calibrated)
 
         for camera_name in sorted(expected_cameras):
             pose_camera = pose_cameras[camera_name]
@@ -222,7 +251,9 @@ def load_map_visual_records(map_root: Path) -> tuple[dict, list[dict]]:
                     "image_path": image_path,
                     "image_timestamp_ns": group_timestamp_ns,
                     "pose_timestamp_ns": group_timestamp_ns,
-                    "trajectory_query_timestamp_ns": int(pose_group.get("trajectory_query_timestamp_ns", group_timestamp_ns)),
+                    "trajectory_query_timestamp_ns": trajectory_query_timestamp_ns,
+                    "camera_time_offset_ns": camera_time_offset_ns,
+                    "camera_time_offset_calibrated": camera_time_offset_calibrated,
                     "trajectory_method": pose_group.get("trajectory_method"),
                     "T_camera_map": pose_camera["T_camera_map"],
                     "T_map_camera": pose_camera["T_map_camera"],
@@ -241,9 +272,38 @@ def load_map_visual_records(map_root: Path) -> tuple[dict, list[dict]]:
                 }
             )
 
-    if seen_group_ids != set(capture_by_id):
-        missing = sorted(set(capture_by_id) - seen_group_ids)
-        raise ValueError(f"capture groups missing final camera poses: {missing[:10]}")
+    missing = sorted(set(capture_by_id) - seen_group_ids)
+    unexpected = sorted(seen_group_ids - set(capture_by_id))
+    if unexpected:
+        raise ValueError(f"final camera poses contain unknown capture groups: {unexpected[:10]}")
+    if missing:
+        counts = trajectory_manifest.get("counts")
+        rejected = (
+            int(counts.get("rejected_outside_trajectory_groups", -1))
+            if isinstance(counts, dict)
+            else -1
+        )
+        valid = (
+            int(counts.get("valid_camera_pose_groups", -1))
+            if isinstance(counts, dict)
+            else -1
+        )
+        if rejected != len(missing) or valid != len(pose_groups):
+            raise ValueError(
+                f"capture groups missing final camera poses without matching trajectory "
+                f"rejection provenance: {missing[:10]}"
+            )
+    if len(offset_values) != 1 or len(calibrated_values) != 1:
+        raise ValueError("map_visual final pose groups use inconsistent camera time offsets")
+    camera_time_offset_ns = next(iter(offset_values))
+    camera_time_offset_calibrated = next(iter(calibrated_values))
+    if trajectory_manifest:
+        if int(trajectory_manifest.get("camera_time_offset_ns", 0)) != camera_time_offset_ns:
+            raise ValueError("trajectory manifest camera time offset does not match final poses")
+        if parse_bool(
+            trajectory_manifest.get("camera_time_offset_calibrated", False), False
+        ) != camera_time_offset_calibrated:
+            raise ValueError("trajectory manifest calibration flag does not match final poses")
 
     records = [record for camera_name in sorted(flattened_by_camera) for record in flattened_by_camera[camera_name]]
     manifest = {
@@ -251,9 +311,12 @@ def load_map_visual_records(map_root: Path) -> tuple[dict, list[dict]]:
         "source_schema": "auto_ad_mapping_final_camera_poses.v1",
         "map_visual_root": str(map_root),
         "image_keyframe_groups": len(pose_groups),
+        "captured_image_keyframe_groups": len(capture_groups),
+        "rejected_image_keyframe_groups": len(missing),
+        "rejected_image_keyframe_group_ids": missing,
         "camera_pose_rows": len(records),
-        "camera_time_offset_ns": 0,
-        "camera_time_offset_calibrated": False,
+        "camera_time_offset_ns": camera_time_offset_ns,
+        "camera_time_offset_calibrated": camera_time_offset_calibrated,
         "calibration": calibration,
     }
     for record in records:
@@ -683,7 +746,7 @@ def record_pointcloud_context_available(record: dict) -> bool:
 
 def pose_interpolation_note_for_mode(mode: str) -> str:
     if mode == "map_visual_final_pgo_spline_pose":
-        return "Used the final per-image T_camera_map from map_visual: dense frontend cubic/SO(3) motion plus the final-PGO correction spline. No cloud interpolation or legacy time offset was applied."
+        return "Used the final per-image T_camera_map from map_visual: dense frontend cubic/SO(3) motion plus the final-PGO correction spline. A calibrated offset may already be baked into trajectory_query_timestamp_ns; no cloud interpolation or additional legacy offset was applied."
     if mode == "cloud_pose_history_interpolated":
         return "Cloud interpolated shared_context/pose_history.jsonl to each image timestamp, then computed T_map_camera = T_map_lidar * inv(T_cam_lidar)."
     if mode == "vehicle_timestamp_interpolated_pose":
@@ -1461,7 +1524,16 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             raw_group_key = record_group_key(record, image_id)
             group_name = sanitize_component(raw_group_key, "group").replace("_", "-")
             image_ts_s = record_image_timestamp_s(record)
-            pose_interpolation_ts_s = image_ts_s + pose_time_offset_s if image_ts_s is not None else None
+            if record.get("__map_visual_final_pose") and record.get("trajectory_query_timestamp_ns") is not None:
+                pose_interpolation_ts_s = float(record["trajectory_query_timestamp_ns"]) / 1e9
+                effective_pose_time_offset_ms = (
+                    (pose_interpolation_ts_s - image_ts_s) * 1000.0
+                    if image_ts_s is not None
+                    else None
+                )
+            else:
+                pose_interpolation_ts_s = image_ts_s + pose_time_offset_s if image_ts_s is not None else None
+                effective_pose_time_offset_ms = pose_time_offset_s * 1000.0
             pose_ts_s = record_pose_timestamp_s(record)
             pose_delta_ms = record_pose_delta_ms(record, image_ts_s, pose_ts_s)
             params = camera_params(record, local_manifest, source_image)
@@ -1559,7 +1631,12 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                     "image_ts_ns": timestamp_ns(image_ts_s),
                     "pose_interpolation_ts_unix": pose_interpolation_ts_s,
                     "pose_interpolation_ts_ns": timestamp_ns(pose_interpolation_ts_s),
-                    "pose_time_offset_ms": round(pose_time_offset_s * 1000.0, 6),
+                    "pose_time_offset_ms": round(effective_pose_time_offset_ms, 6)
+                    if effective_pose_time_offset_ms is not None
+                    else None,
+                    "camera_time_offset_calibrated": bool(
+                        record.get("camera_time_offset_calibrated", False)
+                    ),
                     "pose_ts_unix": pose_ts_s,
                     "pose_ts_ns": timestamp_ns(pose_ts_s),
                     "image_pose_delta_ms": pose_delta_ms,
@@ -1609,7 +1686,18 @@ def prepare_scene(args: argparse.Namespace) -> dict:
                         "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
                         "pose_mode_counts": pose_mode_counts,
                         "pose_time_offsets_ms": {key: value * 1000.0 for key, value in sorted(pose_time_offsets_s.items())},
-                        "note": "map_visual final poses are used verbatim and reject legacy offsets; generic packages may optionally use cloud pose-history interpolation.",
+                        "embedded_camera_time_offset_ms": float(
+                            manifest.get("camera_time_offset_ns", 0)
+                        )
+                        / 1e6
+                        if is_map_visual
+                        else None,
+                        "embedded_camera_time_offset_calibrated": bool(
+                            manifest.get("camera_time_offset_calibrated", False)
+                        )
+                        if is_map_visual
+                        else False,
+                        "note": "map_visual final poses are used verbatim, may already include a calibrated offset, and reject additional legacy offsets; generic packages may optionally use cloud pose-history interpolation.",
                     },
                     "pointcloud_context": {
                         "available_frame_count": pointcloud_context_frame_count,
@@ -1652,7 +1740,18 @@ def prepare_scene(args: argparse.Namespace) -> dict:
             "vehicle_interpolation_available": bool(pose_mode_counts.get("vehicle_timestamp_interpolated_pose")),
             "pose_mode_counts": pose_mode_counts,
             "pose_time_offsets_ms": {key: value * 1000.0 for key, value in sorted(pose_time_offsets_s.items())},
-            "note": "map_visual final poses are used verbatim and reject legacy offsets; generic records keep the existing optional interpolation behavior.",
+            "embedded_camera_time_offset_ms": float(
+                manifest.get("camera_time_offset_ns", 0)
+            )
+            / 1e6
+            if is_map_visual
+            else None,
+            "embedded_camera_time_offset_calibrated": bool(
+                manifest.get("camera_time_offset_calibrated", False)
+            )
+            if is_map_visual
+            else False,
+            "note": "map_visual final poses are used verbatim, may already include a calibrated offset, and reject additional legacy offsets; generic records keep the existing optional interpolation behavior.",
             },
             "pointcloud_context": {
                 "available": pointcloud_context_frame_count > 0,
