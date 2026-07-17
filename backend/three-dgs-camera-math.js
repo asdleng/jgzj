@@ -60,9 +60,41 @@ function cameraForwardInWorld(qvec, sign = 1) {
   return normalizeVector(cameraAxisToWorld(qvec, [0, 0, normalizedSign]));
 }
 
+function cameraUpInWorld(qvec) {
+  // COLMAP camera Y points down in the image; viewer up is therefore -camera Y.
+  return normalizeVector(cameraAxisToWorld(qvec, [0, -1, 0]));
+}
+
+function mapVectorToSuperSplatViewer(values) {
+  if (!Array.isArray(values) || values.length !== 3) {
+    throw new TypeError('map vector must contain three values');
+  }
+  const vector = values.map(Number);
+  if (!vector.every(Number.isFinite)) {
+    throw new TypeError('map vector must be finite');
+  }
+
+  // SuperSplat rotates every loaded gsplat entity by 180 degrees around Z.
+  return [-vector[0], -vector[1], vector[2]];
+}
+
+function pinholeFovDegrees(width, height, fx, fy) {
+  const values = [width, height, fx, fy].map(Number);
+  if (!values.every((value) => Number.isFinite(value) && value > 0)) {
+    throw new TypeError('pinhole dimensions and focal lengths must be positive finite values');
+  }
+  return {
+    horizontal: 2 * Math.atan(values[0] / (2 * values[2])) * 180 / Math.PI,
+    vertical: 2 * Math.atan(values[1] / (2 * values[3])) * 180 / Math.PI
+  };
+}
+
 module.exports = {
   cameraAxisToWorld,
   cameraCenterFromImagePose,
   cameraForwardInWorld,
+  cameraUpInWorld,
+  mapVectorToSuperSplatViewer,
+  pinholeFovDegrees,
   qvecToRotmat
 };
