@@ -5424,13 +5424,15 @@ module.exports = function registerParkPcmRoutes(app, options) {
   function greenDimensionHealthScore(dimensions, confidence, issues) {
     let weightedTotal = 0;
     let weightTotal = 0;
+    let assessedDimensionCount = 0;
     Object.entries(GREEN_INSPECTION_DIMENSIONS).forEach(([key, weight]) => {
       const score = normalizeGreenScore(dimensions?.[key]?.score);
       if (score == null) return;
       weightedTotal += score * weight;
       weightTotal += weight;
+      assessedDimensionCount += 1;
     });
-    if (!weightTotal) return null;
+    if (!weightTotal || assessedDimensionCount < 3) return null;
     let score = Math.round(weightedTotal / weightTotal);
     score = Math.min(score, { low: 84, medium: 92, high: 97 }[confidence] || 84);
     const severityRank = { low: 1, medium: 2, high: 3 };
@@ -5611,8 +5613,11 @@ module.exports = function registerParkPcmRoutes(app, options) {
         .slice(0, 8);
     }
     const healthScore = vegetationPresent
-      ? greenDimensionHealthScore(dimensionScores, confidence, issues) ?? normalizeGreenScore(payload.health_score)
+      ? greenDimensionHealthScore(dimensionScores, confidence, issues)
       : null;
+    const assessmentStatus = vegetationPresent && healthScore == null && !issues.length
+      ? 'not_assessable'
+      : status;
     const scoreReason = vegetationPresent
       ? String(payload.score_reason || '').trim().slice(0, 260)
       : '';
@@ -5629,7 +5634,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
       vehicle_id: context.vehicle_id || null,
       collected_at: context.collected_at || null,
       position: context.position || null,
-      status,
+      status: assessmentStatus,
       vegetation_present: vegetationPresent,
       vegetation_types: vegetationTypes,
       confidence,
@@ -6221,11 +6226,11 @@ print(len(faces))
         text:
           '你是园区绿化养护巡检员。下面是同一采集节点车辆前后左右四路相机画面。只评估画面中可见的树木、灌木、绿篱、草坪和地被植物；忽略人、车、建筑和广告。' +
           '四路可能有重叠，不要重复计数。不得猜测具体植物品种，不得凭模糊画面断言病虫害或缺水。光照、季节、阴影、逆光、落叶期和画质不足都要降低置信度。' +
-          '只要任一路看到植被，就必须对该视角写一条具体 view_assessments.observation；整体 observations 至少写两条有图像依据的观察，可以是长势良好、覆盖连续、修剪整齐等正向观察，也可以是中性限制或异常观察。没有问题不等于没有分析。' +
-          '分别对叶色、水分状态、病虫迹象、枝干结构、养护状态五个维度独立打 0-100 分，并写明依据和对应 camera_ids。不要把所有维度都打成同一个数，不要默认给 90 分，也不要机械只用 5 或 10 的倍数。' +
+          '只要任一路看到植被，就必须对该视角写一条 20-50 字的具体 view_assessments.observation，可以是长势良好、覆盖连续、修剪整齐等正向观察，也可以是中性限制或异常观察。没有问题不等于没有分析。' +
+          '分别对叶色、水分状态、病虫迹象、枝干结构、养护状态五个维度独立打 0-100 分，并各写 20-60 字依据和对应 camera_ids。不要把所有维度都打成同一个数，不要默认给 90 分，也不要机械只用 5 或 10 的倍数。' +
           '分数标尺：95-100 仅用于画面证据非常充分且状态近乎优异；88-94 为健康且养护良好；78-87 为总体正常但存在轻微限制；65-77 为需要关注；低于 65 为有明确退化或问题。看不清的维度 score=null。总体 health_score 由系统根据五维分数计算，模型不要输出总体分。' +
           '只有中高置信度且能指出具体画面证据的问题才能写入 issues；不确定迹象只放到 indicators 的 possible 或 observations 的 neutral，不得写成问题。没有明确问题时 issues 和 recommendations 必须为空，但 summary 仍要概括看到的植被类型、长势和画面限制。' +
-          '养护建议必须逐条对应 issues，不能为了完整而硬写。只输出一个 JSON 对象，不要 Markdown。必须包含以下键：' +
+          '养护建议必须逐条对应 issues，不能为了完整而硬写。score_reason 控制在 30-80 字，summary 最多两句且控制在 100 字内。只输出一个紧凑 JSON 对象，不要 Markdown。必须包含以下键：' +
           '{"vegetation_present":true,"vegetation_types":{"trees":true,"shrubs":false,"lawn_or_groundcover":false},"confidence":"low|medium|high",' +
           '"dimension_scores":{"leaf_color":{"score":"0-100整数或null","confidence":"low|medium|high","camera_ids":["camera1"],"observation":"中文具体依据"},"water_status":{},"pest_status":{},"branch_structure":{},"maintenance_condition":{}},' +
           'dimension_scores 中五个对象都必须按 leaf_color 的相同字段结构完整输出。' +
@@ -6234,7 +6239,6 @@ print(len(faces))
           '"pest_or_disease":"none|possible|clear|unknown","dead_or_broken_branches":"none|possible|clear|unknown","shrub_condition":"good|fair|poor|unknown",' +
           '"groundcover_condition":"good|fair|poor|unknown","overgrowth_or_encroachment":"none|possible|clear|unknown"},' +
           '"view_assessments":[{"camera_id":"camera1","vegetation_visible":true,"vegetation_types":{"trees":true,"shrubs":false,"lawn_or_groundcover":false},"green_coverage_percent":"0-100整数","condition":"good|fair|poor|not_assessable","confidence":"low|medium|high","observation":"该视角的中文具体观察"}],' +
-          '"observations":[{"category":"canopy|leaf_color|water_status|pest_status|branch_structure|shrub|groundcover|maintenance|visibility","sentiment":"positive|neutral|negative","confidence":"low|medium|high","camera_ids":["camera1"],"evidence":"中文具体可见证据"}],' +
           '"issues":[{"type":"yellowing_or_wilting|drought_stress|pest_or_disease|dead_or_broken_branch|overgrowth_or_encroachment|missing_or_bare_patch|support_or_tree_grate_problem",' +
           '"severity":"low|medium|high","confidence":"medium|high","camera_ids":["camera1"],"evidence":"中文具体可见证据"}],' +
           '"recommendations":[{"action":"中文养护动作","priority":"routine|soon|urgent","reason":"中文依据","related_issue_type":"对应问题英文键"}],"summary":"两句中文实质结论"}。'
@@ -6276,7 +6280,7 @@ print(len(faces))
       body: JSON.stringify({
         model: greenInspectionModel,
         messages: [{ role: 'user', content }],
-        max_tokens: 1900,
+        max_tokens: 1350,
         temperature: 0,
         stream: false,
         chat_template_kwargs: { enable_thinking: false }
