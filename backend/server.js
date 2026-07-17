@@ -24,6 +24,7 @@ const registerThreeDgsRoutes = require('./three-dgs');
 const registerCrowdCpmRoutes = require('./crowd-cpm');
 const registerParkPcmRoutes = require('./park-pcm');
 const registerOneApiProxyRoutes = require('./one-api-proxy');
+const { createAsyncTtlCache } = require('./async-ttl-cache');
 const { registerMapPackageUploadRoutes } = require('./map-package-upload');
 const { registerSemanticAnchorInferRoutes } = require('./semantic-anchor-infer');
 const {
@@ -54,11 +55,16 @@ const aiCheckArchiveDbPath = path.join(
   aiCheckArchiveRoot,
   process.env.AI_CHECK_ARCHIVE_DB_NAME || 'qwen_ws_checker.sqlite3'
 );
-const aiCheckArchiveDbUri = `file:${aiCheckArchiveDbPath}?mode=ro&immutable=1`;
+// The checker writes this WAL database continuously, so readers must use SQLite snapshots.
+const aiCheckArchiveDbUri = `file:${aiCheckArchiveDbPath}?mode=ro`;
 const sqlite3Bin = resolveExecutable(
   process.env.SQLITE3_BIN || process.env.AI_CHECK_SQLITE_BIN,
   ['/usr/bin/sqlite3', '/usr/local/bin/sqlite3', '/home/admin1/miniconda3/bin/sqlite3']
 );
+const aiCheckHistoryPageCacheTtlMs = Number(process.env.AI_CHECK_HISTORY_PAGE_CACHE_TTL_MS || 3000);
+const aiCheckHistoryCountCacheTtlMs = Number(process.env.AI_CHECK_HISTORY_COUNT_CACHE_TTL_MS || 15000);
+const aiCheckHistoryOptionsCacheTtlMs = Number(process.env.AI_CHECK_HISTORY_OPTIONS_CACHE_TTL_MS || 60000);
+const aiCheckHistoryQueryCache = createAsyncTtlCache({ maxEntries: 256 });
 const defaultVehicleId = process.env.DEFAULT_VEHICLE_ID || 'car-web';
 const upstreamBaseUrl = process.env.UPSTREAM_CHAT_BASE_URL || 'http://127.0.0.1:8050';
 const upstreamStreamUrl = new URL(
@@ -5496,6 +5502,18 @@ async function runArchiveSql(sql) {
   return parseJsonField(stdout, []);
 }
 
+async function runCachedArchiveSql(sql, ttlMs) {
+  return aiCheckHistoryQueryCache.get(sql, ttlMs, () => runArchiveSql(sql));
+}
+
+function uniqueTrimmedArchiveValues(rows, field) {
+  return Array.from(new Set(
+    rows
+      .map((row) => String(row?.[field] || '').trim())
+      .filter(Boolean)
+  ));
+}
+
 async function writeArchiveSql(sql) {
   await execFileAsync(sqlite3Bin, [aiCheckArchiveDbPath, sql], {
     maxBuffer: 1024 * 1024
@@ -5545,6 +5563,7 @@ COMMIT;
 `.trim();
 
   await writeArchiveSql(sql);
+  aiCheckHistoryQueryCache.clear();
 }
 
 function buildAiCheckHistoryClauses(filters = {}, requestAlias = 'r', options = {}) {
@@ -5583,38 +5602,38 @@ function buildAiCheckHistoryWhere(filters = {}, requestAlias = 'r', options = {}
 }
 
 async function listAiCheckDeviceOptions(filters = {}) {
-  const whereClause = buildAiCheckHistoryWhere(filters, 'r', { includeDevice: false, includeEvent: true });
-  const rows = await runArchiveSql(`
+  const eventName =
+    typeof filters.event_name === 'string' && filters.event_name.trim()
+      ? filters.event_name.trim()
+      : '';
+  const rows = await runCachedArchiveSql(`
     SELECT
-      r.device_id,
-      COUNT(*) AS total
-    FROM requests r
-    ${whereClause ? `${whereClause} AND` : 'WHERE'} TRIM(COALESCE(r.device_id, '')) <> ''
-    GROUP BY r.device_id
-    ORDER BY total DESC, r.device_id COLLATE NOCASE ASC;
-  `);
+      DISTINCT r.device_id
+    ${eventName ? 'FROM tasks t JOIN requests r ON r.id = t.request_row_id' : 'FROM requests r'}
+    WHERE r.device_id > ''
+    ${eventName ? `AND t.event_name = ${toSqlTextLiteral(eventName)}` : ''}
+    ORDER BY r.device_id;
+  `, aiCheckHistoryOptionsCacheTtlMs);
 
-  return rows
-    .map((row) => String(row?.device_id || '').trim())
-    .filter(Boolean);
+  return uniqueTrimmedArchiveValues(rows, 'device_id');
 }
 
 async function listAiCheckEventOptions(filters = {}) {
-  const whereClause = buildAiCheckHistoryWhere(filters, 'r', { includeDevice: true, includeEvent: false });
-  const rows = await runArchiveSql(`
+  const deviceId =
+    typeof filters.device_id === 'string' && filters.device_id.trim()
+      ? filters.device_id.trim()
+      : '';
+  const rows = await runCachedArchiveSql(`
     SELECT
-      t.event_name,
-      COUNT(DISTINCT r.id) AS total
+      DISTINCT t.event_name
     FROM tasks t
-    JOIN requests r ON r.id = t.request_row_id
-    ${whereClause ? `${whereClause} AND` : 'WHERE'} TRIM(COALESCE(t.event_name, '')) <> ''
-    GROUP BY t.event_name
-    ORDER BY total DESC, t.event_name COLLATE NOCASE ASC;
-  `);
+    ${deviceId ? 'JOIN requests r ON r.id = t.request_row_id' : ''}
+    WHERE t.event_name > ''
+    ${deviceId ? `AND r.device_id = ${toSqlTextLiteral(deviceId)}` : ''}
+    ORDER BY t.event_name;
+  `, aiCheckHistoryOptionsCacheTtlMs);
 
-  return rows
-    .map((row) => String(row?.event_name || '').trim())
-    .filter(Boolean);
+  return uniqueTrimmedArchiveValues(rows, 'event_name');
 }
 
 async function listAiCheckHistory(page, pageSize, filters = {}) {
@@ -5629,8 +5648,11 @@ async function listAiCheckHistory(page, pageSize, filters = {}) {
       : '';
   const whereClause = buildAiCheckHistoryWhere(filters, 'r');
   const [countRows, rows, availableDeviceIds, availableEventNames] = await Promise.all([
-    runArchiveSql(`SELECT COUNT(*) AS total FROM requests r ${whereClause};`),
-    runArchiveSql(`
+    runCachedArchiveSql(
+      `SELECT COUNT(*) AS total FROM requests r ${whereClause};`,
+      aiCheckHistoryCountCacheTtlMs
+    ),
+    runCachedArchiveSql(`
       SELECT
         r.id,
         r.request_id,
@@ -5664,8 +5686,7 @@ async function listAiCheckHistory(page, pageSize, filters = {}) {
       ${whereClause}
       ORDER BY r.id DESC
       LIMIT ${pageSize} OFFSET ${offset};
-    `)
-    ,
+    `, aiCheckHistoryPageCacheTtlMs),
     listAiCheckDeviceOptions({ event_name: eventName }),
     listAiCheckEventOptions({ device_id: deviceId })
   ]);
