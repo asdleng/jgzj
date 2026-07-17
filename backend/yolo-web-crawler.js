@@ -44,6 +44,7 @@ function normalizeYoloWebCrawlerStats(summary) {
   const positiveImages = numberValue(qwen.scene_positive) || numberValue(scenes.positive);
   const hardNegativeImages = numberValue(qwen.scene_hard_negative) || numberValue(scenes.hard_negative);
   const needsHumanImages = numberValue(qwen.scene_needs_human) || numberValue(scenes.needs_human);
+  const auditNeedsHumanImages = numberValue(qwen.audit_needs_human);
   const unusableImages = numberValue(qwen.scene_unusable) || numberValue(scenes.unusable);
   const positiveImagesByTarget = {};
   for (const [key, value] of Object.entries(summary.target_scene_counts || {})) {
@@ -60,12 +61,13 @@ function normalizeYoloWebCrawlerStats(summary) {
     positive_images: positiveImages,
     hard_negative_images: hardNegativeImages,
     needs_human_images: needsHumanImages,
+    review_queue_images: Math.max(needsHumanImages, auditNeedsHumanImages),
     unusable_images: unusableImages,
     accepted_boxes: numberValue(qwen.accepted_boxes) || sumCounts(summary.boxes_by_class),
     model_accepted_boxes: numberValue(qwen.model_accepted_boxes),
     proposed_boxes: numberValue(qwen.proposed_boxes),
     audit_pass_images: numberValue(qwen.audit_pass),
-    audit_needs_human_images: numberValue(qwen.audit_needs_human),
+    audit_needs_human_images: auditNeedsHumanImages,
     audit_not_run_images: numberValue(qwen.audit_not_run),
     quarantined_conflicts: numberValue(qwen.quarantine_positive_in_hard_negative_bucket),
     positive_images_by_target: positiveImagesByTarget,

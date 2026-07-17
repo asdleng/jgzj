@@ -4261,6 +4261,35 @@ function normalizeYoloDatasetSummaryStats(summary = {}, classes = []) {
   };
 }
 
+async function yoloWebReviewQueueCount(datasetDir, datasetId) {
+  const reviewPath = path.join(datasetDir, 'qwen_review_manifest.jsonl');
+  const content = await readTextFile(reviewPath, '');
+  if (!content.trim()) {
+    return null;
+  }
+  const manualIndex = await loadYoloManualAnnotationIndex();
+  let total = 0;
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const review = JSON.parse(line);
+      const itemKey = normalizeApiRelPath(review.image || '');
+      const manual = itemKey
+        ? manualIndex?.get(yoloReviewManualAnnotationIndexKey(datasetId, itemKey))
+        : null;
+      if (manual?.deleted) {
+        continue;
+      }
+      if (normalizeClassToken(effectiveYoloWebAuditVerdict(review)) === 'needs_human') {
+        total += 1;
+      }
+    } catch (_error) {
+      // Ignore malformed review rows; item loading applies the same behavior.
+    }
+  }
+  return total;
+}
+
 async function buildYoloDatasetList() {
   const datasets = [];
 
@@ -4281,12 +4310,23 @@ async function buildYoloDatasetList() {
       const dataDir = resolveYoloDataDir(datasetDir, summary);
       const classes = await readYoloClasses(datasetDir, summary);
       const stats = normalizeYoloDatasetSummaryStats(summary, classes);
+      if (stats.web_crawler) {
+        const exactReviewQueue = await yoloWebReviewQueueCount(datasetDir, id);
+        if (exactReviewQueue != null) {
+          stats.web_crawler.review_queue_images = exactReviewQueue;
+        }
+      }
       const sourceType = stats.web_crawler ? 'web_crawler' : 'checker_archive';
       const feedback = summary.feedback && typeof summary.feedback === 'object'
         ? {
             total_images: Number(summary.feedback.total_images || 0),
             status_counts: summary.feedback.status_counts || null,
             event_counts: summary.feedback.event_counts || null,
+            negative_event_counts: summary.feedback.negative_event_counts || null,
+            review_queue_images: Number(
+              summary.feedback.review_queue_images ?? summary.feedback.status_counts?.needs_human ?? 0
+            ),
+            review_event_counts: summary.feedback.review_event_counts || null,
             training_eligible_images: Number(summary.feedback.training_eligible_images || 0)
           }
         : null;
@@ -4408,6 +4448,12 @@ async function resolveYoloDataset(datasetId) {
   const kind = inferYoloDatasetKind(datasetDir, summary);
   const dataDir = resolveYoloDataDir(datasetDir, summary);
   const stats = normalizeYoloDatasetSummaryStats(summary, classes);
+  if (stats.web_crawler) {
+    const exactReviewQueue = await yoloWebReviewQueueCount(datasetDir, datasetId);
+    if (exactReviewQueue != null) {
+      stats.web_crawler.review_queue_images = exactReviewQueue;
+    }
+  }
   const sourceType = stats.web_crawler ? 'web_crawler' : 'checker_archive';
   const normalizedSummary = {
     ...summary,
@@ -4673,6 +4719,15 @@ function normalizeClassToken(value) {
   return String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
 }
 
+function isYoloEventFeedbackSummary(summary) {
+  if (!summary || typeof summary !== 'object') {
+    return false;
+  }
+  return String(summary.schema || '') === 'jgzj_yolo_event_feedback_dataset.v1' || Boolean(
+    summary.feedback && /YOLO事件原图反馈候选集/.test(String(summary.profile || ''))
+  );
+}
+
 function manifestImageRelPath(dataset, manifestItem) {
   const imagePath = String(manifestItem?.image || '').trim();
   if (!imagePath) {
@@ -4789,6 +4844,54 @@ function yoloWebQwenProjection(webReview, dataset) {
   };
 }
 
+function yoloFeedbackQwenProjection(manifestItem, dataset) {
+  if (!manifestItem || !isYoloEventFeedbackSummary(dataset?.summary)) {
+    return {};
+  }
+  const feedbackStatus = normalizeClassToken(manifestItem.feedback_status || '');
+  const feedbackReason = normalizeClassToken(manifestItem.feedback_reason || '');
+  const rawVerdict = feedbackStatus === 'review_only'
+    ? ''
+    : normalizeClassToken(manifestItem.audit_verdict || '');
+  const reviewVerdicts = new Set(['suspect', 'needs_human', 'error']);
+  const needsReview = feedbackStatus === 'needs_human' || reviewVerdicts.has(rawVerdict);
+  const verdict = needsReview
+    ? (reviewVerdicts.has(rawVerdict) ? rawVerdict : 'needs_human')
+    : rawVerdict;
+  const missingClasses = Array.isArray(manifestItem.missing_expected_classes)
+    ? manifestItem.missing_expected_classes.map(String).filter(Boolean)
+    : [];
+  const reasons = [
+    feedbackReason,
+    ...missingClasses.map((className) => `missing:${className}`)
+  ].filter(Boolean);
+  const auditStatus = verdict
+    ? 'done'
+    : (feedbackStatus === 'pending_label' ? 'pending' : 'not_applicable');
+  const audit = verdict ? {
+    status: auditStatus,
+    verdict,
+    severity: verdict === 'error' || verdict === 'needs_human' ? 'high' : (verdict === 'suspect' ? 'medium' : ''),
+    reasons,
+    suspicious_count: missingClasses.length || (needsReview ? 1 : 0),
+    missing_count: missingClasses.length,
+    model: '',
+    audited_at: dataset.summary?.updated_at || null
+  } : null;
+  return {
+    feedback_status: feedbackStatus,
+    feedback_reason: feedbackReason,
+    qwen_bbox_status: feedbackStatus === 'pending_label' ? 'pending' : 'done',
+    qwen_bbox_audit_status: auditStatus,
+    qwen_bbox_audit_verdict: verdict,
+    qwen_bbox_audit_severity: audit?.severity || '',
+    qwen_bbox_audit_reasons: reasons,
+    qwen_bbox_audit_suspicious_count: audit?.suspicious_count || 0,
+    qwen_bbox_audit_missing_count: audit?.missing_count || 0,
+    qwen_bbox_audit: audit
+  };
+}
+
 function buildYoloBaseItem(dataset, rel, manifestItem = null, webReview = null) {
   const metadata = parseYoloFilenameMetadata(rel);
   const task = Array.isArray(manifestItem?.tasks) && manifestItem.tasks.length ? manifestItem.tasks[0] : null;
@@ -4817,6 +4920,7 @@ function buildYoloBaseItem(dataset, rel, manifestItem = null, webReview = null) 
     web_scene: normalizedWebReview?.scene || '',
     web_collection_bucket: normalizedWebReview?.collection_bucket || '',
     web_training_eligible: normalizedWebReview?.training_eligible === true,
+    ...yoloFeedbackQwenProjection(manifestItem, dataset),
     ...yoloWebQwenProjection(normalizedWebReview, dataset)
   };
 }
@@ -4986,6 +5090,54 @@ async function enrichYoloItem(dataset, item, options = {}) {
   };
 }
 
+function yoloItemMatchesQwenAudit(dataset, item, qwenAudit) {
+  if (!qwenAudit) {
+    return true;
+  }
+  if (dataset.source_type === 'web_crawler') {
+    const scene = normalizeClassToken(item.web_review?.scene || '');
+    const verdict = normalizeClassToken(effectiveYoloWebAuditVerdict(item.web_review));
+    if (qwenAudit === 'suspect' || qwenAudit === 'needs_human') {
+      return verdict === 'needs_human' || scene === 'needs_human';
+    }
+    if (qwenAudit === 'pending' || qwenAudit === 'unreviewed') {
+      return verdict === 'not_run';
+    }
+    if (qwenAudit === 'done') {
+      return Boolean(verdict && verdict !== 'not_run' && verdict !== 'not_applicable');
+    }
+    return verdict === qwenAudit;
+  }
+
+  const supportsAudit = dataset.source === 'patrol' || isYoloEventFeedbackSummary(dataset.summary);
+  if (!supportsAudit) {
+    return false;
+  }
+  const auditVerdict = normalizeClassToken(item.qwen_bbox_audit_verdict || '');
+  const auditStatus = normalizeClassToken(item.qwen_bbox_audit_status || '');
+  const auditSeverity = normalizeClassToken(item.qwen_bbox_audit_severity || '');
+  const auditTokens = [
+    auditStatus,
+    auditVerdict,
+    auditSeverity ? `severity:${auditSeverity}` : '',
+    ...(Array.isArray(item.qwen_bbox_audit_reasons) ? item.qwen_bbox_audit_reasons : [])
+  ].map((value) => normalizeClassToken(value)).filter(Boolean);
+  const pendingAudit = auditStatus === 'pending' || (item.qwen_bbox_status === 'done' && !item.qwen_bbox_audit);
+  if (qwenAudit === 'suspect') {
+    return ['suspect', 'needs_human', 'error'].includes(auditVerdict);
+  }
+  if (qwenAudit === 'needs_human') {
+    return ['needs_human', 'error'].includes(auditVerdict);
+  }
+  if (qwenAudit === 'pending' || qwenAudit === 'unreviewed') {
+    return pendingAudit;
+  }
+  if (qwenAudit === 'done') {
+    return auditStatus === 'done' && Boolean(auditVerdict);
+  }
+  return auditTokens.includes(qwenAudit);
+}
+
 async function listYoloReviewItems(datasetId, query = {}) {
   const dataset = await resolveYoloDataset(datasetId);
   const page = toFiniteInteger(query.page, 1, { min: 1, max: 9999 });
@@ -5007,7 +5159,9 @@ async function listYoloReviewItems(datasetId, query = {}) {
   const needsLabelBeforePagination = ['YES', 'NO'].includes(aiAnswer) || classNames.length > 0 || hasBoxOnly;
 
   const allItems = await yoloBaseItems(dataset);
-  let items = allItems;
+  let items = qwenAudit
+    ? allItems.filter((item) => yoloItemMatchesQwenAudit(dataset, item, qwenAudit))
+    : allItems;
   const prefilteredItems = [];
   for (const item of items) {
     const manual = await readYoloManualAnnotation(dataset.id, item.image_rel_path);
@@ -5059,58 +5213,8 @@ async function listYoloReviewItems(datasetId, query = {}) {
         return false;
       }
     }
-    if (qwenAudit && dataset.source === 'patrol') {
-      const auditVerdict = normalizeClassToken(item.qwen_bbox_audit_verdict || '');
-      const auditStatus = normalizeClassToken(item.qwen_bbox_audit_status || '');
-      const auditSeverity = normalizeClassToken(item.qwen_bbox_audit_severity || '');
-      const auditTokens = [
-        auditStatus,
-        auditVerdict,
-        auditSeverity ? `severity:${auditSeverity}` : '',
-        ...(Array.isArray(item.qwen_bbox_audit_reasons) ? item.qwen_bbox_audit_reasons : [])
-      ].map((value) => normalizeClassToken(value)).filter(Boolean);
-      const pendingAudit = item.qwen_bbox_status === 'done' && !item.qwen_bbox_audit;
-      if (qwenAudit === 'suspect') {
-        if (!['suspect', 'needs_human', 'error'].includes(auditVerdict)) {
-          return false;
-        }
-      } else if (qwenAudit === 'needs_human') {
-        if (!['needs_human', 'error'].includes(auditVerdict)) {
-          return false;
-        }
-      } else if (qwenAudit === 'pending' || qwenAudit === 'unreviewed') {
-        if (!pendingAudit) {
-          return false;
-        }
-      } else if (qwenAudit === 'done') {
-        if (!item.qwen_bbox_audit) {
-          return false;
-        }
-      } else if (!auditTokens.includes(qwenAudit)) {
-        return false;
-      }
-    } else if (qwenAudit && dataset.source_type === 'web_crawler') {
-      const scene = normalizeClassToken(item.web_review?.scene || '');
-      const verdict = normalizeClassToken(effectiveYoloWebAuditVerdict(item.web_review));
-      if (qwenAudit === 'suspect') {
-        if (verdict !== 'needs_human' && scene !== 'needs_human') {
-          return false;
-        }
-      } else if (qwenAudit === 'needs_human') {
-        if (verdict !== 'needs_human' && scene !== 'needs_human') {
-          return false;
-        }
-      } else if (qwenAudit === 'pending' || qwenAudit === 'unreviewed') {
-        if (verdict !== 'not_run') {
-          return false;
-        }
-      } else if (qwenAudit === 'done') {
-        if (!verdict || verdict === 'not_run') {
-          return false;
-        }
-      } else if (verdict !== qwenAudit) {
-        return false;
-      }
+    if (qwenAudit && !yoloItemMatchesQwenAudit(dataset, item, qwenAudit)) {
+      return false;
     }
     return yoloItemMatchesQuery(item, q);
   });

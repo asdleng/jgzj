@@ -5933,6 +5933,10 @@
   gap: 8px;
 }
 
+.yolo-review-source-cards.is-review-queue {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .yolo-review-source-card {
   min-width: 0;
   min-height: 72px;
@@ -6484,6 +6488,10 @@
   box-shadow: inset 3px 0 0 rgba(45, 212, 191, 0.9);
 }
 
+.yolo-review-dataset-card--feedback {
+  grid-column: 1 / -1;
+}
+
 .yolo-review-dataset-card-head {
   min-width: 0;
   display: flex;
@@ -6533,6 +6541,73 @@
   font-weight: 800;
   line-height: 1.28;
   overflow-wrap: anywhere;
+}
+
+.yolo-review-feedback-breakdown {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  border-radius: 8px;
+  background: rgba(8, 47, 73, 0.24);
+}
+
+.yolo-review-feedback-breakdown-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.yolo-review-feedback-breakdown-head strong {
+  color: #ccfbf1;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  font-weight: 900;
+}
+
+.yolo-review-feedback-breakdown-head span {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 0.64rem;
+  line-height: 1.25;
+  font-weight: 800;
+}
+
+.yolo-review-feedback-count-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 5px;
+}
+
+.yolo-review-feedback-count {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 7px;
+  border: 1px solid rgba(71, 85, 105, 0.58);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.yolo-review-feedback-count span {
+  min-width: 0;
+  color: #cbd5e1;
+  font-size: 0.64rem;
+  line-height: 1.2;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.yolo-review-feedback-count strong {
+  flex: 0 0 auto;
+  color: #fbbf24;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  font-weight: 900;
 }
 
 .yolo-review-dataset-metrics {
@@ -7359,6 +7434,10 @@ body.yolo-review-is-panning {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .yolo-review-source-cards.is-review-queue {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .yolo-review-summary {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
@@ -7494,6 +7573,10 @@ body.yolo-review-is-panning {
   .yolo-review-model-task-grid,
   .yolo-task-grid,
   .yolo-model-registry-list {
+    grid-template-columns: 1fr;
+  }
+
+  .yolo-review-source-cards.is-review-queue {
     grid-template-columns: 1fr;
   }
 

@@ -21,13 +21,22 @@ class EventFeedbackDatasetTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def add_frame(self, sha, request_id, event_name, labels=None, quality="good", with_cache=True):
+    def add_frame(
+        self,
+        sha,
+        request_id,
+        event_name,
+        labels=None,
+        quality="good",
+        with_cache=True,
+        source="qwen_permanent_yes_frame",
+    ):
         day = self.permanent / "20260714"
         day.mkdir(parents=True, exist_ok=True)
         image = day / f"{request_id}_{sha[:16]}.jpg"
         image.write_bytes(b"sample-jpeg")
         meta = {
-            "source": "qwen_permanent_yes_frame",
+            "source": source,
             "request_id": request_id,
             "image_sha256": sha,
             "device_id": "BIT-TEST",
@@ -40,6 +49,14 @@ class EventFeedbackDatasetTest(unittest.TestCase):
                 "pass": True,
             }],
         }
+        if source == "qwen_no_labeler_positive_frame":
+            meta["no_tasks"] = [{
+                "task_id": "task_1",
+                "event_name": event_name,
+                "answer": "NO",
+                "pass": False,
+            }]
+            del meta["yes_tasks"]
         image.with_suffix(".jpg.json").write_text(json.dumps(meta), encoding="utf-8")
         if with_cache:
             label_path = self.labels / sha[:2] / f"{sha}.json"
@@ -74,6 +91,8 @@ class EventFeedbackDatasetTest(unittest.TestCase):
         summary = build_dataset(args)
         self.assertEqual(summary["feedback"]["total_images"], 3)
         self.assertEqual(summary["feedback"]["status_counts"]["needs_human"], 1)
+        self.assertEqual(summary["feedback"]["review_queue_images"], 1)
+        self.assertEqual(summary["feedback"]["review_event_counts"]["paper"], 1)
         self.assertEqual(summary["feedback"]["status_counts"]["agreement"], 1)
         self.assertEqual(summary["feedback"]["status_counts"]["pending_label"], 1)
         self.assertEqual(summary["feedback"]["training_eligible_images"], 0)
@@ -102,6 +121,42 @@ class EventFeedbackDatasetTest(unittest.TestCase):
         self.assertFalse(stale_image.exists())
         self.assertFalse(stale_label.exists())
         self.assertEqual(second_summary["feedback"]["pruned_files"], 2)
+
+    def test_binary_negative_cross_class_positive_is_not_a_review_conflict(self):
+        sha = "4" * 64
+        self.add_frame(
+            sha,
+            "req_smoke_negative",
+            "smoke",
+            labels=[{
+                "class_name": "vehicle",
+                "x": 0.5,
+                "y": 0.5,
+                "w": 0.2,
+                "h": 0.2,
+            }],
+            source="qwen_no_labeler_positive_frame",
+        )
+        args = argparse.Namespace(
+            permanent_root=self.permanent,
+            label_root=self.labels,
+            audit_root=self.audits,
+            output_root=self.output,
+            days=0,
+        )
+
+        summary = build_dataset(args)
+
+        self.assertNotIn("smoke", summary["feedback"]["event_counts"])
+        self.assertEqual(summary["feedback"]["negative_event_counts"]["smoke"], 1)
+        self.assertEqual(summary["feedback"]["review_queue_images"], 0)
+        self.assertEqual(summary["feedback"]["review_event_counts"], {})
+        self.assertEqual(summary["feedback"]["status_counts"]["review_only"], 1)
+        manifest = json.loads(
+            (self.output / "manifest_selected_images.jsonl").read_text(encoding="utf-8").strip()
+        )
+        self.assertEqual(manifest["feedback_reason"], "binary_negative_cross_class_positive")
+        self.assertEqual(manifest["missing_expected_classes"], [])
 
 
 if __name__ == "__main__":

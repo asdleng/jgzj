@@ -320,8 +320,11 @@ def iter_candidate_rows(
             mapped
             for mapped in (expected_class(task.get("event_name")) for task in tasks)
             if mapped
-        }
-        status, reason, missing = feedback_status(label_payload, labels, expected, audit_payload)
+        } if source == SOURCE else set()
+        if source == NO_LABELER_SOURCE:
+            status, reason, missing = "review_only", "binary_negative_cross_class_positive", []
+        else:
+            status, reason, missing = feedback_status(label_payload, labels, expected, audit_payload)
         yield {
             "meta": meta,
             "meta_path": meta_path,
@@ -366,6 +369,8 @@ def build_dataset(args) -> dict:
 
     status_counts = collections.Counter()
     event_counts = collections.Counter()
+    negative_event_counts = collections.Counter()
+    review_event_counts = collections.Counter()
     expected_counts = collections.Counter()
     independent_counts = collections.Counter()
     quality_counts = collections.Counter()
@@ -395,7 +400,10 @@ def build_dataset(args) -> dict:
         task_rows = []
         for task in tasks:
             event_name = str(task.get("event_name") or "")
-            event_counts[event_name or "unknown"] += 1
+            target_counts = event_counts if row["source"] == SOURCE else negative_event_counts
+            target_counts[event_name or "unknown"] += 1
+            if row["source"] == SOURCE and row["feedback_status"] == "needs_human":
+                review_event_counts[event_name or "unknown"] += 1
             task_rows.append({
                 "request_id": request_id,
                 "task_id": task.get("task_id"),
@@ -488,6 +496,9 @@ def build_dataset(args) -> dict:
             "total_images": len(rows),
             "status_counts": dict(status_counts.most_common()),
             "event_counts": dict(event_counts.most_common()),
+            "negative_event_counts": dict(negative_event_counts.most_common()),
+            "review_queue_images": int(status_counts.get("needs_human", 0)),
+            "review_event_counts": dict(review_event_counts.most_common()),
             "expected_class_counts": dict(expected_counts.most_common()),
             "independent_class_images": dict(independent_counts.most_common()),
             "quality_counts": dict(quality_counts.most_common()),

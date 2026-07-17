@@ -67,7 +67,7 @@
       taskKind: "mixed"
     },
     qwen_suspect: {
-      label: "可疑标注 · 全部来源 · 待人工校核",
+      label: "待人工校核 · 三类来源",
       tokens: ["vehicle_self_collected", "patrol", "qwen_bbox"],
       qwenLabel: "",
       className: "",
@@ -211,6 +211,12 @@
     { value: "web_crawler", label: "网络搜索数据集" },
     { value: "checker_archive", label: "云端校核" },
     { value: "public_dataset", label: "公开数据集" }
+  ];
+
+  const reviewSourceGroups = [
+    { value: "vehicle_collection", label: "车辆自采巡逻图" },
+    { value: "web_crawler", label: "网络搜索数据集" },
+    { value: "checker_archive", label: "YOLO事件反馈候选集" }
   ];
 
   function createNode(tag, className, text) {
@@ -627,6 +633,31 @@
     return qwenLabelNames[value] || value;
   }
 
+  function feedbackEventLabel(value) {
+    const names = {
+      bicycle: "自行车",
+      truck: "卡车",
+      linger: "徘徊",
+      license_plate: "车牌",
+      paper: "纸类垃圾",
+      box: "箱盒",
+      bag: "袋子",
+      lawn: "草坪",
+      fighting: "打架",
+      bottle: "瓶子",
+      car: "汽车",
+      off_leash_dog: "未牵绳犬",
+      motorcycle: "摩托车",
+      non_motorvehicle: "非机动车",
+      lying: "躺卧",
+      fishing: "钓鱼",
+      falldown: "跌倒",
+      wall: "墙面"
+    };
+    const token = normalizeClassToken(value);
+    return names[token] || qwenLabelNames[token] || String(value || "");
+  }
+
   function qwenCountSummary(item) {
     const counts = item?.qwen_label?.counts || {};
     const parts = Object.entries(counts)
@@ -683,6 +714,20 @@
     return feedback?.event_counts && typeof feedback.event_counts === "object" && !Array.isArray(feedback.event_counts)
       ? feedback.event_counts
       : null;
+  }
+
+  function feedbackEventCountRows(dataset) {
+    const feedback = datasetFeedback(dataset);
+    const counts = isReviewQueueEvent() && feedback?.review_event_counts
+      ? feedback.review_event_counts
+      : feedbackEventCounts(dataset);
+    return Object.entries(counts || {})
+      .map(([name, count]) => ({
+        name: String(name || "").trim(),
+        count: Number(count || 0)
+      }))
+      .filter((item) => item.name && Number.isFinite(item.count) && item.count > 0)
+      .sort((left, right) => (right.count - left.count) || left.name.localeCompare(right.name, "zh-CN"));
   }
 
   function normalizeEventNameOptions(source) {
@@ -781,7 +826,7 @@
     const preset = eventPresets[eventKey];
     if (!preset) return true;
     if (preset.qwenAudit) {
-      return datasetSourceGroup(dataset) === "vehicle_collection";
+      return datasetReviewQueueCount(dataset) > 0;
     }
     const sourceGroup = datasetSourceGroup(dataset);
     const text = datasetEventText(dataset);
@@ -885,9 +930,12 @@
 
   function datasetEventLabel(eventKey = state.activeEvent, source = refs.source?.value || "") {
     const raw = eventPresets[eventKey]?.label || "全部事件";
-    const sourceText = sourceGroupLabel(source);
+    const sourceText = currentSourceGroupLabel(source);
     const label = raw.replace(" · 全部来源", "");
     if (!eventKey || eventKey === "all") {
+      return `${label} · 当前 ${sourceText}`;
+    }
+    if (eventKey === "qwen_suspect") {
       return `${label} · 当前 ${sourceText}`;
     }
     return label
@@ -933,10 +981,10 @@
       return datasetTotalImages(dataset);
     }
     if (preset.qwenAudit) {
-      const audit = datasetQwenAudit(dataset);
       if (preset.qwenAudit === "suspect") {
-        return Number(audit?.review_queue_images || 0);
+        return datasetReviewQueueCount(dataset);
       }
+      const audit = datasetQwenAudit(dataset);
       if (preset.qwenAudit === "pending") {
         return Number(audit?.pending_images || 0);
       }
@@ -1034,6 +1082,31 @@
 
   function datasetQwenAudit(dataset) {
     return dataset?.qwen_bbox_audit || dataset?.summary?.qwen_bbox_audit || null;
+  }
+
+  function isReviewQueueEvent() {
+    return state.activeEvent === "qwen_suspect";
+  }
+
+  function datasetReviewQueueCount(dataset) {
+    const feedback = datasetFeedback(dataset);
+    if (feedback) {
+      return Number(feedback.review_queue_images ?? feedback.status_counts?.needs_human ?? 0);
+    }
+    const webCrawler = dataset?.web_crawler || dataset?.summary?.web_crawler;
+    if (webCrawler) {
+      return Number(webCrawler.review_queue_images ?? webCrawler.audit_needs_human_images ?? webCrawler.needs_human_images ?? 0);
+    }
+    return Number(datasetQwenAudit(dataset)?.review_queue_images || 0);
+  }
+
+  function currentSourceGroups() {
+    return isReviewQueueEvent() ? reviewSourceGroups : sourceGroups.slice(1);
+  }
+
+  function currentSourceGroupLabel(value) {
+    if (!value) return "全部来源";
+    return currentSourceGroups().find((item) => item.value === value)?.label || sourceGroupLabel(value);
   }
 
   function datasetClassSummary(dataset) {
@@ -1207,8 +1280,9 @@
   function renderSourceCards() {
     if (!refs.sourceCards) return;
     refs.sourceCards.innerHTML = "";
+    refs.sourceCards.classList.toggle("is-review-queue", isReviewQueueEvent());
     const selectedSource = refs.source?.value || "";
-    const orderedGroups = [...sourceGroups.slice(1), sourceGroups[0]];
+    const orderedGroups = [...currentSourceGroups(), sourceGroups[0]];
     orderedGroups.forEach((group) => {
       const stats = sourceStats(group.value);
       const button = createNode("button", "yolo-review-source-card");
@@ -1228,13 +1302,16 @@
       button.appendChild(title);
 
       const metrics = createNode("div", "yolo-review-source-card-metrics");
-      const sampleLabel = state.activeEvent === "all" ? "样本" : "事件样本";
+      const sampleLabel = isReviewQueueEvent() ? "待校核" : (state.activeEvent === "all" ? "样本" : "事件样本");
       const boxLabel = state.activeEvent === "all" ? "框" : "事件框";
-      [
+      const metricRows = [
         ["数据集", compactNumber(stats.datasetCount)],
-        [sampleLabel, compactNumber(stats.imageCount)],
-        [boxLabel, compactNumber(stats.boxCount)]
-      ].forEach(([label, value]) => {
+        [sampleLabel, compactNumber(stats.imageCount)]
+      ];
+      if (!isReviewQueueEvent()) {
+        metricRows.push([boxLabel, compactNumber(stats.boxCount)]);
+      }
+      metricRows.forEach(([label, value]) => {
         const metric = createNode("span", "", `${label} ${value}`);
         metrics.appendChild(metric);
       });
@@ -1251,14 +1328,15 @@
     const total = state.eventDatasets.length;
     if (refs.datasetStatus) {
       const selectedStats = sourceStats(refs.source?.value || "");
-      const sourceCounts = sourceGroups.slice(1).map((group) => {
+      const sourceCounts = currentSourceGroups().map((group) => {
         const stats = sourceStats(group.value);
-        return `${group.label} ${compactNumber(stats.datasetCount)}集/${compactNumber(stats.imageCount)}样本`;
+        const countLabel = isReviewQueueEvent() ? "待校核" : "样本";
+        return `${group.label} ${compactNumber(stats.datasetCount)}集/${compactNumber(stats.imageCount)}${countLabel}`;
       });
       refs.datasetStatus.textContent = `${datasetEventLabel()} · ${compactNumber(selectedStats.datasetCount)} / ${compactNumber(total)} 个数据集 · ${sourceCounts.join(" · ")}`;
     }
     if (!visible.length) {
-      const sourceText = sourceGroupLabel(refs.source?.value || "");
+      const sourceText = currentSourceGroupLabel(refs.source?.value || "");
       refs.datasetCards.appendChild(createNode("p", "yolo-review-empty", `当前事件的「${sourceText}」下没有数据集。`));
       return;
     }
@@ -1267,6 +1345,7 @@
       button.type = "button";
       button.dataset.datasetId = dataset.id;
       button.classList.toggle("is-active", dataset.id === state.datasetId);
+      button.classList.toggle("yolo-review-dataset-card--feedback", isEventFeedbackDataset(dataset));
       button.addEventListener("click", () => {
         if (dataset.id === state.datasetId) return;
         state.datasetId = dataset.id;
@@ -1296,17 +1375,47 @@
       const classes = createNode("p", "yolo-review-dataset-classes", datasetClassSummary(dataset));
       button.appendChild(classes);
 
+      const feedbackCounts = feedbackEventCountRows(dataset);
+      if (feedbackCounts.length) {
+        const breakdown = createNode("div", "yolo-review-feedback-breakdown");
+        const breakdownHead = createNode("div", "yolo-review-feedback-breakdown-head");
+        breakdownHead.appendChild(createNode(
+          "strong",
+          "",
+          isReviewQueueEvent() ? "按事件类型（待校核数）" : "按事件类型（YES候选数）"
+        ));
+        breakdownHead.appendChild(createNode("span", "", `${compactNumber(feedbackCounts.length)} 种`));
+        breakdown.appendChild(breakdownHead);
+
+        const countGrid = createNode("div", "yolo-review-feedback-count-grid");
+        feedbackCounts.forEach(({ name, count }) => {
+          const item = createNode("span", "yolo-review-feedback-count");
+          const label = feedbackEventLabel(name);
+          item.title = label === name ? name : `${label} (${name})`;
+          item.appendChild(createNode("span", "", label));
+          item.appendChild(createNode("strong", "", compactNumber(count)));
+          countGrid.appendChild(item);
+        });
+        breakdown.appendChild(countGrid);
+        button.appendChild(breakdown);
+      }
+
       const metrics = createNode("div", "yolo-review-dataset-metrics");
       const eventMetrics = datasetEventMetrics(dataset);
       const audit = datasetQwenAudit(dataset);
       const sampleLabel = state.activeEvent === "all" ? "样本" : "事件样本";
       const boxLabel = state.activeEvent === "all" ? "框" : "事件框";
       const webCrawler = dataset.web_crawler || dataset.summary?.web_crawler;
-      const metricRows = webCrawler ? [
+      const reviewQueueRows = [
+        ["待人工校核", compactNumber(datasetReviewQueueCount(dataset))],
+        ["总样本", compactNumber(dataset.total_images)],
+        ["已有框", compactNumber(datasetTotalBoxes(dataset))]
+      ];
+      const metricRows = isReviewQueueEvent() ? reviewQueueRows : (webCrawler ? [
         ["总样本", compactNumber(webCrawler.total_images)],
         ["正样本", compactNumber(webCrawler.positive_images)],
         ["强负样本", compactNumber(webCrawler.hard_negative_images)],
-        ["待人工", compactNumber(webCrawler.needs_human_images)],
+        ["待人工", compactNumber(webCrawler.review_queue_images ?? webCrawler.audit_needs_human_images ?? webCrawler.needs_human_images)],
         ["不可用", compactNumber(webCrawler.unusable_images)],
         ["最终框", compactNumber(webCrawler.accepted_boxes)]
       ] : [
@@ -1316,7 +1425,7 @@
         ["NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"],
         ["框已标", datasetMetricValue(dataset, "qwen_bbox.cached_images")],
         ["可疑", audit ? compactNumber(audit.review_queue_images) : "-"]
-      ];
+      ]);
       metricRows.forEach(([label, value]) => {
         const metric = createNode("div", "yolo-review-dataset-metric");
         metric.appendChild(createNode("span", "", label));
@@ -1654,12 +1763,15 @@
     }
 
     const eventMetrics = datasetEventMetrics(dataset);
+    const reviewQueue = isReviewQueueEvent();
     const cells = [
       ["来源", datasetSourceText(dataset)],
       ["Profile", dataset.profile || dataset.name || "-"],
       ["类型", dataset.kind === "classify" ? "分类" : "检测"],
-      [state.activeEvent === "all" ? "样本" : "事件样本", compactNumber(eventMetrics.imageCount)],
-      [state.activeEvent === "all" ? "框" : "事件框", dataset.boxes || eventMetrics.boxCount ? compactNumber(eventMetrics.boxCount) : "-"],
+      [reviewQueue ? "待人工校核" : (state.activeEvent === "all" ? "样本" : "事件样本"), compactNumber(eventMetrics.imageCount)],
+      [reviewQueue ? "队列来源" : (state.activeEvent === "all" ? "框" : "事件框"), reviewQueue
+        ? currentSourceGroupLabel(datasetSourceGroup(dataset))
+        : (dataset.boxes || eventMetrics.boxCount ? compactNumber(eventMetrics.boxCount) : "-")],
       ["AI YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
       ["AI NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"]
     ];
@@ -1668,7 +1780,7 @@
     if (webCrawler) {
       cells.push(["Qwen正样本", compactNumber(webCrawler.positive_images)]);
       cells.push(["强负样本", compactNumber(webCrawler.hard_negative_images)]);
-      cells.push(["待人工", compactNumber(webCrawler.needs_human_images)]);
+      cells.push(["待人工", compactNumber(webCrawler.review_queue_images ?? webCrawler.audit_needs_human_images ?? webCrawler.needs_human_images)]);
       cells.push(["不可用", compactNumber(webCrawler.unusable_images)]);
       cells.push(["隔离冲突", compactNumber(webCrawler.quarantined_conflicts)]);
       cells.push(["训练门禁", webCrawler.training_eligible ? "已放行" : "未放行"]);
@@ -1818,7 +1930,8 @@
     if (classFilter) params.set("class_name", classFilter);
     if (refs.answer.value) params.set("ai_answer", refs.answer.value);
     if (refs.qwenLabel?.value) params.set("qwen_label", refs.qwenLabel.value);
-    if (refs.qwenAudit?.value) params.set("qwen_audit", refs.qwenAudit.value);
+    const auditFilter = isReviewQueueEvent() ? "suspect" : refs.qwenAudit?.value;
+    if (auditFilter) params.set("qwen_audit", auditFilter);
     if (refs.hasBox?.checked) params.set("has_box", "1");
     if (refs.query.value.trim()) params.set("q", refs.query.value.trim());
     return `${endpoints.items}?${params.toString()}`;
