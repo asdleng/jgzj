@@ -7902,6 +7902,11 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
     error.status = 503;
     throw error;
   }
+  if (!cloudOpsAgentConfigured()) {
+    const error = new Error('cloud_ops_codex_relay_not_configured');
+    error.status = 503;
+    throw error;
+  }
   const runId = `codex_ops_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`;
   const startedAt = Date.now();
   const vehicles = await listCloudAgentVehicles().catch(() => []);
@@ -7913,13 +7918,22 @@ async function runCloudOpsCodexAgent({ message, requestedModel, history, vehicle
   const codexModel = cloudOpsCodexAgentModel;
   const permission = cloudOpsAgentPermissionConfig(permissionMode);
   const child = spawn(cloudOpsCodexBin, [
+    '-c', 'model_provider="jgzj_relay"',
+    '-c', 'model_providers.jgzj_relay.name="JGZJ Relay"',
+    '-c', `model_providers.jgzj_relay.base_url=${JSON.stringify(cloudOpsAgentBaseUrl)}`,
+    '-c', 'model_providers.jgzj_relay.env_key="CLOUD_OPS_AGENT_API_KEY"',
+    '-c', 'model_providers.jgzj_relay.wire_api="responses"',
+    '-c', 'model_providers.jgzj_relay.requires_openai_auth=false',
     '-c', `web_search=${JSON.stringify(cloudOpsCodexWebSearchMode)}`,
     'app-server',
     '--stdio'
   ], {
     cwd: cloudOpsCodexAgentCwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: process.env
+    env: {
+      ...process.env,
+      CLOUD_OPS_AGENT_API_KEY: cloudOpsAgentApiKey
+    }
   });
   const pendingRequests = new Map();
   let nextRequestId = 1;
@@ -15704,12 +15718,14 @@ app.get('/api/cloud-ops-agent/status', authStore.requirePermission('vehicle:read
   ]);
   const legacySubapiConfigured = cloudOpsAgentConfigured();
   const codexConfigured = Boolean(codexDeployment.integrated);
-  const configured = cloudOpsCodexUnifiedRouteEnabled ? codexConfigured : legacySubapiConfigured;
+  const configured = cloudOpsCodexUnifiedRouteEnabled
+    ? codexConfigured && legacySubapiConfigured
+    : legacySubapiConfigured;
   return res.json({
     ok: true,
     enabled: cloudOpsAgentEnabled,
     configured,
-    provider: cloudOpsCodexUnifiedRouteEnabled ? 'openai_codex_app_server' : 'subapi_openai_compatible',
+    provider: cloudOpsCodexUnifiedRouteEnabled ? 'codex_app_server_via_sub2api' : 'subapi_openai_compatible',
     route: cloudOpsCodexUnifiedRouteEnabled ? 'unified_codex' : 'server_side_only',
     execution_route_label: cloudOpsCodexUnifiedRouteEnabled
       ? `山海智枢 · 实时搜索 ${cloudOpsCodexWebSearchMode}`
@@ -15747,7 +15763,9 @@ app.get('/api/cloud-ops-agent/status', authStore.requirePermission('vehicle:read
     ],
     missing_config: configured
       ? []
-      : [cloudOpsCodexUnifiedRouteEnabled ? '山海智枢运行时' : 'CLOUD_OPS_AGENT_API_KEY or CLOUD_OPS_AGENT_SUBAPI_KEY']
+      : [cloudOpsCodexUnifiedRouteEnabled
+          ? '山海智枢运行时或服务器中转配置'
+          : 'CLOUD_OPS_AGENT_API_KEY or CLOUD_OPS_AGENT_SUBAPI_KEY']
   });
 });
 
