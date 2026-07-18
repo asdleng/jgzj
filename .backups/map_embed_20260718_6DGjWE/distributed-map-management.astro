@@ -2,8 +2,6 @@
 import "../../styles/app.css";
 import OptimizedImage from "../../components/OptimizedImage.astro";
 import SiteLayout from "../../components/SiteLayout.astro";
-
-const isEmbedded = Astro.url.searchParams.get("embed") === "1";
 ---
 
 <SiteLayout
@@ -11,16 +9,8 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
   description="连接车端地图编辑器插件，在云端统一启动、查看和代理车端地图、路线、边界与点云编辑页面。"
   currentPath="/app/distributed-map-management"
   noindex={true}
-  authMode={isEmbedded ? "none" : "controller"}
-  embedded={isEmbedded}
 >
-  <script is:inline>
-    (() => {
-      if (new URLSearchParams(window.location.search).get("embed") !== "1") return;
-      document.documentElement.classList.add("is-map-embed");
-    })();
-  </script>
-  {!isEmbedded ? <header class="page-hero distributed-map-hero">
+  <header class="page-hero distributed-map-hero">
     <OptimizedImage
       src="/assets/fallback/hero-l4-autonomy-1600.jpg"
       webp="/assets/optimized/hero-l4-autonomy-1600.webp"
@@ -39,9 +29,9 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
         </p>
       </div>
     </div>
-  </header> : null}
+  </header>
 
-  <main class:list={["page-main", "grid-bg", "distributed-map-content-main", { "distributed-map-embed-main": isEmbedded }]}>
+  <main class="page-main grid-bg">
     <section class="page-section map-editor-page-section">
       <div class="glass-card section-card reveal" data-reveal>
         <p class="section-kicker">车端插件桥接</p>
@@ -751,50 +741,6 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
   }
   .distributed-map-hero .page-subtitle {
     border-left-color: #60a5fa;
-  }
-</style>
-
-<style is:global>
-  html.is-map-embed .site-nav,
-  html.is-map-embed .scroll-progress,
-  html.is-map-embed .distributed-map-hero,
-  html.is-map-embed #back-to-top,
-  html.is-map-embed #contact,
-  html.is-map-embed .site-footer {
-    display: none !important;
-  }
-
-  html.is-map-embed,
-  html.is-map-embed body {
-    min-height: 0;
-    background: #020617;
-  }
-
-  html.is-map-embed .distributed-map-content-main {
-    min-height: 0;
-    padding: 0 !important;
-    background-color: #020617;
-  }
-
-  html.is-map-embed .distributed-map-content-main .map-editor-page-section {
-    width: 100%;
-    max-width: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  html.is-map-embed .distributed-map-content-main .section-card {
-    padding: clamp(14px, 2vw, 24px);
-    border: 0;
-    border-radius: 0;
-    background: #07101f;
-    box-shadow: none;
-  }
-
-  @media (max-width: 720px) {
-    html.is-map-embed .distributed-map-content-main .section-card {
-      padding: 12px;
-    }
   }
 </style>
 </SiteLayout>

@@ -644,34 +644,19 @@ const agentRules = [
       </section>
 
       <section id="cloud-ops-test-map" class="cloud-ops-test-page" data-active="false">
-        <div class="cloud-ops-test-page-head cloud-ops-map-page-head">
-          <div>
-            <p class="cloud-ops-test-kicker">MAP MANAGEMENT</p>
-            <h2>地图管理</h2>
-          </div>
-          <div class="cloud-ops-map-page-actions">
-            <span class="cloud-ops-map-load-state" data-role="map-embed-state"><i aria-hidden="true"></i>正在加载</span>
-            <a href="/app/distributed-map-management" target="_blank" rel="noopener noreferrer">
-              <span>独立打开</span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"></path></svg>
-            </a>
-          </div>
+        <div class="cloud-ops-test-page-head">
+          <p class="cloud-ops-test-kicker">MAP MANAGEMENT</p>
+          <h2>地图管理</h2>
         </div>
-        <div class="cloud-ops-map-embed-shell" data-role="map-embed-shell" data-state="loading">
-          <div class="cloud-ops-map-embed-loading" role="status">
-            <span aria-hidden="true"></span>
-            <strong>正在加载地图管理</strong>
-          </div>
-          <iframe
-            class="cloud-ops-map-embed-frame"
-            data-role="map-embed-frame"
-            src="/app/distributed-map-management?embed=1"
-            title="分布式地图管理工作台"
-            loading="lazy"
-            referrerpolicy="same-origin"
-            allow="clipboard-read; clipboard-write"
-            scrolling="no"
-          ></iframe>
+        <div class="cloud-ops-test-card-grid">
+          <article class="cloud-ops-test-card"><h3>车端插件桥接</h3><p>map_editor.start / status / stop / http</p></article>
+          <article class="cloud-ops-test-card"><h3>边界路径</h3><p>运营边界、禁行区、巡逻路径、检查点、停车点。</p></article>
+          <article class="cloud-ops-test-card"><h3>版本管理</h3><p>地图版本、车辆使用版本、发布记录、回滚点。</p></article>
+        </div>
+        <div class="cloud-ops-test-disabled-actions">
+          <button type="button" disabled>启动地图插件</button>
+          <button type="button" disabled>检查插件状态</button>
+          <button type="button" disabled>关闭地图插件</button>
         </div>
       </section>
 
@@ -913,9 +898,6 @@ const agentRules = [
 
     const tabs = [...shell.querySelectorAll(".cloud-ops-test-tabs button")];
     const pages = [...shell.querySelectorAll(".cloud-ops-test-page")];
-    const mapEmbedShell = shell.querySelector('[data-role="map-embed-shell"]');
-    const mapEmbedFrame = shell.querySelector('[data-role="map-embed-frame"]');
-    const mapEmbedState = shell.querySelector('[data-role="map-embed-state"]');
     const statusNode = shell.querySelector('[data-role="status"]');
     const vehicleSelect = shell.querySelector('[data-role="vehicle-select"]');
     const vehicleSortSelect = shell.querySelector('[data-role="vehicle-sort-select"]');
@@ -1034,7 +1016,6 @@ const agentRules = [
     let mapRouteGeneration = 0;
     let activeControlAction = null;
     let controlActionInFlight = false;
-    let mapEmbedResizeObserver = null;
     let agentCanChat = false;
     let agentDefaultModel = "gpt-5.6-terra";
     let agentAvailableModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
@@ -1272,41 +1253,6 @@ const agentRules = [
       statusNode.dataset.state = state;
     };
 
-    const resizeMapEmbed = () => {
-      if (!mapEmbedFrame) return;
-      try {
-        const frameDocument = mapEmbedFrame.contentDocument;
-        if (!frameDocument) return;
-        const height = Math.max(
-          frameDocument.documentElement?.scrollHeight || 0,
-          frameDocument.body?.scrollHeight || 0
-        );
-        if (height > 0) mapEmbedFrame.style.height = `${Math.ceil(height) + 2}px`;
-      } catch (_error) {
-        // The embedded page is same-origin in production; the minimum height remains as fallback.
-      }
-    };
-    const initializeMapEmbed = () => {
-      if (!mapEmbedFrame) return;
-      if (mapEmbedShell) mapEmbedShell.dataset.state = "ready";
-      if (mapEmbedState) mapEmbedState.innerHTML = '<i aria-hidden="true"></i>已加载';
-      mapEmbedResizeObserver?.disconnect();
-      try {
-        const frameDocument = mapEmbedFrame.contentDocument;
-        if (frameDocument?.documentElement && window.ResizeObserver) {
-          mapEmbedResizeObserver = new ResizeObserver(resizeMapEmbed);
-          mapEmbedResizeObserver.observe(frameDocument.documentElement);
-          if (frameDocument.body) mapEmbedResizeObserver.observe(frameDocument.body);
-        }
-      } catch (_error) {
-        mapEmbedResizeObserver = null;
-      }
-      resizeMapEmbed();
-      window.setTimeout(resizeMapEmbed, 250);
-    };
-    mapEmbedFrame?.addEventListener("load", initializeMapEmbed);
-    if (mapEmbedFrame?.contentDocument?.readyState === "complete") initializeMapEmbed();
-
     const setActive = (targetId) => {
       if (targetId !== "cloud-ops-test-status") stopLiveMonitor({ hideControl: true });
       tabs.forEach((tab) => tab.classList.toggle("is-active", tab.dataset.target === targetId));
@@ -1316,7 +1262,6 @@ const agentRules = [
       if (targetId === "cloud-ops-test-params" && selectedVehicleId() && paramLoadedVehicleId !== selectedVehicleId()) {
         loadParamValues();
       }
-      if (targetId === "cloud-ops-test-map") window.setTimeout(resizeMapEmbed, 0);
     };
 
     const vehicleIdOf = (vehicle) => String(vehicle?.vehicle_id || vehicle?.plate_number || vehicle?.id || "").trim();

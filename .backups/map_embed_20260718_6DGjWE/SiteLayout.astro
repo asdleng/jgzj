@@ -1,0 +1,123 @@
+---
+import "../styles/global.css";
+import AccountAuth from "./AccountAuth.astro";
+import {
+  contactInfo,
+  publicNavigationItems,
+  siteDescription,
+  siteName,
+  siteUrl
+} from "../data/site-content.js";
+
+const {
+  title,
+  description = siteDescription,
+  currentPath = "/",
+  ogImage = "/assets/fallback/home-hero-1920.jpg",
+  pageBackdrop = "",
+  noindex = false,
+  authMode = "controller",
+  structuredData = []
+} = Astro.props;
+
+const canonicalUrl = new URL(currentPath, siteUrl).toString();
+const fullTitle = title === siteName ? siteName : `${title} | ${siteName}`;
+const jsonLdItems = Array.isArray(structuredData)
+  ? structuredData
+  : structuredData
+    ? [structuredData]
+    : [];
+const isAppPage = String(currentPath).startsWith("/app/");
+---
+
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="canonical" href={canonicalUrl} />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <meta name="description" content={description} />
+    {noindex ? <meta name="robots" content="noindex,nofollow" /> : null}
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:image" content={new URL(ogImage, siteUrl).toString()} />
+    <meta property="og:description" content={description} />
+    {jsonLdItems.map((item) => (
+      <script is:inline type="application/ld+json" set:html={JSON.stringify(item)} />
+    ))}
+    <title>{fullTitle}</title>
+  </head>
+  <body class:list={{ "has-page-backdrop": Boolean(pageBackdrop), "is-app-page": isAppPage }}>
+    {pageBackdrop ? (
+      <div
+        class="page-backdrop"
+        style={`--page-backdrop-image: url('${pageBackdrop}')`}
+        aria-hidden="true"
+      ></div>
+    ) : null}
+    <div class="scroll-progress">
+      <span id="scroll-progress"></span>
+    </div>
+
+    <nav class="site-nav">
+      <div class="site-nav-shell">
+        <a href="/" class="site-brand">
+          <img src="/assets/s19_91432e393d0c.png" alt="吉光智界 logo" class="h-8 w-8 rounded" width="32" height="32" decoding="async" />
+          吉光智界
+        </a>
+        <div class="site-nav-links">
+          {publicNavigationItems.map((item) => (
+            <a href={item.href} class:list={{ "is-active": currentPath === item.href }}>
+              {item.label}
+            </a>
+          ))}
+        </div>
+        <div class="site-nav-links site-nav-links--private" data-private-nav hidden></div>
+        {authMode !== "none" ? <AccountAuth mode={authMode} /> : null}
+      </div>
+    </nav>
+
+    <slot />
+
+    <button
+      type="button"
+      id="back-to-top"
+      class="back-to-top"
+      aria-label="返回顶部"
+      hidden
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 14 12 8 18 14" />
+      </svg>
+    </button>
+
+    <section id="contact" class="mx-auto max-w-screen-xl px-4 pb-10">
+      <div class="contact-band reveal" data-reveal>
+        <p class="contact-band-kicker">商务联系</p>
+        <h2 class="contact-band-title">欢迎联系吉光智界</h2>
+        <div class="contact-info-list">
+          <a href={`mailto:${contactInfo.email}`} class="contact-info-badge contact-info-badge--cyan">
+            <span class="contact-info-icon">✉</span>
+            <span>{contactInfo.email}</span>
+          </a>
+          <span class="contact-info-badge">
+            <span class="contact-info-icon">📞</span>
+            <span>{contactInfo.phone}</span>
+          </span>
+          <span class="contact-info-badge">
+            <span class="contact-info-icon">📍</span>
+            <span>{contactInfo.address}</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      © {new Date().getFullYear()} {siteName}. All Rights Reserved.
+    </footer>
+
+    <script is:inline data-cfasync="false" src="/js/site-ui.js?v=20260610-3" defer></script>
+  </body>
+</html>

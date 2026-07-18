@@ -567,6 +567,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
 <script>
   // @ts-nocheck
   const STATUS_URL = "/api/three-dgs/status";
+  const VIEWER_BUILD = "20260718-cloudflare-startup-v1";
   const api = {
     capabilities: "/api/three-dgs/capture/capabilities",
     startCapture: "/api/three-dgs/capture/start",
@@ -745,7 +746,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
       trajectoryCamera
     ].join("-");
     const settingsUrl = `/api/three-dgs/viewer/settings?key=${encodeURIComponent(settingsKey)}&trajectory_camera=${encodeURIComponent(trajectoryCamera)}`;
-    return `/supersplat-viewer/?webgl&content=${encodeURIComponent(pointCloudUrl)}&settings=${encodeURIComponent(settingsUrl)}`;
+    return `/supersplat-viewer/?viewer_build=${encodeURIComponent(VIEWER_BUILD)}&webgl&content=${encodeURIComponent(pointCloudUrl)}&settings=${encodeURIComponent(settingsUrl)}`;
   }
 
   function parseViewerVector(text) {

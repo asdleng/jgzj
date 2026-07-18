@@ -19144,7 +19144,12 @@ app.use(
   '/supersplat-viewer',
   express.static(superSplatViewerRoot, {
     index: 'index.html',
-    maxAge: '1h'
+    maxAge: '1h',
+    setHeaders(res, filePath) {
+      if (path.basename(filePath) === 'index.html') {
+        res.setHeader('Cache-Control', 'no-store');
+      }
+    }
   })
 );
 
