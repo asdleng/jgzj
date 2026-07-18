@@ -14,6 +14,12 @@ patched = original.replace(
     '<script type="module">',
     '<script data-cfasync="false" type="module">',
 )
+patched = re.sub(
+    r"(import \{ main \} from '\./index\.js)(?:\?[^']*)?(';)",
+    r"\1?v=20260719-first-frame-loader-1\2",
+    patched,
+    count=1,
+)
 
 if "const launchViewer = async () => {" not in patched:
     startup_pattern = re.compile(
@@ -48,11 +54,13 @@ if protected_module_count < 2:
     raise RuntimeError(
         f"expected at least two protected module scripts, found {protected_module_count}"
     )
+if "./index.js?v=20260719-first-frame-loader-1" not in patched:
+    raise RuntimeError("SuperSplat Viewer JS cache version was not patched")
 
 if patched != original:
     target_path.write_text(patched, encoding="utf-8")
 
 print(
     f"patched {target_path}: startup=readyState-safe "
-    f"protected_modules={protected_module_count}"
+    f"protected_modules={protected_module_count} js_cache=first-frame-loader-1"
 )

@@ -6836,7 +6836,7 @@ if __name__ == "__main__":
 
   app.get('/api/three-dgs/evaluation/:runId/image/:name', requireThreeDgsAuth, async (req, res) => {
     try {
-      const runId = sanitizeRunId(req.params.runId);
+      const runId = validateViewerRunId(req.params.runId);
       const fileName = String(req.params.name || '');
       if (!runId || !fileName || fileName !== path.basename(fileName)) {
         return res.status(400).type('text/plain').send('invalid_evaluation_image');

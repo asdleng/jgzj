@@ -22,6 +22,7 @@ cp package/public/index.css "$TARGET_DIR/index.css"
 cp package/public/index.js "$TARGET_DIR/index.js"
 cp package/LICENSE "$TARGET_DIR/LICENSE"
 python3 "$ROOT_DIR/scripts/patch_supersplat_viewer_html.py" "$TARGET_DIR/index.html"
+python3 "$ROOT_DIR/scripts/patch_supersplat_viewer_js.py" "$TARGET_DIR/index.js"
 cat > "$TARGET_DIR/settings.json" <<'JSON'
 {
   "version": 2,
