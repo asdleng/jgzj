@@ -23,6 +23,12 @@ function parseList(value) {
     .filter(Boolean);
 }
 
+function validateViewerRunId(value) {
+  const runId = String(value || '').trim();
+  if (!runId || runId.length > 255) return '';
+  return /^[a-zA-Z0-9_-]+$/.test(runId) ? runId : '';
+}
+
 function createInitialState() {
   return {
     phase: 'idle',
@@ -157,6 +163,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const datasetRoot = path.join(runtimeRoot, 'datasets');
   const logDir = path.join(runtimeRoot, 'logs');
   const resultRoot = path.join(runtimeRoot, 'results');
+  const viewerWebAssetName = 'point_cloud.web-v1.compressed.ply';
+  const viewerWebAssetQueryValue = 'compressed-ply-v1';
   const evaluationRoot = path.join(runtimeRoot, 'evaluations');
   const poseOptimizationRoot = path.join(runtimeRoot, 'pose-optimization');
   const defaultPoseTimeOffsetsJson = process.env.THREE_DGS_POSE_TIME_OFFSETS_JSON
@@ -382,10 +390,40 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return next;
   }
 
+  function responseViewerState() {
+    const viewer = state.viewer || {};
+    const runId = validateViewerRunId(viewer.run_id);
+    if (!runId || !viewer.point_cloud_url) return viewer;
+
+    const webAssetPath = path.join(resultRoot, runId, viewerWebAssetName);
+    let webAssetStat;
+    try {
+      webAssetStat = fs.statSync(webAssetPath);
+    } catch (_error) {
+      return viewer;
+    }
+    if (!webAssetStat.isFile() || webAssetStat.size <= 0) return viewer;
+
+    const pointCloudUrl = new URL(viewer.point_cloud_url, 'http://three-dgs.local');
+    pointCloudUrl.searchParams.set('web_asset', viewerWebAssetQueryValue);
+    return {
+      ...viewer,
+      point_cloud_url: `${pointCloudUrl.pathname}${pointCloudUrl.search}`,
+      source_size_bytes: viewer.size_bytes,
+      size_bytes: webAssetStat.size,
+      web_asset: {
+        format: 'compressed-ply',
+        version: 1,
+        size_bytes: webAssetStat.size
+      }
+    };
+  }
+
   function responseState() {
     return {
       ...state,
-      stage_text: normalizeThreeDgsStageText(state.stage_text)
+      stage_text: normalizeThreeDgsStageText(state.stage_text),
+      viewer: responseViewerState()
     };
   }
 
@@ -6820,17 +6858,22 @@ if __name__ == "__main__":
   });
 
   app.get('/api/three-dgs/results/:runId/point_cloud.ply', requireThreeDgsAuth, async (req, res) => {
-    const runId = sanitizeRunId(req.params.runId);
+    const runId = validateViewerRunId(req.params.runId);
     if (!runId) {
       return res.status(400).type('text/plain').send('run_id_invalid');
     }
-    const targetPath = path.join(resultRoot, runId, 'point_cloud.ply');
+    const sourcePath = path.join(resultRoot, runId, 'point_cloud.ply');
+    const webAssetPath = path.join(resultRoot, runId, viewerWebAssetName);
+    const useWebAsset = req.query.web_asset === viewerWebAssetQueryValue
+      && Boolean(await safeStat(webAssetPath));
+    const targetPath = useWebAsset ? webAssetPath : sourcePath;
     const stat = await safeStat(targetPath);
     if (!stat) {
       return res.status(404).type('text/plain').send('point_cloud_not_synced');
     }
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('X-JGZJ-Three-DGS-Asset', useWebAsset ? viewerWebAssetQueryValue : 'source-ply');
     return res.sendFile(targetPath);
   });
 
@@ -6934,3 +6977,5 @@ if __name__ == "__main__":
     return res.status(404).type('text/plain').send('log_not_found');
   });
 };
+
+module.exports.validateViewerRunId = validateViewerRunId;

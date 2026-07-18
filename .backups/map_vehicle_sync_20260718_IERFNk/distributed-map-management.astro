@@ -172,9 +172,6 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
       const uploadProgress = document.getElementById("map-upload-progress");
       const uploadProgressLabel = document.getElementById("map-upload-progress-label");
       const uploadMeta = document.getElementById("map-upload-meta");
-      const embeddedMode = new URLSearchParams(window.location.search).get("embed") === "1";
-      let requestedVehicleId = "";
-      let embeddedVehicleId = "";
 
       const mapUploadState = {
         pcdFile: null,
@@ -610,24 +607,6 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
         setFrameVisible(true);
       };
 
-      const syncEmbeddedVehicle = async (vehicleId, options = {}) => {
-        if (!embeddedMode || !vehicleSelect) return false;
-        requestedVehicleId = String(vehicleId || "").trim();
-        if (!requestedVehicleId) return false;
-        const exists = [...vehicleSelect.options].some((option) => option.value === requestedVehicleId);
-        if (!exists) return false;
-        if (embeddedVehicleId === requestedVehicleId && vehicleSelect.value === requestedVehicleId) return true;
-        if (options.resetFrame !== false) {
-          if (frame) frame.removeAttribute("src");
-          setFrameVisible(false);
-        }
-        vehicleSelect.value = requestedVehicleId;
-        embeddedVehicleId = requestedVehicleId;
-        await restoreUploadSession();
-        setStatus(`已同步左侧车辆：${requestedVehicleId}`, "ok");
-        return true;
-      };
-
       const loadVehicles = async () => {
         setBusy(true);
         setStatus("加载车辆中...", "loading");
@@ -637,12 +616,6 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
           const previous = selectedVehicleId();
           if (vehicleSelect) {
             vehicleSelect.innerHTML = "";
-            if (embeddedMode) {
-              const placeholderOption = document.createElement("option");
-              placeholderOption.value = "";
-              placeholderOption.textContent = "等待左侧车辆同步";
-              vehicleSelect.appendChild(placeholderOption);
-            }
             if (!vehicles.length) {
               const option = document.createElement("option");
               option.value = "";
@@ -659,23 +632,13 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
                 option.textContent = `${vehicleId}${host}${seen ? ` · ${seen}` : ""}`;
                 vehicleSelect.appendChild(option);
               });
-              if (!embeddedMode && previous && [...vehicleSelect.options].some((item) => item.value === previous)) {
+              if (previous && [...vehicleSelect.options].some((item) => item.value === previous)) {
                 vehicleSelect.value = previous;
               }
             }
           }
-          const synced = requestedVehicleId
-            ? await syncEmbeddedVehicle(requestedVehicleId, { resetFrame: false })
-            : false;
-          if (!synced) {
-            setStatus(
-              vehicles.length
-                ? embeddedMode ? "等待左侧车辆同步" : `已加载 ${vehicles.length} 台在线车辆`
-                : "暂无在线车辆",
-              vehicles.length ? embeddedMode ? "loading" : "ok" : "error"
-            );
-            await restoreUploadSession();
-          }
+          setStatus(vehicles.length ? `已加载 ${vehicles.length} 台在线车辆` : "暂无在线车辆", vehicles.length ? "ok" : "error");
+          await restoreUploadSession();
         } catch (error) {
           setStatus(`车辆加载失败：${error.message}`, "error");
         } finally {
@@ -765,7 +728,6 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
       uploadSync?.addEventListener("click", syncMapToServer);
       uploadCancel?.addEventListener("click", cancelMapUpload);
       vehicleSelect?.addEventListener("change", async () => {
-        if (embeddedMode) return;
         if (frame) frame.removeAttribute("src");
         setFrameVisible(false);
         await restoreUploadSession();
@@ -773,16 +735,6 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
       });
 
       loadVehicles();
-      if (embeddedMode) {
-        window.addEventListener("message", (event) => {
-          if (event.origin !== window.location.origin || event.source !== window.parent) return;
-          if (event.data?.type !== "jgzj:map-editor:vehicle") return;
-          syncEmbeddedVehicle(event.data.vehicleId).catch((error) => {
-            setStatus(`车辆同步失败：${error?.message || "未知错误"}`, "error");
-          });
-        });
-        window.parent.postMessage({ type: "jgzj:map-editor:ready" }, window.location.origin);
-      }
     })();
   </script>
 
@@ -839,32 +791,9 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
     box-shadow: none;
   }
 
-  html.is-map-embed .map-editor-field,
-  html.is-map-embed #map-editor-refresh {
-    display: none;
-  }
-
-  html.is-map-embed .map-editor-toolbar {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  html.is-map-embed .map-editor-inline-status {
-    grid-column: 1 / -1;
-    justify-self: start;
-    text-align: left;
-  }
-
   @media (max-width: 720px) {
     html.is-map-embed .distributed-map-content-main .section-card {
       padding: 12px;
-    }
-
-    html.is-map-embed .map-editor-toolbar {
-      grid-template-columns: 1fr;
-    }
-
-    html.is-map-embed .map-editor-inline-status {
-      grid-column: 1;
     }
   }
 </style>

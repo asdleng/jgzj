@@ -11669,7 +11669,6 @@ body.yolo-review-is-panning {
 }
 
 .cloud-ops-map-load-state,
-.cloud-ops-map-vehicle-context,
 .cloud-ops-map-page-actions a {
   min-height: 36px;
   display: inline-flex;
@@ -11687,12 +11686,6 @@ body.yolo-review-is-panning {
 .cloud-ops-map-load-state {
   color: #a7f3d0;
   background: rgba(6, 78, 59, 0.2);
-}
-
-.cloud-ops-map-vehicle-context {
-  color: #bae6fd;
-  border-color: rgba(56, 189, 248, 0.3);
-  background: rgba(8, 47, 73, 0.32);
 }
 
 .cloud-ops-map-load-state i {

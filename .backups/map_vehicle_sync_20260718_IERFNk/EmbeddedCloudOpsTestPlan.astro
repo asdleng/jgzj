@@ -650,7 +650,6 @@ const agentRules = [
             <h2>地图管理</h2>
           </div>
           <div class="cloud-ops-map-page-actions">
-            <span class="cloud-ops-map-vehicle-context" data-role="map-vehicle-context">车辆 --</span>
             <span class="cloud-ops-map-load-state" data-role="map-embed-state"><i aria-hidden="true"></i>正在加载</span>
             <a href="/app/distributed-map-management" target="_blank" rel="noopener noreferrer">
               <span>独立打开</span>
@@ -917,7 +916,6 @@ const agentRules = [
     const mapEmbedShell = shell.querySelector('[data-role="map-embed-shell"]');
     const mapEmbedFrame = shell.querySelector('[data-role="map-embed-frame"]');
     const mapEmbedState = shell.querySelector('[data-role="map-embed-state"]');
-    const mapVehicleContext = shell.querySelector('[data-role="map-vehicle-context"]');
     const statusNode = shell.querySelector('[data-role="status"]');
     const vehicleSelect = shell.querySelector('[data-role="vehicle-select"]');
     const vehicleSortSelect = shell.querySelector('[data-role="vehicle-sort-select"]');
@@ -1037,7 +1035,6 @@ const agentRules = [
     let activeControlAction = null;
     let controlActionInFlight = false;
     let mapEmbedResizeObserver = null;
-    let lastMapEmbedVehicleId = "";
     let agentCanChat = false;
     let agentDefaultModel = "gpt-5.6-terra";
     let agentAvailableModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
@@ -1274,7 +1271,6 @@ const agentRules = [
       statusNode.textContent = text;
       statusNode.dataset.state = state;
     };
-    const selectedVehicleId = () => String(currentVehicleId || vehicleSelect?.value || "").trim();
 
     const resizeMapEmbed = () => {
       if (!mapEmbedFrame) return;
@@ -1289,17 +1285,6 @@ const agentRules = [
       } catch (_error) {
         // The embedded page is same-origin in production; the minimum height remains as fallback.
       }
-    };
-    const syncMapEmbedVehicle = (options = {}) => {
-      const vehicleId = selectedVehicleId();
-      if (mapVehicleContext) mapVehicleContext.textContent = `车辆 ${vehicleId || "--"}`;
-      if (!vehicleId || !mapEmbedFrame?.contentWindow) return;
-      if (options.force !== true && vehicleId === lastMapEmbedVehicleId) return;
-      mapEmbedFrame.contentWindow.postMessage(
-        { type: "jgzj:map-editor:vehicle", vehicleId },
-        window.location.origin
-      );
-      lastMapEmbedVehicleId = vehicleId;
     };
     const initializeMapEmbed = () => {
       if (!mapEmbedFrame) return;
@@ -1316,17 +1301,11 @@ const agentRules = [
       } catch (_error) {
         mapEmbedResizeObserver = null;
       }
-      lastMapEmbedVehicleId = "";
-      syncMapEmbedVehicle({ force: true });
       resizeMapEmbed();
       window.setTimeout(resizeMapEmbed, 250);
     };
     mapEmbedFrame?.addEventListener("load", initializeMapEmbed);
     if (mapEmbedFrame?.contentDocument?.readyState === "complete") initializeMapEmbed();
-    window.addEventListener("message", (event) => {
-      if (event.origin !== window.location.origin || event.source !== mapEmbedFrame?.contentWindow) return;
-      if (event.data?.type === "jgzj:map-editor:ready") syncMapEmbedVehicle({ force: true });
-    });
 
     const setActive = (targetId) => {
       if (targetId !== "cloud-ops-test-status") stopLiveMonitor({ hideControl: true });
@@ -1343,6 +1322,7 @@ const agentRules = [
     const vehicleIdOf = (vehicle) => String(vehicle?.vehicle_id || vehicle?.plate_number || vehicle?.id || "").trim();
     const lastSeenOf = (vehicle) => String(vehicle?.last_seen || vehicle?.last_seen_at || vehicle?.updated_at || "").trim();
     const toolCountOf = (vehicle) => Number(vehicle?.tool_count || vehicle?.tools_count || 0) || 0;
+    const selectedVehicleId = () => String(currentVehicleId || vehicleSelect?.value || "").trim();
     const displayValue = (value, fallback = "--") => {
       if (value === null || value === undefined || value === "") return fallback;
       return String(value);
@@ -2791,7 +2771,6 @@ const agentRules = [
         renderParamDraft();
         if (paramPage?.dataset.active === "true") loadParamValues();
       }
-      syncMapEmbedVehicle();
     };
 
     const setSelectedVehicle = (vehicleId, options = {}) => {
