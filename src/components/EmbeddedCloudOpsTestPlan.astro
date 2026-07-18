@@ -468,6 +468,81 @@ const agentRules = [
       <section id="cloud-ops-test-params" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head cloud-ops-param-page-head">
           <div>
+            <p class="cloud-ops-test-kicker">PARAMETER SETTINGS</p>
+            <h2>参数设置</h2>
+          </div>
+          <button type="button" data-action="param-refresh" data-role="param-refresh">刷新当前值</button>
+        </div>
+
+        <div class="cloud-ops-param-context" aria-label="参数设置状态">
+          <div><span>当前车辆</span><strong data-role="param-vehicle">--</strong></div>
+          <div><span>读取状态</span><strong data-role="param-read-state">待读取</strong></div>
+          <div><span>待修改</span><strong><b data-role="param-changed-count">0</b> 项</strong></div>
+        </div>
+
+        <div class="cloud-ops-param-table" role="table" aria-label="车辆参数设置">
+          <div class="cloud-ops-param-row cloud-ops-param-row--head" role="row">
+            <strong role="columnheader">参数名字</strong>
+            <strong role="columnheader">含义</strong>
+            <strong role="columnheader">设置值</strong>
+          </div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="body.ad_screen">
+            <div role="cell"><strong>广告屏</strong><span data-param-current="body.ad_screen">当前：--</span></div>
+            <p role="cell">控制车载广告屏供电状态</p>
+            <div role="cell" class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="body" data-param-key="body.ad_screen" data-param-label="广告屏" data-original="" data-param-value="">
+              <button type="button" data-action="param-choice" data-param-value="true" disabled>开启</button><button type="button" data-action="param-choice" data-param-value="false" disabled>关闭</button>
+            </div>
+          </div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="body.front_lamp">
+            <div role="cell"><strong>前照灯</strong><span data-param-current="body.front_lamp">当前：--</span></div>
+            <p role="cell">控制车辆前照灯开关</p>
+            <div role="cell" class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="body" data-param-key="body.front_lamp" data-param-label="前照灯" data-original="" data-param-value="">
+              <button type="button" data-action="param-choice" data-param-value="true" disabled>开启</button><button type="button" data-action="param-choice" data-param-value="false" disabled>关闭</button>
+            </div>
+          </div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="body.mood_lamp">
+            <div role="cell"><strong>氛围灯</strong><span data-param-current="body.mood_lamp">当前：--</span></div>
+            <p role="cell">控制车内氛围灯开关</p>
+            <div role="cell" class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="body" data-param-key="body.mood_lamp" data-param-label="氛围灯" data-original="" data-param-value="">
+              <button type="button" data-action="param-choice" data-param-value="true" disabled>开启</button><button type="button" data-action="param-choice" data-param-value="false" disabled>关闭</button>
+            </div>
+          </div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="body.steer_lamp">
+            <div role="cell"><strong>转向灯</strong><span data-param-current="body.steer_lamp">当前：--</span></div>
+            <p role="cell">设置关闭、左转、右转或双闪</p>
+            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="转向灯设置值" data-param-input data-param-kind="steer" data-param-group="body" data-param-key="body.steer_lamp" data-param-label="转向灯" data-original="" disabled><option value="0">关闭</option><option value="1">左转</option><option value="2">右转</option><option value="3">双闪</option></select></div>
+          </div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="audio.system_volume">
+            <div role="cell"><strong>系统音量</strong><span data-param-current="audio.system_volume">当前：--</span></div>
+            <p role="cell">Ubuntu 扬声器输出音量</p>
+            <label role="cell" class="cloud-ops-param-number"><input type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="系统音量设置值" data-param-input data-param-kind="percent" data-param-group="audio" data-param-key="audio.system_volume" data-param-label="系统音量" data-original="" disabled><span>%</span></label>
+          </div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="audio.microphone_gain">
+            <div role="cell"><strong>麦克风收音</strong><span data-param-current="audio.microphone_gain">当前：--</span></div>
+            <p role="cell">USB 麦克风输入增益</p>
+            <label role="cell" class="cloud-ops-param-number"><input type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="麦克风收音设置值" data-param-input data-param-kind="percent" data-param-group="audio" data-param-key="audio.microphone_gain" data-param-label="麦克风收音" data-original="" disabled><span>%</span></label>
+          </div>
+        </div>
+
+        <div class="cloud-ops-param-submit-bar">
+          <div><strong data-role="param-summary-title">没有待修改参数</strong><span data-role="param-summary-detail">修改设置值后，可统一确认并写入当前车辆。</span></div>
+          <div><button type="button" data-action="param-reset" data-role="param-reset" disabled>撤销修改</button><button type="button" class="is-primary" data-action="param-confirm-open" data-role="param-apply" disabled>确认修改</button></div>
+        </div>
+
+        <dialog class="cloud-ops-param-dialog" data-role="param-dialog" aria-labelledby="cloud-ops-param-dialog-title">
+          <div class="cloud-ops-param-dialog-shell">
+            <div class="cloud-ops-param-dialog-head"><div><p>PARAMETER CHANGE</p><h3 id="cloud-ops-param-dialog-title">确认参数修改</h3></div><button type="button" data-action="param-confirm-close" aria-label="关闭参数确认框">×</button></div>
+            <dl><div><dt>当前车辆</dt><dd data-role="param-confirm-vehicle">--</dd></div><div><dt>修改数量</dt><dd data-role="param-confirm-count">0 项</dd></div></dl>
+            <div class="cloud-ops-param-confirm-list" data-role="param-confirm-list"></div>
+            <p class="cloud-ops-param-confirm-warning">点击确认后才会实际写入车端；每项操作都会记录审计并执行写后回读。</p>
+            <div class="cloud-ops-param-dialog-actions"><button type="button" data-action="param-confirm-close">取消</button><button type="button" class="is-danger" data-action="param-confirm-submit" data-role="param-confirm-submit">确认并写入</button></div>
+          </div>
+        </dialog>
+      </section>
+
+      <section id="cloud-ops-test-params-legacy" class="cloud-ops-test-page" data-active="false" hidden aria-hidden="true">
+        <div class="cloud-ops-test-page-head cloud-ops-param-page-head">
+          <div>
             <p class="cloud-ops-test-kicker">PARAMETER CENTER</p>
             <h2>车辆参数中心</h2>
           </div>
@@ -904,14 +979,25 @@ const agentRules = [
     const agentTaskDialogCopy = agentTaskDialog?.querySelector('[data-role="agent-task-dialog-copy"]');
     const agentTaskDialogConfirm = agentTaskDialog?.querySelector('[data-role="agent-task-dialog-confirm"]');
     const paramVehicle = shell.querySelector('[data-role="param-vehicle"]');
+    const paramPage = shell.querySelector('#cloud-ops-test-params');
+    const paramReadState = paramPage?.querySelector('[data-role="param-read-state"]');
     const paramChangedCount = shell.querySelector('[data-role="param-changed-count"]');
-    const paramChangedBadge = shell.querySelector('[data-role="param-changed-badge"]');
-    const paramChangeList = shell.querySelector('[data-role="param-change-list"]');
-    const paramValidation = shell.querySelector('[data-role="param-validation"]');
-    const paramDomainTabs = [...shell.querySelectorAll('[data-param-domain]')];
-    const paramDomainPanels = [...shell.querySelectorAll('[data-param-panel]')];
-    const paramDraftInputs = [...shell.querySelectorAll('[data-param-input]')];
+    const paramRefresh = paramPage?.querySelector('[data-role="param-refresh"]');
+    const paramReset = paramPage?.querySelector('[data-role="param-reset"]');
+    const paramApply = paramPage?.querySelector('[data-role="param-apply"]');
+    const paramSummaryTitle = paramPage?.querySelector('[data-role="param-summary-title"]');
+    const paramSummaryDetail = paramPage?.querySelector('[data-role="param-summary-detail"]');
+    const paramDialog = paramPage?.querySelector('[data-role="param-dialog"]');
+    const paramConfirmVehicle = paramDialog?.querySelector('[data-role="param-confirm-vehicle"]');
+    const paramConfirmCount = paramDialog?.querySelector('[data-role="param-confirm-count"]');
+    const paramConfirmList = paramDialog?.querySelector('[data-role="param-confirm-list"]');
+    const paramConfirmSubmit = paramDialog?.querySelector('[data-role="param-confirm-submit"]');
+    const paramDraftInputs = [...(paramPage?.querySelectorAll('[data-param-input]') || [])];
     let lastParamVehicleId = "";
+    let paramLoadedVehicleId = "";
+    let paramLoadGeneration = 0;
+    let paramLoadInFlight = false;
+    let paramApplyInFlight = false;
     let vehicles = [];
     let currentVehicleId = "";
     let vehicleSortMode = "status";
@@ -951,79 +1037,214 @@ const agentRules = [
     let agentConversationPollTimer = 0;
     let agentConversationPollInFlight = false;
 
-    const paramInputValue = (input) => input.type === "checkbox" ? String(input.checked) : String(input.value || "");
+    const paramInputValue = (input) => input.dataset.paramKind === "boolean"
+      ? String(input.dataset.paramValue || "")
+      : String(input.value || "");
     const paramValueText = (input, value) => {
-      if (input.type === "checkbox") return value === "true" ? "开启" : "关闭";
-      return value || "未设置";
+      const normalized = String(value ?? "");
+      if (!normalized) return "--";
+      if (input.dataset.paramKind === "boolean") return normalized === "true" ? "开启" : "关闭";
+      if (input.dataset.paramKind === "steer") return ({ 0: "关闭", 1: "左转", 2: "右转", 3: "双闪" })[normalized] || normalized;
+      if (input.dataset.paramKind === "percent") return `${normalized}%`;
+      return normalized;
     };
-    const paramDraftStorageKey = () => `cloudOpsParamDraft:${selectedVehicleId() || "unselected"}`;
-    const syncParamDependencies = () => {
-      paramDraftInputs.forEach((input) => {
-        const parentId = input.dataset.paramParent;
-        if (!parentId) return;
-        const parent = shell.querySelector(`#${parentId}`);
-        input.disabled = !parent?.checked;
+    const setParamInputEnabled = (input, enabled) => {
+      if (input.dataset.paramKind === "boolean") {
+        input.querySelectorAll("button").forEach((button) => { button.disabled = !enabled; });
+      } else {
+        input.disabled = !enabled;
+      }
+      input.closest("[data-param-row]")?.classList.toggle("is-unavailable", !enabled);
+    };
+    const setParamInputValue = (input, value, options = {}) => {
+      const normalized = value === null || value === undefined ? "" : String(value);
+      if (input.dataset.paramKind === "boolean") {
+        input.dataset.paramValue = normalized;
+        input.querySelectorAll("button[data-param-value]").forEach((button) => {
+          button.classList.toggle("is-active", button.dataset.paramValue === normalized);
+          button.setAttribute("aria-pressed", button.dataset.paramValue === normalized ? "true" : "false");
+        });
+      } else {
+        input.value = normalized;
+      }
+      if (options.original) input.dataset.original = normalized;
+      const current = paramPage?.querySelector(`[data-param-current="${input.dataset.paramKey}"]`);
+      if (current && options.original) current.textContent = `当前：${paramValueText(input, normalized)}`;
+    };
+    const paramChanges = () => paramDraftInputs
+      .filter((input) => !input.closest("[data-param-row]")?.classList.contains("is-unavailable"))
+      .filter((input) => paramInputValue(input) !== String(input.dataset.original || ""))
+      .map((input) => ({
+        input,
+        key: String(input.dataset.paramKey || ""),
+        group: String(input.dataset.paramGroup || ""),
+        label: String(input.dataset.paramLabel || input.dataset.paramKey || "参数"),
+        original: String(input.dataset.original || ""),
+        value: paramInputValue(input)
+      }));
+    const validateParamChanges = (changes) => {
+      changes.forEach((change) => {
+        if (!change.value) throw new Error(`${change.label}没有有效设置值`);
+        if (change.input.dataset.paramKind === "percent") {
+          const value = Number(change.value);
+          if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error(`${change.label}必须是 0–100 的整数`);
+        }
       });
     };
     const renderParamDraft = () => {
-      syncParamDependencies();
-      const changes = paramDraftInputs.filter((input) => paramInputValue(input) !== String(input.dataset.original ?? ""));
-      const unresolved = changes.filter((input) => input.dataset.rangePending === "true" && paramInputValue(input));
+      const changes = paramChanges();
+      paramDraftInputs.forEach((input) => input.closest("[data-param-row]")?.classList.toggle(
+        "is-changed",
+        changes.some((change) => change.input === input)
+      ));
       if (paramChangedCount) paramChangedCount.textContent = String(changes.length);
-      if (paramChangedBadge) paramChangedBadge.textContent = `${changes.length} 项`;
-      if (paramChangeList) {
-        paramChangeList.innerHTML = changes.length
-          ? changes.map((input) => `<article><strong>${escapeHtml(input.dataset.paramLabel || input.dataset.paramKey || "参数")}</strong><span>${escapeHtml(paramValueText(input, String(input.dataset.original ?? "")))} → ${escapeHtml(paramValueText(input, paramInputValue(input)))}</span></article>`).join("")
-          : "<p>修改左侧草稿后，这里显示“原值 → 建议值”。</p>";
+      if (paramSummaryTitle) paramSummaryTitle.textContent = changes.length ? `待修改 ${changes.length} 项参数` : "没有待修改参数";
+      if (paramSummaryDetail) paramSummaryDetail.textContent = changes.length
+        ? changes.map((change) => `${change.label}：${paramValueText(change.input, change.original)} → ${paramValueText(change.input, change.value)}`).join("；")
+        : "修改设置值后，可统一确认并写入当前车辆。";
+      if (paramReset) paramReset.disabled = !changes.length || paramLoadInFlight || paramApplyInFlight;
+      if (paramApply) {
+        paramApply.disabled = !changes.length || paramLoadInFlight || paramApplyInFlight || paramLoadedVehicleId !== selectedVehicleId();
+        paramApply.textContent = changes.length ? `确认修改 (${changes.length})` : "确认修改";
       }
-      if (paramValidation) {
-        const strong = paramValidation.querySelector("strong");
-        const span = paramValidation.querySelector("span");
-        paramValidation.classList.toggle("is-warn", unresolved.length > 0);
-        if (strong) strong.textContent = unresolved.length ? "存在待确认项" : (changes.length ? "草稿校验通过" : "当前状态");
-        if (span) span.textContent = unresolved.length ? `${unresolved.length} 项缺少后端单位或安全范围，仅可保存本地草稿` : (changes.length ? "可保存本地草稿；真实应用仍被禁用" : "没有草稿变更");
-      }
+      if (paramRefresh) paramRefresh.disabled = paramLoadInFlight || paramApplyInFlight;
     };
     const resetParamDraft = (notify = true) => {
-      paramDraftInputs.forEach((input) => {
-        const original = String(input.dataset.original ?? "");
-        if (input.type === "checkbox") input.checked = original === "true";
-        else input.value = original;
-      });
+      paramDraftInputs.forEach((input) => setParamInputValue(input, String(input.dataset.original || "")));
       renderParamDraft();
-      if (notify) setStatus("已清空当前车辆的未保存参数草稿，未执行任何车端操作。", "ok");
+      if (notify) setStatus("已撤销未确认的参数修改，没有写入车辆。", "ok");
     };
-    const loadParamDraft = () => {
-      resetParamDraft(false);
-      try {
-        const draft = JSON.parse(localStorage.getItem(paramDraftStorageKey()) || "{}");
-        paramDraftInputs.forEach((input) => {
-          if (!(input.dataset.paramKey in draft)) return;
-          if (input.type === "checkbox") input.checked = Boolean(draft[input.dataset.paramKey]);
-          else input.value = String(draft[input.dataset.paramKey] ?? "");
-        });
-      } catch (_error) {}
-      renderParamDraft();
-    };
-    const saveParamDraft = () => {
-      const draft = {};
+    const paramFirstBool = (...values) => values.find((value) => typeof value === "boolean");
+    const loadParamValues = async (options = {}) => {
+      const vehicleId = selectedVehicleId();
+      if (!vehicleId || paramApplyInFlight) return;
+      const generation = ++paramLoadGeneration;
+      paramLoadInFlight = true;
+      paramLoadedVehicleId = "";
       paramDraftInputs.forEach((input) => {
-        draft[input.dataset.paramKey] = input.type === "checkbox" ? input.checked : input.value;
+        setParamInputValue(input, "", { original: true });
+        setParamInputEnabled(input, false);
       });
+      if (paramReadState) paramReadState.textContent = "读取中";
+      renderParamDraft();
       try {
-        localStorage.setItem(paramDraftStorageKey(), JSON.stringify(draft));
-        setStatus(`已为 ${selectedVehicleId() || "当前车辆"} 保存本地参数草稿，未写入车辆。`, "ok");
-      } catch (_error) {
-        setStatus("本地草稿保存失败，未写入车辆。", "error");
+        const [bodyResponse, audioResponse] = await Promise.allSettled([
+          requestReadOnlyToolPayload(vehicleId, "status.body_control", {}, 25, "parameter-read-body"),
+          requestReadOnlyToolPayload(vehicleId, "status.audio_alsa", { preferred_keywords: ["Yundea", "Jabra"], speaker_min_percent: 0, include_controls: true }, 25, "parameter-read-audio")
+        ]);
+        if (generation !== paramLoadGeneration || vehicleId !== selectedVehicleId()) return;
+        let loadedCount = 0;
+        if (bodyResponse.status === "fulfilled") {
+          const body = toolResultOfPayload(bodyResponse.value) || {};
+          const summary = body.summary || {};
+          const command = summary.control_command || {};
+          const planning = summary.planning_intent || {};
+          const feedback = summary.vehicle_feedback || {};
+          const values = {
+            "body.ad_screen": paramFirstBool(command.ad_screen, planning.ad_screen, feedback.ad_screen_on),
+            "body.front_lamp": paramFirstBool(command.front_lamp, planning.front_lamp, feedback.front_lamp_on),
+            "body.mood_lamp": paramFirstBool(command.mood_lamp, planning.mood_lamp, feedback.mood_lamp_on),
+            "body.steer_lamp": command.steer_lamp_code ?? feedback.steer_lamp_code
+          };
+          paramDraftInputs.filter((input) => input.dataset.paramGroup === "body").forEach((input) => {
+            const value = values[input.dataset.paramKey];
+            const valid = input.dataset.paramKind === "steer"
+              ? ["0", "1", "2", "3"].includes(String(value))
+              : value !== null && value !== undefined && value !== "";
+            setParamInputValue(input, valid ? value : "", { original: true });
+            setParamInputEnabled(input, valid);
+            if (valid) loadedCount += 1;
+          });
+        }
+        if (audioResponse.status === "fulfilled") {
+          const audio = toolResultOfPayload(audioResponse.value) || {};
+          const values = {
+            "audio.system_volume": audio.system_volume?.percent ?? audio.speaker?.percent,
+            "audio.microphone_gain": audio.microphone_input?.percent ?? audio.mic?.percent
+          };
+          paramDraftInputs.filter((input) => input.dataset.paramGroup === "audio").forEach((input) => {
+            const rawValue = values[input.dataset.paramKey];
+            const raw = Number(rawValue);
+            const valid = rawValue !== null && rawValue !== undefined && rawValue !== "" && Number.isFinite(raw) && raw >= 0 && raw <= 100;
+            const value = valid ? Math.round(raw) : "";
+            setParamInputValue(input, value, { original: true });
+            setParamInputEnabled(input, valid);
+            if (valid) loadedCount += 1;
+          });
+        }
+        paramLoadedVehicleId = vehicleId;
+        if (paramReadState) paramReadState.textContent = loadedCount === paramDraftInputs.length ? "已读取" : `已读取 ${loadedCount}/${paramDraftInputs.length}`;
+        if (options.notify !== false) setStatus(`已读取 ${vehicleId} 的 ${loadedCount} 项可写参数。`, loadedCount ? "ok" : "error");
+      } catch (error) {
+        if (generation !== paramLoadGeneration) return;
+        if (paramReadState) paramReadState.textContent = "读取失败";
+        if (options.notify !== false) setStatus(`参数读取失败：${error?.message || "未知错误"}`, "error");
+      } finally {
+        if (generation === paramLoadGeneration) {
+          paramLoadInFlight = false;
+          renderParamDraft();
+        }
       }
     };
-    const setParamDomain = (domain) => {
-      paramDomainTabs.forEach((button) => button.classList.toggle("is-active", button.dataset.paramDomain === domain));
-      paramDomainPanels.forEach((panel) => {
-        const active = panel.dataset.paramPanel === domain;
-        panel.classList.toggle("is-active", active);
-        panel.hidden = !active;
-      });
+    const openParamConfirm = () => {
+      const changes = paramChanges();
+      try { validateParamChanges(changes); } catch (error) { setStatus(error?.message || "参数值无效", "error"); return; }
+      if (!changes.length || !paramDialog || paramLoadedVehicleId !== selectedVehicleId()) return;
+      if (paramConfirmVehicle) paramConfirmVehicle.textContent = selectedVehicleId();
+      if (paramConfirmCount) paramConfirmCount.textContent = `${changes.length} 项`;
+      if (paramConfirmList) paramConfirmList.innerHTML = changes.map((change) => `<article><strong>${escapeHtml(change.label)}</strong><span>${escapeHtml(paramValueText(change.input, change.original))}</span><b>→</b><span>${escapeHtml(paramValueText(change.input, change.value))}</span></article>`).join("");
+      paramDialog.showModal();
+    };
+    const closeParamConfirm = () => {
+      if (!paramApplyInFlight && paramDialog?.open) paramDialog.close();
+    };
+    const runParamApply = async () => {
+      const vehicleId = selectedVehicleId();
+      const changes = paramChanges();
+      if (!vehicleId || vehicleId !== paramLoadedVehicleId || !changes.length || paramApplyInFlight) return;
+      try { validateParamChanges(changes); } catch (error) { setStatus(error?.message || "参数值无效", "error"); return; }
+      const operations = [];
+      const bodyChanges = changes.filter((change) => change.group === "body");
+      if (bodyChanges.length) {
+        const args = { dry_run: false, persistent: true, require_stationary: false };
+        bodyChanges.forEach((change) => {
+          const key = change.key.replace("body.", "");
+          args[key] = change.input.dataset.paramKind === "boolean" ? change.value === "true" : change.value;
+        });
+        operations.push({ label: "车身参数", tool: "vehicle.body_control", args, timeout: 35, keys: bodyChanges.map((change) => change.key) });
+      }
+      changes.filter((change) => change.key === "audio.system_volume").forEach((change) => operations.push({ label: change.label, tool: "audio.system_volume.set", args: { volume_percent: Number(change.value), preferred_keywords: ["Yundea", "Jabra"], persist: true, verify: true }, timeout: 25, keys: [change.key] }));
+      changes.filter((change) => change.key === "audio.microphone_gain").forEach((change) => operations.push({ label: change.label, tool: "audio.microphone_gain.set", args: { volume_percent: Number(change.value), preferred_keywords: ["Yundea", "Jabra"], persist: true, verify: true }, timeout: 25, keys: [change.key] }));
+      paramApplyInFlight = true;
+      if (paramConfirmSubmit) { paramConfirmSubmit.disabled = true; paramConfirmSubmit.textContent = "正在写入..."; }
+      renderParamDraft();
+      setStatus(`正在写入 ${vehicleId} 的 ${changes.length} 项参数...`, "loading");
+      const failedKeys = new Set();
+      const errors = [];
+      for (const operation of operations) {
+        try {
+          const payload = await requestToolPayload(vehicleId, operation.tool, operation.args, operation.timeout, "parameter-apply");
+          const result = toolResultOfPayload(payload) || {};
+          const resultStatus = String(result.status || "").toLowerCase();
+          if (resultStatus === "error" || resultStatus === "partial") throw new Error(result.error || result.message || `${operation.label}写入未确认`);
+        } catch (error) {
+          operation.keys.forEach((key) => failedKeys.add(key));
+          errors.push(`${operation.label}：${error?.message || "写入失败"}`);
+        }
+      }
+      const desiredValues = new Map(changes.map((change) => [change.key, change.value]));
+      paramApplyInFlight = false;
+      if (paramConfirmSubmit) { paramConfirmSubmit.disabled = false; paramConfirmSubmit.textContent = "确认并写入"; }
+      if (paramDialog?.open) paramDialog.close();
+      if (vehicleId === selectedVehicleId()) {
+        await loadParamValues({ notify: false });
+        paramDraftInputs.forEach((input) => {
+          if (failedKeys.has(input.dataset.paramKey) && desiredValues.has(input.dataset.paramKey)) setParamInputValue(input, desiredValues.get(input.dataset.paramKey));
+        });
+        renderParamDraft();
+      }
+      if (errors.length) setStatus(`参数写入部分失败：${errors.join("；")}`, "error");
+      else setStatus(`${vehicleId} 的 ${changes.length} 项参数已写入并完成回读。`, "ok");
     };
 
     const setStatus = (text, state = "idle") => {
@@ -1038,6 +1259,9 @@ const agentRules = [
       pages.forEach((page) => {
         page.dataset.active = page.id === targetId ? "true" : "false";
       });
+      if (targetId === "cloud-ops-test-params" && selectedVehicleId() && paramLoadedVehicleId !== selectedVehicleId()) {
+        loadParamValues();
+      }
     };
 
     const vehicleIdOf = (vehicle) => String(vehicle?.vehicle_id || vehicle?.plate_number || vehicle?.id || "").trim();
@@ -2482,7 +2706,15 @@ const agentRules = [
       if (paramVehicle) paramVehicle.textContent = selectedVehicleId() || "--";
       if (lastParamVehicleId !== selectedVehicleId()) {
         lastParamVehicleId = selectedVehicleId();
-        loadParamDraft();
+        paramLoadGeneration += 1;
+        paramLoadedVehicleId = "";
+        paramDraftInputs.forEach((input) => {
+          setParamInputValue(input, "", { original: true });
+          setParamInputEnabled(input, false);
+        });
+        if (paramReadState) paramReadState.textContent = "待读取";
+        renderParamDraft();
+        if (paramPage?.dataset.active === "true") loadParamValues();
       }
     };
 
@@ -4929,11 +5161,6 @@ const agentRules = [
         setSelectedVehicle(vehicleButton.dataset.vehicleId || "");
         return;
       }
-      const paramDomainButton = target?.closest?.("[data-param-domain]");
-      if (paramDomainButton) {
-        setParamDomain(paramDomainButton.dataset.paramDomain || "control");
-        return;
-      }
       const actionButton = target?.closest?.("[data-action]");
       if (!actionButton) return;
       const action = actionButton.dataset.action;
@@ -4977,11 +5204,22 @@ const agentRules = [
         setAgentRailOpen(!agentRail?.classList.contains("is-open"));
       } else if (action === "agent-page-pin") {
         setAgentPinned(!agentRail?.classList.contains("is-pinned"));
-      } else if (action === "param-save-draft") {
-        saveParamDraft();
-      } else if (action === "param-reset-draft") {
-        try { localStorage.removeItem(paramDraftStorageKey()); } catch (_error) {}
+      } else if (action === "param-choice") {
+        const input = actionButton.closest("[data-param-input]");
+        if (input && !actionButton.disabled) {
+          setParamInputValue(input, actionButton.dataset.paramValue || "");
+          renderParamDraft();
+        }
+      } else if (action === "param-refresh") {
+        loadParamValues();
+      } else if (action === "param-reset") {
         resetParamDraft();
+      } else if (action === "param-confirm-open") {
+        openParamConfirm();
+      } else if (action === "param-confirm-close") {
+        closeParamConfirm();
+      } else if (action === "param-confirm-submit") {
+        runParamApply();
       }
     });
     controlFields?.addEventListener("input", (event) => {
@@ -5003,6 +5241,9 @@ const agentRules = [
     paramDraftInputs.forEach((input) => {
       input.addEventListener("input", renderParamDraft);
       input.addEventListener("change", renderParamDraft);
+    });
+    paramDialog?.addEventListener("cancel", (event) => {
+      if (paramApplyInFlight) event.preventDefault();
     });
     vehicleSelect?.addEventListener("change", () => {
       setSelectedVehicle(vehicleSelect.value || "");
@@ -5094,7 +5335,6 @@ const agentRules = [
     restoreAgentPinned();
     resizeAgentInput(agentInput);
     resizeAgentInput(agentPageInput);
-    setParamDomain("control");
     renderParamDraft();
     syncAgentMessageViews();
     loadVehicles();
