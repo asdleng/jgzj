@@ -19,14 +19,13 @@ if (root) {
   const API = {
     auth: "/api/auth/me",
     vehicles: "/api/park-pcm/crowd/vehicles",
-    samples: "/api/park-pcm/crowd/samples",
+    samples: "/api/park-pcm/green/samples",
     routes: "/api/park-pcm/crowd/routes",
     greenInspections: "/api/park-pcm/green/inspections",
     greenInspect: "/api/park-pcm/green/inspect",
     greenStatus: "/api/park-pcm/green/status"
   };
   const SAMPLE_LIMIT = 8000;
-  const INITIAL_SAMPLE_LIMIT = 1000;
   const ROUTE_MAX_POINTS = 900;
   const ROUTE_MAX_REQUESTS = 12;
   const STATIC_MAP_SIZE = 1024;
@@ -43,6 +42,9 @@ if (root) {
     stage: root.querySelector("[data-gm-stage]"),
     map: root.querySelector("[data-gm-map]"),
     loading: root.querySelector("[data-gm-loading]"),
+    loadProgress: root.querySelector("[data-gm-load-progress]"),
+    loadProgressBar: root.querySelector("[data-gm-load-progress-bar]"),
+    loadProgressLabel: root.querySelector("[data-gm-load-progress-label]"),
     mapError: root.querySelector("[data-gm-map-error]"),
     mapMeta: root.querySelector("[data-gm-map-meta]"),
     tooltip: root.querySelector("[data-gm-tooltip]"),
@@ -93,6 +95,7 @@ if (root) {
     visibleSamples: [],
     routes: [],
     inspections: new Map(),
+    inspectionDateKey: "",
     greenQueue: null,
     inspectionPending: new Set(),
     inspectionErrors: new Map(),
@@ -101,6 +104,9 @@ if (root) {
     mapBuildId: 0,
     nodeMeshes: [],
     nodeAnchors: [],
+    nodeIndexBySampleId: new Map(),
+    nodePositions: new Map(),
+    visibleSampleById: new Map(),
     selectedRing: null,
     sceneSpan: 120,
     scene: null,
@@ -112,8 +118,12 @@ if (root) {
     raycaster: new THREE.Raycaster(),
     pointer: new THREE.Vector2(),
     pointerDown: null,
+    pointerMoveFrame: 0,
+    pendingPointerEvent: null,
     resizeObserver: null,
-    animationFrame: 0
+    animationFrame: 0,
+    renderFrames: 0,
+    renderCount: 0
   };
 
   function setStatus(text, status = "loading") {
@@ -123,7 +133,14 @@ if (root) {
     el.status.dataset.state = status;
   }
 
-  function setBusy(busy, message) {
+  function setLoadProgress(value, label) {
+    const progress = Math.max(0, Math.min(100, Number(value) || 0));
+    if (el.loadProgress) el.loadProgress.setAttribute("aria-valuenow", String(Math.round(progress)));
+    if (el.loadProgressBar) el.loadProgressBar.style.width = `${progress}%`;
+    if (el.loadProgressLabel && label) el.loadProgressLabel.textContent = label;
+  }
+
+  function setBusy(busy, message, progress) {
     state.busy = Boolean(busy);
     [el.vehicle, el.date, el.refresh, el.reset, ...el.viewButtons].forEach((control) => {
       if (!control) return;
@@ -138,6 +155,8 @@ if (root) {
       const label = el.loading.querySelector("strong");
       if (label) label.textContent = message;
     }
+    if (busy && progress != null) setLoadProgress(progress, message);
+    if (!busy) setLoadProgress(100, "加载完成");
   }
 
   async function fetchJson(url, options = {}) {
@@ -362,61 +381,34 @@ if (root) {
       .filter((point) => point.longitude != null && point.latitude != null && Math.abs(point.latitude) <= 85);
   }
 
-  function sampleVehicles(samples) {
-    const counts = new Map();
-    samples.forEach((sample) => {
-      if (!samplePosition(sample)) return;
-      const vehicleId = String(sample?.vehicle_id || "").trim();
-      if (!vehicleId) return;
-      const current = counts.get(vehicleId) || { count: 0, latest: 0, routeCount: 0, routeLatest: 0 };
-      current.count += 1;
-      current.latest = Math.max(current.latest, Date.parse(sample.collected_at || "") || 0);
-      if (routeRequestItems([sample]).length) {
-        current.routeCount += 1;
-        current.routeLatest = Math.max(current.routeLatest, Date.parse(sample.collected_at || "") || 0);
-      }
-      counts.set(vehicleId, current);
-    });
-    return counts;
-  }
-
-  function renderVehicleOptions(vehicles, initialSamples) {
+  function renderVehicleOptions(vehicles) {
     if (!el.vehicle) return "";
-    const sampleCounts = sampleVehicles(initialSamples);
     const rows = new Map();
     (Array.isArray(vehicles) ? vehicles : []).forEach((vehicle) => {
       const vehicleId = String(vehicle?.vehicle_id || "").trim();
       if (vehicleId) rows.set(vehicleId, vehicle);
     });
-    sampleCounts.forEach((_value, vehicleId) => {
-      if (!rows.has(vehicleId)) rows.set(vehicleId, { vehicle_id: vehicleId, fresh: false });
-    });
+    const captureTime = (vehicle) => {
+      const capture = vehicle?.last_crowd_capture;
+      return number(capture?.collected_at_ms) ?? (Date.parse(capture?.collected_at || "") || 0);
+    };
     const ranked = [...rows.values()].sort((left, right) => {
-      const leftStats = sampleCounts.get(left.vehicle_id);
-      const rightStats = sampleCounts.get(right.vehicle_id);
-      if (Boolean(leftStats) !== Boolean(rightStats)) return leftStats ? -1 : 1;
-      if ((rightStats?.routeLatest || 0) !== (leftStats?.routeLatest || 0)) return (rightStats?.routeLatest || 0) - (leftStats?.routeLatest || 0);
-      if ((rightStats?.latest || 0) !== (leftStats?.latest || 0)) return (rightStats?.latest || 0) - (leftStats?.latest || 0);
+      const captureDelta = captureTime(right) - captureTime(left);
+      if (captureDelta) return captureDelta;
       if (Boolean(left.fresh) !== Boolean(right.fresh)) return left.fresh ? -1 : 1;
       return String(left.vehicle_id).localeCompare(String(right.vehicle_id), "zh-CN");
     });
     el.vehicle.replaceChildren();
     ranked.forEach((vehicle) => {
-      const stats = sampleCounts.get(vehicle.vehicle_id);
+      const capture = vehicle?.last_crowd_capture;
       const option = document.createElement("option");
       option.value = vehicle.vehicle_id;
-      option.textContent = stats
-        ? `${vehicle.vehicle_id} · ${stats.count} 条近期采集${stats.routeCount ? " · 路线可用" : ""}`
-        : `${vehicle.vehicle_id} · 暂无近期采集`;
+      option.textContent = captureTime(vehicle)
+        ? `${vehicle.vehicle_id} · 最新采集 ${formatTime(capture?.collected_at)}`
+        : `${vehicle.vehicle_id} · 暂无采集`;
       el.vehicle.appendChild(option);
     });
-    const routeCandidates = [...sampleCounts.entries()].filter((entry) => entry[1].routeLatest > 0);
-    const newestRouteAt = Math.max(0, ...routeCandidates.map((entry) => entry[1].routeLatest));
-    const recentRouteCandidates = routeCandidates.filter((entry) => entry[1].routeLatest >= newestRouteAt - 24 * 60 * 60 * 1000);
-    const preferredPool = recentRouteCandidates.length ? recentRouteCandidates : [...sampleCounts.entries()];
-    const preferred = preferredPool
-      .sort((left, right) => right[1].routeLatest - left[1].routeLatest || right[1].latest - left[1].latest)[0]?.[0];
-    return preferred || ranked[0]?.vehicle_id || "";
+    return ranked.find((vehicle) => captureTime(vehicle))?.vehicle_id || ranked[0]?.vehicle_id || "";
   }
 
   function renderDateOptions(samples, preferredDate = "") {
@@ -938,6 +930,8 @@ if (root) {
   function clearSceneContent() {
     state.nodeMeshes = [];
     state.nodeAnchors = [];
+    state.nodeIndexBySampleId.clear();
+    state.nodePositions.clear();
     if (el.hitLayer) el.hitLayer.replaceChildren();
     state.selectedRing = null;
     if (state.contentGroup && state.scene) {
@@ -947,6 +941,7 @@ if (root) {
     state.contentGroup = null;
     if (state.mapTexture) state.mapTexture.dispose();
     state.mapTexture = null;
+    requestSceneRender(1);
   }
 
   function ensureScene() {
@@ -969,6 +964,9 @@ if (root) {
     state.controls.maxDistance = 360;
     state.controls.maxPolarAngle = Math.PI / 2.04;
     state.controls.target.set(0, 0, 0);
+    state.controls.addEventListener("change", () => requestSceneRender(3));
+    state.controls.addEventListener("start", () => requestSceneRender(20));
+    state.controls.addEventListener("end", () => requestSceneRender(24));
 
     const hemisphere = new THREE.HemisphereLight(0xffffff, 0x8ea294, 1.75);
     state.scene.add(hemisphere);
@@ -991,35 +989,70 @@ if (root) {
       state.pointerDown = null;
       if (!down || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 6 || performance.now() - down.time > 700) return;
       const hit = pickNode(event);
-      if (hit?.object?.userData?.sampleId) selectSample(hit.object.userData.sampleId, true);
+      const id = sampleIdFromHit(hit);
+      if (id) selectSample(id, true);
     });
     canvas.addEventListener("pointermove", (event) => {
-      const hit = pickNode(event);
-      canvas.style.cursor = hit ? "pointer" : "grab";
-      if (!el.tooltip || !el.stage) return;
-      if (!hit?.object?.userData?.sampleId) {
-        el.tooltip.hidden = true;
-        return;
-      }
-      const sample = state.visibleSamples.find((row, index) => sampleId(row, index) === hit.object.userData.sampleId);
-      if (!sample) {
-        el.tooltip.hidden = true;
-        return;
-      }
-      const rect = el.stage.getBoundingClientRect();
-      el.tooltip.textContent = `${formatTime(sample.collected_at)} · ${inspectionStatusLabel(inspectionFor(sample))} · 4 路绿化影像`;
-      el.tooltip.style.left = `${Math.max(0, Math.min(rect.width - 230, event.clientX - rect.left))}px`;
-      el.tooltip.style.top = `${Math.max(0, Math.min(rect.height - 70, event.clientY - rect.top))}px`;
-      el.tooltip.hidden = false;
+      state.pendingPointerEvent = { clientX: event.clientX, clientY: event.clientY };
+      if (state.pointerMoveFrame) return;
+      state.pointerMoveFrame = window.requestAnimationFrame(() => {
+        state.pointerMoveFrame = 0;
+        const pointerEvent = state.pendingPointerEvent;
+        if (!pointerEvent) return;
+        const hit = pickNode(pointerEvent);
+        canvas.style.cursor = hit ? "pointer" : "grab";
+        if (!el.tooltip || !el.stage) return;
+        const id = sampleIdFromHit(hit);
+        if (!id) {
+          el.tooltip.hidden = true;
+          return;
+        }
+        const sample = state.visibleSampleById.get(id);
+        if (!sample) {
+          el.tooltip.hidden = true;
+          return;
+        }
+        const rect = el.stage.getBoundingClientRect();
+        el.tooltip.textContent = `${formatTime(sample.collected_at)} · ${inspectionStatusLabel(inspectionFor(sample))} · 4 路绿化影像`;
+        el.tooltip.style.left = `${Math.max(0, Math.min(rect.width - 230, pointerEvent.clientX - rect.left))}px`;
+        el.tooltip.style.top = `${Math.max(0, Math.min(rect.height - 70, pointerEvent.clientY - rect.top))}px`;
+        el.tooltip.hidden = false;
+      });
     });
     canvas.addEventListener("pointerleave", () => {
       if (el.tooltip) el.tooltip.hidden = true;
     });
 
+    if (el.hitLayer && el.hitLayer.dataset.gmBound !== "true") {
+      el.hitLayer.dataset.gmBound = "true";
+      el.hitLayer.addEventListener("click", (event) => {
+        const button = event.target.closest(".gm-node-hit");
+        const id = button?.dataset.sampleId;
+        if (!id) return;
+        event.stopPropagation();
+        selectSample(id, true);
+      });
+      el.hitLayer.addEventListener("pointerover", (event) => {
+        const button = event.target.closest(".gm-node-hit");
+        const sample = button?.dataset.sampleId ? state.visibleSampleById.get(button.dataset.sampleId) : null;
+        if (!button || !sample || !el.tooltip || !el.stage) return;
+        const stageRect = el.stage.getBoundingClientRect();
+        const buttonRect = button.getBoundingClientRect();
+        el.tooltip.textContent = `${formatTime(sample.collected_at)} · ${inspectionStatusLabel(inspectionFor(sample))} · 4 路绿化影像`;
+        el.tooltip.style.left = `${Math.max(0, Math.min(stageRect.width - 230, buttonRect.left - stageRect.left))}px`;
+        el.tooltip.style.top = `${Math.max(0, Math.min(stageRect.height - 70, buttonRect.top - stageRect.top))}px`;
+        el.tooltip.hidden = false;
+      });
+      el.hitLayer.addEventListener("pointerout", (event) => {
+        if (event.relatedTarget?.closest?.(".gm-node-hit")) return;
+        if (el.tooltip) el.tooltip.hidden = true;
+      });
+    }
+
     state.resizeObserver = new ResizeObserver(resizeScene);
     state.resizeObserver.observe(el.map);
     resizeScene();
-    animate();
+    requestSceneRender(2);
   }
 
   function resizeScene() {
@@ -1030,18 +1063,23 @@ if (root) {
     state.renderer.setSize(width, height, false);
     state.camera.aspect = width / height;
     state.camera.updateProjectionMatrix();
+    requestSceneRender(2);
   }
 
-  function animate() {
-    state.animationFrame = window.requestAnimationFrame(animate);
-    if (state.selectedRing) {
-      const pulse = 1 + Math.sin(performance.now() * 0.004) * 0.12;
-      state.selectedRing.scale.set(pulse, pulse, pulse);
-      state.selectedRing.material.opacity = 0.72 + Math.sin(performance.now() * 0.004) * 0.16;
-    }
-    state.controls?.update();
+  function requestSceneRender(frames = 1) {
+    state.renderFrames = Math.max(state.renderFrames, Math.max(1, Number(frames) || 1));
+    if (!state.animationFrame) state.animationFrame = window.requestAnimationFrame(renderSceneFrame);
+  }
+
+  function renderSceneFrame() {
+    state.animationFrame = 0;
+    const controlsChanged = state.controls?.update() === true;
     updateNodeHitTargets();
     if (state.renderer && state.scene && state.camera) state.renderer.render(state.scene, state.camera);
+    state.renderCount += 1;
+    root.dataset.gmRenderCount = String(state.renderCount);
+    state.renderFrames = Math.max(0, state.renderFrames - 1);
+    if (controlsChanged || state.renderFrames > 0) requestSceneRender(controlsChanged ? 2 : 1);
   }
 
   function updateNodeHitTargets() {
@@ -1049,14 +1087,21 @@ if (root) {
     const rect = el.map.getBoundingClientRect();
     const world = new THREE.Vector3();
     state.nodeAnchors.forEach((anchor) => {
-      anchor.object.getWorldPosition(world);
+      world.copy(anchor.position);
       world.project(state.camera);
       const visible = world.z >= -1 && world.z <= 1 && Math.abs(world.x) <= 1.08 && Math.abs(world.y) <= 1.08;
       anchor.button.hidden = !visible;
       if (!visible) return;
-      anchor.button.style.left = `${(world.x * 0.5 + 0.5) * rect.width}px`;
-      anchor.button.style.top = `${(-world.y * 0.5 + 0.5) * rect.height}px`;
+      const x = (world.x * 0.5 + 0.5) * rect.width;
+      const y = (-world.y * 0.5 + 0.5) * rect.height;
+      anchor.button.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`;
     });
+  }
+
+  function sampleIdFromHit(hit) {
+    if (!hit?.object) return "";
+    if (Number.isInteger(hit.instanceId)) return hit.object.userData.sampleIds?.[hit.instanceId] || "";
+    return hit.object.userData.sampleId || "";
   }
 
   function pickNode(event) {
@@ -1146,59 +1191,84 @@ if (root) {
   }
 
   function updateNodeInspectionStyle(id, inspection) {
-    state.nodeMeshes
-      .filter((node) => node.userData.sampleId === id)
-      .forEach((node) => {
-        if (node.material?.color) node.material.color.setHex(nodeInspectionColor(inspection, node.userData.role));
-      });
+    const index = state.nodeIndexBySampleId.get(id);
+    if (!Number.isInteger(index)) return;
+    state.nodeMeshes.forEach((mesh) => {
+      mesh.setColorAt(index, new THREE.Color(nodeInspectionColor(inspection, mesh.userData.role)));
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    });
+    requestSceneRender(2);
   }
 
-  function createNodes(group, samples, project) {
-    const densityScale = Math.max(0.5, Math.min(1, Math.sqrt(48 / Math.max(1, samples.length))));
+  async function createNodes(group, samples, project) {
+    const positionedSamples = samples
+      .map((sample, index) => ({ sample, index, position: samplePosition(sample) }))
+      .filter((item) => item.position);
+    const densityScale = Math.max(0.5, Math.min(1, Math.sqrt(48 / Math.max(1, positionedSamples.length))));
     const stemGeometry = new THREE.CylinderGeometry(0.52 * densityScale, 0.68 * densityScale, 1, 12);
     const capGeometry = new THREE.SphereGeometry(0.82 * densityScale, 14, 10);
-    samples.forEach((sample, index) => {
-      const position = samplePosition(sample);
-      if (!position) return;
+    const stem = new THREE.InstancedMesh(
+      stemGeometry,
+      new THREE.MeshStandardMaterial({ roughness: 0.58, vertexColors: true }),
+      positionedSamples.length
+    );
+    const cap = new THREE.InstancedMesh(
+      capGeometry,
+      new THREE.MeshStandardMaterial({ roughness: 0.42, vertexColors: true }),
+      positionedSamples.length
+    );
+    stem.castShadow = true;
+    cap.castShadow = true;
+    stem.userData.role = "stem";
+    cap.userData.role = "cap";
+    stem.userData.sampleIds = [];
+    cap.userData.sampleIds = stem.userData.sampleIds;
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const worldPosition = new THREE.Vector3();
+    const fragment = document.createDocumentFragment();
+    for (let instanceIndex = 0; instanceIndex < positionedSamples.length; instanceIndex += 1) {
+      const { sample, index, position } = positionedSamples[instanceIndex];
       const projected = project(position);
       const inspection = inspectionFor(sample);
       const height = 3.2;
-      const stem = new THREE.Mesh(stemGeometry, new THREE.MeshStandardMaterial({ color: nodeInspectionColor(inspection, "stem"), roughness: 0.58 }));
-      stem.scale.y = height;
-      stem.position.set(projected.x, 0.35 + height / 2, projected.z);
-      stem.castShadow = true;
-      stem.userData.sampleId = sampleId(sample, index);
-      stem.userData.role = "stem";
-      const cap = new THREE.Mesh(capGeometry, new THREE.MeshStandardMaterial({ color: nodeInspectionColor(inspection, "cap"), roughness: 0.42 }));
-      cap.position.set(projected.x, 0.35 + height, projected.z);
-      cap.castShadow = true;
-      cap.userData.sampleId = stem.userData.sampleId;
-      cap.userData.role = "cap";
-      group.add(stem, cap);
-      state.nodeMeshes.push(stem, cap);
+      const id = sampleId(sample, index);
+      worldPosition.set(projected.x, 0.35 + height / 2, projected.z);
+      scale.set(1, height, 1);
+      matrix.compose(worldPosition, quaternion, scale);
+      stem.setMatrixAt(instanceIndex, matrix);
+      stem.setColorAt(instanceIndex, new THREE.Color(nodeInspectionColor(inspection, "stem")));
+      worldPosition.set(projected.x, 0.35 + height, projected.z);
+      scale.set(1, 1, 1);
+      matrix.compose(worldPosition, quaternion, scale);
+      cap.setMatrixAt(instanceIndex, matrix);
+      cap.setColorAt(instanceIndex, new THREE.Color(nodeInspectionColor(inspection, "cap")));
+      stem.userData.sampleIds.push(id);
+      state.nodeIndexBySampleId.set(id, instanceIndex);
+      state.nodePositions.set(id, new THREE.Vector3(projected.x, 0, projected.z));
       if (el.hitLayer) {
         const hit = document.createElement("button");
         hit.type = "button";
         hit.className = "gm-node-hit";
+        hit.dataset.sampleId = id;
         hit.setAttribute("aria-label", `${formatTime(sample.collected_at)}，${inspectionStatusLabel(inspection)}，查看四路绿化图片`);
-        hit.addEventListener("click", (event) => {
-          event.stopPropagation();
-          selectSample(stem.userData.sampleId, true);
-        });
-        hit.addEventListener("pointerenter", () => {
-          if (!el.tooltip) return;
-          el.tooltip.textContent = `${formatTime(sample.collected_at)} · ${inspectionStatusLabel(inspectionFor(sample))} · 4 路绿化影像`;
-          el.tooltip.style.left = hit.style.left;
-          el.tooltip.style.top = hit.style.top;
-          el.tooltip.hidden = false;
-        });
-        hit.addEventListener("pointerleave", () => {
-          if (el.tooltip) el.tooltip.hidden = true;
-        });
-        el.hitLayer.appendChild(hit);
-        state.nodeAnchors.push({ sampleId: stem.userData.sampleId, object: cap, button: hit });
+        fragment.appendChild(hit);
+        state.nodeAnchors.push({ sampleId: id, position: worldPosition.clone(), button: hit });
       }
-    });
+      if ((instanceIndex + 1) % 200 === 0) {
+        const ratio = (instanceIndex + 1) / Math.max(1, positionedSamples.length);
+        setLoadProgress(84 + ratio * 13, `正在生成采集节点 ${instanceIndex + 1}/${positionedSamples.length}`);
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      }
+    }
+    stem.instanceMatrix.needsUpdate = true;
+    cap.instanceMatrix.needsUpdate = true;
+    if (stem.instanceColor) stem.instanceColor.needsUpdate = true;
+    if (cap.instanceColor) cap.instanceColor.needsUpdate = true;
+    group.add(stem, cap);
+    state.nodeMeshes.push(stem, cap);
+    if (el.hitLayer) el.hitLayer.appendChild(fragment);
     const ringInner = Math.max(0.68, 1.05 * densityScale);
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(ringInner, ringInner + 0.48, 32),
@@ -1215,11 +1285,13 @@ if (root) {
     const buildId = state.mapBuildId + 1;
     state.mapBuildId = buildId;
     ensureScene();
+    setLoadProgress(62, "正在计算地图范围");
     const samplePoints = samples.map(samplePosition).filter(Boolean);
     const allRoutePoints = routes.flatMap(routePoints);
     const allPoints = samplePoints.concat(allRoutePoints);
     const view = chooseStaticMapView(allPoints);
     if (!view) throw new Error("当前日期没有有效定位点");
+    setLoadProgress(70, "正在加载高德静态底图");
     const { texture, fallback } = await loadMapTexture(view);
     if (buildId !== state.mapBuildId) {
       texture.dispose();
@@ -1231,13 +1303,16 @@ if (root) {
     state.contentGroup = group;
     state.scene.add(group);
     const project = mapProjector(view);
+    setLoadProgress(80, "正在生成路线和地图地面");
     createGround(group, texture);
     createRoutes(group, routes, project);
-    createNodes(group, samples, project);
+    setLoadProgress(84, `正在生成 ${samples.length} 个采集节点`);
+    await createNodes(group, samples, project);
     state.sceneSpan = STATIC_MAP_SIZE * WORLD_PER_PIXEL;
     state.camera.far = state.sceneSpan * 6;
     state.camera.updateProjectionMatrix();
     cameraPreset(state.viewMode, false);
+    requestSceneRender(3);
     if (el.mapError) {
       el.mapError.hidden = true;
       el.mapError.textContent = "";
@@ -1245,11 +1320,12 @@ if (root) {
     if (fallback && el.mapMeta) {
       el.mapMeta.textContent += " · 静态底图暂不可用";
     }
+    setLoadProgress(98, "正在打开最新采集节点");
     selectSample(state.selectedSampleId || sampleId(samples[samples.length - 1], samples.length - 1), false);
   }
 
   function selectSample(id, focus = false) {
-    const sample = state.visibleSamples.find((row, index) => sampleId(row, index) === id) || state.visibleSamples[0];
+    const sample = state.visibleSampleById.get(id) || state.visibleSamples[0];
     if (!sample) {
       state.selectedSampleId = "";
       renderSampleDetail(null);
@@ -1260,25 +1336,48 @@ if (root) {
     renderSampleDetail(sample);
     renderProjects(sample);
     void ensureInspection(sample);
-    const mesh = state.nodeMeshes.find((node) => node.userData.sampleId === state.selectedSampleId);
-    if (state.selectedRing && mesh) {
-      state.selectedRing.position.x = mesh.position.x;
-      state.selectedRing.position.z = mesh.position.z;
+    const nodePosition = state.nodePositions.get(state.selectedSampleId);
+    if (state.selectedRing && nodePosition) {
+      state.selectedRing.position.x = nodePosition.x;
+      state.selectedRing.position.z = nodePosition.z;
       state.selectedRing.visible = true;
     }
-    if (focus && mesh && state.controls && state.camera) {
-      const nextTarget = new THREE.Vector3(mesh.position.x, 0, mesh.position.z);
+    if (focus && nodePosition && state.controls && state.camera) {
+      const nextTarget = new THREE.Vector3(nodePosition.x, 0, nodePosition.z);
       const offset = state.camera.position.clone().sub(state.controls.target);
       state.controls.target.copy(nextTarget);
       state.camera.position.copy(nextTarget.clone().add(offset));
       state.controls.update();
     }
+    requestSceneRender(3);
+  }
+
+  async function loadInspectionsForDate() {
+    const requestedVehicle = state.vehicleId;
+    const requestedDate = state.dateKey;
+    if (!requestedVehicle || !requestedDate) {
+      state.inspections = new Map();
+      state.inspectionDateKey = "";
+      return;
+    }
+    const query = new URLSearchParams({ vehicle_id: requestedVehicle, date: requestedDate });
+    const payload = await fetchJson(`${API.greenInspections}?${query.toString()}`).catch(() => ({ items: [] }));
+    if (state.vehicleId !== requestedVehicle || state.dateKey !== requestedDate) return;
+    state.inspections = new Map(
+      (Array.isArray(payload.items) ? payload.items : [])
+        .filter((item) => item?.sample_id)
+        .map((item) => [String(item.sample_id), item])
+    );
+    state.inspectionDateKey = requestedDate;
   }
 
   async function renderDate() {
     state.visibleSamples = state.allSamples
       .filter((sample) => dateKey(sample.collected_at) === state.dateKey && samplePosition(sample))
       .sort((left, right) => (Date.parse(left.collected_at || "") || 0) - (Date.parse(right.collected_at || "") || 0));
+    state.visibleSampleById = new Map(
+      state.visibleSamples.map((sample, index) => [sampleId(sample, index), sample])
+    );
     state.selectedSampleId = "";
     if (!state.visibleSamples.length) {
       state.routes = [];
@@ -1291,12 +1390,17 @@ if (root) {
       }
       return;
     }
-    setBusy(true, "正在加载路线与高德静态地图");
+    setBusy(true, "正在读取当日分析与巡逻路线", 50);
     try {
-      state.routes = await loadRoutes(state.visibleSamples).catch((error) => {
-        console.warn("green-management route load failed", error);
-        return [];
-      });
+      const [routes] = await Promise.all([
+        loadRoutes(state.visibleSamples).catch((error) => {
+          console.warn("green-management route load failed", error);
+          return [];
+        }),
+        loadInspectionsForDate()
+      ]);
+      state.routes = routes;
+      setLoadProgress(58, "路线与绿化分析已就绪");
       updateSummary(state.visibleSamples, state.routes);
       await buildMap(state.visibleSamples, state.routes);
       setStatus("数据已更新", "ok");
@@ -1310,8 +1414,10 @@ if (root) {
     if (!state.vehicleId) return;
     state.inspectionPending.clear();
     state.inspectionErrors.clear();
+    state.inspections = new Map();
+    state.inspectionDateKey = "";
     if (el.vehicle) el.vehicle.value = state.vehicleId;
-    setBusy(true, "正在读取车辆采集记录");
+    setBusy(true, "正在读取车辆采集记录", 30);
     setStatus("数据加载中", "loading");
     try {
       const query = new URLSearchParams({
@@ -1319,16 +1425,8 @@ if (root) {
         source: "all",
         limit: String(SAMPLE_LIMIT)
       });
-      const inspectionQuery = new URLSearchParams({ vehicle_id: state.vehicleId });
-      const [payload, inspectionPayload] = await Promise.all([
-        fetchJson(`${API.samples}?${query.toString()}`),
-        fetchJson(`${API.greenInspections}?${inspectionQuery.toString()}`).catch(() => ({ items: [] }))
-      ]);
-      state.inspections = new Map(
-        (Array.isArray(inspectionPayload.items) ? inspectionPayload.items : [])
-          .filter((item) => item?.sample_id)
-          .map((item) => [String(item.sample_id), item])
-      );
+      const payload = await fetchJson(`${API.samples}?${query.toString()}`);
+      setLoadProgress(44, `已读取 ${formatNumber(payload.samples?.length || 0)} 个近期节点`);
       state.allSamples = (Array.isArray(payload.samples) ? payload.samples : [])
         .filter((sample) => !sample?.skipped && samplePosition(sample));
       state.dateKey = renderDateOptions(state.allSamples, preferredDate);
@@ -1358,7 +1456,7 @@ if (root) {
   }
 
   async function initialize() {
-    setBusy(true, "正在读取园区巡逻数据");
+    setBusy(true, "正在验证访问权限", 4);
     try {
       const auth = await fetchJson(API.auth);
       state.authenticated = hasReadPermission(auth);
@@ -1373,18 +1471,14 @@ if (root) {
         return;
       }
       if (el.auth) el.auth.hidden = true;
-      const initialQuery = new URLSearchParams({ source: "all", limit: String(INITIAL_SAMPLE_LIMIT) });
-      const [vehiclePayload, samplePayload] = await Promise.all([
-        fetchJson(API.vehicles),
-        fetchJson(`${API.samples}?${initialQuery.toString()}`)
-      ]);
-      const initialSamples = (Array.isArray(samplePayload.samples) ? samplePayload.samples : [])
-        .filter((sample) => !sample?.skipped && samplePosition(sample));
-      const preferred = renderVehicleOptions(vehiclePayload.vehicles, initialSamples);
+      setLoadProgress(12, "正在读取车辆列表");
+      const vehiclePayload = await fetchJson(API.vehicles);
+      const preferred = renderVehicleOptions(vehiclePayload.vehicles);
       if (!preferred) throw new Error("暂无可用巡逻车辆");
+      setLoadProgress(24, `已找到 ${formatNumber(vehiclePayload.vehicles?.length || 0)} 台采集车辆`);
       await refreshGreenQueueStatus();
       await selectVehicle(preferred);
-      window.setInterval(() => void refreshGreenQueueStatus(), 10 * 1000);
+      window.setInterval(() => void refreshGreenQueueStatus(), 20 * 1000);
     } catch (error) {
       setStatus("初始化失败", "error");
       if (el.auth) {

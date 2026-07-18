@@ -102,6 +102,16 @@
       <div class="gm-map-loading" data-gm-loading>
         <span aria-hidden="true"></span>
         <strong>正在生成 3D 地图</strong>
+        <div
+          class="gm-load-progress"
+          data-gm-load-progress
+          role="progressbar"
+          aria-label="绿化数据加载进度"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        ><i data-gm-load-progress-bar></i></div>
+        <small data-gm-load-progress-label>准备读取数据</small>
       </div>
       <div class="gm-map-error" data-gm-map-error hidden></div>
       <div class="gm-map-topline">
@@ -1040,6 +1050,29 @@
   .gm-map-loading > span {
     border-color: rgba(90, 224, 151, 0.22);
     border-top-color: var(--gm-green);
+  }
+
+  .gm-load-progress {
+    width: min(320px, 72vw);
+    height: 7px;
+    overflow: hidden;
+    border-radius: 4px;
+    background: rgba(151, 184, 173, 0.18);
+  }
+
+  .gm-load-progress > i {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--gm-green);
+    transition: width 180ms ease;
+  }
+
+  .gm-map-loading > small {
+    color: #9fb4ad;
+    font-size: 0.7rem;
+    line-height: 1.4;
   }
 
   .gm-map-error {

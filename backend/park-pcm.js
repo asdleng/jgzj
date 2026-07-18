@@ -4346,6 +4346,52 @@ module.exports = function registerParkPcmRoutes(app, options) {
     return storedSamples.map((sample) => mergeCrowdAnalysisIntoSample(sample, analysisState));
   }
 
+  function compactGreenManagementSample(sample) {
+    if (!sample || typeof sample !== 'object') return null;
+    const compactRoute = (route) => {
+      if (!route || typeof route !== 'object') return null;
+      return {
+        route_id: route.route_id || null,
+        primary_route_id: route.primary_route_id || null,
+        route_ids: normalizeStringListForAnalysis(route.route_ids, 12)
+      };
+    };
+    const frames = (Array.isArray(sample.frames) ? sample.frames : [])
+      .slice(0, 4)
+      .map((frame) => {
+        if (!frame || typeof frame !== 'object') return null;
+        const imagePath = String(frame.image_path || '').trim();
+        return {
+          capture_id: frame.capture_id || null,
+          camera_id: frame.camera_id || null,
+          image_size_bytes: Number(frame.image_size_bytes) || 0,
+          image_width: Number(frame.image_width) || null,
+          image_height: Number(frame.image_height) || null,
+          image_path: imagePath || null,
+          image_url: imagePath ? crowdRedactedFrameUrl(imagePath) : frame.image_url || null,
+          route: compactRoute(frame.route)
+        };
+      })
+      .filter(Boolean);
+    const patrolRouteIds = normalizeStringListForAnalysis(sample.patrol_state?.fields?.route_ids, 12);
+    return {
+      sample_id: sample.sample_id || null,
+      source: sample.source || 'cloud_camera_capture',
+      upload_session_id: sample.upload_session_id || null,
+      upload_manifest: sample.upload_manifest?.session_id
+        ? { session_id: sample.upload_manifest.session_id }
+        : null,
+      vehicle_id: sample.vehicle_id || null,
+      collected_at: sample.collected_at || null,
+      frame_count: Number(sample.frame_count) || frames.length,
+      total_image_bytes: Number(sample.total_image_bytes) || 0,
+      position: sample.position || null,
+      route: compactRoute(sample.route),
+      patrol_state: patrolRouteIds.length ? { fields: { route_ids: patrolRouteIds } } : null,
+      frames
+    };
+  }
+
   function routeFileNameCandidates(routeId) {
     const raw = String(routeId || '').trim();
     const candidates = new Set();
@@ -7461,6 +7507,43 @@ print(len(faces))
       return res.status(error.status || 502).json({
         ok: false,
         error: error.message || 'park_pcm_crowd_samples_failed'
+      });
+    }
+  });
+
+  app.get('/api/park-pcm/green/samples', requirePermission('vehicle:read'), async (req, res) => {
+    try {
+      const requestedSource = String(req.query?.source || 'all').trim();
+      const source = requestedSource && requestedSource !== 'all' ? requestedSource : '';
+      const filters = {
+        vehicle_id: req.query?.vehicle_id,
+        source
+      };
+      const limit = toFiniteInteger(req.query?.limit, 1000, { min: 1, max: 20000 });
+      const [axisSamples, uploadState] = await Promise.all([
+        readCrowdSampleLogForAxis(filters),
+        readPatrolFlowUploadState().catch(() => ({ sessions: {} }))
+      ]);
+      const axisState = buildCrowdSampleDayAxis(axisSamples);
+      mergeCrowdUploadSessionsIntoDayAxis(axisState, uploadState.sessions, filters);
+      const samples = axisSamples
+        .filter((sample) => sample && !sample.skipped)
+        .slice(-limit)
+        .reverse()
+        .map(compactGreenManagementSample)
+        .filter((sample) => sample && sample.sample_id && sample.frames.length);
+      return res.json({
+        ok: true,
+        vehicle_id: req.query?.vehicle_id ? String(req.query.vehicle_id) : null,
+        source: source || 'all',
+        compact: true,
+        day_axis: finalizeCrowdSampleDayAxis(axisState),
+        samples
+      });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'green_management_samples_failed'
       });
     }
   });

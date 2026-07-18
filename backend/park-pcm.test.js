@@ -125,9 +125,11 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     collected_at: '2026-07-17T08:00:00.000Z',
     position: { gaode_longitude: 114.1, gaode_latitude: 22.5 },
     frame_count: 4,
+    analysis: { people_count: 9, note: 'must not reach green management' },
     frames: ['camera1', 'camera2', 'camera3', 'camera4'].map((cameraId) => ({
       camera_id: cameraId,
-      image_path: `20260717/sample-1/${cameraId}.jpg`
+      image_path: `20260717/sample-1/${cameraId}.jpg`,
+      analysis: { people_count: 3 }
     }))
   };
   const secondSample = {
@@ -312,12 +314,21 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
 
   try {
-    let response = await fetch(`${baseUrl}/api/park-pcm/green/inspect`, {
+    let response = await fetch(`${baseUrl}/api/park-pcm/green/samples?vehicle_id=BIT-TEST&limit=8000`);
+    let payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.compact, true);
+    assert.equal(payload.samples.length, 3);
+    assert.equal(payload.samples[0].analysis, undefined);
+    assert.equal(payload.samples[0].frames[0].analysis, undefined);
+    assert.match(payload.samples[0].frames[0].image_url, /^\/api\/park-pcm\/crowd\/redacted-files\//);
+
+    response = await fetch(`${baseUrl}/api/park-pcm/green/inspect`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sample_id: sample.sample_id, vehicle_id: sample.vehicle_id })
     });
-    let payload = await response.json();
+    payload = await response.json();
     assert.equal(response.status, 200);
     assert.equal(payload.cached, false);
     assert.equal(payload.inspection.health_score, 74);
