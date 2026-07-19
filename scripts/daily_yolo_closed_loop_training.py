@@ -44,6 +44,9 @@ A100_PY = os.environ.get("YOLO_DAILY_A100_PY", "/home/sari/autodistill/bin/pytho
 A100_GPU = int(os.environ.get("YOLO_DAILY_A100_GPU", "3"))
 
 GOOD_QUALITIES = DEFAULT_QUALITIES
+ALLOW_QWEN_AUDIT_PASS = str(
+    os.environ.get("YOLO_DAILY_ALLOW_QWEN_AUDIT_PASS", "1")
+).strip().lower() not in {"0", "false", "no", "off"}
 
 TASKS = [
     {
@@ -197,7 +200,12 @@ def summarize_index(allowed_days: set[str] | None, tasks: list[dict] | None = No
         if not day or (allowed_days is not None and day not in allowed_days):
             continue
         stat = by_day[day]
-        eligible, reason, manual = training_row_decision(row, manual_annotations, qualities=GOOD_QUALITIES)
+        eligible, reason, manual = training_row_decision(
+            row,
+            manual_annotations,
+            qualities=GOOD_QUALITIES,
+            allow_qwen_audit_pass=ALLOW_QWEN_AUDIT_PASS,
+        )
         if not eligible:
             stat["rejected_by_reason"][reason] += 1
             continue
@@ -566,8 +574,13 @@ def main() -> None:
         "day_stats": day_stats,
         "training_policy": {
             "manual_annotations": "preferred",
-            "qwen_audit": "review_queue_only",
-            "training_release": "manual_annotation_required",
+            "qwen_audit": "training_eligible" if ALLOW_QWEN_AUDIT_PASS else "review_queue_only",
+            "training_release": (
+                "manual_annotation_or_qwen_audit_pass"
+                if ALLOW_QWEN_AUDIT_PASS
+                else "manual_annotation_required"
+            ),
+            "allow_qwen_audit_pass": ALLOW_QWEN_AUDIT_PASS,
             "qwen_audit_prompt_version": EXPECTED_AUDIT_PROMPT_VERSION,
         },
         "selected": [

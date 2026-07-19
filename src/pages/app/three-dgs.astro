@@ -218,8 +218,8 @@ import SiteLayout from "../../components/SiteLayout.astro";
               <input id="three-dgs-max-points" type="number" min="10000" step="10000" value="500000" />
             </label>
             <label class="three-dgs-field">
-              <span>A100 GPU</span>
-              <input id="three-dgs-gpu" type="number" min="0" max="5" step="1" value="3" />
+              <span>A100 训练 GPU（仅 3/4）</span>
+              <input id="three-dgs-gpu" type="number" min="3" max="4" step="1" value="3" />
             </label>
             <label class="three-dgs-field">
               <span>训练迭代</span>
@@ -2563,6 +2563,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
 
   function trainPayload() {
     return {
+      backend: "a100",
       gpu: Number(el("three-dgs-gpu").value || 3),
       iterations: Number(el("three-dgs-iterations").value || 10000),
       resolution: Number(el("three-dgs-resolution").value || 1)

@@ -19,6 +19,9 @@ from yolo_closed_loop_policy import (
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 DEFAULT_QUALITIES = {"good", "blur"}
+ALLOW_QWEN_AUDIT_PASS = str(
+    os.environ.get("YOLO_DAILY_ALLOW_QWEN_AUDIT_PASS", "1")
+).strip().lower() not in {"0", "false", "no", "off"}
 
 
 TASKS = {
@@ -213,7 +216,13 @@ def include_row(row: dict, args, qualities: set[str], manual_annotations: dict[s
         day = image_date(row)
         if day not in args.dates:
             return False, "date", None
-    return training_row_decision(row, manual_annotations, source=args.source, qualities=qualities)
+    return training_row_decision(
+        row,
+        manual_annotations,
+        source=args.source,
+        qualities=qualities,
+        allow_qwen_audit_pass=ALLOW_QWEN_AUDIT_PASS,
+    )
 
 
 def add_existing_dataset(output: Path, dataset_yaml: Path, stats: dict, mode: str, existing_mode: str, image_lists: dict) -> None:
@@ -317,8 +326,13 @@ def main() -> None:
             "dates": args.dates,
             "qualities": sorted(qualities),
             "manual_annotations": "preferred",
-            "qwen_audit": "review_queue_only",
-            "training_release": "manual_annotation_required",
+            "qwen_audit": "training_eligible" if ALLOW_QWEN_AUDIT_PASS else "review_queue_only",
+            "training_release": (
+                "manual_annotation_or_qwen_audit_pass"
+                if ALLOW_QWEN_AUDIT_PASS
+                else "manual_annotation_required"
+            ),
+            "allow_qwen_audit_pass": ALLOW_QWEN_AUDIT_PASS,
             "qwen_audit_prompt_version": EXPECTED_AUDIT_PROMPT_VERSION,
             "include_empty": args.include_empty,
             "empty_to_positive_ratio": args.empty_to_positive_ratio,

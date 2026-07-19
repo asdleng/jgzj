@@ -13,6 +13,13 @@ const {
   mapVectorToSuperSplatViewer,
   pinholeFovDegrees
 } = require('./three-dgs-camera-math');
+const {
+  A100_ONLY_TRAINING_POLICY,
+  assertA100OnlyTraining,
+  assertAllowedA100Gpu,
+  parseA100GpuSnapshot,
+  assertA100GpuIdle
+} = require('./three-dgs-training-policy');
 
 const execFileAsync = promisify(execFile);
 
@@ -104,6 +111,7 @@ function createInitialState() {
     train: {
       phase: 'idle',
       running: false,
+      backend: 'a100',
       run_id: null,
       local_log_path: null,
       remote_dataset_path: null,
@@ -118,8 +126,10 @@ function createInitialState() {
       dataset_fingerprint: null,
       remote_dataset_synced_at_ms: null,
       gpu: null,
+      gpu_preflight: null,
       iterations: null,
       resolution: null,
+      depth_supervision: null,
       started_at_ms: null,
       completed_at_ms: null,
       last_remote_status_check_ms: null,
@@ -184,6 +194,7 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const remoteEnvName = process.env.THREE_DGS_REMOTE_ENV_NAME || '3dgs124_exact';
   const defaultVehicleId = process.env.THREE_DGS_DEFAULT_VEHICLE_ID || 'BIT-0041';
   const defaultTrainGpu = String(process.env.THREE_DGS_DEFAULT_GPU || '3').trim() || '3';
+  const allowedA100TrainingGpus = parseList(process.env.THREE_DGS_ALLOWED_TRAIN_GPUS || '3,4');
   const defaultTrainResolution = Math.max(1, Number(process.env.THREE_DGS_DEFAULT_RESOLUTION || 1));
   const remoteStatusPollMs = Number(process.env.THREE_DGS_REMOTE_STATUS_POLL_MS || 30000);
   const fallbackVehicleMapPath = process.env.THREE_DGS_VEHICLE_MAP_PATH || 'map/GlobalMap.pcd';
@@ -220,6 +231,8 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
   const colmapInitMaxImageSize = Math.max(320, Number(process.env.THREE_DGS_COLMAP_INIT_MAX_IMAGE_SIZE || 1100));
   const colmapInitMaxNumFeatures = Math.max(1000, Number(process.env.THREE_DGS_COLMAP_INIT_MAX_NUM_FEATURES || 10000));
   const defaultCheckpointInterval = Math.max(100, Number(process.env.THREE_DGS_CHECKPOINT_INTERVAL || 1000));
+  const lidarDepthWeightInit = Number(process.env.THREE_DGS_LIDAR_DEPTH_WEIGHT_INIT || 0.05);
+  const lidarDepthWeightFinal = Number(process.env.THREE_DGS_LIDAR_DEPTH_WEIGHT_FINAL || 0.005);
   const viewerCameraForwardSign = Number(process.env.THREE_DGS_VIEWER_CAMERA_FORWARD_SIGN || 1) >= 0 ? 1 : -1;
 
   let state = createInitialState();
@@ -325,6 +338,9 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
           viewer_camera: { ...createInitialState().viewer_camera, ...(parsed.viewer_camera || {}) },
           updated_at_ms: Number(parsed.updated_at_ms) || Date.now()
         };
+        if (!parsed.train?.backend && String(parsed.train?.gpu || '').startsWith('server-proxy')) {
+          state.train.backend = 'historical-server-proxy-4090';
+        }
         normalizeStaleTransientState();
       }
     } catch (_error) {
@@ -2676,6 +2692,10 @@ module.exports = function registerThreeDgsRoutes(app, options = {}) {
     return {
       ok: true,
       auth: statusAuthPayload(auth),
+      training_policy: {
+        ...A100_ONLY_TRAINING_POLICY,
+        allowed_gpus: allowedA100TrainingGpus
+      },
       state: responseState(),
       ...extra
     };
@@ -5386,12 +5406,59 @@ if __name__ == "__main__":
     };
   }
 
+  async function detectDepthSupervision(datasetPath) {
+    if (!datasetPath) return null;
+    const depthParamsPath = path.join(datasetPath, 'sparse', '0', 'depth_params.json');
+    if (!await safeStat(depthParamsPath)) return null;
+    for (const directory of ['depths_lidar', 'depths_pointcloud']) {
+      const depthPath = path.join(datasetPath, directory);
+      const stat = await safeStat(depthPath);
+      if (stat?.isDirectory()) {
+        return {
+          enabled: true,
+          directory,
+          depth_l1_weight_init: lidarDepthWeightInit,
+          depth_l1_weight_final: lidarDepthWeightFinal,
+          densification_interval: 400,
+          opacity_reset_interval: 3000,
+          densify_until_iter: 15000,
+          source: 'prepared_dataset'
+        };
+      }
+    }
+    return null;
+  }
+
+  async function assertA100GpuReady(gpu) {
+    const selectedGpu = assertAllowedA100Gpu(gpu, allowedA100TrainingGpus);
+    const stdout = await execSsh(
+      'nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader,nounits',
+      15000
+    );
+    const snapshot = parseA100GpuSnapshot(stdout, selectedGpu);
+    return assertA100GpuIdle(snapshot);
+  }
+
   function makeRemoteTrainCommand(remoteDatasetPath, remoteRunPath, trainOptions) {
     const iterations = Number(trainOptions.iterations || 10000);
     const resolution = Number(trainOptions.resolution || defaultTrainResolution);
     const gpu = String(trainOptions.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
     const resume = Boolean(trainOptions.resume);
     const checkpointInterval = Math.max(100, Number(trainOptions.checkpointInterval || defaultCheckpointInterval));
+    const depthSupervision = trainOptions.depthSupervision?.enabled
+      ? trainOptions.depthSupervision
+      : null;
+    const depthArgsLine = depthSupervision
+      ? [
+          '--depths', remoteQuote(depthSupervision.directory),
+          '--depth_l1_weight_init', Number(depthSupervision.depth_l1_weight_init),
+          '--depth_l1_weight_final', Number(depthSupervision.depth_l1_weight_final),
+          '--densification_interval', Number(depthSupervision.densification_interval),
+          '--opacity_reset_interval', Number(depthSupervision.opacity_reset_interval),
+          '--densify_until_iter', Math.min(Number(depthSupervision.densify_until_iter), iterations),
+          '--position_lr_max_steps', iterations
+        ].join(' ')
+      : '';
     const script = [
       'set -Eeuo pipefail',
       `RUN_DIR=${remoteQuote(remoteRunPath)}`,
@@ -5440,6 +5507,7 @@ if __name__ == "__main__":
       '  export TORCH_CUDA_ARCH_LIST=8.0',
       '  export CUDA_VISIBLE_DEVICES="$GPU"',
       '  cd "$SOURCE_DIR"',
+      `  DEPTH_ARGS=(${depthArgsLine})`,
       '  CHECKPOINT_ARGS=()',
       '  if [ "$CHECKPOINT_INTERVAL" -gt 0 ]; then',
       '    next_checkpoint="$CHECKPOINT_INTERVAL"',
@@ -5463,6 +5531,7 @@ if __name__ == "__main__":
       '  "$HOME/.local/bin/micromamba" run -n "$ENV_NAME" python train.py \\',
       '    -s "$DATASET_DIR" \\',
       '    -m "$RUN_DIR" \\',
+      '    --eval \\',
       '    --iterations "$ITERATIONS" \\',
       '    --save_iterations "$ITERATIONS" \\',
       '    --checkpoint_iterations "${CHECKPOINT_ARGS[@]}" \\',
@@ -5470,6 +5539,7 @@ if __name__ == "__main__":
       '    --data_device cpu \\',
       '    -r "$RESOLUTION" \\',
       '    --disable_viewer \\',
+      '    "${DEPTH_ARGS[@]}" \\',
       '    "${START_CHECKPOINT_ARGS[@]}"',
       '  write_status completed 0',
       '  rm -f "$PID_FILE"',
@@ -5502,13 +5572,14 @@ if __name__ == "__main__":
     });
   }
 
-  async function launchRemoteTraining({ localLogPath, remoteDatasetPath, remoteRunPath, gpu, iterations, resolution, resume, checkpoint, checkpointInterval = defaultCheckpointInterval }) {
+  async function launchRemoteTraining({ localLogPath, remoteDatasetPath, remoteRunPath, gpu, iterations, resolution, resume, checkpoint, depthSupervision, checkpointInterval = defaultCheckpointInterval }) {
     await appendToLog(localLogPath, `${resume ? 'resume' : 'start'} remote training`);
     const command = makeRemoteTrainCommand(remoteDatasetPath, remoteRunPath, {
       gpu,
       iterations,
       resolution,
       resume,
+      depthSupervision,
       checkpointInterval
     });
     const stdout = await execSsh(command, 30000);
@@ -5521,6 +5592,7 @@ if __name__ == "__main__":
       error_message: null,
       train: {
         ...state.train,
+        backend: 'a100',
         phase: 'training',
         running: true,
         remote_pid: pid,
@@ -5535,6 +5607,7 @@ if __name__ == "__main__":
   }
 
   async function startTrainingTask(auth, payload = {}, options = {}) {
+    assertA100OnlyTraining(payload);
     const resume = Boolean(options.resume || payload.resume);
     if (trainBootstrapProcess || state.train.running || state.prepare.running) {
       throw new Error('three_dgs_busy');
@@ -5570,9 +5643,13 @@ if __name__ == "__main__":
 
     trainStopRequested = false;
     const gpu = String(payload.gpu ?? state.train.gpu ?? defaultTrainGpu).trim() || defaultTrainGpu;
+    const gpuPreflight = await assertA100GpuReady(gpu);
     const iterations = Number(payload.iterations || state.train.iterations || 10000);
     const resolution = Number(payload.resolution || state.train.resolution || defaultTrainResolution);
     const checkpointInterval = Math.max(100, Number(payload.checkpointInterval || state.train.checkpoint_interval || defaultCheckpointInterval));
+    const depthSupervision = resume
+      ? (state.train.depth_supervision || await detectDepthSupervision(state.dataset.path || ''))
+      : await detectDepthSupervision(state.dataset.path);
     const datasetMarker = resume ? null : await makeDatasetSyncMarker(state.dataset.path);
 
     updateState({
@@ -5585,6 +5662,7 @@ if __name__ == "__main__":
       viewer: resume ? state.viewer : createInitialState().viewer,
       train: {
         ...state.train,
+        backend: 'a100',
         phase: resume ? 'resuming' : 'syncing',
         running: true,
         run_id: runId,
@@ -5596,7 +5674,11 @@ if __name__ == "__main__":
         resume_from_checkpoint: checkpoint?.path || null,
         resume_from_iteration: checkpoint?.iteration || null,
         checkpoint_interval: checkpointInterval,
-        mode: resume ? 'resume' : 'restart',
+        mode: resume
+          ? 'a100-remote-resume'
+          : depthSupervision
+            ? 'a100-remote-lidar-depth'
+            : 'a100-remote-rgb',
         sync_progress: resume
           ? state.train.sync_progress
           : {
@@ -5611,8 +5693,10 @@ if __name__ == "__main__":
         dataset_fingerprint: datasetMarker?.fingerprint || state.train.dataset_fingerprint || null,
         remote_dataset_synced_at_ms: null,
         gpu,
+        gpu_preflight: gpuPreflight,
         iterations,
         resolution,
+        depth_supervision: depthSupervision,
         started_at_ms: Date.now(),
         completed_at_ms: null,
         last_remote_status_check_ms: null,
@@ -5631,6 +5715,7 @@ if __name__ == "__main__":
           resolution,
           resume: true,
           checkpoint,
+          depthSupervision,
           checkpointInterval
         });
       } catch (error) {
@@ -5690,6 +5775,7 @@ if __name__ == "__main__":
         resolution,
         resume: false,
         checkpoint: null,
+        depthSupervision,
         checkpointInterval
       });
       updateNestedState('train', {
@@ -5804,6 +5890,7 @@ if __name__ == "__main__":
           resolution,
           resume: false,
           checkpoint: null,
+          depthSupervision,
           checkpointInterval
         });
         updateNestedState('train', {
@@ -6894,7 +6981,7 @@ if __name__ == "__main__":
       await startTrainingTask(req.threeDgsAuth, req.body || {});
       return res.json(makeStatusResponse(req.threeDgsAuth));
     } catch (error) {
-      return res.status(400).json({
+      return res.status(error.status || 400).json({
         ok: false,
         error: error.message || 'three_dgs_train_start_failed'
       });
@@ -6918,7 +7005,7 @@ if __name__ == "__main__":
       await startTrainingTask(req.threeDgsAuth, { ...(req.body || {}), resume: true }, { resume: true });
       return res.json(makeStatusResponse(req.threeDgsAuth));
     } catch (error) {
-      return res.status(400).json({
+      return res.status(error.status || 400).json({
         ok: false,
         error: error.message || 'three_dgs_train_resume_failed'
       });
