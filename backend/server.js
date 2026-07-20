@@ -292,7 +292,7 @@ const lidarRelocalizationA100NumWorkers = toFiniteInteger(
 const lidarRelocalizationIndexedVehicles = new Set(
   String(
     process.env.LIDAR_RELOCALIZATION_INDEXED_VEHICLES ||
-      'BIT-0011,BIT-0013,BIT-0014,BIT-0015,BIT-0016,BIT-0019,BIT-0020,BIT-0032,BIT-0046'
+      'BIT-0011,BIT-0013,BIT-0014,BIT-0015,BIT-0016,BIT-0019,BIT-0020,BIT-0032,BIT-0033,BIT-0038,BIT-0042,BIT-0046'
   )
     .split(',')
     .map((vehicleId) => getLidarRelocVehicleId(vehicleId))
@@ -9307,9 +9307,7 @@ function listLidarRelocCaptureTools(toolNames) {
     'lidar.capture_current_frame',
     'lidar.capture',
     'vpr.capture_bundle'
-  ].filter((toolName) => toolNames.has(toolName));
-}
-
+  ].filter((toolName) => t
 function listLidarRelocInferTools(toolNames) {
   return [
     'lidar.relocalization_infer',

@@ -30,6 +30,7 @@ if (root) {
   const ROUTE_MAX_REQUESTS = 12;
   const STATIC_MAP_SIZE = 1024;
   const WORLD_PER_PIXEL = 0.12;
+  const VEGETATION_TABLE_PAGE_SIZE = 50;
 
   const el = {
     status: root.querySelector("[data-gm-status]"),
@@ -62,6 +63,16 @@ if (root) {
     observations: root.querySelector("[data-gm-observations]"),
     issues: root.querySelector("[data-gm-issues]"),
     recommendations: root.querySelector("[data-gm-recommendations]"),
+    vegetationTableBody: root.querySelector("[data-gm-vegetation-table-body]"),
+    vegetationTableSummary: root.querySelector("[data-gm-vegetation-table-summary]"),
+    vegetationFilters: [...root.querySelectorAll("[data-gm-vegetation-filter]")],
+    vegetationFilterCounts: Object.fromEntries(
+      [...root.querySelectorAll("[data-gm-filter-count]")]
+        .map((node) => [node.dataset.gmFilterCount, node])
+    ),
+    vegetationTablePrev: root.querySelector("[data-gm-table-prev]"),
+    vegetationTableNext: root.querySelector("[data-gm-table-next]"),
+    vegetationTablePage: root.querySelector("[data-gm-table-page]"),
     projects: root.querySelector("[data-gm-projects]"),
     projectSummary: root.querySelector("[data-gm-project-summary]"),
     preview: root.querySelector("[data-gm-preview]"),
@@ -100,6 +111,8 @@ if (root) {
     inspectionPending: new Set(),
     inspectionErrors: new Map(),
     selectedSampleId: "",
+    vegetationFilter: "all",
+    vegetationTablePage: 0,
     viewMode: "perspective",
     mapBuildId: 0,
     nodeMeshes: [],
@@ -268,6 +281,180 @@ if (root) {
     }[inspection.health_grade] || "需要人工复核";
     const confidence = { high: "高", medium: "中", low: "低" }[inspection.confidence] || "低";
     return `${grade} · ${confidence}置信度`;
+  }
+
+  function vegetationPresence(inspection, key) {
+    if (!inspection) return { state: "unknown", label: "待分析" };
+    const value = inspection.vegetation_types?.[key];
+    if (value === true) return { state: "present", label: "有" };
+    if (value === false) return { state: "absent", label: "未见" };
+    return { state: "unknown", label: "无法判断" };
+  }
+
+  function vegetationCoverage(inspection) {
+    const values = (Array.isArray(inspection?.view_assessments) ? inspection.view_assessments : [])
+      .map((item) => number(item?.green_coverage_percent))
+      .filter((value) => value != null);
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }
+
+  function sampleRouteId(sample) {
+    const candidates = [
+      sample?.route?.primary_route_id,
+      sample?.route?.route_id,
+      ...(Array.isArray(sample?.route?.route_ids) ? sample.route.route_ids : []),
+      ...(Array.isArray(sample?.frames)
+        ? sample.frames.flatMap((frame) => [
+            frame?.route?.primary_route_id,
+            frame?.route?.route_id,
+            ...(Array.isArray(frame?.route?.route_ids) ? frame.route.route_ids : [])
+          ])
+        : [])
+    ];
+    return String(candidates.find((value) => String(value || "").trim()) || "").trim();
+  }
+
+  function routeDisplayName(value) {
+    const fileName = String(value || "").split(/[\\/]/).pop().replace(/\.csv$/i, "");
+    if (!fileName) return "未标注路线";
+    const separator = fileName.indexOf("&");
+    if (separator >= 0 && fileName.slice(separator + 1).trim()) return fileName.slice(separator + 1).trim();
+    return fileName.replace(/^\d{4}-\d{2}-\d{2}[_-]\d{2}[-:]\d{2}[-:]\d{2}[_-]?/, "") || fileName;
+  }
+
+  function filteredVegetationSamples() {
+    const rows = state.vegetationFilter === "all"
+      ? state.visibleSamples
+      : state.visibleSamples.filter((sample) => (
+          inspectionFor(sample)?.vegetation_types?.[state.vegetationFilter] === true
+        ));
+    return rows.slice().reverse();
+  }
+
+  function appendVegetationPresenceCell(row, inspection, key) {
+    const cell = document.createElement("td");
+    const presence = vegetationPresence(inspection, key);
+    const label = document.createElement("span");
+    label.className = "gm-veg-presence";
+    label.dataset.state = presence.state;
+    label.textContent = presence.label;
+    cell.appendChild(label);
+    row.appendChild(cell);
+  }
+
+  function renderVegetationTable() {
+    if (!el.vegetationTableBody) return;
+    const analyzedCount = state.visibleSamples.reduce((sum, sample) => sum + (inspectionFor(sample) ? 1 : 0), 0);
+    const counts = {
+      all: state.visibleSamples.length,
+      trees: 0,
+      shrubs: 0,
+      lawn_or_groundcover: 0
+    };
+    state.visibleSamples.forEach((sample) => {
+      const types = inspectionFor(sample)?.vegetation_types || {};
+      if (types.trees === true) counts.trees += 1;
+      if (types.shrubs === true) counts.shrubs += 1;
+      if (types.lawn_or_groundcover === true) counts.lawn_or_groundcover += 1;
+    });
+    Object.entries(counts).forEach(([key, value]) => {
+      if (el.vegetationFilterCounts[key]) el.vegetationFilterCounts[key].textContent = String(value);
+    });
+    el.vegetationFilters.forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.gmVegetationFilter === state.vegetationFilter));
+    });
+    if (el.vegetationTableSummary) {
+      el.vegetationTableSummary.textContent = state.dateKey
+        ? `${formatDateKey(state.dateKey)} · ${state.visibleSamples.length} 个地点 · ${analyzedCount} 已识别`
+        : "等待当前日期数据";
+    }
+
+    const rows = filteredVegetationSamples();
+    const pageCount = Math.max(1, Math.ceil(rows.length / VEGETATION_TABLE_PAGE_SIZE));
+    state.vegetationTablePage = Math.max(0, Math.min(state.vegetationTablePage, pageCount - 1));
+    if (el.vegetationTablePage) {
+      el.vegetationTablePage.textContent = `第 ${state.vegetationTablePage + 1} / ${pageCount} 页`;
+    }
+    if (el.vegetationTablePrev) el.vegetationTablePrev.disabled = state.vegetationTablePage <= 0;
+    if (el.vegetationTableNext) el.vegetationTableNext.disabled = state.vegetationTablePage >= pageCount - 1;
+
+    el.vegetationTableBody.replaceChildren();
+    if (!rows.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 9;
+      cell.className = "gm-table-empty";
+      cell.textContent = state.visibleSamples.length ? "当前筛选没有已识别地点" : "当前日期没有采集地点";
+      row.appendChild(cell);
+      el.vegetationTableBody.appendChild(row);
+      return;
+    }
+
+    const start = state.vegetationTablePage * VEGETATION_TABLE_PAGE_SIZE;
+    const fragment = document.createDocumentFragment();
+    rows.slice(start, start + VEGETATION_TABLE_PAGE_SIZE).forEach((sample) => {
+      const id = sampleId(sample, state.visibleSamples.indexOf(sample));
+      const inspection = inspectionFor(sample);
+      const position = samplePosition(sample);
+      const coverage = vegetationCoverage(inspection);
+      const row = document.createElement("tr");
+      row.dataset.sampleId = id;
+      row.dataset.selected = String(id === state.selectedSampleId);
+
+      const timeCell = document.createElement("td");
+      timeCell.textContent = formatTime(sample.collected_at, false);
+      row.appendChild(timeCell);
+
+      const locationCell = document.createElement("td");
+      const location = document.createElement("div");
+      location.className = "gm-table-location";
+      const route = document.createElement("strong");
+      route.textContent = routeDisplayName(sampleRouteId(sample));
+      const coordinate = document.createElement("small");
+      coordinate.textContent = position
+        ? `${formatCoord(position.longitude)}, ${formatCoord(position.latitude)}`
+        : "坐标不可用";
+      location.append(route, coordinate);
+      locationCell.appendChild(location);
+      row.appendChild(locationCell);
+
+      appendVegetationPresenceCell(row, inspection, "trees");
+      appendVegetationPresenceCell(row, inspection, "shrubs");
+      appendVegetationPresenceCell(row, inspection, "lawn_or_groundcover");
+
+      const coverageCell = document.createElement("td");
+      coverageCell.textContent = coverage == null ? "-" : `${Math.round(coverage)}%`;
+      row.appendChild(coverageCell);
+
+      const healthCell = document.createElement("td");
+      healthCell.className = "gm-table-health";
+      healthCell.textContent = inspection?.health_score == null ? "-" : String(inspection.health_score);
+      row.appendChild(healthCell);
+
+      const statusCell = document.createElement("td");
+      statusCell.textContent = inspectionStatusLabel(inspection);
+      row.appendChild(statusCell);
+
+      const actionCell = document.createElement("td");
+      const locate = document.createElement("button");
+      locate.type = "button";
+      locate.className = "gm-table-locate";
+      locate.dataset.sampleId = id;
+      locate.textContent = "定位";
+      locate.title = "在地图中定位";
+      locate.setAttribute("aria-label", `${formatTime(sample.collected_at)}，在地图中定位`);
+      actionCell.appendChild(locate);
+      row.appendChild(actionCell);
+      fragment.appendChild(row);
+    });
+    el.vegetationTableBody.appendChild(fragment);
+  }
+
+  function syncVegetationTableSelection() {
+    el.vegetationTableBody?.querySelectorAll("tr[data-sample-id]").forEach((row) => {
+      row.dataset.selected = String(row.dataset.sampleId === state.selectedSampleId);
+    });
   }
 
   function issueTypeLabel(type) {
@@ -724,6 +911,7 @@ if (root) {
         state.inspections.set(id, payload.inspection);
         updateNodeInspectionStyle(id, payload.inspection);
         updateSummary(state.visibleSamples, state.routes);
+        renderVegetationTable();
         void refreshGreenQueueStatus();
       }
     } catch (error) {
@@ -1328,11 +1516,13 @@ if (root) {
     const sample = state.visibleSampleById.get(id) || state.visibleSamples[0];
     if (!sample) {
       state.selectedSampleId = "";
+      syncVegetationTableSelection();
       renderSampleDetail(null);
       if (state.selectedRing) state.selectedRing.visible = false;
       return;
     }
     state.selectedSampleId = sampleId(sample, state.visibleSamples.indexOf(sample));
+    syncVegetationTableSelection();
     renderSampleDetail(sample);
     renderProjects(sample);
     void ensureInspection(sample);
@@ -1372,6 +1562,7 @@ if (root) {
   }
 
   async function renderDate() {
+    state.vegetationTablePage = 0;
     state.visibleSamples = state.allSamples
       .filter((sample) => dateKey(sample.collected_at) === state.dateKey && samplePosition(sample))
       .sort((left, right) => (Date.parse(left.collected_at || "") || 0) - (Date.parse(right.collected_at || "") || 0));
@@ -1383,6 +1574,7 @@ if (root) {
       state.routes = [];
       clearSceneContent();
       updateSummary([], []);
+      renderVegetationTable();
       renderSampleDetail(null);
       if (el.mapError) {
         el.mapError.textContent = `${state.vehicleId} 在 ${formatDateKey(state.dateKey)} 没有有效定位采集点。`;
@@ -1402,6 +1594,7 @@ if (root) {
       state.routes = routes;
       setLoadProgress(58, "路线与绿化分析已就绪");
       updateSummary(state.visibleSamples, state.routes);
+      renderVegetationTable();
       await buildMap(state.visibleSamples, state.routes);
       setStatus("数据已更新", "ok");
     } finally {
@@ -1435,6 +1628,7 @@ if (root) {
         state.routes = [];
         clearSceneContent();
         updateSummary([], []);
+        renderVegetationTable();
         renderSampleDetail(null);
         if (el.mapError) {
           el.mapError.textContent = `${state.vehicleId} 暂无可用采集记录。`;
@@ -1513,6 +1707,26 @@ if (root) {
   el.reset?.addEventListener("click", () => cameraPreset(state.viewMode));
   el.viewButtons.forEach((button) => {
     button.addEventListener("click", () => cameraPreset(button.dataset.gmView));
+  });
+  el.vegetationFilters.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.vegetationFilter = button.dataset.gmVegetationFilter || "all";
+      state.vegetationTablePage = 0;
+      renderVegetationTable();
+    });
+  });
+  el.vegetationTablePrev?.addEventListener("click", () => {
+    state.vegetationTablePage = Math.max(0, state.vegetationTablePage - 1);
+    renderVegetationTable();
+  });
+  el.vegetationTableNext?.addEventListener("click", () => {
+    state.vegetationTablePage += 1;
+    renderVegetationTable();
+  });
+  el.vegetationTableBody?.addEventListener("click", (event) => {
+    const button = event.target.closest(".gm-table-locate");
+    const id = button?.dataset.sampleId;
+    if (id) selectSample(id, true);
   });
   el.previewClose?.addEventListener("click", () => el.preview?.close());
   el.preview?.addEventListener("click", (event) => {
