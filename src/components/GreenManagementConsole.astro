@@ -251,6 +251,7 @@
   .green-management-main {
     min-height: 100vh;
     padding: calc(var(--gm-nav-height, 88px) + 14px) 0 0;
+    overflow-x: hidden;
   }
 
   .green-management {
@@ -783,8 +784,12 @@
     --gm-surface: rgba(7, 24, 22, 0.88);
     --gm-surface-strong: rgba(6, 17, 20, 0.96);
     --gm-surface-soft: rgba(22, 47, 42, 0.68);
+    box-sizing: border-box;
     width: min(1760px, 100%);
+    min-width: 0;
+    max-width: 100%;
     padding: 26px 28px 64px;
+    overflow-x: hidden;
     color: var(--gm-ink);
   }
 
@@ -1403,8 +1408,12 @@
   }
 
   .gm-vegetation-ledger {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     margin-top: 12px;
     padding: 20px;
+    overflow: hidden;
   }
 
   .gm-ledger-head,
@@ -1495,7 +1504,11 @@
   }
 
   .gm-vegetation-table-wrap {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     overflow-x: auto;
+    overscroll-behavior-x: contain;
   }
 
   .gm-vegetation-table {
