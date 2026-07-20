@@ -383,7 +383,7 @@ if (root) {
     if (!rows.length) {
       const row = document.createElement("tr");
       const cell = document.createElement("td");
-      cell.colSpan = 9;
+      cell.colSpan = 7;
       cell.className = "gm-table-empty";
       cell.textContent = state.visibleSamples.length ? "当前筛选没有已识别地点" : "当前日期没有采集地点";
       row.appendChild(cell);
@@ -402,10 +402,6 @@ if (root) {
       row.dataset.sampleId = id;
       row.dataset.selected = String(id === state.selectedSampleId);
 
-      const timeCell = document.createElement("td");
-      timeCell.textContent = formatTime(sample.collected_at, false);
-      row.appendChild(timeCell);
-
       const locationCell = document.createElement("td");
       const location = document.createElement("div");
       location.className = "gm-table-location";
@@ -413,8 +409,8 @@ if (root) {
       route.textContent = routeDisplayName(sampleRouteId(sample));
       const coordinate = document.createElement("small");
       coordinate.textContent = position
-        ? `${formatCoord(position.longitude)}, ${formatCoord(position.latitude)}`
-        : "坐标不可用";
+        ? `${formatTime(sample.collected_at, false)} · ${formatCoord(position.longitude)}, ${formatCoord(position.latitude)}`
+        : `${formatTime(sample.collected_at, false)} · 坐标不可用`;
       location.append(route, coordinate);
       locationCell.appendChild(location);
       row.appendChild(locationCell);
@@ -423,16 +419,18 @@ if (root) {
       appendVegetationPresenceCell(row, inspection, "shrubs");
       appendVegetationPresenceCell(row, inspection, "lawn_or_groundcover");
 
-      const coverageCell = document.createElement("td");
-      coverageCell.textContent = coverage == null ? "-" : `${Math.round(coverage)}%`;
-      row.appendChild(coverageCell);
-
-      const healthCell = document.createElement("td");
-      healthCell.className = "gm-table-health";
-      healthCell.textContent = inspection?.health_score == null ? "-" : String(inspection.health_score);
-      row.appendChild(healthCell);
+      const metricsCell = document.createElement("td");
+      metricsCell.className = "gm-table-metrics";
+      const coverageLabel = document.createElement("span");
+      coverageLabel.textContent = `覆盖 ${coverage == null ? "-" : `${Math.round(coverage)}%`}`;
+      const healthLabel = document.createElement("strong");
+      healthLabel.textContent = `健康 ${inspection?.health_score == null ? "-" : inspection.health_score}`;
+      metricsCell.append(coverageLabel, healthLabel);
+      row.appendChild(metricsCell);
 
       const statusCell = document.createElement("td");
+      statusCell.className = "gm-table-status";
+      statusCell.dataset.state = inspection?.status || "pending";
       statusCell.textContent = inspectionStatusLabel(inspection);
       row.appendChild(statusCell);
 

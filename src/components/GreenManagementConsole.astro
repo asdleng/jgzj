@@ -126,95 +126,93 @@
       <div class="gm-map-source">高德静态地图</div>
     </div>
 
-    <aside class="gm-inspector" aria-live="polite">
-      <header class="gm-inspector-head">
+    <section class="gm-vegetation-ledger" aria-label="植被分布表">
+      <header class="gm-ledger-head">
         <div>
-          <p class="gm-kicker">CAPTURE NODE</p>
-          <h2 data-gm-node-title>采集节点</h2>
+          <p class="gm-kicker">VEGETATION DISTRIBUTION</p>
+          <h2>植被分布表</h2>
         </div>
-        <span data-gm-node-health data-state="pending">待分析</span>
+        <p data-gm-vegetation-table-summary>等待当前日期数据</p>
       </header>
-      <p class="gm-node-meta" data-gm-node-meta>在地图中选择采集节点。</p>
-      <div class="gm-frame-grid" data-gm-frames>
-        <p class="gm-empty">等待四路现场图片。</p>
+      <div class="gm-ledger-toolbar">
+        <div class="gm-ledger-filters" role="group" aria-label="植被类型筛选">
+          <button type="button" data-gm-vegetation-filter="all" aria-pressed="true">全部 <b data-gm-filter-count="all">0</b></button>
+          <button type="button" data-gm-vegetation-filter="trees" aria-pressed="false">乔木 <b data-gm-filter-count="trees">0</b></button>
+          <button type="button" data-gm-vegetation-filter="shrubs" aria-pressed="false">灌木 <b data-gm-filter-count="shrubs">0</b></button>
+          <button type="button" data-gm-vegetation-filter="lawn_or_groundcover" aria-pressed="false">草坪 <b data-gm-filter-count="lawn_or_groundcover">0</b></button>
+        </div>
+        <div class="gm-ledger-pagination">
+          <button type="button" data-gm-table-prev aria-label="上一页" title="上一页">‹</button>
+          <span data-gm-table-page>第 1 / 1 页</span>
+          <button type="button" data-gm-table-next aria-label="下一页" title="下一页">›</button>
+        </div>
       </div>
-      <section class="gm-health-panel" data-state="pending">
-        <div class="gm-health-score">
-          <span>植被健康度</span>
-          <strong data-gm-health-score>-</strong>
-          <em data-gm-health-grade>选择节点后分析</em>
-          <p data-gm-score-reason>五维评分依据将在分析后显示。</p>
-        </div>
-        <div class="gm-indicator-grid" data-gm-indicators>
-          <p class="gm-empty">等待四路绿化巡检结果。</p>
-        </div>
-      </section>
-      <section class="gm-operation-note">
-        <header>
-          <p class="gm-kicker">MAINTENANCE REVIEW</p>
-          <h3>问题与养护建议</h3>
-        </header>
-        <p class="gm-inspection-summary" data-gm-inspection-summary>选择节点后读取巡检结论。</p>
-        <div class="gm-observation-block">
-          <h4>可见绿化观察</h4>
-          <ul data-gm-observations><li class="gm-clear">暂无观察</li></ul>
-        </div>
-        <div class="gm-finding-columns">
-          <div>
-            <h4>问题证据</h4>
-            <ul data-gm-issues><li class="gm-clear">暂无结论</li></ul>
-          </div>
-          <div>
-            <h4>养护动作</h4>
-            <ul data-gm-recommendations><li class="gm-clear">暂无建议</li></ul>
-          </div>
-        </div>
-      </section>
-    </aside>
+      <div class="gm-vegetation-table-wrap">
+        <table class="gm-vegetation-table">
+          <thead>
+            <tr>
+              <th scope="col">时间 / 地点</th>
+              <th scope="col">乔木</th>
+              <th scope="col">灌木</th>
+              <th scope="col">草坪</th>
+              <th scope="col">绿化指标</th>
+              <th scope="col">状态</th>
+              <th scope="col"><span class="gm-visually-hidden">操作</span></th>
+            </tr>
+          </thead>
+          <tbody data-gm-vegetation-table-body>
+            <tr><td colspan="7" class="gm-table-empty">等待当前日期数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </section>
 
-  <section class="gm-vegetation-ledger" aria-label="植被分布表">
-    <header class="gm-ledger-head">
+  <aside class="gm-inspector" aria-live="polite">
+    <header class="gm-inspector-head">
       <div>
-        <p class="gm-kicker">VEGETATION DISTRIBUTION</p>
-        <h2>植被分布表</h2>
+        <p class="gm-kicker">CAPTURE NODE · FOUR CAMERA REVIEW</p>
+        <h2 data-gm-node-title>采集节点</h2>
       </div>
-      <p data-gm-vegetation-table-summary>等待当前日期数据</p>
+      <span data-gm-node-health data-state="pending">待分析</span>
     </header>
-    <div class="gm-ledger-toolbar">
-      <div class="gm-ledger-filters" role="group" aria-label="植被类型筛选">
-        <button type="button" data-gm-vegetation-filter="all" aria-pressed="true">全部 <b data-gm-filter-count="all">0</b></button>
-        <button type="button" data-gm-vegetation-filter="trees" aria-pressed="false">乔木 <b data-gm-filter-count="trees">0</b></button>
-        <button type="button" data-gm-vegetation-filter="shrubs" aria-pressed="false">灌木 <b data-gm-filter-count="shrubs">0</b></button>
-        <button type="button" data-gm-vegetation-filter="lawn_or_groundcover" aria-pressed="false">草坪地被 <b data-gm-filter-count="lawn_or_groundcover">0</b></button>
-      </div>
-      <div class="gm-ledger-pagination">
-        <button type="button" data-gm-table-prev aria-label="上一页" title="上一页">‹</button>
-        <span data-gm-table-page>第 1 / 1 页</span>
-        <button type="button" data-gm-table-next aria-label="下一页" title="下一页">›</button>
-      </div>
+    <p class="gm-node-meta" data-gm-node-meta>在地图或表格中选择采集节点。</p>
+    <div class="gm-frame-grid" data-gm-frames>
+      <p class="gm-empty">等待四路现场图片。</p>
     </div>
-    <div class="gm-vegetation-table-wrap">
-      <table class="gm-vegetation-table">
-        <thead>
-          <tr>
-            <th scope="col">时间</th>
-            <th scope="col">路线与位置</th>
-            <th scope="col">乔木</th>
-            <th scope="col">灌木</th>
-            <th scope="col">草坪地被</th>
-            <th scope="col">绿化覆盖</th>
-            <th scope="col">健康度</th>
-            <th scope="col">识别状态</th>
-            <th scope="col"><span class="gm-visually-hidden">操作</span></th>
-          </tr>
-        </thead>
-        <tbody data-gm-vegetation-table-body>
-          <tr><td colspan="9" class="gm-table-empty">等待当前日期数据</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
+    <section class="gm-health-panel" data-state="pending">
+      <div class="gm-health-score">
+        <span>植被健康度</span>
+        <strong data-gm-health-score>-</strong>
+        <em data-gm-health-grade>选择节点后分析</em>
+        <p data-gm-score-reason>五维评分依据将在分析后显示。</p>
+      </div>
+      <div class="gm-indicator-grid" data-gm-indicators>
+        <p class="gm-empty">等待四路绿化巡检结果。</p>
+      </div>
+    </section>
+    <section class="gm-operation-note">
+      <header>
+        <p class="gm-kicker">MAINTENANCE REVIEW</p>
+        <h3>问题与养护建议</h3>
+      </header>
+      <p class="gm-inspection-summary" data-gm-inspection-summary>选择节点后读取巡检结论。</p>
+      <div class="gm-observation-block">
+        <h4>可见绿化观察</h4>
+        <ul data-gm-observations><li class="gm-clear">暂无观察</li></ul>
+      </div>
+      <div class="gm-finding-columns">
+        <div>
+          <h4>问题证据</h4>
+          <ul data-gm-issues><li class="gm-clear">暂无结论</li></ul>
+        </div>
+        <div>
+          <h4>养护动作</h4>
+          <ul data-gm-recommendations><li class="gm-clear">暂无建议</li></ul>
+        </div>
+      </div>
+    </section>
+  </aside>
 
   <section class="gm-flow-band">
     <header>
@@ -1065,9 +1063,10 @@
   }
 
   .gm-workspace {
-    grid-template-columns: minmax(0, 1.6fr) minmax(420px, 0.9fr);
+    grid-template-columns: minmax(0, 1.4fr) minmax(500px, 0.95fr);
     gap: 12px;
     align-items: stretch;
+    min-height: 680px;
   }
 
   .gm-map-stage,
@@ -1081,8 +1080,9 @@
   }
 
   .gm-map-stage {
-    min-height: 760px;
-    max-height: 920px;
+    height: 680px;
+    min-height: 680px;
+    max-height: 680px;
     background: #06120f;
   }
 
@@ -1142,6 +1142,7 @@
   }
 
   .gm-inspector {
+    margin-top: 12px;
     padding: 20px;
     color: #e9f5f1;
   }
@@ -1178,6 +1179,7 @@
   }
 
   .gm-frame-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
   }
 
@@ -1237,7 +1239,7 @@
   }
 
   .gm-health-panel {
-    grid-template-columns: minmax(160px, 0.7fr) minmax(0, 1.6fr);
+    grid-template-columns: minmax(190px, 0.48fr) minmax(0, 2fr);
     gap: 18px;
     margin-top: 16px;
     padding: 18px 0;
@@ -1278,7 +1280,7 @@
   }
 
   .gm-indicator-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 7px;
   }
 
@@ -1334,6 +1336,9 @@
   }
 
   .gm-operation-note {
+    display: grid;
+    grid-template-columns: minmax(240px, 0.8fr) minmax(0, 2fr);
+    gap: 12px 16px;
     margin-top: 16px;
     padding: 0;
     border: 0;
@@ -1341,6 +1346,7 @@
   }
 
   .gm-inspection-summary {
+    grid-column: 1 / -1;
     margin-top: 12px;
     padding: 11px 12px;
     border-left: 3px solid var(--gm-blue);
@@ -1349,9 +1355,9 @@
   }
 
   .gm-observation-block {
-    margin-top: 14px;
-    padding-bottom: 14px;
-    border-bottom: 1px solid var(--gm-line);
+    margin-top: 0;
+    padding: 0;
+    border: 0;
   }
 
   .gm-observation-block h4,
@@ -1387,8 +1393,9 @@
   }
 
   .gm-finding-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
-    margin-top: 14px;
+    margin-top: 0;
   }
 
   .gm-finding-columns li {
@@ -1408,11 +1415,14 @@
   }
 
   .gm-vegetation-ledger {
+    display: flex;
     width: 100%;
+    height: 680px;
     min-width: 0;
     max-width: 100%;
-    margin-top: 12px;
-    padding: 20px;
+    flex-direction: column;
+    margin-top: 0;
+    padding: 14px;
     overflow: hidden;
   }
 
@@ -1432,12 +1442,13 @@
   }
 
   .gm-vegetation-ledger h2 {
-    margin: 4px 0 0;
+    margin: 2px 0 0;
     color: #f3faf7;
-    font-size: 1.25rem;
+    font-size: 1.05rem;
   }
 
   .gm-ledger-head > p {
+    max-width: 58%;
     margin: 0;
     color: var(--gm-muted);
     font-size: 0.72rem;
@@ -1445,8 +1456,9 @@
   }
 
   .gm-ledger-toolbar {
-    margin-top: 16px;
-    padding: 9px 0;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    padding: 7px 0;
     border-top: 1px solid var(--gm-line);
     border-bottom: 1px solid var(--gm-line);
   }
@@ -1459,19 +1471,19 @@
   .gm-ledger-filters button,
   .gm-ledger-pagination button,
   .gm-table-locate {
-    height: 34px;
+    height: 30px;
     border: 1px solid rgba(119, 168, 153, 0.3);
     border-radius: 3px;
     background: rgba(19, 45, 39, 0.72);
     color: #b8cbc4;
     font: inherit;
-    font-size: 0.7rem;
+    font-size: 0.64rem;
     font-weight: 800;
     cursor: pointer;
   }
 
   .gm-ledger-filters button {
-    padding: 0 11px;
+    padding: 0 8px;
   }
 
   .gm-ledger-filters button[aria-pressed="true"] {
@@ -1486,7 +1498,7 @@
   }
 
   .gm-ledger-pagination button {
-    width: 34px;
+    width: 30px;
     padding: 0;
     font-size: 1.15rem;
   }
@@ -1497,7 +1509,7 @@
   }
 
   .gm-ledger-pagination span {
-    min-width: 82px;
+    min-width: 70px;
     color: var(--gm-muted);
     font-size: 0.68rem;
     text-align: center;
@@ -1507,47 +1519,51 @@
     width: 100%;
     min-width: 0;
     max-width: 100%;
-    overflow-x: auto;
+    flex: 1 1 auto;
+    overflow: auto;
     overscroll-behavior-x: contain;
+    scrollbar-width: thin;
   }
 
   .gm-vegetation-table {
     width: 100%;
-    min-width: 980px;
+    min-width: 500px;
     border-collapse: collapse;
     table-layout: fixed;
   }
 
   .gm-vegetation-table th,
   .gm-vegetation-table td {
-    padding: 11px 10px;
+    padding: 7px 6px;
     border-bottom: 1px solid rgba(150, 188, 175, 0.14);
     text-align: left;
     vertical-align: middle;
   }
 
   .gm-vegetation-table th {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+    background: #061714;
     color: #90a9a0;
-    font-size: 0.66rem;
+    font-size: 0.61rem;
     font-weight: 900;
     white-space: nowrap;
   }
 
   .gm-vegetation-table td {
     color: #d2e1dc;
-    font-size: 0.7rem;
-    line-height: 1.45;
+    font-size: 0.64rem;
+    line-height: 1.35;
   }
 
-  .gm-vegetation-table th:nth-child(1) { width: 82px; }
-  .gm-vegetation-table th:nth-child(2) { width: 270px; }
-  .gm-vegetation-table th:nth-child(3),
-  .gm-vegetation-table th:nth-child(4) { width: 82px; }
-  .gm-vegetation-table th:nth-child(5) { width: 104px; }
-  .gm-vegetation-table th:nth-child(6),
-  .gm-vegetation-table th:nth-child(7) { width: 88px; }
-  .gm-vegetation-table th:nth-child(8) { width: 104px; }
-  .gm-vegetation-table th:nth-child(9) { width: 66px; }
+  .gm-vegetation-table th:nth-child(1) { width: 150px; }
+  .gm-vegetation-table th:nth-child(2),
+  .gm-vegetation-table th:nth-child(3) { width: 50px; }
+  .gm-vegetation-table th:nth-child(4) { width: 58px; }
+  .gm-vegetation-table th:nth-child(5) { width: 78px; }
+  .gm-vegetation-table th:nth-child(6) { width: 66px; }
+  .gm-vegetation-table th:nth-child(7) { width: 44px; }
 
   .gm-vegetation-table tbody tr {
     transition: background 140ms ease;
@@ -1577,22 +1593,23 @@
 
   .gm-table-location strong {
     color: #edf7f2;
-    font-size: 0.72rem;
+    font-size: 0.66rem;
   }
 
   .gm-table-location small {
     color: #829b92;
-    font-size: 0.62rem;
+    font-size: 0.57rem;
   }
 
   .gm-veg-presence {
-    gap: 6px;
+    gap: 4px;
+    font-size: 0.6rem;
     white-space: nowrap;
   }
 
   .gm-veg-presence::before {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     flex: 0 0 auto;
     border-radius: 50%;
     background: #71877f;
@@ -1606,14 +1623,35 @@
   .gm-veg-presence[data-state="unknown"] { color: #e7c77f; }
   .gm-veg-presence[data-state="unknown"]::before { background: var(--gm-amber); }
 
-  .gm-table-health {
-    color: #f2fbf7;
-    font-size: 0.82rem;
-    font-weight: 900;
+  .gm-table-metrics {
+    display: grid;
+    gap: 1px;
+    white-space: nowrap;
   }
 
+  .gm-table-metrics span {
+    color: #8ea69d;
+    font-size: 0.57rem;
+  }
+
+  .gm-table-metrics strong {
+    color: #e5f5ef;
+    font-size: 0.62rem;
+  }
+
+  .gm-table-status {
+    color: #a9bdb6;
+    font-size: 0.59rem !important;
+    white-space: nowrap;
+  }
+
+  .gm-table-status[data-state="clear"] { color: #9de7bd; }
+  .gm-table-status[data-state="attention"] { color: #f1cf83; }
+  .gm-table-status[data-state="issue"] { color: #ffaaa3; }
+  .gm-table-status[data-state="not_assessable"] { color: #aabbb5; }
+
   .gm-table-locate {
-    width: 52px;
+    width: 40px;
     padding: 0;
     border-color: rgba(67, 185, 216, 0.42);
     color: #bfeefd;
@@ -1690,13 +1728,28 @@
     }
   }
 
-  @media (max-width: 1080px) {
+  @media (max-width: 1180px) {
     .gm-workspace {
       grid-template-columns: 1fr;
+      min-height: 0;
     }
 
     .gm-map-stage {
+      height: 640px;
       min-height: 640px;
+      max-height: 640px;
+    }
+
+    .gm-vegetation-ledger {
+      height: 620px;
+    }
+
+    .gm-frame-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .gm-indicator-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .gm-toolbar {
@@ -1745,8 +1798,13 @@
     }
 
     .gm-map-stage {
+      height: 62vh;
       min-height: 62vh;
       max-height: 680px;
+    }
+
+    .gm-vegetation-ledger {
+      height: 560px;
     }
 
     .gm-inspector,
@@ -1762,6 +1820,7 @@
     }
 
     .gm-ledger-head > p {
+      max-width: none;
       text-align: left;
     }
 
@@ -1778,6 +1837,16 @@
 
     .gm-health-panel {
       grid-template-columns: 1fr;
+    }
+
+    .gm-frame-grid,
+    .gm-operation-note {
+      grid-template-columns: 1fr;
+    }
+
+    .gm-operation-note > header,
+    .gm-inspection-summary {
+      grid-column: auto;
     }
 
     .gm-health-score {
