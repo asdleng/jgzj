@@ -9307,7 +9307,9 @@ function listLidarRelocCaptureTools(toolNames) {
     'lidar.capture_current_frame',
     'lidar.capture',
     'vpr.capture_bundle'
-  ].filter((toolName) => t
+  ].filter((toolName) => toolNames.has(toolName));
+}
+
 function listLidarRelocInferTools(toolNames) {
   return [
     'lidar.relocalization_infer',
