@@ -298,6 +298,10 @@ const lidarRelocalizationIndexedVehicles = new Set(
     .map((vehicleId) => getLidarRelocVehicleId(vehicleId))
     .filter(Boolean)
 );
+const lidarRelocalizationIndexRegistryPath = path.resolve(
+  process.env.LIDAR_RELOCALIZATION_INDEX_REGISTRY ||
+    path.join(lidarRelocalizationRoot, 'relocalization6_vehicle_index_registry.json')
+);
 const lidarRelocalizationBlockedVehicles = new Map([
   ['BIT-0026', 'repeated_place_false_accepts'],
   ['BIT-0037', 'a100_map_index_mismatch']
@@ -10642,14 +10646,41 @@ function describeLidarRelocCoverageFailure(vehicleId, coverage) {
   return `当前 BEVPlace++ + LCR-Net 检索库没有 ${vehicleId} 的已验证地图描述子。`;
 }
 
+async function readLidarRelocIndexRegistry() {
+  try {
+    const payload = JSON.parse(await fs.readFile(lidarRelocalizationIndexRegistryPath, 'utf8'));
+    const vehicles = payload?.schema_version === 1 && payload?.vehicles && typeof payload.vehicles === 'object'
+      ? payload.vehicles
+      : {};
+    return {
+      updated_at: payload?.updated_at || null,
+      vehicles: Object.fromEntries(
+        Object.entries(vehicles).filter(([vehicleId, entry]) => (
+          getLidarRelocVehicleId(vehicleId) === vehicleId && entry?.ok === true
+        ))
+      )
+    };
+  } catch (_error) {
+    return { updated_at: null, vehicles: {} };
+  }
+}
+
 async function getLidarRelocBevplaceCoverage(vehicleId, options = {}) {
   const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
   if (!normalizedVehicleId) {
     return normalizeLidarRelocCoveragePayload(vehicleId, { count: 0 });
   }
   if (!options.force) {
-    const indexed = lidarRelocalizationIndexedVehicles.has(normalizedVehicleId);
-    const blockedReason = lidarRelocalizationBlockedVehicles.get(normalizedVehicleId) || null;
+    const registry = await readLidarRelocIndexRegistry();
+    const registryEntry = registry.vehicles[normalizedVehicleId] || null;
+    const dynamicIndexed = Boolean(registryEntry);
+    const indexed = dynamicIndexed || lidarRelocalizationIndexedVehicles.has(normalizedVehicleId);
+    const configuredBlock = lidarRelocalizationBlockedVehicles.get(normalizedVehicleId) || null;
+    const blockedReason =
+      dynamicIndexed && configuredBlock === 'a100_map_index_mismatch' ? null : configuredBlock;
+    const indexedVehicles = Array.from(
+      new Set([...lidarRelocalizationIndexedVehicles, ...Object.keys(registry.vehicles)])
+    ).sort();
     return {
       ...normalizeLidarRelocCoveragePayload(normalizedVehicleId, {
         count: indexed && !blockedReason ? 1 : 0,
@@ -10658,8 +10689,10 @@ async function getLidarRelocBevplaceCoverage(vehicleId, options = {}) {
       descriptor_count: indexed && !blockedReason ? null : 0,
       blocked: Boolean(blockedReason),
       blocked_reason: blockedReason,
-      indexed_vehicles: Array.from(lidarRelocalizationIndexedVehicles).sort(),
-      source: 'server_static_indexed_vehicle_set'
+      indexed_vehicles: indexedVehicles,
+      index_version: registryEntry?.version || null,
+      registry_updated_at: registry.updated_at,
+      source: dynamicIndexed ? 'validated_dynamic_registry' : 'server_static_indexed_vehicle_set'
     };
   }
   const now = Date.now();
