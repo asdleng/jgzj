@@ -122,6 +122,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
   const sample = {
     sample_id: 'green-sample-1',
     vehicle_id: 'BIT-TEST',
+    source: 'auto_ad_patrol_flow_upload',
     collected_at: '2026-07-17T08:00:00.000Z',
     position: { gaode_longitude: 114.1, gaode_latitude: 22.5 },
     frame_count: 4,
@@ -142,9 +143,16 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     sample_id: 'green-sample-3',
     collected_at: '2026-07-17T08:00:20.000Z'
   };
+  const legacySample = {
+    ...sample,
+    sample_id: 'legacy-crowd-sample',
+    vehicle_id: 'BIT-OLD',
+    source: 'cloud_camera_capture',
+    collected_at: '2026-07-17T08:00:30.000Z'
+  };
   await fs.writeFile(
     path.join(runtimeRoot, 'crowd-samples.jsonl'),
-    `${JSON.stringify(sample)}\n${JSON.stringify(secondSample)}\n${JSON.stringify(thirdSample)}\n`
+    `${JSON.stringify(sample)}\n${JSON.stringify(secondSample)}\n${JSON.stringify(thirdSample)}\n${JSON.stringify(legacySample)}\n`
   );
 
   let analysisRequests = 0;
@@ -291,6 +299,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
     greenModel: process.env.PARK_GREEN_INSPECTION_MODEL,
     greenAutoEnabled: process.env.PARK_GREEN_INSPECTION_AUTO_ENABLED,
     greenBootDelay: process.env.PARK_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS,
+    greenLookback: process.env.PARK_GREEN_INSPECTION_AUTO_LOOKBACK_HOURS,
     cleanupDelay: process.env.PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS
   };
   process.env.PARK_CROWD_RUNTIME_ROOT = runtimeRoot;
@@ -301,6 +310,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
   delete process.env.PARK_GREEN_INSPECTION_MODEL;
   process.env.PARK_GREEN_INSPECTION_AUTO_ENABLED = 'true';
   process.env.PARK_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS = '60000';
+  process.env.PARK_GREEN_INSPECTION_AUTO_LOOKBACK_HOURS = '720';
   process.env.PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS = '60000';
 
   const app = express();
@@ -314,9 +324,17 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
 
   try {
-    let response = await fetch(`${baseUrl}/api/park-pcm/green/samples?vehicle_id=BIT-TEST&limit=8000`);
+    let response = await fetch(`${baseUrl}/api/park-pcm/green/vehicles`);
     let payload = await response.json();
     assert.equal(response.status, 200);
+    assert.equal(payload.source, 'auto_ad_patrol_flow_upload');
+    assert.deepEqual(payload.vehicles.map((vehicle) => vehicle.vehicle_id), ['BIT-TEST']);
+    assert.equal(payload.vehicles[0].last_patrol_flow_capture.sample_id, thirdSample.sample_id);
+
+    response = await fetch(`${baseUrl}/api/park-pcm/green/samples?vehicle_id=BIT-TEST&source=cloud_camera_capture&limit=8000`);
+    payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.source, 'auto_ad_patrol_flow_upload');
     assert.equal(payload.compact, true);
     assert.equal(payload.samples.length, 3);
     assert.equal(payload.samples[0].analysis, undefined);
@@ -413,6 +431,7 @@ test('green inspection analyzes four-view evidence once and suppresses low-confi
       PARK_GREEN_INSPECTION_MODEL: previousEnv.greenModel,
       PARK_GREEN_INSPECTION_AUTO_ENABLED: previousEnv.greenAutoEnabled,
       PARK_GREEN_INSPECTION_AUTO_BOOT_DELAY_MS: previousEnv.greenBootDelay,
+      PARK_GREEN_INSPECTION_AUTO_LOOKBACK_HOURS: previousEnv.greenLookback,
       PARK_CROWD_STORAGE_CLEANUP_BOOT_DELAY_MS: previousEnv.cleanupDelay
     })) {
       if (value == null) delete process.env[key];
@@ -430,6 +449,7 @@ test('green inspection auto worker moves terminal model errors to the failed que
   const sample = {
     sample_id: 'green-failed-sample',
     vehicle_id: 'BIT-FAIL',
+    source: 'auto_ad_patrol_flow_upload',
     collected_at: new Date().toISOString(),
     frames: [{ camera_id: 'camera1', image_path: '20260717/failed-sample/camera1.jpg' }]
   };

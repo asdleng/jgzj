@@ -1292,7 +1292,7 @@ module.exports = function registerParkPcmRoutes(app, options) {
     { min: 1, max: 8 }
   );
   const crowdMonitorEnabled = String(
-    process.env.PARK_CROWD_MONITOR_ENABLED || process.env.PARK_PCM_CROWD_MONITOR_ENABLED || 'true'
+    process.env.PARK_CROWD_MONITOR_ENABLED || process.env.PARK_PCM_CROWD_MONITOR_ENABLED || 'false'
   ).toLowerCase() !== 'false';
   const crowdMonitorIntervalMs = toFiniteInteger(
     process.env.PARK_CROWD_MONITOR_INTERVAL_MS || process.env.PARK_PCM_CROWD_MONITOR_INTERVAL_MS,
@@ -6452,7 +6452,9 @@ print(len(faces))
     const [inspectionState, workerState, samples] = await Promise.all([
       readGreenInspectionState(),
       readGreenInspectionWorkerState(),
-      readCrowdSampleLog(greenInspectionAutoScanLimit)
+      readCrowdSampleLog(greenInspectionAutoScanLimit, {
+        source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE
+      })
     ]);
     const candidates = greenInspectionCandidateSamples(samples);
     const completed = [];
@@ -7481,6 +7483,70 @@ print(len(faces))
     }
   });
 
+  app.get('/api/park-pcm/green/vehicles', requirePermission('vehicle:read'), async (_req, res) => {
+    try {
+      const [vehicles, samples] = await Promise.all([
+        listVehicles().catch(() => []),
+        readCrowdSampleLogForAxis({ source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE })
+      ]);
+      const nowMs = Date.now();
+      const vehicleMeta = new Map(
+        vehicles
+          .filter((vehicle) => vehicle && vehicle.vehicle_id)
+          .map((vehicle) => [String(vehicle.vehicle_id), vehicle])
+      );
+      const latestByVehicle = new Map();
+      samples.forEach((sample) => {
+        const vehicleId = String(sample?.vehicle_id || '').trim();
+        const collectedAtMs = sampleCollectedAtMs(sample);
+        if (!vehicleId || sample?.skipped || collectedAtMs == null) return;
+        const current = latestByVehicle.get(vehicleId);
+        if (!current || collectedAtMs > current.collected_at_ms) {
+          latestByVehicle.set(vehicleId, {
+            sample_id: sample.sample_id || null,
+            collected_at: sample.collected_at || new Date(collectedAtMs).toISOString(),
+            collected_at_ms: collectedAtMs,
+            source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE
+          });
+        }
+      });
+      const rows = [...latestByVehicle.entries()]
+        .map(([vehicleId, lastCapture]) => {
+          const vehicle = vehicleMeta.get(vehicleId) || {};
+          const lastSeenMs = Date.parse(vehicle.last_seen || '');
+          const ageS = Number.isFinite(lastSeenMs) ? Math.max(0, Math.round((nowMs - lastSeenMs) / 1000)) : null;
+          return {
+            vehicle_id: vehicleId,
+            plate_number: vehicle.plate_number || null,
+            last_seen: vehicle.last_seen || null,
+            last_seen_age_s: ageS,
+            fresh: ageS != null && ageS * 1000 <= freshVehicleMs,
+            tool_count: vehicle.tool_count == null ? null : vehicle.tool_count,
+            telemetry: {
+              speed_kph: numberValue(vehicle?.telemetry?.vehicle?.speed_kph ?? vehicle?.telemetry?.vehicle?.speed),
+              battery_soc: numberValue(vehicle?.telemetry?.vehicle?.battery_soc),
+              running_mode: numberValue(vehicle?.telemetry?.vehicle?.running_mode)
+            },
+            last_patrol_flow_capture: lastCapture
+          };
+        })
+        .sort((left, right) => (
+          right.last_patrol_flow_capture.collected_at_ms - left.last_patrol_flow_capture.collected_at_ms ||
+          left.vehicle_id.localeCompare(right.vehicle_id, 'zh-CN')
+        ));
+      return res.json({
+        ok: true,
+        source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE,
+        vehicles: rows
+      });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        ok: false,
+        error: error.message || 'green_management_vehicle_list_failed'
+      });
+    }
+  });
+
   app.get('/api/park-pcm/crowd/samples', requirePermission('vehicle:read'), async (req, res) => {
     try {
       const requestedSource = String(req.query?.source || 'all').trim();
@@ -7513,11 +7579,9 @@ print(len(faces))
 
   app.get('/api/park-pcm/green/samples', requirePermission('vehicle:read'), async (req, res) => {
     try {
-      const requestedSource = String(req.query?.source || 'all').trim();
-      const source = requestedSource && requestedSource !== 'all' ? requestedSource : '';
       const filters = {
         vehicle_id: req.query?.vehicle_id,
-        source
+        source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE
       };
       const limit = toFiniteInteger(req.query?.limit, 1000, { min: 1, max: 20000 });
       const [axisSamples, uploadState] = await Promise.all([
@@ -7535,7 +7599,7 @@ print(len(faces))
       return res.json({
         ok: true,
         vehicle_id: req.query?.vehicle_id ? String(req.query.vehicle_id) : null,
-        source: source || 'all',
+        source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE,
         compact: true,
         day_axis: finalizeCrowdSampleDayAxis(axisState),
         samples

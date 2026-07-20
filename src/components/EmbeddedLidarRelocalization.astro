@@ -13,7 +13,7 @@ import "../styles/lidar-relocalization-data.css";
   <div class="lidar-reloc-head">
     <div>
       <p class="section-kicker">LiDAR Relocalization</p>
-      <h3>地图 + 当前帧粗位姿</h3>
+      <h3>BEVPlace++ + LCR-Net 重定位</h3>
     </div>
     <p id="lidar-reloc-status" class="cloud-ops-inline-status" data-state="idle">待加载</p>
   </div>
@@ -27,7 +27,7 @@ import "../styles/lidar-relocalization-data.css";
     </label>
     <button id="lidar-reloc-refresh" class="cloud-ops-toolbar-button" type="button">刷新</button>
     <button id="lidar-reloc-capture" class="cloud-ops-toolbar-button" type="button" disabled>抓取当前帧</button>
-    <button id="lidar-reloc-infer" class="cloud-ops-toolbar-button lidar-reloc-primary" type="button" disabled>推测粗位姿</button>
+    <button id="lidar-reloc-infer" class="cloud-ops-toolbar-button lidar-reloc-primary" type="button" disabled>运行重定位</button>
   </div>
 
   <div class="lidar-reloc-grid">
@@ -125,7 +125,7 @@ import "../styles/lidar-relocalization-data.css";
     <div class="lidar-reloc-result-head">
       <div>
         <p class="lidar-reloc-panel-kicker">VISUALIZATION</p>
-        <h4>BEV 地图与当前帧叠加</h4>
+        <h4>全局地图与当前帧叠加</h4>
       </div>
       <p id="lidar-reloc-visual-state" class="cloud-ops-inline-status" data-state="idle">等待推理</p>
     </div>

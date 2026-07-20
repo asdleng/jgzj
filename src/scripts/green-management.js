@@ -18,7 +18,7 @@ if (root) {
 
   const API = {
     auth: "/api/auth/me",
-    vehicles: "/api/park-pcm/crowd/vehicles",
+    vehicles: "/api/park-pcm/green/vehicles",
     samples: "/api/park-pcm/green/samples",
     routes: "/api/park-pcm/crowd/routes",
     greenInspections: "/api/park-pcm/green/inspections",
@@ -389,7 +389,7 @@ if (root) {
       if (vehicleId) rows.set(vehicleId, vehicle);
     });
     const captureTime = (vehicle) => {
-      const capture = vehicle?.last_crowd_capture;
+      const capture = vehicle?.last_patrol_flow_capture;
       return number(capture?.collected_at_ms) ?? (Date.parse(capture?.collected_at || "") || 0);
     };
     const ranked = [...rows.values()].sort((left, right) => {
@@ -400,7 +400,7 @@ if (root) {
     });
     el.vehicle.replaceChildren();
     ranked.forEach((vehicle) => {
-      const capture = vehicle?.last_crowd_capture;
+      const capture = vehicle?.last_patrol_flow_capture;
       const option = document.createElement("option");
       option.value = vehicle.vehicle_id;
       option.textContent = captureTime(vehicle)

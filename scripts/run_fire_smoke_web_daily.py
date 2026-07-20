@@ -87,9 +87,12 @@ def plan_daily_state(
     current_count: int,
     daily_limit: int,
     timestamp: str,
+    baseline_count_floor: int = 0,
 ) -> dict:
     if daily_limit <= 0:
         raise ValueError("daily_limit must be positive")
+    if baseline_count_floor < 0:
+        raise ValueError("baseline_count_floor must be non-negative")
     same_day = existing.get("schema") == SCHEMA and existing.get("day") == day
     if same_day:
         try:
@@ -101,8 +104,13 @@ def plan_daily_state(
         if baseline_count < 0 or target_count != baseline_count + daily_limit:
             raise DailyValidationError("same_day_state_target_is_invalid")
         state = dict(existing)
+        if baseline_count_floor and baseline_count < baseline_count_floor:
+            baseline_count = baseline_count_floor
+            target_count = baseline_count + daily_limit
+            state["baseline_count"] = baseline_count
+            state["target_count"] = target_count
     else:
-        baseline_count = current_count
+        baseline_count = max(current_count, baseline_count_floor)
         target_count = baseline_count + daily_limit
         attempts = 1
         state = {
@@ -208,6 +216,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--state", type=Path)
     parser.add_argument("--lock", type=Path)
     parser.add_argument("--daily-limit", type=int, default=50)
+    parser.add_argument(
+        "--baseline-count",
+        type=int,
+        default=int(os.environ.get("FIRE_SMOKE_WEB_DAILY_BASELINE_COUNT", "3000")),
+        help="Minimum baseline_count used for daily planning; use 0 to start from the current dataset count.",
+    )
     parser.add_argument("--endpoint", default="http://127.0.0.1:18016")
     parser.add_argument("--model", default="Qwen3.6-27B-Labeler")
     parser.add_argument("--api-key", default=os.environ.get("QWEN_LABELER_API_KEY", ""))
@@ -249,6 +263,7 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
             current_count,
             args.daily_limit,
             timestamp,
+            getattr(args, "baseline_count", 0),
         )
         plan = {
             "schema": SCHEMA,

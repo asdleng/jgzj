@@ -723,6 +723,8 @@
     addMeta(pipelineNode, "当前帧抓取", captureTools.length ? captureTools.join(" / ") : "缺 LiDAR 抓取工具", captureTools.length ? "ok" : "warn");
     addMeta(pipelineNode, "推理工具", inferLabel, inferTools.length || serverInference ? "ok" : "warn");
     addMeta(pipelineNode, "模型阶段", model.phase || "not_deployed", model.service_ready ? "ok" : "warn");
+    addMeta(pipelineNode, "推理链路", model.method || "-");
+    addMeta(pipelineNode, "A100", model.a100_gpu === undefined ? "-" : `GPU ${model.a100_gpu}`);
     addMeta(pipelineNode, "最近抓取", capture ? `${capture.tool_name || "-"} · ${formatTime(capture.captured_at)}` : "-");
     addMeta(pipelineNode, "Bundle", capture?.bundle_id || "-");
   }
@@ -841,9 +843,13 @@
     if (!resultNode) return;
     resultNode.innerHTML = "";
     addMeta(resultNode, "推理阶段", data?.phase || "-");
+    addMeta(resultNode, "方法", data?.method || data?.result?.method || "-");
     addMeta(resultNode, "粗位姿", formatPose(data?.coarse_pose), data?.coarse_pose ? "ok" : "warn");
     if (data?.raw_coarse_pose) {
-      addMeta(resultNode, "BEVPlace++ top1", formatPose(data.raw_coarse_pose), "idle");
+      addMeta(resultNode, "LCR-Net rank1", formatPose(data.raw_coarse_pose), "idle");
+    }
+    if (data?.bev_coarse_pose) {
+      addMeta(resultNode, "BEVPlace++ top1", formatPose(data.bev_coarse_pose), "idle");
     }
     addMeta(resultNode, "置信度", formatNumber(data?.confidence, 3));
     addMeta(resultNode, "工具", data?.tool_name || "-");
@@ -858,8 +864,10 @@
       const rows = Array.isArray(selector.rows) ? selector.rows : [];
       const selected = rows.find((row) => Number(row.rank) === Number(selector.selected_rank)) || rows[0] || null;
       if (selected) {
-        addMeta(resultNode, "NDT fitness", formatNumber(selected.fitness_score, 3), selected.converged ? "ok" : "warn");
-        addMeta(resultNode, "NDT 校正", selected.correction_xy_m === null || selected.correction_xy_m === undefined ? "-" : `${formatNumber(selected.correction_xy_m, 2)} m`);
+        addMeta(resultNode, "NDT probability", formatNumber(selected.transformation_probability, 3), selected.gate_pass ? "ok" : "warn");
+        addMeta(resultNode, "NDT 迭代", selected.final_num_iteration ?? "-", selected.gate_pass ? "ok" : "warn");
+        const correction = selected.correction_xy_m ?? selected.correction_m;
+        addMeta(resultNode, "NDT 校正", correction === null || correction === undefined ? "-" : `${formatNumber(correction, 2)} m`);
       }
       if (selector.detail) addMeta(resultNode, "NDT 说明", selector.detail, "warn");
     }
@@ -869,8 +877,14 @@
         ? "无可靠真值"
         : refCheck.xy_error_m === null || refCheck.xy_error_m === undefined
           ? "-"
-          : `${formatNumber(refCheck.xy_error_m, 2)} m / ${formatNumber(refCheck.max_xy_m, 1)} m`;
+          : `${formatNumber(refCheck.xy_error_m, 2)} m / ${formatNumber(refCheck.yaw_error_deg, 2)}°`;
       addMeta(resultNode, "可靠定位自检", value, refCheck.passed ? "ok" : "warn");
+    }
+    const resource = data?.resource || data?.result?.resource || null;
+    if (resource) {
+      addMeta(resultNode, "总耗时", formatMs(Number(resource.wall_s || 0) * 1000));
+      addMeta(resultNode, "BEV / LCR / NDT", [resource.bev_wall_s, resource.lcr_wall_s, resource.ndt_wall_s]
+        .map((value) => `${formatNumber(value, 2)}s`).join(" / "));
     }
     if (data?.detail) addMeta(resultNode, "状态", data.detail, data.ok ? "idle" : "warn");
   }

@@ -1,0 +1,68 @@
+[2026-07-20T17:29:55+08:00] start fire_smoke_yolo class_id=0 fire
+{
+  "model": "fire_smoke_yolo",
+  "task_id": "fire_smoke_yolo",
+  "title": "火源烟雾",
+  "task": "detect",
+  "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+  "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+  "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+  "class_id": 0,
+  "class_name": "fire",
+  "qwen_class": "fire",
+  "run_tag": "20260720_172955_fire_smoke_yolo_c0_fire",
+  "run_dir": "/home/admin1/jgzj/finetune/runs/20260720_172955_fire_smoke_yolo_c0_fire"
+}
+[2026-07-20 17:41:44] original_scan positives=9200/12670 negatives=4000/107152
+Traceback (most recent call last):
+  File "finetune/finetune_yolo.py", line 1386, in <module>
+    main()
+  File "finetune/finetune_yolo.py", line 1326, in main
+    original_summary = select_original_samples(model, positives, negatives, args.class_id, args, rng, selected, used)
+  File "finetune/finetune_yolo.py", line 612, in select_original_samples
+    pos_preds = predict_batch(model, [row["image"] for row in pos_rows], args)
+  File "finetune/finetune_yolo.py", line 506, in predict_batch
+    for result in results:
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/utils/_contextlib.py", line 36, in generator_context
+    response = gen.send(None)
+  File "/home/admin1/.local/lib/python3.8/site-packages/ultralytics/engine/predictor.py", line 330, in stream_inference
+    preds = self.inference(im, *args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/ultralytics/engine/predictor.py", line 182, in inference
+    return self.model(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/ultralytics/nn/autobackend.py", line 717, in forward
+    y = self.model(im, augment=augment, visualize=visualize, embed=embed, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/ultralytics/nn/tasks.py", line 142, in forward
+    return self.predict(x, *args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/ultralytics/nn/tasks.py", line 159, in predict
+    return self._predict_once(x, profile, visualize, embed)
+  File "/home/admin1/.local/lib/python3.8/site-packages/ultralytics/nn/tasks.py", line 181, in _predict_once
+    x = m(x)  # run
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/ultralytics/nn/modules/block.py", line 312, in forward
+    return self.cv2(torch.cat(y, 1))
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/ultralytics/nn/modules/conv.py", line 89, in forward_fuse
+    return self.act(self.conv(x))
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/conv.py", line 458, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+  File "/home/admin1/.local/lib/python3.8/site-packages/torch/nn/modules/conv.py", line 454, in _conv_forward
+    return F.conv2d(input, weight, bias, self.stride,
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 3.12 GiB. GPU 0 has a total capacity of 23.53 GiB of which 1.42 GiB is free. Process 2176269 has 5.95 GiB memory in use. Process 845327 has 3.12 GiB memory in use. Process 705822 has 3.63 GiB memory in use. Process 3893654 has 628.00 MiB memory in use. Including non-PyTorch memory, this process has 8.75 GiB memory in use. Of the allocated memory 7.49 GiB is allocated by PyTorch, and 806.67 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

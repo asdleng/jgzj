@@ -245,21 +245,32 @@ const lidarRelocalizationCaptureRoot = path.resolve(
 );
 const lidarRelocalizationA100Root =
   process.env.LIDAR_RELOCALIZATION_A100_ROOT || '/home/sari/lidar_reloc_bevplace_20260629';
+const lidarRelocalizationLcrA100Root =
+  process.env.LIDAR_RELOCALIZATION_LCR_A100_ROOT || '/home/sari/lcrnet_reloc_20260717';
 const lidarRelocalizationModelLabel =
   process.env.LIDAR_RELOCALIZATION_MODEL_LABEL ||
-  'BEVPlace++ 20260709 keyframe official raw-rslidar global+local RANSAC yaw-fix';
+  'BEVPlace++ Top-10 + LCR-Net Epoch 15 FP32 Top-3 + strict PCL NDT';
 const lidarRelocalizationModelCheckpoint =
   process.env.LIDAR_RELOCALIZATION_MODEL_CHECKPOINT ||
   `${lidarRelocalizationA100Root}/runs/bevplace_rawrslidar_to_keyframe_20260709_keyframe_official_large_v3_gpu3/model_best.pth.tar`;
+const lidarRelocalizationLcrCheckpoint =
+  process.env.LIDAR_RELOCALIZATION_LCR_CHECKPOINT ||
+  `${lidarRelocalizationLcrA100Root}/runs/registration_jgzj_v1_gpu3_20260717/validated_checkpoints/epoch-15.pth.tar`;
+const lidarRelocalizationLcrWebRunner =
+  process.env.LIDAR_RELOCALIZATION_LCR_WEB_RUNNER ||
+  `${lidarRelocalizationLcrA100Root}/web_runtime_20260720/run_web_relocalization6.sh`;
 const lidarRelocalizationFallbackCheckpoint =
   process.env.LIDAR_RELOCALIZATION_FALLBACK_CHECKPOINT ||
   `${lidarRelocalizationA100Root}/runs/jgzj_bevplace_yaw3_kdtree_20260630_gpu3/model_best.pth.tar`;
 const lidarRelocalizationBevplaceDatasetRoot =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_DATASET_ROOT ||
-  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260709_verified_currentmaps_official_1025_xy5yaw30/map_db/datasets/KITTI`;
+  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260715_server_strict11_incremental_v1_official/map_db/datasets/KITTI`;
 const lidarRelocalizationBevplaceManifest =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_MANIFEST ||
-  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260709_verified_currentmaps_official_1025_xy5yaw30/map_db/manifest.jsonl`;
+  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260715_server_strict11_incremental_v1_official/map_db/manifest.jsonl`;
+const lidarRelocalizationBevplaceDescriptors =
+  process.env.LIDAR_RELOCALIZATION_BEVPLACE_DESCRIPTORS ||
+  `${lidarRelocalizationA100Root}/data/keyframes/jgzj_keyframe_bev_rawrslidar_20260715_server_strict11_incremental_v1_official/map_db/descriptors_model_v3.npz`;
 const lidarRelocalizationBevplaceScript =
   process.env.LIDAR_RELOCALIZATION_BEVPLACE_SCRIPT ||
   `${lidarRelocalizationA100Root}/scripts/bevplace_global_infer.py`;
@@ -281,12 +292,16 @@ const lidarRelocalizationA100NumWorkers = toFiniteInteger(
 const lidarRelocalizationIndexedVehicles = new Set(
   String(
     process.env.LIDAR_RELOCALIZATION_INDEXED_VEHICLES ||
-      'BIT-0013,BIT-0014,BIT-0015,BIT-0016,BIT-0019,BIT-0020,BIT-0026,BIT-0032,BIT-0039'
+      'BIT-0011,BIT-0013,BIT-0014,BIT-0015,BIT-0016,BIT-0019,BIT-0020,BIT-0032,BIT-0046'
   )
     .split(',')
     .map((vehicleId) => getLidarRelocVehicleId(vehicleId))
     .filter(Boolean)
 );
+const lidarRelocalizationBlockedVehicles = new Map([
+  ['BIT-0026', 'repeated_place_false_accepts'],
+  ['BIT-0037', 'a100_map_index_mismatch']
+]);
 const lidarRelocalizationCoverageCacheTtlMs = toFiniteInteger(
   process.env.LIDAR_RELOCALIZATION_COVERAGE_CACHE_TTL_MS,
   300000,
@@ -319,7 +334,10 @@ const lidarRelocalizationNdtSelectorRequire =
 const lidarRelocalizationReferenceCheckEnabled =
   String(process.env.LIDAR_RELOCALIZATION_REFERENCE_CHECK_ENABLED || 'true').toLowerCase() !== 'false';
 const lidarRelocalizationReferenceCheckMaxXyM = Number(
-  process.env.LIDAR_RELOCALIZATION_REFERENCE_CHECK_MAX_XY_M || 5
+  process.env.LIDAR_RELOCALIZATION_REFERENCE_CHECK_MAX_XY_M || 0.5
+);
+const lidarRelocalizationReferenceCheckMaxYawDeg = Number(
+  process.env.LIDAR_RELOCALIZATION_REFERENCE_CHECK_MAX_YAW_DEG || 2
 );
 const lidarRelocalizationInferScript = path.resolve(
   process.env.LIDAR_RELOCALIZATION_INFER_SCRIPT ||
@@ -9433,7 +9451,7 @@ async function writeLastLidarRelocCapture(vehicleId, capture) {
 }
 
 function hasLidarRelocServerInfer() {
-  return fsSync.existsSync(lidarRelocalizationInferScript);
+  return Boolean(lidarRelocalizationLcrWebRunner) && fsSync.existsSync(lidarRelocalizationA100Key);
 }
 
 async function executeLidarRelocTool(vehicleId, toolName, args = {}, timeout_s = 25) {
@@ -9693,13 +9711,25 @@ function buildLidarRelocReferenceCheck(capturePose, coarsePose) {
   }
   const xyErrorM = finiteDistance2d(capturePose, coarsePose);
   const maxXyM = Number(lidarRelocalizationReferenceCheckMaxXyM);
-  const passed = !Number.isFinite(xyErrorM) || !Number.isFinite(maxXyM) || xyErrorM <= maxXyM;
+  const captureYaw = readLidarRelocNumber(capturePose?.yaw, capturePose?.heading);
+  const coarseYaw = readLidarRelocNumber(coarsePose?.yaw, coarsePose?.heading);
+  const yawErrorDeg =
+    Number.isFinite(captureYaw) && Number.isFinite(coarseYaw)
+      ? Math.abs(Math.atan2(Math.sin(coarseYaw - captureYaw), Math.cos(coarseYaw - captureYaw))) * 180 / Math.PI
+      : null;
+  const maxYawDeg = Number(lidarRelocalizationReferenceCheckMaxYawDeg);
+  const xyPassed = !Number.isFinite(xyErrorM) || !Number.isFinite(maxXyM) || xyErrorM <= maxXyM;
+  const yawPassed =
+    !Number.isFinite(yawErrorDeg) || !Number.isFinite(maxYawDeg) || yawErrorDeg <= maxYawDeg;
+  const passed = xyPassed && yawPassed;
   return {
     enabled: true,
     passed,
     skipped: false,
     xy_error_m: xyErrorM,
     max_xy_m: Number.isFinite(maxXyM) ? maxXyM : null,
+    yaw_error_deg: yawErrorDeg,
+    max_yaw_deg: Number.isFinite(maxYawDeg) ? maxYawDeg : null,
     reference_pose: capturePose
   };
 }
@@ -10503,9 +10533,10 @@ async function captureLidarRelocCurrentFrame(vehicleId, status, options = {}) {
   throw error;
 }
 
-async function copyLidarRelocCaptureToA100(vehicleId, capturePath) {
+async function copyLidarRelocCaptureToA100(vehicleId, capturePath, requestId = 'last_capture') {
   const remoteDir = `${lidarRelocalizationA100WorkRoot}/${vehicleId}`;
-  const remoteCapture = `${remoteDir}/last_capture.json`;
+  const safeRequestId = String(requestId || 'last_capture').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 96);
+  const remoteCapture = `${remoteDir}/${safeRequestId || 'last_capture'}.json`;
   await execFileAsync(
     'ssh',
     [
@@ -10541,6 +10572,51 @@ async function copyLidarRelocCaptureToA100(vehicleId, capturePath) {
   return remoteCapture;
 }
 
+async function runLidarRelocLcrnetInfer(vehicleId, mapPath, capturePath) {
+  const requestId = `web-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
+  const remoteCapture = await copyLidarRelocCaptureToA100(vehicleId, capturePath, requestId);
+  const mapStat = await fs.stat(mapPath);
+  const command = [
+    shellQuote(lidarRelocalizationLcrWebRunner),
+    shellQuote(requestId),
+    shellQuote(vehicleId),
+    shellQuote(remoteCapture),
+    shellQuote(String(mapStat.size))
+  ].join(' ');
+  const startedAt = Date.now();
+  const { stdout, stderr } = await execFileAsync(
+    'ssh',
+    [
+      '-i',
+      lidarRelocalizationA100Key,
+      '-o',
+      'ClearAllForwardings=yes',
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'StrictHostKeyChecking=no',
+      `${lidarRelocalizationA100User}@${lidarRelocalizationA100Host}`,
+      command
+    ],
+    { timeout: lidarRelocalizationInferTimeoutMs, maxBuffer: 64 * 1024 * 1024 }
+  );
+  const lines = String(stdout || '').trim().split(/\r?\n/).filter(Boolean);
+  const payload = parseJsonField(lines[lines.length - 1] || stdout, null);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error(stderr || 'lcrnet_web_infer_empty_output');
+  }
+  if (payload.method !== 'bevplace_trt_global_top10_lcrnet_fp32_top3_pcl_ndt') {
+    throw new Error(`unexpected_lcrnet_method:${payload.method || 'missing'}`);
+  }
+  return {
+    ...payload,
+    a100_request_id: requestId,
+    a100_gpu: lidarRelocalizationA100Gpu,
+    server_elapsed_ms: Date.now() - startedAt,
+    stderr: stderr ? String(stderr).slice(0, 2000) : undefined
+  };
+}
+
 function normalizeLidarRelocCoveragePayload(vehicleId, payload, cached = false) {
   const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
   const count = toFiniteInteger(payload?.count, 0, { min: 0, max: Number.MAX_SAFE_INTEGER });
@@ -10556,6 +10632,16 @@ function normalizeLidarRelocCoveragePayload(vehicleId, payload, cached = false) 
   };
 }
 
+function describeLidarRelocCoverageFailure(vehicleId, coverage) {
+  if (coverage?.blocked_reason === 'repeated_place_false_accepts') {
+    return `${vehicleId} 已被安全封禁：重复场景误匹配超过上线门限。`;
+  }
+  if (coverage?.blocked_reason === 'a100_map_index_mismatch') {
+    return `${vehicleId} 当前地图与 A100 检索库版本不一致，需重建 map_db 后再测。`;
+  }
+  return `当前 BEVPlace++ + LCR-Net 检索库没有 ${vehicleId} 的已验证地图描述子。`;
+}
+
 async function getLidarRelocBevplaceCoverage(vehicleId, options = {}) {
   const normalizedVehicleId = getLidarRelocVehicleId(vehicleId);
   if (!normalizedVehicleId) {
@@ -10563,12 +10649,15 @@ async function getLidarRelocBevplaceCoverage(vehicleId, options = {}) {
   }
   if (!options.force) {
     const indexed = lidarRelocalizationIndexedVehicles.has(normalizedVehicleId);
+    const blockedReason = lidarRelocalizationBlockedVehicles.get(normalizedVehicleId) || null;
     return {
       ...normalizeLidarRelocCoveragePayload(normalizedVehicleId, {
-        count: indexed ? 1 : 0,
+        count: indexed && !blockedReason ? 1 : 0,
         checked_at: new Date().toISOString()
       }),
-      descriptor_count: indexed ? null : 0,
+      descriptor_count: indexed && !blockedReason ? null : 0,
+      blocked: Boolean(blockedReason),
+      blocked_reason: blockedReason,
       indexed_vehicles: Array.from(lidarRelocalizationIndexedVehicles).sort(),
       source: 'server_static_indexed_vehicle_set'
     };
@@ -10714,7 +10803,7 @@ async function runLidarRelocBevplaceGlobalInfer(vehicleId, capturePath, options 
 
 async function runLidarRelocServerInfer(vehicleId, mapPath, capturePath, options = {}) {
   if (!lidarRelocalizationUseLegacyLocalBev) {
-    return runLidarRelocBevplaceGlobalInfer(vehicleId, capturePath, options);
+    return runLidarRelocLcrnetInfer(vehicleId, mapPath, capturePath, options);
   }
   if (!hasLidarRelocServerInfer()) {
     throw new Error('lidar_relocalization_infer_script_missing');
@@ -10838,22 +10927,24 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
     localization,
     model: {
       label: lidarRelocalizationModelLabel,
-      checkpoint: lidarRelocalizationModelCheckpoint,
+      checkpoint: lidarRelocalizationLcrCheckpoint,
+      bev_checkpoint: lidarRelocalizationModelCheckpoint,
       fallback_checkpoint: lidarRelocalizationFallbackCheckpoint,
-      infer_script: serverInference ? lidarRelocalizationBevplaceScript : lidarRelocalizationInferScript,
+      infer_script: serverInference ? lidarRelocalizationLcrWebRunner : lidarRelocalizationInferScript,
       bevplace_script: lidarRelocalizationBevplaceScript,
       bevplace_dataset_root: lidarRelocalizationBevplaceDatasetRoot,
       bevplace_manifest: lidarRelocalizationBevplaceManifest,
+      bevplace_descriptors: lidarRelocalizationBevplaceDescriptors,
       a100_gpu: lidarRelocalizationA100Gpu,
       a100_num_workers: lidarRelocalizationA100NumWorkers,
-      method: serverInference ? 'bevplace_global_local_ransac' : null,
+      method: serverInference ? 'bevplace_global_lcrnet_fp32_top3_strict_ndt' : null,
       coverage,
       service_ready: inferTools.length > 0 || (serverInference && coverage.available),
       phase: inferTools.length
         ? 'tool_ready'
         : serverInference
           ? coverage.available
-            ? 'bevplace_global_ready'
+            ? 'lcrnet_ndt_ready'
             : 'vehicle_not_indexed'
           : 'not_deployed'
     },
@@ -16976,7 +17067,7 @@ app.post(
           ok: false,
           vehicle_id: vehicleId,
           phase: 'vehicle_not_indexed',
-          detail: `当前上线 BEVPlace++ 检索库没有 ${vehicleId} 的地图描述子，不能推测粗位姿。需要先为该车生成/同步 keyframe map_db 后再测。`,
+          detail: describeLidarRelocCoverageFailure(vehicleId, preflightCoverage),
           coverage: preflightCoverage
         });
       }
@@ -16996,7 +17087,7 @@ app.post(
               ok: false,
               vehicle_id: vehicleId,
               phase: 'vehicle_not_indexed',
-              detail: `当前上线 BEVPlace++ 检索库没有 ${vehicleId} 的地图描述子，不能推测粗位姿。需要先为该车生成/同步 keyframe map_db 后再测。`,
+              detail: describeLidarRelocCoverageFailure(vehicleId, coverage),
               model: status.model,
               coverage
             });
@@ -17028,10 +17119,16 @@ app.post(
             }
           );
           const rawMethod = String(rawResult?.method || '').trim();
+          const isLcrnetServerMethod =
+            rawMethod === 'bevplace_trt_global_top10_lcrnet_fp32_top3_pcl_ndt';
           const isBevplaceServerMethod =
-            rawMethod === 'bevplace_global_descriptor' || rawMethod === 'bevplace_global_local_ransac';
+            isLcrnetServerMethod ||
+            rawMethod === 'bevplace_global_descriptor' ||
+            rawMethod === 'bevplace_global_local_ransac';
           const result =
-            isBevplaceServerMethod
+            isLcrnetServerMethod
+              ? rawResult
+              : isBevplaceServerMethod
               ? await attachLidarRelocNdtSelector(vehicleId, mapSync.map.path, capture.local_record, rawResult, {
                   ndt_selector_enabled:
                     typeof req.body?.ndt_selector_enabled === 'boolean'
@@ -17043,7 +17140,9 @@ app.post(
           const coarsePose =
             normalizeLidarRelocPose(result?.pose || result?.coarse_pose || result?.best_pose || result) || null;
           const rawCoarsePose =
-            normalizeLidarRelocPose(result?.bevplace_coarse_pose || rawResult?.coarse_pose || rawResult?.pose || rawResult) ||
+            normalizeLidarRelocPose(
+              result?.raw_coarse_pose || result?.bevplace_coarse_pose || rawResult?.coarse_pose || rawResult?.pose || rawResult
+            ) ||
             coarsePose;
           const visualization = await buildLidarRelocVisualization(
             vehicleId,
@@ -17084,7 +17183,9 @@ app.post(
               : lidarRelocalizationNdtSelectorRequire;
           const selectorPhase = String(result?.ndt_selector?.phase || '').trim();
           const selectorPassed =
-            !selectorRequired || ['validated_rank1', 'selected_by_ndt'].includes(selectorPhase);
+            isLcrnetServerMethod
+              ? result?.candidate_accepted === true && ['validated_rank1', 'selected_by_ndt'].includes(selectorPhase)
+              : !selectorRequired || ['validated_rank1', 'selected_by_ndt'].includes(selectorPhase);
           const capturePose = normalizeLidarRelocPose(capture.result?.pose || capture.result?.localization);
           const referenceCheck = buildLidarRelocReferenceCheck(capturePose, coarsePose);
           const ok =
@@ -17110,7 +17211,9 @@ app.post(
                   ? 'ndt_selector_not_ready'
                   : result?.phase || 'infer_failed',
             tool_name:
-              isBevplaceServerMethod
+              isLcrnetServerMethod
+                ? 'server.bevplace_top10+lcrnet_fp32_top3+strict_ndt'
+                : isBevplaceServerMethod
                 ? result?.ndt_selector?.enabled
                   ? method === 'bevplace_global_local_ransac'
                     ? 'server.bevplace_global+local_ransac+ndt_selector'
@@ -17119,13 +17222,16 @@ app.post(
                     ? 'server.bevplace_global+local_ransac'
                     : 'server.bevplace_global'
                 : 'server.lidar_relocalization',
+            method: result?.method || null,
             coarse_pose: ok ? coarsePose : null,
             raw_coarse_pose: rawCoarsePose,
+            bev_coarse_pose: normalizeLidarRelocPose(result?.bev_coarse_pose) || null,
             confidence,
             candidates: Array.isArray(result?.candidates) ? result.candidates : [],
             selected_candidate: result?.selected_candidate || null,
             ndt_selector: result?.ndt_selector || null,
             reference_check: referenceCheck,
+            resource: result?.resource || null,
             visualization,
             capture: {
               captured_at: capture.captured_at,
@@ -17142,9 +17248,9 @@ app.post(
               : isLegacyLocalBev
                 ? '旧的 prior-refine fallback 已禁用；当前不会把先验局部匹配伪装成 BEVPlace++ 粗位姿。'
                 : !referenceCheck.passed
-                  ? `可靠定位自检失败：粗位姿与当前可靠定位相差 ${referenceCheck.xy_error_m?.toFixed?.(2) ?? '-'}m，超过 ${referenceCheck.max_xy_m ?? '-'}m；不返回给 NDT。`
+                  ? `严格真值自检失败：${referenceCheck.xy_error_m?.toFixed?.(2) ?? '-'}m / ${referenceCheck.yaw_error_deg?.toFixed?.(2) ?? '-'}°，门限 ${referenceCheck.max_xy_m ?? '-'}m / ${referenceCheck.max_yaw_deg ?? '-'}°。`
                 : !selectorPassed
-                  ? `NDT selector 未通过要求：${selectorPhase || 'unknown'}。`
+                  ? `严格 NDT selector 未通过：${selectorPhase || 'unknown'}。`
                 : !passesConfidence
                   ? `BEVPlace++ 全局检索置信度低于阈值 ${lidarRelocalizationMinConfidence}，不返回给 NDT。`
                   : result?.detail || 'server_bevplace_global_infer_failed'
