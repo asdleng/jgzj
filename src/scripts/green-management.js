@@ -55,6 +55,7 @@ if (root) {
     nodeTitle: root.querySelector("[data-gm-node-title]"),
     nodeHealth: root.querySelector("[data-gm-node-health]"),
     nodeMeta: root.querySelector("[data-gm-node-meta]"),
+    inspectorKicker: root.querySelector("[data-gm-inspector-kicker]"),
     frames: root.querySelector("[data-gm-frames]"),
     healthPanel: root.querySelector(".gm-health-panel"),
     healthScore: root.querySelector("[data-gm-health-score]"),
@@ -75,6 +76,17 @@ if (root) {
     treeReview: root.querySelector("[data-gm-tree-review]"),
     treeReviewMeta: root.querySelector("[data-gm-tree-review-meta]"),
     treeReviewActions: [...root.querySelectorAll("[data-gm-tree-review-action]")],
+    treeHeroCount: root.querySelector("[data-gm-tree-hero-count]"),
+    treeHeroObservations: root.querySelector("[data-gm-tree-hero-observations]"),
+    treeHeroDays: root.querySelector("[data-gm-tree-hero-days]"),
+    treeHeroPending: root.querySelector("[data-gm-tree-hero-pending]"),
+    treeHeroId: root.querySelector("[data-gm-tree-hero-id]"),
+    treeHeroSignature: root.querySelector("[data-gm-tree-hero-signature]"),
+    treeHeroMeta: root.querySelector("[data-gm-tree-hero-meta]"),
+    treeHeroReview: root.querySelector("[data-gm-tree-hero-review]"),
+    treeHeroSummary: root.querySelector("[data-gm-tree-hero-summary]"),
+    treeHeroScope: root.querySelector("[data-gm-tree-hero-scope]"),
+    treeCardList: root.querySelector("[data-gm-tree-card-list]"),
     scoreTitle: root.querySelector("[data-gm-score-title]"),
     vegetationTableBody: root.querySelector("[data-gm-vegetation-table-body]"),
     vegetationFilters: [...root.querySelectorAll("[data-gm-vegetation-filter]")],
@@ -397,6 +409,80 @@ if (root) {
     if (el.treeStats.pending) el.treeStats.pending.textContent = String(summary.needs_review_count || 0);
   }
 
+  function renderTreeAssetCards() {
+    const summary = state.treeAssetSummary || {};
+    const assetCount = Number(summary.asset_count ?? state.treeAssets.length) || 0;
+    const observationCount = Number(summary.observation_count) || state.treeAssets.reduce((sum, asset) => (
+      sum + (Number(asset.observation_count) || 0)
+    ), 0);
+    const distinctDates = new Set(
+      state.treeAssets.flatMap((asset) => Array.isArray(asset.dates) ? asset.dates : [])
+    );
+    const pendingCount = Number(summary.needs_review_count) || 0;
+    if (el.treeHeroCount) el.treeHeroCount.textContent = String(assetCount);
+    if (el.treeHeroObservations) el.treeHeroObservations.textContent = String(observationCount);
+    if (el.treeHeroDays) el.treeHeroDays.textContent = String(distinctDates.size);
+    if (el.treeHeroPending) el.treeHeroPending.textContent = String(pendingCount);
+    if (el.treeHeroSummary) {
+      el.treeHeroSummary.textContent = `${assetCount} 棵资产 · ${observationCount} 张历史图 · ${distinctDates.size} 个日期`;
+    }
+    if (el.treeHeroScope) {
+      el.treeHeroScope.textContent = state.treeAssetScopeNotice || "同车、同相机、同一路侧视角下匹配。";
+    }
+    if (!el.treeCardList) return;
+    el.treeCardList.replaceChildren();
+    if (!state.treeAssets.length) {
+      const empty = document.createElement("p");
+      empty.className = "gm-empty";
+      empty.textContent = "暂无满足位置、航向和图像几何门限的独立乔木。";
+      el.treeCardList.appendChild(empty);
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    state.treeAssets.forEach((asset, index) => {
+      const observations = Array.isArray(asset.observations) ? asset.observations : [];
+      const latest = observations[0];
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "gm-tree-card";
+      button.dataset.assetId = asset.asset_id;
+      button.dataset.selected = String(asset.asset_id === state.selectedAssetId);
+      button.setAttribute("aria-pressed", String(asset.asset_id === state.selectedAssetId));
+
+      const visual = document.createElement("span");
+      visual.className = "gm-tree-card-visual";
+      if (latest?.image_url) {
+        const image = document.createElement("img");
+        image.loading = "eager";
+        image.decoding = "async";
+        image.alt = "";
+        image.src = redactedImageUrl(latest.image_url);
+        visual.appendChild(image);
+      }
+      const ordinal = document.createElement("b");
+      ordinal.textContent = String(index + 1).padStart(2, "0");
+      visual.appendChild(ordinal);
+
+      const copy = document.createElement("span");
+      copy.className = "gm-tree-card-copy";
+      const id = document.createElement("strong");
+      id.textContent = asset.asset_id;
+      const signature = document.createElement("small");
+      signature.textContent = asset.signature || "独立乔木跨天匹配";
+      const stats = document.createElement("em");
+      stats.textContent = `${asset.day_count || 0} 天 · ${asset.observation_count || 0} 张 · ${asset.camera_id || "相机"}`;
+      copy.append(id, signature, stats);
+
+      const review = document.createElement("span");
+      review.className = "gm-tree-card-review";
+      review.dataset.state = asset.review_status || "unreviewed";
+      review.textContent = treeReviewLabel(asset.review_status);
+      button.append(visual, copy, review);
+      fragment.appendChild(button);
+    });
+    el.treeCardList.appendChild(fragment);
+  }
+
   function appendAssetTextCell(row, primary, secondary = "") {
     const cell = document.createElement("td");
     const block = document.createElement("div");
@@ -470,6 +556,17 @@ if (root) {
   function renderTreeAssetDetail(asset) {
     if (!asset) return;
     state.selectedAssetId = asset.asset_id;
+    renderTreeAssetCards();
+    if (el.inspectorKicker) el.inspectorKicker.textContent = "TREE HISTORY · MULTI-DATE EVIDENCE";
+    if (el.treeHeroId) el.treeHeroId.textContent = asset.asset_id;
+    if (el.treeHeroSignature) el.treeHeroSignature.textContent = asset.signature || "跨天树形与固定环境关系一致。";
+    if (el.treeHeroMeta) {
+      el.treeHeroMeta.textContent = `${asset.vehicle_id || "-"} · ${asset.camera_id || "相机"} · 首次 ${formatTime(asset.first_seen)} · 最近 ${formatTime(asset.last_seen)}`;
+    }
+    if (el.treeHeroReview) {
+      el.treeHeroReview.dataset.state = asset.review_status || "unreviewed";
+      el.treeHeroReview.textContent = treeReviewLabel(asset.review_status);
+    }
     if (el.nodeTitle) el.nodeTitle.textContent = asset.asset_id;
     if (el.nodeMeta) {
       const station = asset.observation_station || {};
@@ -488,7 +585,9 @@ if (root) {
     el.treeReviewActions.forEach((button) => {
       button.disabled = state.treeReviewBusy || button.dataset.gmTreeReviewAction === asset.review_status;
     });
-    const observations = Array.isArray(asset.observations) ? asset.observations.slice(0, 4) : [];
+    const observations = Array.isArray(asset.observations)
+      ? asset.observations.slice().sort((left, right) => String(right.date || "").localeCompare(String(left.date || "")))
+      : [];
     if (el.frames) {
       el.frames.replaceChildren();
       observations.forEach((observation) => {
@@ -597,6 +696,7 @@ if (root) {
     state.treeAssetSummary = payload.summary || {};
     state.treeAssetScopeNotice = payload.scope_notice || "";
     if (!state.treeAssets.some((item) => item.asset_id === state.selectedAssetId)) state.selectedAssetId = "";
+    renderTreeAssetCards();
     renderTreeAssetTable();
   }
 
@@ -1355,6 +1455,7 @@ if (root) {
 
   function renderSampleDetail(sample) {
     if (el.treeReview) el.treeReview.hidden = true;
+    if (el.inspectorKicker) el.inspectorKicker.textContent = "CAPTURE DOSSIER · FOUR CAMERA EVIDENCE";
     if (el.scoreTitle) el.scoreTitle.textContent = "植被健康度";
     if (!sample) {
       if (el.nodeTitle) el.nodeTitle.textContent = "采集节点";
@@ -2165,6 +2266,10 @@ if (root) {
   el.treeAssetTableBody?.addEventListener("click", (event) => {
     const row = event.target.closest("tr[data-asset-id]");
     if (row?.dataset.assetId) selectTreeAsset(row.dataset.assetId, true);
+  });
+  el.treeCardList?.addEventListener("click", (event) => {
+    const card = event.target.closest("button[data-asset-id]");
+    if (card?.dataset.assetId) selectTreeAsset(card.dataset.assetId, false);
   });
   el.treeReviewActions.forEach((button) => {
     button.addEventListener("click", async () => {

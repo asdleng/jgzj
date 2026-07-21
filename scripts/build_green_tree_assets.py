@@ -118,7 +118,7 @@ def tree_camera_ids(inspection):
     return rows
 
 
-def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m, heading_gate_deg):
+def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m, heading_gate_deg, history_days=8):
     by_id = {str(item.get("sample_id")): item for item in samples}
     tree_inspections = [
         item for item in inspections
@@ -129,7 +129,7 @@ def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m
     latest_date = max(date_key(item.get("collected_at")) for item in tree_inspections)
     latest = [item for item in tree_inspections if date_key(item.get("collected_at")) == latest_date]
     available_dates = sorted({date_key(item.get("collected_at")) for item in samples if date_key(item.get("collected_at")) <= latest_date}, reverse=True)
-    prior_dates = available_dates[1:4]
+    prior_dates = available_dates[1:max(1, int(history_days))]
     samples_by_date = {date: [item for item in samples if date_key(item.get("collected_at")) == date] for date in prior_dates}
     heading_gate = math.radians(heading_gate_deg)
     candidates = []
@@ -146,7 +146,7 @@ def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m
             if ranked:
                 _, position_distance, heading_delta, candidate = min(ranked, key=lambda row: row[0])
                 matches.append({"date": date, "sample": candidate, "distance_m": position_distance, "heading_delta_rad": heading_delta})
-        if len(matches) != len(prior_dates) or len(matches) < 2:
+        if len(matches) < 2:
             continue
         candidates.append({
             "anchor": anchor,
@@ -291,6 +291,41 @@ def normalize_tracks(payload, allowed_dates):
             "observations": observations,
         })
     return tracks
+
+
+def has_visible_tree_roots(observations):
+    if not observations:
+        return False
+    for observation in observations:
+        box = observation.get("bbox_1000") or []
+        root = observation.get("root_1000") or []
+        if observation.get("visibility") != "full" or len(box) != 4 or len(root) != 2:
+            return False
+        if not (box[0] <= root[0] <= box[2] and box[1] <= root[1] <= box[3]):
+            return False
+    return True
+
+
+def prune_invalid_unreviewed_assets(state):
+    removed = []
+    for identifier, asset in list((state.get("assets") or {}).items()):
+        if asset.get("review_status") == "confirmed":
+            continue
+        if has_visible_tree_roots(asset.get("observations") or []):
+            continue
+        removed.append(identifier)
+        state["assets"].pop(identifier, None)
+        state.setdefault("rejected_tracks", []).append({
+            "job_key": asset.get("build_key"),
+            "track_id": identifier,
+            "asset_kind": asset.get("asset_kind"),
+            "confidence": asset.get("confidence"),
+            "signature": asset.get("signature"),
+            "geometry": {"passed": False, "reason": "tree_root_not_visible_inside_bbox"},
+            "rejected_at": now_iso(),
+        })
+    state["rejected_tracks"] = (state.get("rejected_tracks") or [])[-500:]
+    return removed
 
 
 def resize_for_features(image, max_side=1280):
@@ -525,19 +560,24 @@ def run(args):
         args.anchor_separation_m,
         args.position_gate_m,
         args.heading_gate_deg,
+        args.history_days,
     )
     state = read_json(args.state_path, empty_state())
     if state.get("schema") != SCHEMA:
         state = empty_state()
-    pending = [job for job in jobs if args.force or job_key(job) not in state.get("processed_jobs", {})]
-    pending = pending[:args.max_jobs]
+    pruned_asset_ids = prune_invalid_unreviewed_assets(state)
+    pending_jobs = [job for job in jobs if args.force or job_key(job) not in state.get("processed_jobs", {})]
+    pending = pending_jobs[:args.max_jobs]
     build = {
         "build_id": f"tree-assets-{int(time.time())}",
         "vehicle_id": args.vehicle,
         "latest_date": latest_date,
         "started_at": now_iso(),
         "candidate_job_count": len(jobs),
+        "pending_job_count": len(pending_jobs),
         "selected_job_count": len(pending),
+        "pruned_asset_count": len(pruned_asset_ids),
+        "pruned_asset_ids": pruned_asset_ids,
         "jobs": [],
     }
     for index, job in enumerate(pending, 1):
@@ -555,6 +595,7 @@ def run(args):
                     track["asset_kind"] == "individual_tree" and
                     track["confidence"] == "high" and
                     len(track["observations"]) >= args.min_days and
+                    has_visible_tree_roots(track["observations"]) and
                     geometry.get("passed") is True
                 )
                 if eligible:
@@ -610,6 +651,7 @@ def parse_args():
     parser.add_argument("--anchor-separation-m", type=float, default=10.0)
     parser.add_argument("--position-gate-m", type=float, default=5.0)
     parser.add_argument("--heading-gate-deg", type=float, default=10.0)
+    parser.add_argument("--history-days", type=int, default=8)
     parser.add_argument("--min-days", type=int, default=3)
     parser.add_argument("--min-inliers", type=int, default=50)
     parser.add_argument("--min-inlier-ratio", type=float, default=0.15)

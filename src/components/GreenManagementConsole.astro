@@ -28,6 +28,106 @@
     <i></i>
   </div>
 
+  <section class="gm-tree-priority" aria-label="树木资产总览">
+    <article class="gm-tree-profile">
+      <header>
+        <div>
+          <p class="gm-kicker">TREE ASSET PROFILE</p>
+          <h2>树木资产库</h2>
+        </div>
+        <span data-gm-tree-hero-review data-state="pending">待匹配</span>
+      </header>
+      <div class="gm-tree-profile-main">
+        <div class="gm-tree-art" aria-hidden="true">
+          <div class="gm-tree-crown">
+            <i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <span class="gm-tree-trunk"></span>
+          <span class="gm-tree-ground"></span>
+        </div>
+        <div class="gm-tree-profile-copy">
+          <span>当前树木资产</span>
+          <strong data-gm-tree-hero-count>0</strong>
+          <h3 data-gm-tree-hero-id>等待跨天匹配</h3>
+          <p data-gm-tree-hero-signature>系统正在建立树木身份档案。</p>
+        </div>
+      </div>
+      <div class="gm-tree-profile-stats">
+        <span><strong data-gm-tree-hero-observations>0</strong>历史影像</span>
+        <span><strong data-gm-tree-hero-days>0</strong>覆盖日期</span>
+        <span><strong data-gm-tree-hero-pending>0</strong>待人工确认</span>
+      </div>
+      <p class="gm-tree-profile-meta" data-gm-tree-hero-meta>等待树木资产数据</p>
+    </article>
+
+    <section class="gm-tree-register" aria-label="树木资产列表">
+      <header>
+        <div>
+          <p class="gm-kicker">MATCHED TREE REGISTER</p>
+          <h2>已匹配树木</h2>
+        </div>
+        <p data-gm-tree-hero-summary>正在读取跨日期记录</p>
+      </header>
+      <div class="gm-tree-card-list" data-gm-tree-card-list>
+        <p class="gm-empty">等待树木资产数据。</p>
+      </div>
+      <p class="gm-tree-register-scope" data-gm-tree-hero-scope>同车、同相机、同一路侧视角下匹配。</p>
+    </section>
+  </section>
+
+  <aside class="gm-inspector" aria-live="polite">
+    <header class="gm-inspector-head">
+      <div>
+        <p class="gm-kicker" data-gm-inspector-kicker>TREE HISTORY · MULTI-DATE EVIDENCE</p>
+        <h2 data-gm-node-title>树木跨期影像</h2>
+      </div>
+      <span data-gm-node-health data-state="pending">待分析</span>
+    </header>
+    <p class="gm-node-meta" data-gm-node-meta>选择树木资产后查看不同日期的真实影像。</p>
+    <div class="gm-tree-review-actions" data-gm-tree-review hidden>
+      <p data-gm-tree-review-meta>自动匹配结果等待人工复核。</p>
+      <div>
+        <button type="button" data-gm-tree-review-action="confirmed">确认同一棵树</button>
+        <button type="button" data-gm-tree-review-action="rejected">标记误匹配</button>
+      </div>
+    </div>
+    <div class="gm-frame-grid" data-gm-frames>
+      <p class="gm-empty">等待跨日期树木影像。</p>
+    </div>
+    <section class="gm-health-panel" data-state="pending">
+      <div class="gm-health-score">
+        <span data-gm-score-title>植被健康度</span>
+        <strong data-gm-health-score>-</strong>
+        <em data-gm-health-grade>选择节点后分析</em>
+        <p data-gm-score-reason>五维评分依据将在分析后显示。</p>
+      </div>
+      <div class="gm-indicator-grid" data-gm-indicators>
+        <p class="gm-empty">等待四路绿化巡检结果。</p>
+      </div>
+    </section>
+    <section class="gm-operation-note">
+      <header>
+        <p class="gm-kicker">MAINTENANCE REVIEW</p>
+        <h3>问题与养护建议</h3>
+      </header>
+      <p class="gm-inspection-summary" data-gm-inspection-summary>选择节点后读取巡检结论。</p>
+      <div class="gm-observation-block">
+        <h4>可见绿化观察</h4>
+        <ul data-gm-observations><li class="gm-clear">暂无观察</li></ul>
+      </div>
+      <div class="gm-finding-columns">
+        <div>
+          <h4>问题证据</h4>
+          <ul data-gm-issues><li class="gm-clear">暂无结论</li></ul>
+        </div>
+        <div>
+          <h4>养护动作</h4>
+          <ul data-gm-recommendations><li class="gm-clear">暂无建议</li></ul>
+        </div>
+      </div>
+    </section>
+  </aside>
+
   <section class="gm-overview" aria-label="全园区绿化分析总览">
     <article class="gm-progress-overview">
       <div class="gm-overview-label">
@@ -213,59 +313,6 @@
       </section>
     </section>
   </section>
-
-  <aside class="gm-inspector" aria-live="polite">
-    <header class="gm-inspector-head">
-      <div>
-        <p class="gm-kicker">CAPTURE DOSSIER · FOUR CAMERA EVIDENCE</p>
-        <h2 data-gm-node-title>采集节点</h2>
-      </div>
-      <span data-gm-node-health data-state="pending">待分析</span>
-    </header>
-    <p class="gm-node-meta" data-gm-node-meta>在地图或表格中选择采集节点。</p>
-    <div class="gm-tree-review-actions" data-gm-tree-review hidden>
-      <p data-gm-tree-review-meta>自动匹配结果等待人工复核。</p>
-      <div>
-        <button type="button" data-gm-tree-review-action="confirmed">确认同一棵树</button>
-        <button type="button" data-gm-tree-review-action="rejected">标记误匹配</button>
-      </div>
-    </div>
-    <div class="gm-frame-grid" data-gm-frames>
-      <p class="gm-empty">等待四路现场图片。</p>
-    </div>
-    <section class="gm-health-panel" data-state="pending">
-      <div class="gm-health-score">
-        <span data-gm-score-title>植被健康度</span>
-        <strong data-gm-health-score>-</strong>
-        <em data-gm-health-grade>选择节点后分析</em>
-        <p data-gm-score-reason>五维评分依据将在分析后显示。</p>
-      </div>
-      <div class="gm-indicator-grid" data-gm-indicators>
-        <p class="gm-empty">等待四路绿化巡检结果。</p>
-      </div>
-    </section>
-    <section class="gm-operation-note">
-      <header>
-        <p class="gm-kicker">MAINTENANCE REVIEW</p>
-        <h3>问题与养护建议</h3>
-      </header>
-      <p class="gm-inspection-summary" data-gm-inspection-summary>选择节点后读取巡检结论。</p>
-      <div class="gm-observation-block">
-        <h4>可见绿化观察</h4>
-        <ul data-gm-observations><li class="gm-clear">暂无观察</li></ul>
-      </div>
-      <div class="gm-finding-columns">
-        <div>
-          <h4>问题证据</h4>
-          <ul data-gm-issues><li class="gm-clear">暂无结论</li></ul>
-        </div>
-        <div>
-          <h4>养护动作</h4>
-          <ul data-gm-recommendations><li class="gm-clear">暂无建议</li></ul>
-        </div>
-      </div>
-    </section>
-  </aside>
 
   <section class="gm-archive-band" aria-label="巡检时间线与养护简报">
     <section class="gm-timeline-panel">
@@ -2905,6 +2952,433 @@
 
     .gm-tree-indicator p {
       grid-column: 1 / -1;
+    }
+  }
+
+  .gm-tree-priority {
+    display: grid;
+    grid-template-columns: minmax(420px, 0.82fr) minmax(0, 1.58fr);
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .gm-tree-profile,
+  .gm-tree-register {
+    min-width: 0;
+    border: 1px solid var(--gm-line);
+    border-radius: 2px;
+    background: #0f2018;
+  }
+
+  .gm-tree-profile {
+    padding: 20px;
+  }
+
+  .gm-tree-profile > header,
+  .gm-tree-register > header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .gm-tree-profile h2,
+  .gm-tree-register h2,
+  .gm-tree-profile h3 {
+    margin: 4px 0 0;
+    color: #e8e3d5;
+    letter-spacing: 0;
+  }
+
+  .gm-tree-profile h2,
+  .gm-tree-register h2 {
+    font-size: 1.16rem;
+  }
+
+  .gm-tree-profile > header > span {
+    min-height: 28px;
+    padding: 5px 9px;
+    border: 1px solid #75642f;
+    color: #d6b556;
+    font-size: 0.64rem;
+    font-weight: 800;
+  }
+
+  .gm-tree-profile > header > span[data-state="confirmed"] {
+    border-color: #547954;
+    color: #9fc48a;
+  }
+
+  .gm-tree-profile > header > span[data-state="rejected"] {
+    border-color: #7c4037;
+    color: #d66b5b;
+  }
+
+  .gm-tree-profile-main {
+    display: grid;
+    grid-template-columns: minmax(150px, 0.72fr) minmax(190px, 1fr);
+    align-items: center;
+    min-height: 238px;
+    margin-top: 14px;
+    border-top: 1px solid #314737;
+    border-bottom: 1px solid #314737;
+  }
+
+  .gm-tree-art {
+    position: relative;
+    align-self: stretch;
+    min-height: 238px;
+    overflow: hidden;
+    border-right: 1px solid #314737;
+    background: #14281d;
+  }
+
+  .gm-tree-crown i,
+  .gm-tree-trunk,
+  .gm-tree-ground {
+    position: absolute;
+    display: block;
+  }
+
+  .gm-tree-crown i {
+    z-index: 2;
+    border: 1px solid rgba(195, 206, 159, 0.18);
+    border-radius: 50%;
+    background: #496f47;
+    box-shadow: inset 0 -8px 0 rgba(12, 32, 21, 0.14);
+  }
+
+  .gm-tree-crown i:nth-child(1) { top: 30px; left: calc(50% - 54px); width: 76px; height: 76px; }
+  .gm-tree-crown i:nth-child(2) { top: 20px; left: calc(50% - 8px); width: 84px; height: 84px; background: #5f8553; }
+  .gm-tree-crown i:nth-child(3) { top: 64px; left: calc(50% - 79px); width: 92px; height: 82px; background: #3d6642; }
+  .gm-tree-crown i:nth-child(4) { top: 66px; left: calc(50% - 19px); width: 99px; height: 86px; background: #52784a; }
+  .gm-tree-crown i:nth-child(5) { top: 50px; left: calc(50% - 42px); width: 91px; height: 91px; background: #6d8f58; }
+
+  .gm-tree-trunk {
+    z-index: 1;
+    top: 110px;
+    bottom: 27px;
+    left: calc(50% - 15px);
+    width: 34px;
+    background: #8b6b3d;
+    clip-path: polygon(28% 0, 70% 0, 64% 62%, 94% 100%, 56% 82%, 18% 100%, 38% 62%);
+  }
+
+  .gm-tree-ground {
+    right: 18px;
+    bottom: 26px;
+    left: 18px;
+    height: 1px;
+    background: #718057;
+  }
+
+  .gm-tree-profile-copy {
+    min-width: 0;
+    padding: 20px;
+  }
+
+  .gm-tree-profile-copy > span {
+    color: #8e9c8d;
+    font-size: 0.66rem;
+    font-weight: 800;
+  }
+
+  .gm-tree-profile-copy > strong {
+    display: block;
+    margin: 2px 0 5px;
+    color: #d8ae50;
+    font-size: 3.9rem;
+    line-height: 0.98;
+  }
+
+  .gm-tree-profile-copy h3 {
+    overflow-wrap: anywhere;
+    font-size: 0.94rem;
+  }
+
+  .gm-tree-profile-copy p,
+  .gm-tree-profile-meta,
+  .gm-tree-register > header > p,
+  .gm-tree-register-scope {
+    margin: 8px 0 0;
+    color: #849387;
+    font-size: 0.66rem;
+    line-height: 1.55;
+  }
+
+  .gm-tree-profile-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-bottom: 1px solid #314737;
+  }
+
+  .gm-tree-profile-stats span {
+    padding: 11px 8px;
+    border-right: 1px solid #314737;
+    color: #839186;
+    font-size: 0.64rem;
+    text-align: center;
+  }
+
+  .gm-tree-profile-stats span:last-child {
+    border-right: 0;
+  }
+
+  .gm-tree-profile-stats strong {
+    display: block;
+    margin-bottom: 2px;
+    color: #d8ae50;
+    font-size: 1.12rem;
+  }
+
+  .gm-tree-register {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    padding: 20px;
+  }
+
+  .gm-tree-register > header {
+    padding-bottom: 14px;
+    border-bottom: 1px solid #314737;
+  }
+
+  .gm-tree-register > header > p {
+    max-width: 50%;
+    margin: 2px 0 0;
+    text-align: right;
+  }
+
+  .gm-tree-card-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .gm-tree-card {
+    display: grid;
+    grid-template-columns: 126px minmax(0, 1fr) auto;
+    min-width: 0;
+    min-height: 124px;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid #344c3b;
+    border-radius: 2px;
+    background: #12241a;
+    color: #cbc8ba;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .gm-tree-card:hover,
+  .gm-tree-card:focus-visible {
+    border-color: #8a7135;
+    background: #172b20;
+  }
+
+  .gm-tree-card:focus-visible {
+    outline: 2px solid #d0a442;
+    outline-offset: 2px;
+  }
+
+  .gm-tree-card[data-selected="true"] {
+    border-color: #c49a3d;
+    background: #1a3022;
+    box-shadow: inset 3px 0 0 #d0a442;
+  }
+
+  .gm-tree-card-visual {
+    position: relative;
+    display: block;
+    width: 126px;
+    height: 122px;
+    overflow: hidden;
+    background: #08130e;
+  }
+
+  .gm-tree-card-visual img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .gm-tree-card-visual b {
+    position: absolute;
+    top: 7px;
+    left: 7px;
+    min-width: 28px;
+    padding: 3px 5px;
+    background: #0a1811;
+    color: #d8ae50;
+    font-size: 0.62rem;
+    text-align: center;
+  }
+
+  .gm-tree-card-copy {
+    display: flex;
+    min-width: 0;
+    align-self: stretch;
+    flex-direction: column;
+    justify-content: center;
+    padding: 12px;
+  }
+
+  .gm-tree-card-copy strong,
+  .gm-tree-card-copy small,
+  .gm-tree-card-copy em {
+    display: block;
+    min-width: 0;
+  }
+
+  .gm-tree-card-copy strong {
+    overflow: hidden;
+    color: #e2ded0;
+    font-size: 0.74rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .gm-tree-card-copy small {
+    display: -webkit-box;
+    margin-top: 7px;
+    overflow: hidden;
+    color: #8b998d;
+    font-size: 0.63rem;
+    line-height: 1.45;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .gm-tree-card-copy em {
+    margin-top: 8px;
+    color: #bda664;
+    font-size: 0.62rem;
+    font-style: normal;
+  }
+
+  .gm-tree-card-review {
+    align-self: start;
+    margin: 10px 10px 0 0;
+    padding: 3px 6px;
+    border: 1px solid #75642f;
+    color: #d6b556;
+    font-size: 0.58rem;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .gm-tree-card-review[data-state="confirmed"] {
+    border-color: #547954;
+    color: #9fc48a;
+  }
+
+  .gm-tree-card-review[data-state="rejected"] {
+    border-color: #7c4037;
+    color: #d66b5b;
+  }
+
+  .gm-tree-register-scope {
+    margin-top: auto;
+    padding-top: 11px;
+  }
+
+  .gm-tree-priority + .gm-inspector {
+    margin-top: 0;
+    margin-bottom: 14px;
+  }
+
+  .gm-tree-priority + .gm-inspector .gm-frame-grid {
+    grid-template-columns: none;
+    grid-auto-columns: minmax(245px, 1fr);
+    grid-auto-flow: column;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    padding-bottom: 8px;
+    scrollbar-color: #8a7135 #14261c;
+    scrollbar-width: thin;
+  }
+
+  .gm-tree-priority + .gm-inspector .gm-tree-frame {
+    min-width: 245px;
+  }
+
+  @media (max-width: 1320px) {
+    .gm-tree-priority {
+      grid-template-columns: minmax(360px, 0.8fr) minmax(0, 1.2fr);
+    }
+
+    .gm-tree-card-list {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 900px) {
+    .gm-tree-priority {
+      grid-template-columns: 1fr;
+    }
+
+    .gm-tree-card-list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 700px) {
+    .gm-tree-profile,
+    .gm-tree-register {
+      padding: 14px;
+    }
+
+    .gm-tree-profile-main {
+      grid-template-columns: 118px minmax(0, 1fr);
+      min-height: 204px;
+    }
+
+    .gm-tree-art {
+      min-height: 204px;
+    }
+
+    .gm-tree-crown {
+      transform: translate(-12px, 4px) scale(0.8);
+      transform-origin: 50% 0;
+    }
+
+    .gm-tree-trunk {
+      top: 96px;
+    }
+
+    .gm-tree-profile-copy {
+      padding: 14px;
+    }
+
+    .gm-tree-profile-copy > strong {
+      font-size: 3rem;
+    }
+
+    .gm-tree-card-list {
+      grid-template-columns: 1fr;
+    }
+
+    .gm-tree-card {
+      grid-template-columns: 104px minmax(0, 1fr);
+    }
+
+    .gm-tree-card-visual {
+      width: 104px;
+    }
+
+    .gm-tree-card-review {
+      display: none;
+    }
+
+    .gm-tree-register > header > p {
+      max-width: 46%;
+    }
+
+    .gm-tree-priority + .gm-inspector .gm-frame-grid {
+      grid-auto-columns: minmax(260px, 84vw);
     }
   }
 </style>

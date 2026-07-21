@@ -49,6 +49,29 @@ class GreenTreeAssetsTest(unittest.TestCase):
         self.assertEqual(len(jobs), 1)
         self.assertEqual([item["sample"]["sample_id"] for item in jobs[0]["dates"]], ["today", "day20-good", "day19-good", "day18-good"])
 
+    def test_select_jobs_keeps_older_history_when_one_date_has_no_nearby_sample(self):
+        rows = [
+            sample("today", "2026-07-21", 22.5, 114.2, 0.1),
+            sample("day20-good", "2026-07-20", 22.500001, 114.200001, 0.11),
+            sample("day19-far", "2026-07-19", 22.51, 114.21, 0.1),
+            sample("day18-good", "2026-07-18", 22.500002, 114.200001, 0.09),
+            sample("day17-good", "2026-07-17", 22.500003, 114.200001, 0.12),
+        ]
+        inspections = [{
+            "sample_id": "today",
+            "vehicle_id": "BIT-0042",
+            "collected_at": "2026-07-21T08:00:00.000Z",
+            "vegetation_types": {"trees": True},
+            "view_assessments": [{"camera_id": "camera4", "vegetation_visible": True, "vegetation_types": {"trees": True}}],
+        }]
+        jobs, latest = MODULE.select_jobs(rows, inspections, 4, 2, 5, 10, history_days=8)
+        self.assertEqual(latest, "2026-07-21")
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(
+            [item["sample"]["sample_id"] for item in jobs[0]["dates"]],
+            ["today", "day20-good", "day18-good", "day17-good"],
+        )
+
     def test_normalize_tracks_keeps_only_valid_unique_dates(self):
         payload = {"tracks": [{
             "track_id": "T001",
@@ -65,6 +88,28 @@ class GreenTreeAssetsTest(unittest.TestCase):
         tracks = MODULE.normalize_tracks(payload, {"2026-07-21", "2026-07-20", "2026-07-19"})
         self.assertEqual(len(tracks), 1)
         self.assertEqual([item["date"] for item in tracks[0]["observations"]], ["2026-07-21", "2026-07-19"])
+
+    def test_visible_tree_roots_require_full_visibility_and_root_inside_box(self):
+        valid = [{"visibility": "full", "bbox_1000": [100, 20, 400, 900], "root_1000": [250, 900]}]
+        partial = [{"visibility": "partial", "bbox_1000": [100, 20, 400, 900], "root_1000": [250, 900]}]
+        outside = [{"visibility": "full", "bbox_1000": [100, 20, 400, 500], "root_1000": [250, 650]}]
+        self.assertTrue(MODULE.has_visible_tree_roots(valid))
+        self.assertFalse(MODULE.has_visible_tree_roots(partial))
+        self.assertFalse(MODULE.has_visible_tree_roots(outside))
+
+    def test_prune_invalid_assets_preserves_human_confirmed_records(self):
+        state = {
+            "assets": {
+                "valid": {"review_status": "unreviewed", "observations": [{"visibility": "full", "bbox_1000": [0, 0, 100, 100], "root_1000": [50, 100]}]},
+                "invalid": {"review_status": "unreviewed", "observations": [{"visibility": "partial", "bbox_1000": [0, 0, 100, 60], "root_1000": [50, 100]}]},
+                "confirmed": {"review_status": "confirmed", "observations": [{"visibility": "partial", "bbox_1000": [0, 0, 100, 60], "root_1000": [50, 100]}]},
+            },
+            "rejected_tracks": [],
+        }
+        removed = MODULE.prune_invalid_unreviewed_assets(state)
+        self.assertEqual(removed, ["invalid"])
+        self.assertEqual(set(state["assets"]), {"valid", "confirmed"})
+        self.assertEqual(state["rejected_tracks"][0]["geometry"]["reason"], "tree_root_not_visible_inside_bbox")
 
     def test_asset_id_is_stable(self):
         anchor = sample("today", "2026-07-21", 22.5, 114.2, 0.1)
