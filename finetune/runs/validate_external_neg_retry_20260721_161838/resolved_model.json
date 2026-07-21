@@ -1,0 +1,19 @@
+{
+  "model": "fire_smoke_yolo",
+  "task_id": "fire_smoke_yolo",
+  "title": "火源烟雾",
+  "task": "detect",
+  "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+  "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+  "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+  "class_id": 0,
+  "class_name": "fire",
+  "qwen_class": "fire",
+  "run_tag": "validate_external_neg_retry_20260721_161838",
+  "run_dir": "/home/admin1/jgzj/finetune/runs/validate_external_neg_retry_20260721_161838",
+  "qwen_no_root": "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+  "web_fire_smoke_dataset": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+  "external_hard_neg": 5,
+  "qwen_no_hard_neg": 2,
+  "web_hard_neg": 3
+}

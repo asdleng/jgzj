@@ -38,11 +38,19 @@ MQTT_HOST = os.environ.get("VEHICLE_MQTT_HOST", "120.77.179.98")
 MQTT_PORT = int(os.environ.get("VEHICLE_MQTT_PORT", "1883"))
 CONTROL_VIN = "a001I3829202711775712260"
 CONTROL_TOPIC = f"/auto-rd/rdu/{CONTROL_VIN}"
+VEHICLE_STATE_TOPIC = f"/auto-rd/cloud/{CONTROL_VIN}"
 TRANSPORT_HEARTBEAT_S = 0.10
 MQTT_SEND_TIMEOUT_S = 0.50
+VEHICLE_STATE_TIMEOUT_S = 1.50
 REMOTE_STEERING_LIMIT_DEG = 250
 CONTROL_SSH_TARGET = os.environ.get("VEHICLE_CONTROL_SSH_TARGET", "nvidia@100.98.77.65")
 CONTROL_SSH_KEY = os.environ.get("VEHICLE_CONTROL_SSH_KEY", "/home/weilin/.ssh/id_ed25519")
+REQUIRE_ROS_GUARD = os.environ.get("VEHICLE_CONTROL_REQUIRE_ROS_GUARD", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 class TransportError(RuntimeError):
@@ -107,16 +115,21 @@ def _byte_swap(value: int, width: int) -> int:
     return int.from_bytes((value & mask).to_bytes(width, "little"), "big")
 
 
-def encode_base_message(body: bytes, sequence: int, timestamp_ms: Optional[int] = None) -> bytes:
+def encode_base_message(
+    body: bytes,
+    sequence: int,
+    timestamp_ms: Optional[int] = None,
+    message_id: int = 0x0A04,
+) -> bytes:
     """Encode the legacy BaseMessage protobuf used by ``mqtt_cam``."""
 
     timestamp_ms = int(time.time() * 1000) if timestamp_ms is None else int(timestamp_ms)
-    message_id = _byte_swap(0x0A04, 4)
+    encoded_message_id = _byte_swap(message_id, 4)
     timestamp = _byte_swap(timestamp_ms, 8)
     seq_num = _byte_swap(sequence, 4)
     return b"".join(
         [
-            b"\x08" + _varint(message_id, 32),
+            b"\x08" + _varint(encoded_message_id, 32),
             b"\x10" + _varint(timestamp, 64),
             b"\x28" + _varint(seq_num, 32),
             b"\x3a" + _varint(len(body), 32) + body,
@@ -124,51 +137,119 @@ def encode_base_message(body: bytes, sequence: int, timestamp_ms: Optional[int] 
     )
 
 
-def decode_base_message_id(payload: bytes) -> Optional[int]:
-    """Return the host-order BaseMessage ID, or ``None`` for malformed data."""
+def _read_varint(payload: bytes, offset: int) -> Tuple[int, int]:
+    value = 0
+    shift = 0
+    while offset < len(payload) and shift < 70:
+        byte = payload[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return value, offset
+        shift += 7
+    raise ValueError("malformed protobuf varint")
+
+
+def decode_base_message(payload: bytes) -> Tuple[Optional[int], bytes]:
+    """Return the host-order BaseMessage ID and message body."""
 
     offset = 0
+    message_id: Optional[int] = None
+    message_body = b""
     try:
         while offset < len(payload):
-            tag = 0
-            shift = 0
-            while True:
-                byte = payload[offset]
-                offset += 1
-                tag |= (byte & 0x7F) << shift
-                if not byte & 0x80:
-                    break
-                shift += 7
+            tag, offset = _read_varint(payload, offset)
             field_number = tag >> 3
             wire_type = tag & 0x07
             if wire_type == 0:
-                value = 0
-                shift = 0
-                while True:
-                    byte = payload[offset]
-                    offset += 1
-                    value |= (byte & 0x7F) << shift
-                    if not byte & 0x80:
-                        break
-                    shift += 7
+                value, offset = _read_varint(payload, offset)
                 if field_number == 1:
-                    return _byte_swap(value, 4)
+                    message_id = _byte_swap(value, 4)
             elif wire_type == 2:
-                length = 0
-                shift = 0
-                while True:
-                    byte = payload[offset]
-                    offset += 1
-                    length |= (byte & 0x7F) << shift
-                    if not byte & 0x80:
-                        break
-                    shift += 7
-                offset += length
+                length, offset = _read_varint(payload, offset)
+                end = offset + length
+                if end > len(payload):
+                    raise ValueError("truncated protobuf field")
+                if field_number == 7:
+                    message_body = payload[offset:end]
+                offset = end
             else:
-                return None
-    except (IndexError, OverflowError):
+                raise ValueError("unsupported protobuf wire type")
+    except (IndexError, OverflowError, ValueError):
+        return None, b""
+    return message_id, message_body
+
+
+def decode_base_message_id(payload: bytes) -> Optional[int]:
+    """Return the host-order BaseMessage ID, or ``None`` for malformed data."""
+
+    return decode_base_message(payload)[0]
+
+
+def _decode_int32_fields(payload: bytes) -> Dict[int, int]:
+    fields: Dict[int, int] = {}
+    offset = 0
+    try:
+        while offset < len(payload):
+            tag, offset = _read_varint(payload, offset)
+            field_number = tag >> 3
+            wire_type = tag & 0x07
+            if wire_type == 0:
+                raw, offset = _read_varint(payload, offset)
+                value = _byte_swap(raw, 4)
+                if value & 0x80000000:
+                    value -= 1 << 32
+                fields[field_number] = value
+            elif wire_type == 2:
+                length, offset = _read_varint(payload, offset)
+                offset += length
+                if offset > len(payload):
+                    raise ValueError("truncated protobuf field")
+            elif wire_type == 1:
+                offset += 8
+            elif wire_type == 5:
+                offset += 4
+            else:
+                raise ValueError("unsupported protobuf wire type")
+    except (IndexError, OverflowError, ValueError):
+        return {}
+    return fields
+
+
+def decode_vehicle_state(payload: bytes) -> Optional[Dict[str, Any]]:
+    """Decode the 0x0D01 VehStat frame published by ``mqtt_cam``."""
+
+    message_id, body = decode_base_message(payload)
+    if message_id != 0x0D01 or not body:
         return None
-    return None
+    fields = _decode_int32_fields(body)
+    if not fields:
+        return None
+    mqtt_gear = fields.get(31, 0)
+    can_gear = {0: 0, 1: 2, 2: 3, 3: 1}.get(mqtt_gear, -1)
+    return {
+        "event": "mqtt_vehicle_state",
+        "at": time.time(),
+        "ready": bool(fields.get(13, 0)),
+        "gear": can_gear,
+        "speed_kph": float(fields.get(15, 0)) / 256.0,
+        "front_steering_deg": float(fields.get(32, 0)),
+        "rear_steering_deg": None,
+        "epb": bool(fields.get(29, 0)),
+        "motor_brake": bool(fields.get(27, 0)),
+        "brake_pressure": float(fields.get(28, 0)) / 2.5,
+        "ad_screen_on": bool(fields.get(45, 0)),
+        "vehicle_control_state": fields.get(2, 0),
+        "remote_control_state": fields.get(6, 0),
+        "remote_enable_response": fields.get(9, 0),
+        "battery_soc": fields.get(24),
+        "brake_fault": bool(fields.get(30, 0)),
+        "steer_fault": bool(fields.get(34, 0)),
+        "motor_fault": False,
+        "battery_fault": False,
+        "raw_chassis_status": False,
+        "telemetry_source": "mqtt_vehicle_state",
+    }
 
 
 def encode_remote_command(command: Dict[str, Any], sequence: int, timestamp_ms: Optional[int] = None) -> bytes:
@@ -223,8 +304,26 @@ def encode_remote_command(command: Dict[str, Any], sequence: int, timestamp_ms: 
     return encode_base_message(body, sequence, timestamp_ms)
 
 
+def decode_remote_command(payload: bytes) -> Optional[Dict[str, Any]]:
+    """Decode the packed 0xB2 command carried by a 0x0A04 BaseMessage."""
+
+    message_id, body = decode_base_message(payload)
+    if message_id != 0x0A04 or len(body) < 57 or body[8] != 0xB2:
+        return None
+    mqtt_gear = int(body[15])
+    can_gear = {0: 0, 1: 2, 2: 3, 3: 1}.get(mqtt_gear, 0)
+    return {
+        "deadman": bool(body[12]),
+        "gear": can_gear,
+        "accelerator": float(body[17]) / 100.0,
+        "brake": float(body[18]),
+        "steering": float(-struct.unpack("!h", body[13:15])[0]),
+        "ad_screen": int(body[24]),
+    }
+
+
 class MqttWireClient:
-    """Small MQTT 3.1.1 client sufficient for a guarded QoS-0 command stream."""
+    """Small MQTT v5 client sufficient for a guarded QoS-0 command stream."""
 
     def __init__(
         self,
@@ -233,12 +332,18 @@ class MqttWireClient:
         topic: str,
         on_foreign_message: Callable[[str], None],
         on_fault: Callable[[str], None],
+        state_topic: str = VEHICLE_STATE_TOPIC,
+        on_vehicle_state: Optional[Callable[[Dict[str, Any]], None]] = None,
+        on_control_message: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> None:
         self.username = username
         self.password = password
         self.topic = topic
+        self.state_topic = state_topic
         self.on_foreign_message = on_foreign_message
         self.on_fault = on_fault
+        self.on_vehicle_state = on_vehicle_state
+        self.on_control_message = on_control_message
         self.client_id = "vehicle-viewer-" + uuid.uuid4().hex[:16]
         self.sock: Optional[socket.socket] = None
         self._write_lock = threading.Lock()
@@ -246,6 +351,7 @@ class MqttWireClient:
         self._pending: Deque[Tuple[bytes, float]] = collections.deque(maxlen=256)
         self._closed = threading.Event()
         self._subscribed = threading.Event()
+        self._own_echo = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last_message_at = 0.0
         self.last_fault = ""
@@ -269,7 +375,21 @@ class MqttWireClient:
             )
             sock.settimeout(3.0)
             self.sock = sock
-            variable = _mqtt_string("MQTT") + bytes([4, 0xC2]) + struct.pack("!H", 10)
+            connect_properties = b"".join(
+                [
+                    b"\x11" + struct.pack("!I", 120),
+                    b"\x21" + struct.pack("!H", 120),
+                    b"\x27" + struct.pack("!I", 12000),
+                    b"\x22" + struct.pack("!H", 0),
+                ]
+            )
+            variable = (
+                _mqtt_string("MQTT")
+                + bytes([5, 0xC2])
+                + struct.pack("!H", 10)
+                + _remaining_length(len(connect_properties))
+                + connect_properties
+            )
             payload = (
                 _mqtt_string(self.client_id)
                 + _mqtt_string(self.username)
@@ -280,7 +400,12 @@ class MqttWireClient:
             if header >> 4 != 2 or len(connack) < 2 or connack[1] != 0:
                 raise TransportError(f"MQTT 鉴权失败: {connack.hex()}")
             sock.settimeout(None)
-            subscribe = struct.pack("!H", 1) + _mqtt_string(self.topic) + b"\x00"
+            topics = [self.topic]
+            if self.state_topic and self.state_topic != self.topic:
+                topics.append(self.state_topic)
+            subscribe = struct.pack("!H", 1) + b"\x00" + b"".join(
+                _mqtt_string(topic) + b"\x00" for topic in topics
+            )
             self._send_packet(0x82, subscribe)
             self._thread = threading.Thread(target=self._reader_loop, name="mqtt-control-reader", daemon=True)
             self._thread.start()
@@ -319,7 +444,14 @@ class MqttWireClient:
                 header, packet = self._recv_packet()
                 packet_type = header >> 4
                 if packet_type == 9:
-                    if len(packet) < 3 or packet[:2] != b"\x00\x01" or packet[2] == 0x80:
+                    property_length, property_offset = _read_varint(packet, 2)
+                    return_codes = packet[property_offset + property_length :]
+                    if (
+                        len(packet) < 3
+                        or packet[:2] != b"\x00\x01"
+                        or not return_codes
+                        or any(code == 0x80 for code in return_codes)
+                    ):
                         raise ConnectionError("MQTT subscription rejected")
                     self._subscribed.set()
                 elif packet_type == 3:
@@ -340,9 +472,21 @@ class MqttWireClient:
         qos = (header >> 1) & 0x03
         if qos:
             offset += 2
+        property_length, offset = _read_varint(packet, offset)
+        offset += property_length
+        if offset > len(packet):
+            raise ConnectionError("invalid MQTT publish properties")
         payload = packet[offset:]
+        if topic == self.state_topic:
+            state = decode_vehicle_state(payload)
+            if state and self.on_vehicle_state:
+                self.on_vehicle_state(state)
+            return
         if topic != self.topic:
             return
+        command = decode_remote_command(payload)
+        if command and self.on_control_message:
+            self.on_control_message(command)
         self.last_message_at = time.monotonic()
         if decode_base_message_id(payload) != 0x0A04:
             return
@@ -359,13 +503,15 @@ class MqttWireClient:
                     break
         if not matched:
             self.on_foreign_message("检测到其他 MQTT 远控指令")
+        else:
+            self._own_echo.set()
 
     def publish(self, payload: bytes) -> None:
         digest = hashlib.sha256(payload).digest()
         with self._pending_lock:
             self._pending.append((digest, time.monotonic()))
         try:
-            self._send_packet(0x30, _mqtt_string(self.topic) + payload)
+            self._send_packet(0x30, _mqtt_string(self.topic) + b"\x00" + payload)
         except Exception:
             with self._pending_lock:
                 for index, (expected, _sent_at) in enumerate(self._pending):
@@ -373,6 +519,9 @@ class MqttWireClient:
                         del self._pending[index]
                         break
             raise
+
+    def wait_for_own_echo(self, timeout: float) -> bool:
+        return self._own_echo.wait(timeout)
 
     def is_alive(self) -> bool:
         return bool(
@@ -530,7 +679,7 @@ class RosGuardProcess:
 
 class GuardedMqttTransport:
     def __init__(self) -> None:
-        self.guard = RosGuardProcess()
+        self.guard: Optional[RosGuardProcess] = RosGuardProcess() if REQUIRE_ROS_GUARD else None
         self.client: Optional[MqttWireClient] = None
         self._lock = threading.RLock()
         self._sequence = 0
@@ -541,6 +690,11 @@ class GuardedMqttTransport:
         self._closed = False
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: Optional[threading.Thread] = None
+        self._vehicle_state_ready = threading.Event()
+        self._vehicle_state_at = 0.0
+        self._mqtt_telemetry: Optional[Dict[str, Any]] = None
+        self._broker_command_at = 0.0
+        self._broker_command: Optional[Dict[str, Any]] = None
 
     def _set_fault(self, event: Dict[str, Any]) -> None:
         with self._lock:
@@ -554,9 +708,36 @@ class GuardedMqttTransport:
     def _foreign_message(self, reason: str) -> None:
         self._set_fault({"event": "external_conflict", "reason": "external_remote_command", "detail": reason})
 
+    def _vehicle_state(self, state: Dict[str, Any]) -> None:
+        with self._lock:
+            self._vehicle_state_at = time.monotonic()
+            self._mqtt_telemetry = dict(state)
+            self._vehicle_state_ready.set()
+
+    def _control_message(self, command: Dict[str, Any]) -> None:
+        with self._lock:
+            self._broker_command_at = time.monotonic()
+            self._broker_command = dict(command)
+
+    def _validate_initial_vehicle_state(self) -> None:
+        state = dict(self._mqtt_telemetry or {})
+        if not state:
+            raise TransportError("未收到车辆 MQTT 上行状态")
+        if not state.get("ready"):
+            raise TransportError("车辆未就绪")
+        if abs(float(state.get("speed_kph") or 0.0)) > 0.1:
+            raise TransportError("车辆未静止，拒绝接管", HTTPStatus.CONFLICT)
+        if int(state.get("gear", -1)) != 0:
+            raise TransportError("车辆不在 P 挡，拒绝接管", HTTPStatus.CONFLICT)
+        if not (state.get("epb") or state.get("motor_brake")):
+            raise TransportError("车辆驻车保持未生效，拒绝接管", HTTPStatus.CONFLICT)
+        if state.get("brake_fault") or state.get("steer_fault"):
+            raise TransportError("车辆制动或转向故障，拒绝接管", HTTPStatus.CONFLICT)
+
     def start(self) -> None:
         try:
-            self.guard.start()
+            if self.guard:
+                self.guard.start()
             username, password = _read_mqtt_credentials()
             self.client = MqttWireClient(
                 username,
@@ -564,8 +745,14 @@ class GuardedMqttTransport:
                 CONTROL_TOPIC,
                 on_foreign_message=self._foreign_message,
                 on_fault=self._mqtt_fault,
+                state_topic=VEHICLE_STATE_TOPIC,
+                on_vehicle_state=self._vehicle_state,
+                on_control_message=self._control_message,
             )
             self.client.connect()
+            if not self._vehicle_state_ready.wait(3.0):
+                raise TransportError("车辆 MQTT 上行状态等待超时")
+            self._validate_initial_vehicle_state()
             self._heartbeat_stop.clear()
             self._heartbeat_thread = threading.Thread(
                 target=self._heartbeat_loop,
@@ -576,7 +763,9 @@ class GuardedMqttTransport:
             self._event = {
                 "event": "ready",
                 "transport": "mqtt",
-                "guard": self.guard.last_event,
+                "handshake": "mqtt_connect_connack_suback_vehicle_state",
+                "vehicle_state_topic": VEHICLE_STATE_TOPIC,
+                "guard": self.guard.last_event if self.guard else None,
             }
         except Exception:
             self.close("estop")
@@ -618,6 +807,10 @@ class GuardedMqttTransport:
             self._last_command = command
             if command.get("deadman"):
                 self._was_enabled = True
+
+    def wait_for_command_echo(self, timeout: float = 1.0) -> bool:
+        client = self.client
+        return bool(client and client.wait_for_own_echo(timeout))
 
     def close(self, reason: str = "release") -> None:
         with self._lock:
@@ -663,7 +856,8 @@ class GuardedMqttTransport:
             if client:
                 client.close()
             self.client = None
-        self.guard.close(reason)
+        if self.guard:
+            self.guard.close(reason)
         heartbeat_thread = self._heartbeat_thread
         if heartbeat_thread and heartbeat_thread is not threading.current_thread():
             heartbeat_thread.join(timeout=1.0)
@@ -671,22 +865,48 @@ class GuardedMqttTransport:
 
     def is_alive(self) -> bool:
         with self._lock:
+            state_fresh = bool(
+                self._vehicle_state_at
+                and time.monotonic() - self._vehicle_state_at <= VEHICLE_STATE_TIMEOUT_S
+            )
+            if self._vehicle_state_at and not state_fresh and not self._fault_event:
+                self._set_fault(
+                    {
+                        "event": "closed",
+                        "reason": "vehicle_state_timeout",
+                        "detail": "车辆 MQTT 上行状态超过 1.5 秒未更新",
+                    }
+                )
             return bool(
                 not self._closed
                 and self.client
                 and self.client.is_alive()
-                and self.guard.is_alive()
+                and state_fresh
+                and (not self.guard or self.guard.is_alive())
                 and not self.fault_event
             )
 
     @property
     def last_event(self) -> Optional[Dict[str, Any]]:
-        return self._event or self.guard.last_event
+        return self._event or (self.guard.last_event if self.guard else None)
 
     @property
     def fault_event(self) -> Optional[Dict[str, Any]]:
-        return self._fault_event or self.guard.fault_event
+        return self._fault_event or (self.guard.fault_event if self.guard else None)
 
     @property
     def telemetry(self) -> Optional[Dict[str, Any]]:
-        return self.guard.telemetry
+        if self.guard and self.guard.telemetry:
+            return self.guard.telemetry
+        with self._lock:
+            if not self._mqtt_telemetry:
+                return None
+            telemetry = dict(self._mqtt_telemetry)
+            telemetry["state_age_s"] = max(0.0, time.monotonic() - self._vehicle_state_at)
+            if self._broker_command:
+                telemetry["broker_command"] = dict(self._broker_command)
+                telemetry["broker_command_age_s"] = max(
+                    0.0,
+                    time.monotonic() - self._broker_command_at,
+                )
+            return telemetry

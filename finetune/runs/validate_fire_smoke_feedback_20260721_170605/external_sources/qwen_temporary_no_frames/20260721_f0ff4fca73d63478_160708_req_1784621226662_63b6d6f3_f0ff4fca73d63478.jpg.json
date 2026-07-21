@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784621226662_63b6d6f3",
+  "received_at_ms": 1784621228660,
+  "created_at_ms": 1784621228777,
+  "expires_at_ms": 1784880428777,
+  "device_id": "招商蛇口运河网谷",
+  "camera_id": "1",
+  "edge_ts": 1784621226662,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "f0ff4fca73d634780b3c7e6401cb324c6148fae1a05c0af91bcc40a5c56243ff",
+  "temporary_image_path": "20260721/160708_req_1784621226662_63b6d6f3_f0ff4fca73d63478.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_094fbd84",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:07:08",
+  "labeler_started_at_ms": 1784621228947
+}

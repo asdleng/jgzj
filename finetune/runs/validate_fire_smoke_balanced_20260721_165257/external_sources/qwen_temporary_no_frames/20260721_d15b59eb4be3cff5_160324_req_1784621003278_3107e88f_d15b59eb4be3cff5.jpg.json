@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784621003278_3107e88f",
+  "received_at_ms": 1784621004740,
+  "created_at_ms": 1784621004897,
+  "expires_at_ms": 1784880204897,
+  "device_id": "南山智城",
+  "camera_id": "1",
+  "edge_ts": 1784621003278,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "d15b59eb4be3cff5a6e2097313f6a49dfc1b3b387a8567524da56636476ad627",
+  "temporary_image_path": "20260721/160324_req_1784621003278_3107e88f_d15b59eb4be3cff5.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_e59403d0",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:03:24",
+  "labeler_started_at_ms": 1784621005030
+}

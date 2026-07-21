@@ -1,0 +1,42 @@
+{
+  "model": "fire_smoke_yolo",
+  "task_id": "fire_smoke_yolo",
+  "title": "火源烟雾",
+  "task": "detect",
+  "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+  "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+  "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+  "class_id": 0,
+  "class_ids": [
+    0,
+    1
+  ],
+  "class_name": "fire_smoke",
+  "class_names": [
+    "fire",
+    "smoke"
+  ],
+  "qwen_class": "fire",
+  "qwen_classes": [
+    "fire",
+    "smoke"
+  ],
+  "run_tag": "20260721_170112_fire_smoke_yolo_c0_1_fire_smoke_joint_balanced_gpu3",
+  "run_dir": "/home/admin1/jgzj/finetune/runs/20260721_170112_fire_smoke_yolo_c0_1_fire_smoke_joint_balanced_gpu3",
+  "qwen_no_root": "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+  "web_fire_smoke_dataset": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+  "external_hard_neg": 300,
+  "qwen_no_hard_neg": 150,
+  "web_hard_neg": 150
+}
+[2026-07-21 17:01:25] original_scan positives=6000/15046 negatives=3000/104776
+Traceback (most recent call last):
+  File "finetune/finetune_yolo.py", line 1947, in <module>
+    main()
+  File "finetune/finetune_yolo.py", line 1878, in main
+    feedback_summary = select_feedback_hard_positives(model, class_ids, target_names, qwen_targets, args, rng, selected, used)
+  File "finetune/finetune_yolo.py", line 1463, in select_feedback_hard_positives
+    "target_labels": [
+  File "finetune/finetune_yolo.py", line 1464, in <listcomp>
+    {"cls": class_id, "xywh": [float(x) for x in line.split()[1:5]], "raw": line}
+NameError: free variable 'class_id' referenced before assignment in enclosing scope

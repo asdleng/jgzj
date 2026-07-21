@@ -1,0 +1,34 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784620697803_3e0b998d",
+  "received_at_ms": 1784620699243,
+  "created_at_ms": 1784620699424,
+  "expires_at_ms": 1784879899424,
+  "device_id": "福田公安",
+  "camera_id": "1",
+  "edge_ts": 1784620697803,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "7aabbb940d40006256b706cdf632d277bfe9ea1af39d052f0770ba8371b3ae2e",
+  "temporary_image_path": "20260721/155819_req_1784620697803_3e0b998d_7aabbb940d400062.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_a366f597",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "positive_promoted",
+  "archived_at": "2026-07-21 15:58:19",
+  "labeler_started_at_ms": 1784620699550,
+  "labeler_finished_at_ms": 1784624364322
+}

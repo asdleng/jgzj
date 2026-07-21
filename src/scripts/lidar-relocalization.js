@@ -826,6 +826,10 @@
       }
     } catch (error) {
       currentStatus = null;
+      const readiness = selectedVehicle()?.relocalization;
+      renderEmpty(mapNode, readiness?.detail || "地图状态加载失败。");
+      renderEmpty(localizationNode, readiness?.online ? "车端定位状态暂不可用。" : "车辆当前离线。");
+      renderEmpty(pipelineNode, readiness?.status_label || "重定位链路状态不可用。");
       setStatus(error.message || "状态加载失败", "error");
       if (rawJsonNode) rawJsonNode.textContent = JSON.stringify(error.payload || { error: error.message }, null, 2);
     } finally {
@@ -980,6 +984,10 @@
   vehicleSelect?.addEventListener("change", () => {
     currentVehicleId = vehicleSelect.value;
     currentStatus = null;
+    const readiness = selectedVehicle()?.relocalization;
+    renderEmpty(mapNode, readiness?.detail || "正在读取地图状态。");
+    renderEmpty(localizationNode, readiness?.online ? "正在读取车端定位状态。" : "车辆当前离线。");
+    renderEmpty(pipelineNode, readiness?.status_label || "正在读取重定位链路。");
     updateVehicleReadiness();
     updateButtons();
     if (datasetVehicles().some((vehicle) => vehicle.vehicle_id === currentVehicleId)) {

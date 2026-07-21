@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784624011610_9565bdc0",
+  "received_at_ms": 1784624013355,
+  "created_at_ms": 1784624013601,
+  "expires_at_ms": 1784883213601,
+  "device_id": "海上世界",
+  "camera_id": "1",
+  "edge_ts": 1784624011610,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "16d121bca2a8f8a49142d926e0d0ecf4b7b42aa40380a9690f5f0f3df9b2016b",
+  "temporary_image_path": "20260721/165333_req_1784624011610_9565bdc0_16d121bca2a8f8a4.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_459eb8a4",
+      "event_name": "fire",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:53:33",
+  "labeler_started_at_ms": 1784624013610
+}

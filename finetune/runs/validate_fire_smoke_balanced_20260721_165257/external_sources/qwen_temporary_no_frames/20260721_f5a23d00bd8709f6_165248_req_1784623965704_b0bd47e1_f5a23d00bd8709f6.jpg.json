@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784623965704_b0bd47e1",
+  "received_at_ms": 1784623968773,
+  "created_at_ms": 1784623968926,
+  "expires_at_ms": 1784883168926,
+  "device_id": "松峰数字园",
+  "camera_id": "1",
+  "edge_ts": 1784623965704,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "f5a23d00bd8709f60cb33d1fe30e16ec79eff627770a1b77192e4b64558b04ed",
+  "temporary_image_path": "20260721/165248_req_1784623965704_b0bd47e1_f5a23d00bd8709f6.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_ec2b04a4",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:52:48",
+  "labeler_started_at_ms": 1784623968927
+}

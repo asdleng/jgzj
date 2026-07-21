@@ -36,7 +36,8 @@ CONTROL_TRANSPORT = os.environ.get("VEHICLE_CONTROL_TRANSPORT", "mqtt").strip().
 CONTROL_VEHICLE_ID = "BIT-0041"
 CONTROL_VIN = "a001I3829202711775712260"
 CONTROL_SSH_TARGET = os.environ.get("VEHICLE_CONTROL_SSH_TARGET", "nvidia@100.98.77.65")
-COMMAND_TIMEOUT_S = 0.80
+COMMAND_TIMEOUT_S = 5.00
+MOTION_COMMAND_TIMEOUT_S = 0.60
 VEHICLE_COMMAND_TIMEOUT_S = 1.50
 MAX_CLOUD_AGE_S = 45.0
 MAX_STEERING_DEG = 250.0
@@ -355,6 +356,8 @@ class ControlGateway:
         self.acquiring = False
         self.transport: Optional[Any] = None
         self.last_browser_at = 0.0
+        self.last_browser_command_at = 0.0
+        self.motion_paused = False
         self.last_sequence = -1
         self.last_command = self._safe_command()
         self.last_error = ""
@@ -405,6 +408,23 @@ class ControlGateway:
             "horn": 0,
         }
 
+    @classmethod
+    def _safe_hold_command(cls) -> Dict[str, Any]:
+        command = cls._safe_command()
+        command["deadman"] = True
+        return command
+
+    @staticmethod
+    def _is_motion_command(command: Dict[str, Any]) -> bool:
+        return bool(
+            float(command.get("accelerator", 0.0)) > 0.0
+            or abs(float(command.get("steering", 0.0))) > 0.5
+            or (
+                int(command.get("gear", 0)) in {1, 3}
+                and float(command.get("brake", 100.0)) < 50.0
+            )
+        )
+
     def _sanitize(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         gear_name = str(raw.get("gear", "P")).upper()
         gear = GEAR_TO_CAN.get(gear_name, 0)
@@ -447,6 +467,9 @@ class ControlGateway:
             transport.start()
             safe_command = self._safe_command()
             transport.send(safe_command)
+            wait_for_echo = getattr(transport, "wait_for_command_echo", None)
+            if callable(wait_for_echo) and not wait_for_echo(1.0):
+                raise GatewayError("MQTT 控制帧未收到 Broker 回执", HTTPStatus.SERVICE_UNAVAILABLE)
             with self.lock:
                 if self._stop.is_set():
                     raise GatewayError("本地控制网关正在退出", HTTPStatus.SERVICE_UNAVAILABLE)
@@ -455,6 +478,8 @@ class ControlGateway:
                 self._start_browser_lease(self.session_id)
                 self.last_sequence = -1
                 self.last_command = safe_command
+                self.last_browser_command_at = self.time_fn()
+                self.motion_paused = False
                 self.last_error = ""
                 self.last_transport_event = transport.last_event
                 return {
@@ -483,10 +508,24 @@ class ControlGateway:
                 raise GatewayError("实车控制链路已断开", HTTPStatus.SERVICE_UNAVAILABLE)
             sanitized = self._sanitize(raw)
             self._renew_browser_lease(session_id)
+            requested_motion = self._is_motion_command(sanitized)
+            paused = False
+            if self.motion_paused:
+                if requested_motion:
+                    sanitized = self._safe_hold_command()
+                    paused = True
+                else:
+                    self.motion_paused = False
             self.transport.send(sanitized)
+            self.last_browser_command_at = self.time_fn()
             self.last_sequence = sequence
             self.last_command = sanitized
-            return {"ok": True, "sequence": sequence, "applied": self._public_command(sanitized)}
+            return {
+                "ok": True,
+                "sequence": sequence,
+                "applied": self._public_command(sanitized),
+                "motion_paused": paused,
+            }
 
     def heartbeat(self, session_id: str) -> Dict[str, Any]:
         if not self._renew_browser_lease(session_id):
@@ -518,6 +557,8 @@ class ControlGateway:
             self.session_id = None
             self.last_command = self._safe_command()
             self.last_sequence = -1
+            self.last_browser_command_at = 0.0
+            self.motion_paused = False
             self._clear_browser_lease(str(session_id or ""))
         if transport:
             transport.close("estop" if reason == "estop" else "release")
@@ -529,6 +570,7 @@ class ControlGateway:
             "max_steering_deg": MAX_STEERING_DEG,
             "max_accelerator_percent": MAX_ACCELERATOR_PERCENT,
             "command_timeout_ms": int(COMMAND_TIMEOUT_S * 1000),
+            "motion_command_timeout_ms": int(MOTION_COMMAND_TIMEOUT_S * 1000),
             "vehicle_command_timeout_ms": int(VEHICLE_COMMAND_TIMEOUT_S * 1000),
             "requires_deadman": True,
             "video_required": False,
@@ -551,40 +593,61 @@ class ControlGateway:
                 vehicle["brake_pressure"] = float(transport_telemetry.get("brake_pressure") or 0.0)
                 vehicle["ad_screen_on"] = bool(transport_telemetry.get("ad_screen_on"))
                 vehicle["raw_chassis_status"] = bool(transport_telemetry.get("raw_chassis_status"))
-                vehicle["remote_mode_enabled"] = bool(transport_telemetry.get("remote_mode_enabled"))
-                vehicle["remote_gear_cmd"] = int(transport_telemetry.get("remote_gear_cmd", 0))
-                vehicle["remote_brake_percent"] = float(
-                    transport_telemetry.get("remote_brake_percent", 100.0)
-                )
-                vehicle["remote_steering_deg"] = float(
-                    transport_telemetry.get("remote_steering_deg", 0.0)
-                )
-                vehicle["remote_ad_screen_cmd"] = int(
-                    transport_telemetry.get("remote_ad_screen_cmd", 1)
-                )
-                vehicle["remote_command_age_ms"] = round(
-                    float(transport_telemetry.get("command_age_s") or 0.0) * 1000.0,
+                vehicle["battery_soc"] = transport_telemetry.get("battery_soc", vehicle.get("battery_soc"))
+                vehicle["telemetry_source"] = transport_telemetry.get("telemetry_source", "ros_guard")
+                vehicle["mqtt_vehicle_state_fresh"] = vehicle["telemetry_source"] == "mqtt_vehicle_state"
+                vehicle["mqtt_vehicle_state_age_ms"] = round(
+                    float(transport_telemetry.get("state_age_s") or 0.0) * 1000.0,
                     1,
                 )
-                vehicle["downstream_mode_value"] = int(
-                    transport_telemetry.get("downstream_mode_value", 0)
-                )
-                vehicle["downstream_gear_cmd"] = int(
-                    transport_telemetry.get("downstream_gear_cmd", 0)
-                )
-                vehicle["downstream_brake_percent"] = float(
-                    transport_telemetry.get("downstream_brake_percent", 100.0)
-                )
-                vehicle["downstream_steering_deg"] = float(
-                    transport_telemetry.get("downstream_steering_deg", 0.0)
-                )
-                vehicle["downstream_ad_screen_cmd"] = int(
-                    transport_telemetry.get("downstream_ad_screen_cmd", 1)
-                )
-                vehicle["downstream_command_age_ms"] = round(
-                    float(transport_telemetry.get("downstream_command_age_s") or 0.0) * 1000.0,
-                    1,
-                )
+                broker_command = transport_telemetry.get("broker_command") or {}
+                if broker_command:
+                    vehicle["broker_command_deadman"] = bool(broker_command.get("deadman"))
+                    vehicle["broker_command_gear"] = CAN_TO_GEAR.get(
+                        int(broker_command.get("gear", 0)),
+                        "P",
+                    )
+                    vehicle["broker_command_brake"] = float(broker_command.get("brake", 100.0))
+                    vehicle["broker_command_steering_deg"] = float(broker_command.get("steering", 0.0))
+                    vehicle["broker_command_age_ms"] = round(
+                        float(transport_telemetry.get("broker_command_age_s") or 0.0) * 1000.0,
+                        1,
+                    )
+                if "remote_mode_enabled" in transport_telemetry:
+                    vehicle["remote_mode_enabled"] = bool(transport_telemetry.get("remote_mode_enabled"))
+                    vehicle["remote_gear_cmd"] = int(transport_telemetry.get("remote_gear_cmd", 0))
+                    vehicle["remote_brake_percent"] = float(
+                        transport_telemetry.get("remote_brake_percent", 100.0)
+                    )
+                    vehicle["remote_steering_deg"] = float(
+                        transport_telemetry.get("remote_steering_deg", 0.0)
+                    )
+                    vehicle["remote_ad_screen_cmd"] = int(
+                        transport_telemetry.get("remote_ad_screen_cmd", 1)
+                    )
+                    vehicle["remote_command_age_ms"] = round(
+                        float(transport_telemetry.get("command_age_s") or 0.0) * 1000.0,
+                        1,
+                    )
+                    vehicle["downstream_mode_value"] = int(
+                        transport_telemetry.get("downstream_mode_value", 0)
+                    )
+                    vehicle["downstream_gear_cmd"] = int(
+                        transport_telemetry.get("downstream_gear_cmd", 0)
+                    )
+                    vehicle["downstream_brake_percent"] = float(
+                        transport_telemetry.get("downstream_brake_percent", 100.0)
+                    )
+                    vehicle["downstream_steering_deg"] = float(
+                        transport_telemetry.get("downstream_steering_deg", 0.0)
+                    )
+                    vehicle["downstream_ad_screen_cmd"] = int(
+                        transport_telemetry.get("downstream_ad_screen_cmd", 1)
+                    )
+                    vehicle["downstream_command_age_ms"] = round(
+                        float(transport_telemetry.get("downstream_command_age_s") or 0.0) * 1000.0,
+                        1,
+                    )
                 vehicle["local_telemetry"] = True
             return {
                 "ok": True,
@@ -593,6 +656,7 @@ class ControlGateway:
                 "acquiring": self.acquiring,
                 "session_active": bool(self.session_id),
                 "transport_alive": transport_alive,
+                "motion_paused": self.motion_paused,
                 "transport_event": transport_event,
                 "last_command": self._public_command(self.last_command),
                 "last_error": self.last_error,
@@ -605,12 +669,35 @@ class ControlGateway:
             if not self.session_id:
                 return
             active_session_id = self.session_id
+            motion_safe_failed = False
+            if (
+                not self.motion_paused
+                and self._is_motion_command(self.last_command)
+                and self.time_fn() - self.last_browser_command_at > MOTION_COMMAND_TIMEOUT_S
+            ):
+                safe_hold = self._safe_hold_command()
+                try:
+                    if self.transport and self.transport.is_alive():
+                        self.transport.send(safe_hold)
+                        self.last_command = safe_hold
+                        self.motion_paused = True
+                        self.last_transport_event = {
+                            "event": "motion_paused",
+                            "reason": "browser_command_timeout",
+                        }
+                except Exception as error:
+                    motion_safe_failed = True
+                    self.last_transport_event = {
+                        "event": "closed",
+                        "reason": "motion_safe_hold_failed",
+                        "detail": str(error),
+                    }
             expired = self._browser_lease_expired(active_session_id)
             dead_transport = not self.transport or not self.transport.is_alive()
             transport_event = self.transport.fault_event if self.transport else None
             event_name = (transport_event or {}).get("event")
             event_reason = (transport_event or {}).get("reason")
-            remote_fault = event_name in {
+            remote_fault = motion_safe_failed or event_name in {
                 "external_conflict",
                 "not_ready",
                 "closed",
@@ -629,6 +716,8 @@ class ControlGateway:
             self.session_id = None
             self.last_command = self._safe_command()
             self.last_sequence = -1
+            self.last_browser_command_at = 0.0
+            self.motion_paused = False
             self._clear_browser_lease(active_session_id)
             if expired:
                 self.last_error = "浏览器心跳超时，已退出实车控制"
@@ -638,6 +727,8 @@ class ControlGateway:
                     self.last_error = "车端 MQTT 输入超过 1.5 秒未更新，已制动并退出"
                 elif reason == "downstream_timeout":
                     self.last_error = "车端远控下游超过 1.5 秒未更新，已制动并退出"
+                elif reason == "vehicle_state_timeout":
+                    self.last_error = "车辆 MQTT 上行状态超过 1.5 秒未更新，已制动并退出"
                 elif reason == "external_remote_command":
                     self.last_error = "检测到其他远控指令，已制动并退出"
                 else:
@@ -669,6 +760,8 @@ class ControlGateway:
             self.session_id = None
             self.last_command = self._safe_command()
             self.last_sequence = -1
+            self.last_browser_command_at = 0.0
+            self.motion_paused = False
             self._clear_browser_lease(session_id)
             issues = vehicle.get("active_issues") or ["车辆运行时安全状态异常"]
             self.last_error = "车辆安全状态异常，已退出实车控制: " + "；".join(issues)

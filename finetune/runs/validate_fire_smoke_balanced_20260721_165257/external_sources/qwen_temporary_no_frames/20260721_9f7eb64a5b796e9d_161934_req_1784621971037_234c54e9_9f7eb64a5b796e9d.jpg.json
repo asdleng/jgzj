@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784621971037_234c54e9",
+  "received_at_ms": 1784621974672,
+  "created_at_ms": 1784621974975,
+  "expires_at_ms": 1784881174975,
+  "device_id": "红岗公园",
+  "camera_id": "1",
+  "edge_ts": 1784621971037,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "9f7eb64a5b796e9d0033116b0b2297b114fb784eff3c1ec8d99fcef3d5808f86",
+  "temporary_image_path": "20260721/161934_req_1784621971037_234c54e9_9f7eb64a5b796e9d.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_becc0ee6",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:19:34",
+  "labeler_started_at_ms": 1784621975224
+}

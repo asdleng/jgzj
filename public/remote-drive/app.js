@@ -5,7 +5,7 @@ const CONTROL_API_BASE = "/api/remote-drive";
 const CONTROL_WS_PATH = "/ws/remote-drive";
 const CONTROL_HEARTBEAT_MS = 100;
 const CONTROL_LEASE_HEARTBEAT_MS = 200;
-const CONTROL_REQUEST_TIMEOUT_MS = 1500;
+const CONTROL_REQUEST_TIMEOUT_MS = 5000;
 const STEERING_COMMAND_DEG = 250;
 const DRIVE_ACCELERATOR_PERCENT = 8;
 const GEAR_SHIFT_SETTLE_MS = 300;
@@ -58,6 +58,7 @@ const controlState = {
   transportMode: "",
   commandEnabled: false,
   emergency: false,
+  motionPaused: false,
   driveGear: "D",
   gear: "P",
   steering: 0,
@@ -474,6 +475,7 @@ function resetMotionState(commandEnabled = false) {
   activeMotionControls.clear();
   criticalControlCommands.length = 0;
   controlState.commandEnabled = commandEnabled;
+  controlState.motionPaused = false;
   controlState.driveGear = "D";
   controlState.gear = "P";
   controlState.steering = 0;
@@ -545,7 +547,7 @@ function ensureControlSocket() {
     const connectTimeout = window.setTimeout(() => {
       socket.close();
       reject(new Error("实时控制通道连接超时"));
-    }, 8000);
+    }, 45000);
     socket.addEventListener("open", () => {
       window.clearTimeout(connectTimeout);
       resolve(socket);
@@ -652,6 +654,21 @@ async function pollControlStatus() {
     applyControlConstraints(status.constraints);
     if (controlState.sessionActive && (!status.session_active || !status.transport_alive)) {
       failLocalControl(status.last_error || "实车控制链路已断开");
+    } else if (controlState.sessionActive && status.motion_paused) {
+      cancelGearShift();
+      activeMotionControls.clear();
+      criticalControlCommands.length = 0;
+      controlState.gear = "P";
+      controlState.steering = 0;
+      controlState.accelerator = 0;
+      controlState.brake = 100;
+      if (!controlState.motionPaused) {
+        controlState.motionPaused = true;
+        showToast("控制链路已恢复，请重新按方向键");
+      }
+      queueControlCommand(buildControlCommand(), { critical: true });
+    } else if (!status.motion_paused) {
+      controlState.motionPaused = false;
     }
   } catch (error) {
     controlState.backendOnline = false;
@@ -704,7 +721,12 @@ async function sendControlCommand() {
     if (controlState.transportMode === "mock") {
       await controlApi(`${CONTROL_API_BASE}/command`, payload);
     } else {
-      await controlSocketApi("command", payload, CONTROL_REQUEST_TIMEOUT_MS);
+      const socket = await ensureControlSocket();
+      socket.send(JSON.stringify({
+        endpoint: "command",
+        token: controlState.token,
+        payload,
+      }));
     }
   } catch (error) {
     if (controlState.sessionId === sessionId) {
@@ -744,6 +766,7 @@ function failLocalControl(message) {
   controlState.sessionId = "";
   controlState.transportAlive = false;
   controlState.emergency = true;
+  controlState.motionPaused = false;
   controlState.lastError = message;
   resetMotionState();
   renderControlState();
@@ -1084,11 +1107,18 @@ function renderControlState() {
   elements.telemetryTargetSteering.textContent = Number.isFinite(Number(vehicle?.remote_steering_deg))
     ? String(Math.round(Number(vehicle.remote_steering_deg))) : "--";
   if (vehicle?.local_telemetry) {
-    const age = Number.isFinite(Number(vehicle.remote_command_age_ms))
-      ? `${Math.round(Number(vehicle.remote_command_age_ms))}ms` : "实时";
-    elements.telemetryCommandAck.textContent = vehicle.remote_mode_enabled
-      ? `车端已收到 · ${age}` : `车端安全态 · ${age}`;
-    elements.telemetryCommandAck.dataset.state = vehicle.remote_mode_enabled ? "received" : "safe";
+    if (vehicle.mqtt_vehicle_state_fresh) {
+      const age = Number.isFinite(Number(vehicle.mqtt_vehicle_state_age_ms))
+        ? `${Math.round(Number(vehicle.mqtt_vehicle_state_age_ms))}ms` : "实时";
+      elements.telemetryCommandAck.textContent = `车端 MQTT 在线 · ${age}`;
+      elements.telemetryCommandAck.dataset.state = "received";
+    } else {
+      const age = Number.isFinite(Number(vehicle.remote_command_age_ms))
+        ? `${Math.round(Number(vehicle.remote_command_age_ms))}ms` : "实时";
+      elements.telemetryCommandAck.textContent = vehicle.remote_mode_enabled
+        ? `车端已收到 · ${age}` : `车端安全态 · ${age}`;
+      elements.telemetryCommandAck.dataset.state = vehicle.remote_mode_enabled ? "received" : "safe";
+    }
   } else {
     elements.telemetryCommandAck.textContent = "等待车端";
     elements.telemetryCommandAck.dataset.state = "idle";
@@ -1268,9 +1298,8 @@ function initialize() {
   }, 1000);
   aggregateTimer = window.setInterval(updateAggregateStatus, 1000);
   window.setTimeout(() => window.lucide?.createIcons(), 0);
-  connectAll();
   renderControlState();
-  void bootstrapControl();
+  void bootstrapControl().finally(connectAll);
 }
 
 initialize();

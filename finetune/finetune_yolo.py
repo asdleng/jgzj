@@ -155,6 +155,35 @@ def qwen_class_for(name: str) -> str:
     return QWEN_COARSE_CLASS.get(normalized, normalized)
 
 
+def parse_csv_tokens(value: str) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
+def resolve_target_class_ids(args: argparse.Namespace, names: list[str]) -> list[int]:
+    raw_ids = parse_csv_tokens(getattr(args, "class_ids", "") or "")
+    ids = [int(item) for item in raw_ids] if raw_ids else [int(args.class_id)]
+    out: list[int] = []
+    for class_id in ids:
+        if class_id < 0 or class_id >= len(names):
+            raise SystemExit(f"class_id_out_of_range:{class_id}; names={names}")
+        if class_id not in out:
+            out.append(class_id)
+    return out
+
+
+def resolve_qwen_targets(args: argparse.Namespace, target_names: list[str]) -> list[str]:
+    if getattr(args, "qwen_class", ""):
+        raw = parse_csv_tokens(args.qwen_class)
+        targets = [normalize_name(item) for item in raw]
+    else:
+        targets = [qwen_class_for(name) for name in target_names]
+    out: list[str] = []
+    for item in targets:
+        if item and item not in out:
+            out.append(item)
+    return out
+
+
 def pull_aliases_for(name: str) -> list[str]:
     normalized = normalize_name(name)
     aliases = PULL_CLASS_ALIASES.get(normalized, [normalized])
@@ -507,14 +536,21 @@ def iou_xyxy(a: list[float], b: list[float]) -> float:
     return inter / denom if denom > 0 else 0.0
 
 
-def collect_dataset_records(data_yaml: Path, class_id: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def coerce_class_ids(class_ids: int | list[int] | tuple[int, ...] | set[int]) -> list[int]:
+    if isinstance(class_ids, int):
+        return [class_ids]
+    return [int(item) for item in class_ids]
+
+
+def collect_dataset_records(data_yaml: Path, class_ids: list[int]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     positives: list[dict[str, Any]] = []
     negatives: list[dict[str, Any]] = []
+    target_ids = set(class_ids)
     for split, images in split_paths_from_data(data_yaml).items():
         for image_path in images:
             label_path = label_path_for_image(image_path)
             labels = parse_label_file(label_path)
-            target_labels = [item for item in labels if item["cls"] == class_id]
+            target_labels = [item for item in labels if item["cls"] in target_ids]
             row = {
                 "image": image_path,
                 "label": label_path,
@@ -530,6 +566,29 @@ def collect_dataset_records(data_yaml: Path, class_id: int) -> tuple[list[dict[s
     return positives, negatives
 
 
+def balanced_positive_order(rows: list[dict[str, Any]], class_ids: list[int], rng: random.Random) -> list[dict[str, Any]]:
+    if len(class_ids) <= 1:
+        out = rows[:]
+        rng.shuffle(out)
+        return out
+    target_ids = set(class_ids)
+    buckets: dict[tuple[int, ...], list[dict[str, Any]]] = {}
+    for row in rows:
+        key = tuple(sorted({item["cls"] for item in row.get("target_labels", []) if item.get("cls") in target_ids}))
+        if not key:
+            key = tuple(class_ids)
+        buckets.setdefault(key, []).append(row)
+    for bucket_rows in buckets.values():
+        rng.shuffle(bucket_rows)
+    keys = sorted(buckets)
+    out: list[dict[str, Any]] = []
+    while any(buckets[key] for key in keys):
+        for key in keys:
+            if buckets[key]:
+                out.append(buckets[key].pop())
+    return out
+
+
 def load_yolo(weight: Path):
     from ultralytics import YOLO
 
@@ -540,60 +599,115 @@ def predict_batch(model: Any, paths: list[Path], args: argparse.Namespace) -> di
     out: dict[Path, list[dict[str, Any]]] = {}
     if not paths:
         return out
+    paths = [Path(p).resolve() for p in paths if Path(p).exists()]
+    if not paths:
+        return out
+
+    def result_preds(result: Any) -> list[dict[str, Any]]:
+        preds: list[dict[str, Any]] = []
+        boxes = getattr(result, "boxes", None)
+        if boxes is not None and len(boxes) > 0:
+            cls_values = boxes.cls.detach().cpu().tolist()
+            conf_values = boxes.conf.detach().cpu().tolist()
+            xyxyn_values = boxes.xyxyn.detach().cpu().tolist()
+            for cls, conf, xyxy in zip(cls_values, conf_values, xyxyn_values):
+                preds.append({"cls": int(cls), "conf": float(conf), "xyxy": [float(v) for v in xyxy]})
+        return preds
+
     for start in range(0, len(paths), args.infer_chunk_size):
         chunk = paths[start:start + args.infer_chunk_size]
-        results = model.predict(
-            source=[str(p) for p in chunk],
-            stream=True,
-            conf=args.predict_conf_floor,
-            iou=args.predict_nms_iou,
-            imgsz=args.imgsz,
-            device=args.infer_device,
-            batch=args.infer_batch,
-            verbose=False,
-        )
-        for result in results:
-            path = Path(result.path).resolve()
-            preds: list[dict[str, Any]] = []
-            boxes = getattr(result, "boxes", None)
-            if boxes is not None and len(boxes) > 0:
-                cls_values = boxes.cls.detach().cpu().tolist()
-                conf_values = boxes.conf.detach().cpu().tolist()
-                xyxyn_values = boxes.xyxyn.detach().cpu().tolist()
-                for cls, conf, xyxy in zip(cls_values, conf_values, xyxyn_values):
-                    preds.append({"cls": int(cls), "conf": float(conf), "xyxy": [float(v) for v in xyxy]})
-            out[path] = preds
+        chunk = [p for p in chunk if p.exists()]
+        if not chunk:
+            continue
+        try:
+            results = model.predict(
+                source=[str(p) for p in chunk],
+                stream=True,
+                conf=args.predict_conf_floor,
+                iou=args.predict_nms_iou,
+                imgsz=args.imgsz,
+                device=args.infer_device,
+                batch=args.infer_batch,
+                verbose=False,
+            )
+            seen: set[Path] = set()
+            for expected_path, result in zip(chunk, results):
+                out[expected_path] = result_preds(result)
+                seen.add(expected_path)
+            for path in chunk:
+                if path not in seen:
+                    out[path] = []
+        except Exception as exc:
+            log(f"predict_chunk_failed start={start} size={len(chunk)} error={exc}; fallback_single")
+            for path in chunk:
+                if not path.exists():
+                    continue
+                try:
+                    results = model.predict(
+                        source=str(path),
+                        stream=True,
+                        conf=args.predict_conf_floor,
+                        iou=args.predict_nms_iou,
+                        imgsz=args.imgsz,
+                        device=args.infer_device,
+                        batch=1,
+                        verbose=False,
+                    )
+                    seen = False
+                    for result in results:
+                        out[path] = result_preds(result)
+                        seen = True
+                    if not seen:
+                        out[path] = []
+                except Exception as single_exc:
+                    log(f"predict_skip path={path} error={single_exc}")
     return out
 
 
-def score_positive(row: dict[str, Any], preds: list[dict[str, Any]], class_id: int, args: argparse.Namespace) -> dict[str, Any]:
-    target_preds = [p for p in preds if p["cls"] == class_id]
+def score_positive(row: dict[str, Any], preds: list[dict[str, Any]], class_ids: int | list[int], args: argparse.Namespace) -> dict[str, Any]:
+    target_ids = set(coerce_class_ids(class_ids))
+    target_preds = [p for p in preds if p["cls"] in target_ids]
     gt_boxes = [xywh_to_xyxy(item["xywh"]) for item in row["target_labels"]]
     max_conf = max([p["conf"] for p in target_preds], default=0.0)
     best_iou = 0.0
     best_matched_conf = 0.0
-    for gt in gt_boxes:
-        for pred in target_preds:
+    hard_gt_count = 0
+    for item, gt in zip(row["target_labels"], gt_boxes):
+        cls_preds = [pred for pred in target_preds if pred["cls"] == item["cls"]]
+        gt_best_iou = 0.0
+        gt_best_matched_conf = 0.0
+        for pred in cls_preds:
             iou = iou_xyxy(gt, pred["xyxy"])
             best_iou = max(best_iou, iou)
+            gt_best_iou = max(gt_best_iou, iou)
             if iou >= args.pos_iou_threshold:
                 best_matched_conf = max(best_matched_conf, pred["conf"])
-    is_hard = best_iou < args.pos_iou_threshold or best_matched_conf < args.normal_pos_min_conf
+                gt_best_matched_conf = max(gt_best_matched_conf, pred["conf"])
+        if gt_best_iou < args.pos_iou_threshold or gt_best_matched_conf < args.normal_pos_min_conf:
+            hard_gt_count += 1
+    is_hard = hard_gt_count > 0
     return {
         "bucket": "hard_positive" if is_hard else "normal_positive",
         "target_conf": max_conf,
         "matched_conf": best_matched_conf,
         "max_iou": best_iou,
+        "target_class_ids": sorted(target_ids),
+        "hard_gt_count": hard_gt_count,
         "reason": "low_conf_or_low_iou" if is_hard else "conf_iou_ok",
     }
 
 
-def score_negative(preds: list[dict[str, Any]], class_id: int, args: argparse.Namespace) -> dict[str, Any]:
-    target_preds = [p for p in preds if p["cls"] == class_id]
+def score_negative(preds: list[dict[str, Any]], class_ids: int | list[int], args: argparse.Namespace) -> dict[str, Any]:
+    target_ids = set(coerce_class_ids(class_ids))
+    target_preds = [p for p in preds if p["cls"] in target_ids]
     max_conf = max([p["conf"] for p in target_preds], default=0.0)
+    max_cls = None
+    if target_preds:
+        max_pred = max(target_preds, key=lambda item: item["conf"])
+        max_cls = max_pred["cls"]
     if max_conf >= args.hard_neg_min_conf:
-        return {"bucket": "hard_negative", "target_conf": max_conf, "max_iou": 0.0, "reason": "false_positive_conf"}
-    return {"bucket": "normal_negative", "target_conf": max_conf, "max_iou": 0.0, "reason": "no_target_prediction"}
+        return {"bucket": "hard_negative", "target_conf": max_conf, "target_cls": max_cls, "max_iou": 0.0, "reason": "false_positive_conf"}
+    return {"bucket": "normal_negative", "target_conf": max_conf, "target_cls": max_cls, "max_iou": 0.0, "reason": "no_target_prediction"}
 
 
 def add_selected(
@@ -620,8 +734,12 @@ def add_selected(
             "source_bucket": source_bucket,
             "source": row.get("source") or "",
             "split": row.get("split") or "",
+            "source_image": str(row.get("source_image") or row.get("image") or ""),
+            "meta": row.get("meta") or {},
             "reason": score.get("reason"),
             "target_conf": score.get("target_conf"),
+            "target_cls": score.get("target_cls"),
+            "target_class_ids": score.get("target_class_ids"),
             "matched_conf": score.get("matched_conf"),
             "max_iou": score.get("max_iou"),
             "label_mode": label_mode,
@@ -635,13 +753,13 @@ def select_original_samples(
     model: Any,
     positives: list[dict[str, Any]],
     negatives: list[dict[str, Any]],
-    class_id: int,
+    class_ids: list[int],
     args: argparse.Namespace,
     rng: random.Random,
     selected: list[dict[str, Any]],
     used: set[str],
 ) -> dict[str, Any]:
-    rng.shuffle(positives)
+    positives = balanced_positive_order(positives, class_ids, rng)
     rng.shuffle(negatives)
     need = {
         "original_normal_positive": args.original_normal_pos,
@@ -660,7 +778,7 @@ def select_original_samples(
 
     pos_preds = predict_batch(model, [row["image"] for row in pos_rows], args)
     for row in pos_rows:
-        score = score_positive(row, pos_preds.get(Path(row["image"]).resolve(), []), class_id, args)
+        score = score_positive(row, pos_preds.get(Path(row["image"]).resolve(), []), class_ids, args)
         if score["bucket"] == "normal_positive" and counts["original_normal_positive"] < need["original_normal_positive"]:
             if add_selected(selected, used, row, "normal_positive", "original_normal_positive", score):
                 counts["original_normal_positive"] += 1
@@ -672,7 +790,7 @@ def select_original_samples(
 
     neg_preds = predict_batch(model, [row["image"] for row in neg_rows], args)
     for row in neg_rows:
-        score = score_negative(neg_preds.get(Path(row["image"]).resolve(), []), class_id, args)
+        score = score_negative(neg_preds.get(Path(row["image"]).resolve(), []), class_ids, args)
         if score["bucket"] == "normal_negative" and counts["original_normal_negative"] < need["original_normal_negative"]:
             if add_selected(selected, used, row, "normal_negative", "original_normal_negative", score):
                 counts["original_normal_negative"] += 1
@@ -747,31 +865,67 @@ def hardlink_or_copy(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
-def read_sidecar_json(image: Path) -> dict[str, Any]:
-    candidates = [
+def sidecar_json_paths(image: Path) -> list[Path]:
+    return [
         image.with_suffix(image.suffix + ".json"),
         image.with_suffix(".json"),
         image.parent / f"{image.name}.json",
     ]
-    for path in candidates:
+
+
+def read_sidecar_json(image: Path) -> dict[str, Any]:
+    for path in sidecar_json_paths(image):
         if path.exists():
             return load_json(path, {})
     return {}
+
+
+def snapshot_qwen_no_candidate(image: Path, meta: dict[str, Any], run_dir: Path | None) -> Path | None:
+    if run_dir is None:
+        return image.resolve() if image.exists() else None
+    if not image.exists():
+        return None
+    sha = str(meta.get("image_sha256") or "")[:16]
+    digest = hashlib.sha1(str(image.resolve()).encode("utf-8")).hexdigest()[:12]
+    date_part = re.sub(r"[^A-Za-z0-9_.-]+", "_", image.parent.name)[:32]
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", image.stem)[:80]
+    suffix = image.suffix.lower() if image.suffix.lower() in IMAGE_EXTS else ".jpg"
+    token = sha or digest
+    dst = run_dir / "external_sources" / "qwen_temporary_no_frames" / f"{date_part}_{token}_{stem}{suffix}"
+    try:
+        hardlink_or_copy(image, dst)
+    except Exception as exc:
+        log(f"snapshot_qwen_no_skip image={image} error={exc}")
+        return None
+    for sidecar in sidecar_json_paths(image):
+        if not sidecar.exists():
+            continue
+        try:
+            hardlink_or_copy(sidecar, dst.with_suffix(dst.suffix + ".json"))
+        except Exception as exc:
+            log(f"snapshot_qwen_no_sidecar_skip image={image} sidecar={sidecar} error={exc}")
+        break
+    return dst.resolve()
 
 
 def normalized_blob(*values: Any) -> str:
     return normalize_name(" ".join(str(value or "") for value in values))
 
 
-def fire_smoke_negative_aliases(target_name: str, qwen_target: str) -> list[str]:
-    aliases = set(pull_aliases_for(target_name))
-    aliases.update(pull_aliases_for(qwen_target))
-    if normalize_name(target_name) in {"fire", "smoke"} or qwen_target in {"fire", "smoke"}:
+def fire_smoke_negative_aliases(target_names: list[str], qwen_targets: list[str]) -> list[str]:
+    aliases: set[str] = set()
+    for target_name in target_names:
+        aliases.update(pull_aliases_for(target_name))
+    for qwen_target in qwen_targets:
+        aliases.update(pull_aliases_for(qwen_target))
+    normalized_targets = {normalize_name(name) for name in target_names}
+    normalized_targets.update(qwen_targets)
+    if normalized_targets.intersection({"fire", "smoke"}):
         aliases.update(["fire", "smoke"])
     return sorted(alias for alias in aliases if alias)
 
 
-def collect_qwen_no_candidates(args: argparse.Namespace, aliases: list[str]) -> list[dict[str, Any]]:
+def collect_qwen_no_candidates(args: argparse.Namespace, aliases: list[str], run_dir: Path | None) -> list[dict[str, Any]]:
     root = Path(args.qwen_no_root)
     if not root.exists():
         return []
@@ -792,11 +946,16 @@ def collect_qwen_no_candidates(args: argparse.Namespace, aliases: list[str]) -> 
                 blob = normalized_blob(image, json.dumps(meta, ensure_ascii=False, sort_keys=True))
                 if not any(alias in blob for alias in alias_tokens):
                     continue
+        source_image = image.resolve()
+        snapshot_image = snapshot_qwen_no_candidate(image, meta, run_dir)
+        if snapshot_image is None:
+            continue
         rows.append({
-            "image": image.resolve(),
+            "image": snapshot_image,
             "label": "",
             "source": "qwen_vl_infer_temporary_no",
             "split": "qwen_no",
+            "source_image": str(source_image),
             "meta": meta,
         })
         if len(rows) >= args.external_negative_max_candidates:
@@ -852,6 +1011,7 @@ def collect_web_hard_negative_candidates(args: argparse.Namespace, aliases: list
             "label": "",
             "source": "fire_smoke_web_candidates_qwen_hard_negative",
             "split": "web_hard_negative",
+            "source_image": str(image),
             "meta": row,
         })
         if len(rows) >= args.external_negative_max_candidates:
@@ -862,7 +1022,7 @@ def collect_web_hard_negative_candidates(args: argparse.Namespace, aliases: list
 def select_hard_negatives_from_candidates(
     *,
     model: Any,
-    class_id: int,
+    class_ids: list[int],
     candidates: list[dict[str, Any]],
     requested: int,
     source_bucket: str,
@@ -873,20 +1033,27 @@ def select_hard_negatives_from_candidates(
 ) -> dict[str, Any]:
     if requested <= 0:
         return {"requested": requested, "selected": 0, "candidates": len(candidates), "scanned": 0}
-    rng.shuffle(candidates)
+    candidates = balanced_positive_order(candidates, class_ids, rng)
     scan_limit = min(
         len(candidates),
         max(args.min_external_negative_scan, requested * args.scan_multiplier),
     )
-    scan = candidates[:scan_limit]
+    initial_scan = candidates[:scan_limit]
+    missing_before_predict = sum(1 for row in initial_scan if not Path(row["image"]).exists())
+    scan = [row for row in initial_scan if Path(row["image"]).exists()]
     preds = predict_batch(model, [row["image"] for row in scan], args)
     count = 0
     not_hard = 0
     duplicate = 0
+    predict_missing = 0
     for row in scan:
         if count >= requested:
             break
-        score = score_negative(preds.get(Path(row["image"]).resolve(), []), class_id, args)
+        image = Path(row["image"]).resolve()
+        if image not in preds:
+            predict_missing += 1
+            continue
+        score = score_negative(preds.get(image, []), class_ids, args)
         if score["bucket"] != "hard_negative":
             not_hard += 1
             continue
@@ -895,6 +1062,7 @@ def select_hard_negatives_from_candidates(
             "label": "",
             "source": row.get("source") or source_bucket,
             "split": row.get("split") or "",
+            "source_image": row.get("source_image") or str(row.get("image") or ""),
             "meta": row.get("meta") or {},
         }
         if add_selected(selected, used, source_row, "hard_negative", source_bucket, score, label_mode="empty", label_lines=[]):
@@ -906,6 +1074,8 @@ def select_hard_negatives_from_candidates(
         "selected": count,
         "candidates": len(candidates),
         "scanned": len(scan),
+        "missing_before_predict": missing_before_predict,
+        "predict_missing": predict_missing,
         "not_hard": not_hard,
         "duplicate": duplicate,
     }
@@ -913,29 +1083,30 @@ def select_hard_negatives_from_candidates(
 
 def select_external_hard_negatives(
     model: Any,
-    class_id: int,
-    target_name: str,
-    qwen_target: str,
+    class_ids: list[int],
+    target_names: list[str],
+    qwen_targets: list[str],
     args: argparse.Namespace,
     rng: random.Random,
     selected: list[dict[str, Any]],
     used: set[str],
+    run_dir: Path | None = None,
 ) -> dict[str, Any]:
     requested_total = max(0, args.external_hard_neg)
     if args.skip_external_negatives:
         return {"requested": requested_total, "selected": 0, "skipped": True}
     if requested_total <= 0:
         return {"requested": 0, "selected": 0, "skipped": True}
-    aliases = fire_smoke_negative_aliases(target_name, qwen_target)
+    aliases = fire_smoke_negative_aliases(target_names, qwen_targets)
     qwen_need = min(args.qwen_no_hard_neg, requested_total)
     web_need = min(args.web_hard_neg, max(0, requested_total - qwen_need))
     if qwen_need + web_need < requested_total:
         web_need += requested_total - qwen_need - web_need
 
-    qwen_candidates = collect_qwen_no_candidates(args, aliases)
+    qwen_candidates = collect_qwen_no_candidates(args, aliases, run_dir)
     qwen_summary = select_hard_negatives_from_candidates(
         model=model,
-        class_id=class_id,
+        class_ids=class_ids,
         candidates=qwen_candidates,
         requested=qwen_need,
         source_bucket="qwen_no_hard_negative",
@@ -947,7 +1118,7 @@ def select_external_hard_negatives(
     web_candidates = collect_web_hard_negative_candidates(args, aliases)
     web_summary = select_hard_negatives_from_candidates(
         model=model,
-        class_id=class_id,
+        class_ids=class_ids,
         candidates=web_candidates,
         requested=web_need,
         source_bucket="web_qwen_hard_negative",
@@ -962,7 +1133,7 @@ def select_external_hard_negatives(
         combined = qwen_candidates + web_candidates
         refill_summary = select_hard_negatives_from_candidates(
             model=model,
-            class_id=class_id,
+            class_ids=class_ids,
             candidates=combined,
             requested=remaining,
             source_bucket="external_local_hard_negative_refill",
@@ -979,6 +1150,7 @@ def select_external_hard_negatives(
         "selected": selected_count,
         "aliases": aliases,
         "qwen_no_root": str(args.qwen_no_root),
+        "qwen_no_snapshot_dir": str(run_dir / "external_sources" / "qwen_temporary_no_frames") if run_dir else "",
         "web_fire_smoke_dataset": str(args.web_fire_smoke_dataset),
         "qwen_no_hard_negative": qwen_summary,
         "web_qwen_hard_negative": web_summary,
@@ -1206,30 +1378,40 @@ def select_pulled_hard_negatives(
     }
 
 
-def feedback_aliases(target_name: str, qwen_target: str) -> list[str]:
-    aliases = {normalize_name(target_name), qwen_target}
-    if qwen_target == "trash":
+def feedback_aliases(target_names: list[str], qwen_targets: list[str]) -> list[str]:
+    aliases = {normalize_name(name) for name in target_names}
+    aliases.update(qwen_targets)
+    if "trash" in qwen_targets:
         aliases.update(["bottle", "box", "paper", "bag"])
-    if qwen_target == "vehicle":
+    if "vehicle" in qwen_targets:
         aliases.update(["car", "truck", "bus", "van"])
-    if qwen_target == "nonmotor":
+    if "nonmotor" in qwen_targets:
         aliases.update(["bicycle", "bike", "non_motor_vehicle", "non_motorvehicle", "motorcycle", "scooter"])
-    if qwen_target == "pet":
+    if "pet" in qwen_targets:
         aliases.update(["pet", "dog", "cat", "off_leash_dog"])
     return sorted(aliases)
 
 
-def remap_feedback_labels(label_path: Path, class_id: int, qwen_target: str, filename_match: bool) -> list[str]:
+def remap_feedback_labels(
+    label_path: Path,
+    qwen_to_class_id: dict[str, int],
+    filename_match: bool,
+) -> list[str]:
     labels = parse_label_file(label_path)
     if not labels:
         return []
-    wanted_global_id = FEEDBACK_CLASS_ID.get(qwen_target)
+    global_to_local = {
+        FEEDBACK_CLASS_ID[qwen_target]: class_id
+        for qwen_target, class_id in qwen_to_class_id.items()
+        if qwen_target in FEEDBACK_CLASS_ID
+    }
     remapped = []
     for item in labels:
-        if wanted_global_id is not None and item["cls"] == wanted_global_id:
+        if item["cls"] in global_to_local:
             parts = item["raw"].split()
-            remapped.append(" ".join([str(class_id), *parts[1:5]]))
-    if not remapped and filename_match:
+            remapped.append(" ".join([str(global_to_local[item["cls"]]), *parts[1:5]]))
+    if not remapped and filename_match and len(qwen_to_class_id) == 1:
+        class_id = next(iter(qwen_to_class_id.values()))
         for item in labels:
             parts = item["raw"].split()
             remapped.append(" ".join([str(class_id), *parts[1:5]]))
@@ -1238,9 +1420,9 @@ def remap_feedback_labels(label_path: Path, class_id: int, qwen_target: str, fil
 
 def select_feedback_hard_positives(
     model: Any,
-    class_id: int,
-    target_name: str,
-    qwen_target: str,
+    class_ids: list[int],
+    target_names: list[str],
+    qwen_targets: list[str],
     args: argparse.Namespace,
     rng: random.Random,
     selected: list[dict[str, Any]],
@@ -1253,17 +1435,23 @@ def select_feedback_hard_positives(
     if not image_dir.exists() or not label_dir.exists():
         return {"requested": args.feedback_hard_pos, "selected": 0, "missing_root": True}
 
-    aliases = feedback_aliases(target_name, qwen_target)
+    aliases = feedback_aliases(target_names, qwen_targets)
+    qwen_to_class_id = {qwen_class_for(name): class_id for name, class_id in zip(target_names, class_ids)}
+    for qwen_target in qwen_targets:
+        if qwen_target not in qwen_to_class_id and qwen_target in FEEDBACK_CLASS_ID:
+            for class_id, target_name in zip(class_ids, target_names):
+                if qwen_class_for(target_name) == qwen_target:
+                    qwen_to_class_id[qwen_target] = class_id
     candidates = []
     for label_path in label_dir.glob("*.txt"):
         name_norm = normalize_name(label_path.stem)
         filename_match = any(f"_{alias}_" in f"_{name_norm}_" for alias in aliases)
-        if not filename_match and qwen_target not in name_norm:
+        if not filename_match and not any(qwen_target in name_norm for qwen_target in qwen_targets):
             continue
         image_path = image_dir / (label_path.stem + ".jpg")
         if not image_path.exists():
             continue
-        label_lines = remap_feedback_labels(label_path, class_id, qwen_target, filename_match)
+        label_lines = remap_feedback_labels(label_path, qwen_to_class_id, filename_match)
         if not label_lines:
             continue
         candidates.append({
@@ -1273,7 +1461,7 @@ def select_feedback_hard_positives(
             "source": "yolo_event_feedback_v1",
             "split": "review",
             "target_labels": [
-                {"cls": class_id, "xywh": [float(x) for x in line.split()[1:5]], "raw": line}
+                {"cls": int(float(line.split()[0])), "xywh": [float(x) for x in line.split()[1:5]], "raw": line}
                 for line in label_lines
             ],
         })
@@ -1284,7 +1472,7 @@ def select_feedback_hard_positives(
     for row in scan:
         if count >= args.feedback_hard_pos:
             break
-        score = score_positive(row, preds.get(Path(row["image"]).resolve(), []), class_id, args)
+        score = score_positive(row, preds.get(Path(row["image"]).resolve(), []), class_ids, args)
         if score["bucket"] != "hard_positive":
             continue
         if add_selected(
@@ -1534,8 +1722,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build a target-class YOLO finetune dataset and schedule <=10 epoch finetuning.")
     parser.add_argument("--model", required=True, help="Current registry model name, e.g. trash_yolo.")
     parser.add_argument("--class-id", type=int, required=True, help="Target class id in the model training dataset.")
-    parser.add_argument("--target-name", default="", help="Override class name resolved from data.yaml.")
-    parser.add_argument("--qwen-class", default="", help="Override coarse class used for Qwen positive/negative judgement.")
+    parser.add_argument("--class-ids", default="", help="Comma-separated target class ids for joint finetune, e.g. 0,1. Overrides --class-id.")
+    parser.add_argument("--target-name", default="", help="Override target name shown in run/logs.")
+    parser.add_argument("--qwen-class", default="", help="Override coarse class(es) used for Qwen judgement. Comma-separated for multi-class.")
     parser.add_argument("--run-tag", default="", help="Override run tag.")
     parser.add_argument("--seed", type=int, default=20260720)
     parser.add_argument("--resolve-only", action="store_true")
@@ -1624,8 +1813,6 @@ def main() -> None:
         args.external_hard_neg = args.pulled_hard_neg
     if args.epochs < 1 or args.epochs > 10:
         raise SystemExit("--epochs must be in [1, 10].")
-    if args.class_id < 0:
-        raise SystemExit("--class-id must be >= 0.")
     if args.pull_retries < 1:
         raise SystemExit("--pull-retries must be >= 1.")
     if args.external_hard_neg < 0:
@@ -1636,11 +1823,12 @@ def main() -> None:
         raise SystemExit(f"unsupported_task:{model_info.task}; this script handles detect datasets because hard samples need boxes and IoU.")
 
     names = names_from_data(model_info.data)
-    if args.class_id >= len(names):
-        raise SystemExit(f"class_id_out_of_range:{args.class_id}; names={names}")
-    target_name = args.target_name or names[args.class_id]
-    qwen_target = normalize_name(args.qwen_class or qwen_class_for(target_name))
-    run_tag = args.run_tag or f"{cn_now().strftime('%Y%m%d_%H%M%S')}_{model_info.task_id}_c{args.class_id}_{normalize_name(target_name)}"
+    class_ids = resolve_target_class_ids(args, names)
+    target_names = [names[class_id] for class_id in class_ids]
+    target_name = args.target_name or "_".join(normalize_name(name) for name in target_names)
+    qwen_targets = resolve_qwen_targets(args, target_names)
+    class_token = "_".join(str(class_id) for class_id in class_ids)
+    run_tag = args.run_tag or f"{cn_now().strftime('%Y%m%d_%H%M%S')}_{model_info.task_id}_c{class_token}_{normalize_name(target_name)}"
     run_dir = FINETUNE_ROOT / "runs" / run_tag
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1652,9 +1840,12 @@ def main() -> None:
         "weight": str(model_info.weight),
         "data": str(model_info.data),
         "data_source": model_info.data_source,
-        "class_id": args.class_id,
+        "class_id": class_ids[0],
+        "class_ids": class_ids,
         "class_name": target_name,
-        "qwen_class": qwen_target,
+        "class_names": target_names,
+        "qwen_class": qwen_targets[0] if qwen_targets else "",
+        "qwen_classes": qwen_targets,
         "run_tag": run_tag,
         "run_dir": str(run_dir),
         "qwen_no_root": str(args.qwen_no_root),
@@ -1668,7 +1859,7 @@ def main() -> None:
     if args.resolve_only:
         return
 
-    positives, negatives = collect_dataset_records(model_info.data, args.class_id)
+    positives, negatives = collect_dataset_records(model_info.data, class_ids)
     availability = {
         "original_positive_images": len(positives),
         "original_negative_images": len(negatives),
@@ -1683,17 +1874,18 @@ def main() -> None:
     selected: list[dict[str, Any]] = []
     used: set[str] = set()
 
-    original_summary = select_original_samples(model, positives, negatives, args.class_id, args, rng, selected, used)
-    feedback_summary = select_feedback_hard_positives(model, args.class_id, target_name, qwen_target, args, rng, selected, used)
+    original_summary = select_original_samples(model, positives, negatives, class_ids, args, rng, selected, used)
+    feedback_summary = select_feedback_hard_positives(model, class_ids, target_names, qwen_targets, args, rng, selected, used)
     external_negative_summary = select_external_hard_negatives(
         model,
-        args.class_id,
-        target_name,
-        qwen_target,
+        class_ids,
+        target_names,
+        qwen_targets,
         args,
         rng,
         selected,
         used,
+        run_dir=run_dir,
     )
     fallback_summary = fill_external_shortfall_from_original(
         selected=selected,
@@ -1705,7 +1897,7 @@ def main() -> None:
         rng=rng,
     )
 
-    dataset_dir = FINETUNE_RUNTIME / "datasets" / run_tag / f"{model_info.task_id}_c{args.class_id}_{normalize_name(target_name)}_finetune"
+    dataset_dir = FINETUNE_RUNTIME / "datasets" / run_tag / f"{model_info.task_id}_c{class_token}_{normalize_name(target_name)}_finetune"
     dataset_summary = write_dataset(selected, model_info.data, dataset_dir, args, rng)
     thresholds = {
         "predict_conf_floor": args.predict_conf_floor,

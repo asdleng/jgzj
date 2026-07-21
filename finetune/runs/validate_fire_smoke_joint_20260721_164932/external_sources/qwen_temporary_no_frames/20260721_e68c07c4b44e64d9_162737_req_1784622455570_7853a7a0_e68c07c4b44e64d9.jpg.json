@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784622455570_7853a7a0",
+  "received_at_ms": 1784622457232,
+  "created_at_ms": 1784622457397,
+  "expires_at_ms": 1784881657397,
+  "device_id": "福建南平市民广场",
+  "camera_id": "1",
+  "edge_ts": 1784622455570,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "e68c07c4b44e64d97a4f2e2d0ff567e39fae04bb2f11eeedf2652b6ece9d167d",
+  "temporary_image_path": "20260721/162737_req_1784622455570_7853a7a0_e68c07c4b44e64d9.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_40132dc9",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:27:37",
+  "labeler_started_at_ms": 1784622457399
+}

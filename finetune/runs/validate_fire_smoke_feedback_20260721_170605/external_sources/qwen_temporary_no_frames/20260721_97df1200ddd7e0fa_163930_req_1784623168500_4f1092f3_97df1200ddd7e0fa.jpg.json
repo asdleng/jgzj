@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784623168500_4f1092f3",
+  "received_at_ms": 1784623170628,
+  "created_at_ms": 1784623172222,
+  "expires_at_ms": 1784882372222,
+  "device_id": "海上世界",
+  "camera_id": "1",
+  "edge_ts": 1784623168500,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "97df1200ddd7e0fae9d15355fefd19a2656dbd71f37894740161ae6c688966d8",
+  "temporary_image_path": "20260721/163930_req_1784623168500_4f1092f3_97df1200ddd7e0fa.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_b1920134",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:39:32",
+  "labeler_started_at_ms": 1784623172508
+}

@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784623431588_6059a834",
+  "received_at_ms": 1784623432764,
+  "created_at_ms": 1784623432910,
+  "expires_at_ms": 1784882632910,
+  "device_id": "万象城",
+  "camera_id": "1",
+  "edge_ts": 1784623431588,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "16f27330ed8e7fddbb6dac1ea58fe668315317606c0df9a80da6387342a256eb",
+  "temporary_image_path": "20260721/164352_req_1784623431588_6059a834_16f27330ed8e7fdd.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_3d6f9df6",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:43:52",
+  "labeler_started_at_ms": 1784623433036
+}

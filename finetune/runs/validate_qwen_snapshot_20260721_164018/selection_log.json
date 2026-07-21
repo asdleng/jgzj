@@ -1,0 +1,134 @@
+{
+  "schema": "jgzj_yolo_target_finetune.v1",
+  "created_at": "2026-07-21T16:40:34.552540+08:00",
+  "resolved": {
+    "model": "fire_smoke_yolo",
+    "task_id": "fire_smoke_yolo",
+    "title": "火源烟雾",
+    "task": "detect",
+    "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+    "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+    "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+    "class_id": 0,
+    "class_name": "fire",
+    "qwen_class": "fire",
+    "run_tag": "validate_qwen_snapshot_20260721_164018",
+    "run_dir": "/home/admin1/jgzj/finetune/runs/validate_qwen_snapshot_20260721_164018",
+    "qwen_no_root": "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+    "web_fire_smoke_dataset": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+    "external_hard_neg": 2,
+    "qwen_no_hard_neg": 1,
+    "web_hard_neg": 1
+  },
+  "availability": {
+    "original_positive_images": 12670,
+    "original_negative_images": 107152
+  },
+  "thresholds": {
+    "predict_conf_floor": 0.001,
+    "predict_nms_iou": 0.7,
+    "pos_iou_threshold": 0.5,
+    "normal_pos_min_conf": 0.5,
+    "hard_neg_min_conf": 0.25
+  },
+  "requested": {
+    "original_normal_positive": 0,
+    "original_hard_positive": 0,
+    "feedback_hard_positive": 150,
+    "original_normal_negative": 0,
+    "original_hard_negative": 0,
+    "external_hard_negative": 2,
+    "qwen_no_hard_negative": 1,
+    "web_qwen_hard_negative": 1
+  },
+  "selection": {
+    "original": {
+      "requested": {
+        "original_normal_positive": 0,
+        "original_hard_positive": 0,
+        "original_normal_negative": 0,
+        "original_hard_negative": 0
+      },
+      "selected": {
+        "original_normal_positive": 0,
+        "original_hard_positive": 0,
+        "original_normal_negative": 0,
+        "original_hard_negative": 0
+      },
+      "scanned_positive": 0,
+      "scanned_negative": 0
+    },
+    "feedback_hard_positive": {
+      "requested": 150,
+      "selected": 0,
+      "skipped": true
+    },
+    "external_hard_negative": {
+      "requested": 2,
+      "selected": 0,
+      "aliases": [
+        "fire",
+        "smoke"
+      ],
+      "qwen_no_root": "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+      "qwen_no_snapshot_dir": "/home/admin1/jgzj/finetune/runs/validate_qwen_snapshot_20260721_164018/external_sources/qwen_temporary_no_frames",
+      "web_fire_smoke_dataset": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+      "qwen_no_hard_negative": {
+        "requested": 1,
+        "selected": 0,
+        "candidates": 509,
+        "scanned": 20,
+        "missing_before_predict": 0,
+        "predict_missing": 0,
+        "not_hard": 20,
+        "duplicate": 0
+      },
+      "web_qwen_hard_negative": {
+        "requested": 1,
+        "selected": 0,
+        "candidates": 234,
+        "scanned": 20,
+        "missing_before_predict": 0,
+        "predict_missing": 0,
+        "not_hard": 20,
+        "duplicate": 0
+      },
+      "refill": {
+        "requested": 2,
+        "selected": 0,
+        "candidates": 743,
+        "scanned": 20,
+        "missing_before_predict": 0,
+        "predict_missing": 0,
+        "not_hard": 20,
+        "duplicate": 0
+      }
+    },
+    "external_shortfall_fallback": {
+      "feedback_hard_positive": 150,
+      "external_hard_negative": 2
+    }
+  },
+  "dataset": {
+    "dataset_dir": "/home/admin1/jgzj/.runtime/finetune/datasets/validate_qwen_snapshot_20260721_164018/fire_smoke_yolo_c0_fire_finetune",
+    "data_yaml": "/home/admin1/jgzj/.runtime/finetune/datasets/validate_qwen_snapshot_20260721_164018/fire_smoke_yolo_c0_fire_finetune/data.yaml",
+    "samples": 152,
+    "split_counts": {
+      "train": 129,
+      "val": 15,
+      "test": 8
+    },
+    "category_counts": {
+      "hard_positive": 150,
+      "hard_negative": 2
+    },
+    "source_counts": {
+      "feedback_hard_positive_fallback": 150,
+      "external_hard_negative_fallback": 2
+    },
+    "manifest": "/home/admin1/jgzj/.runtime/finetune/datasets/validate_qwen_snapshot_20260721_164018/fire_smoke_yolo_c0_fire_finetune/samples_manifest.jsonl"
+  },
+  "training": {
+    "skipped": true
+  }
+}
