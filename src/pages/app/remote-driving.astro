@@ -17,13 +17,53 @@ import SiteLayout from "../../components/SiteLayout.astro";
       allow="autoplay"
     ></iframe>
   </main>
+
+<script is:inline data-cfasync="false">
+  (() => {
+    const frame = document.querySelector(".remote-driving-frame");
+    const mobileLayout = window.matchMedia("(max-width: 900px)");
+    let resizeObserver;
+    let animationFrame;
+
+    const syncFrameHeight = () => {
+      cancelAnimationFrame(animationFrame);
+      animationFrame = requestAnimationFrame(() => {
+        if (!(frame instanceof HTMLIFrameElement)) return;
+        if (!mobileLayout.matches) {
+          frame.style.removeProperty("height");
+          return;
+        }
+        const documentElement = frame.contentDocument?.documentElement;
+        const body = frame.contentDocument?.body;
+        if (!documentElement || !body) return;
+        const contentHeight = Math.max(documentElement.scrollHeight, body.scrollHeight);
+        if (contentHeight > 0) frame.style.height = `${contentHeight}px`;
+      });
+    };
+
+    const observeFrame = () => {
+      resizeObserver?.disconnect();
+      const documentElement = frame?.contentDocument?.documentElement;
+      const body = frame?.contentDocument?.body;
+      if (!documentElement || !body) return;
+      resizeObserver = new ResizeObserver(syncFrameHeight);
+      resizeObserver.observe(documentElement);
+      resizeObserver.observe(body);
+      syncFrameHeight();
+    };
+
+    frame?.addEventListener("load", observeFrame);
+    observeFrame();
+    mobileLayout.addEventListener("change", syncFrameHeight);
+    window.addEventListener("resize", syncFrameHeight, { passive: true });
+  })();
+</script>
 </SiteLayout>
 
 <style>
   .remote-driving-main {
     width: 100%;
     min-height: calc(100vh - 64px);
-    padding-top: 64px;
     background: #090d12;
   }
 
@@ -39,7 +79,6 @@ import SiteLayout from "../../components/SiteLayout.astro";
   @media (max-width: 760px) {
     .remote-driving-main {
       min-height: calc(100vh - 56px);
-      padding-top: 56px;
     }
 
     .remote-driving-frame {
