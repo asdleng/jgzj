@@ -136,26 +136,48 @@ def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m
     for inspection in latest:
         anchor = by_id[str(inspection["sample_id"])]
         matches = []
+        current_sample = anchor
+        current_date = latest_date
         for date in prior_dates:
             ranked = []
             for candidate in samples_by_date.get(date, []):
-                position_distance = distance_m(anchor["position"], candidate["position"])
-                heading_delta = angle_difference(anchor["position"].get("heading"), candidate["position"].get("heading"))
-                if position_distance <= position_gate_m and heading_delta <= heading_gate:
-                    ranked.append((position_distance + heading_delta * 8, position_distance, heading_delta, candidate))
+                step_distance = distance_m(current_sample["position"], candidate["position"])
+                step_heading_delta = angle_difference(current_sample["position"].get("heading"), candidate["position"].get("heading"))
+                if step_distance <= position_gate_m and step_heading_delta <= heading_gate:
+                    ranked.append((step_distance, step_heading_delta, candidate))
             if ranked:
-                _, position_distance, heading_delta, candidate = min(ranked, key=lambda row: row[0])
-                matches.append({"date": date, "sample": candidate, "distance_m": position_distance, "heading_delta_rad": heading_delta})
+                step_distance, step_heading_delta, candidate = min(ranked, key=lambda row: (row[0], row[1]))
+                anchor_distance = distance_m(anchor["position"], candidate["position"])
+                anchor_heading_delta = angle_difference(anchor["position"].get("heading"), candidate["position"].get("heading"))
+                matches.append({
+                    "date": date,
+                    "sample": candidate,
+                    "reference_date": current_date,
+                    "step_distance_m": step_distance,
+                    "step_heading_delta_rad": step_heading_delta,
+                    "anchor_distance_m": anchor_distance,
+                    "anchor_heading_delta_rad": anchor_heading_delta,
+                })
+                current_sample = candidate
+                current_date = date
         if len(matches) < 2:
             continue
         candidates.append({
             "anchor": anchor,
             "inspection": inspection,
-            "dates": [{"date": latest_date, "sample": anchor, "distance_m": 0.0, "heading_delta_rad": 0.0}, *matches],
+            "dates": [{
+                "date": latest_date,
+                "sample": anchor,
+                "reference_date": None,
+                "step_distance_m": 0.0,
+                "step_heading_delta_rad": 0.0,
+                "anchor_distance_m": 0.0,
+                "anchor_heading_delta_rad": 0.0,
+            }, *matches],
             "cameras": tree_camera_ids(inspection),
-            "max_distance_m": max(item["distance_m"] for item in matches),
+            "max_step_distance_m": max(item["step_distance_m"] for item in matches),
         })
-    candidates.sort(key=lambda item: (item["max_distance_m"], str(item["anchor"].get("collected_at") or "")), reverse=False)
+    candidates.sort(key=lambda item: (item["max_step_distance_m"], str(item["anchor"].get("collected_at") or "")), reverse=False)
     selected = []
     for candidate in candidates:
         if not candidate["cameras"]:
@@ -370,22 +392,52 @@ def pixel_point(normalized, shape):
 
 def validate_track_geometry(track, job, args):
     rows_by_date = {row["date"]: row for row in job["dates"]}
-    observations = [item for item in track["observations"] if item["date"] in rows_by_date]
+    observations = sorted(
+        (item for item in track["observations"] if item["date"] in rows_by_date),
+        key=lambda item: item["date"],
+        reverse=True,
+    )
     if len(observations) < args.min_days:
         return {"passed": False, "reason": "insufficient_days", "dates": len(observations)}
-    reference = observations[0]
-    reference_image = cv2.imread(str(frame_path(args.frames_root, rows_by_date[reference["date"]]["frame"])), cv2.IMREAD_COLOR)
-    if reference_image is None:
-        return {"passed": False, "reason": "reference_image_unreadable"}
+    images = {}
+
+    def image_for(observation):
+        date = observation["date"]
+        if date not in images:
+            images[date] = cv2.imread(
+                str(frame_path(args.frames_root, rows_by_date[date]["frame"])),
+                cv2.IMREAD_COLOR,
+            )
+        return images[date]
+
     pairs = []
-    for observation in observations[1:]:
-        candidate_image = cv2.imread(str(frame_path(args.frames_root, rows_by_date[observation["date"]]["frame"])), cv2.IMREAD_COLOR)
+    for reference, observation in zip(observations, observations[1:]):
+        reference_image = image_for(reference)
+        candidate_image = image_for(observation)
+        if reference_image is None:
+            pairs.append({
+                "reference_date": reference["date"],
+                "date": observation["date"],
+                "passed": False,
+                "reason": "reference_image_unreadable",
+            })
+            continue
         if candidate_image is None:
-            pairs.append({"date": observation["date"], "passed": False, "reason": "candidate_image_unreadable"})
+            pairs.append({
+                "reference_date": reference["date"],
+                "date": observation["date"],
+                "passed": False,
+                "reason": "candidate_image_unreadable",
+            })
             continue
         metrics = homography_metrics(reference_image, candidate_image)
         if metrics is None:
-            pairs.append({"date": observation["date"], "passed": False, "reason": "homography_unavailable"})
+            pairs.append({
+                "reference_date": reference["date"],
+                "date": observation["date"],
+                "passed": False,
+                "reason": "homography_unavailable",
+            })
             continue
         source = pixel_point(reference["root_1000"], metrics["reference_shape"]).reshape(1, 1, 2)
         projected = cv2.perspectiveTransform(source, metrics["matrix"]).reshape(2)
@@ -399,6 +451,7 @@ def validate_track_geometry(track, job, args):
             error_normalized <= args.max_root_error
         )
         pairs.append({
+            "reference_date": reference["date"],
             "date": observation["date"],
             "passed": passed,
             "good_matches": metrics["good_matches"],
@@ -469,6 +522,14 @@ def build_asset(track, geometry, job, state, inspections_by_sample, model, build
             continue
         sample = row["sample"]
         inspection = inspections_by_sample.get(str(sample.get("sample_id"))) or {}
+        observation_geometry = geometry_by_date.get(observation["date"])
+        step_reference_date = observation_geometry.get("reference_date") if observation_geometry else None
+        step_reference = rows_by_date.get(step_reference_date, {}).get("sample") if step_reference_date else None
+        step_distance = distance_m(step_reference["position"], sample["position"]) if step_reference else 0.0
+        step_heading_delta = angle_difference(
+            step_reference["position"].get("heading"),
+            sample["position"].get("heading"),
+        ) if step_reference else 0.0
         observations.append({
             "observation_id": hashlib.sha1(f"{identifier}|{sample.get('sample_id')}|{job['camera_id']}".encode("utf-8")).hexdigest()[:16],
             "sample_id": sample.get("sample_id"),
@@ -476,11 +537,20 @@ def build_asset(track, geometry, job, state, inspections_by_sample, model, build
             "collected_at": sample.get("collected_at"),
             "camera_id": job["camera_id"],
             "image_url": public_image_url(row["frame"]),
+            "observation_station": {
+                "gaode_latitude": sample["position"].get("gaode_latitude"),
+                "gaode_longitude": sample["position"].get("gaode_longitude"),
+            },
+            "observation_heading": sample["position"].get("heading"),
+            "step_reference_date": step_reference_date,
+            "step_distance_m": round(step_distance, 3),
+            "step_heading_delta_rad": round(step_heading_delta, 6),
+            "anchor_distance_m": round(float(row.get("anchor_distance_m") or 0), 3),
             "bbox_1000": observation["bbox_1000"],
             "root_1000": observation["root_1000"],
             "visibility": observation["visibility"],
             "evidence": observation["evidence"],
-            "geometry": geometry_by_date.get(observation["date"]) or {"reference": True},
+            "geometry": observation_geometry or {"reference": True},
             "context_health_score": inspection.get("health_score"),
             "context_health_grade": inspection.get("health_grade"),
             "context_health_scope": "capture_node",
@@ -510,6 +580,19 @@ def build_asset(track, geometry, job, state, inspections_by_sample, model, build
         },
         "observation_heading": position.get("heading"),
         "position_source": "vehicle_observation_station",
+        "position_chain": [{
+            "date": row["date"],
+            "sample_id": row["sample"].get("sample_id"),
+            "reference_date": row.get("reference_date"),
+            "observation_station": {
+                "gaode_latitude": row["sample"]["position"].get("gaode_latitude"),
+                "gaode_longitude": row["sample"]["position"].get("gaode_longitude"),
+            },
+            "observation_heading": row["sample"]["position"].get("heading"),
+            "step_distance_m": round(float(row.get("step_distance_m") or 0), 3),
+            "step_heading_delta_rad": round(float(row.get("step_heading_delta_rad") or 0), 6),
+            "anchor_distance_m": round(float(row.get("anchor_distance_m") or 0), 3),
+        } for row in job["dates"]],
         "canonical_root_1000": reference["root_1000"],
         "first_seen": min((item["collected_at"] for item in observations if item.get("collected_at")), default=None),
         "last_seen": max((item["collected_at"] for item in observations if item.get("collected_at")), default=None),

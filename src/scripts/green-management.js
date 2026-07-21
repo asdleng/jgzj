@@ -622,9 +622,14 @@ if (root) {
         const date = document.createElement("span");
         date.textContent = observation.date || formatTime(observation.collected_at);
         const match = document.createElement("strong");
-        match.textContent = observation.geometry?.reference ? "身份基准帧" : `${observation.geometry?.inliers || 0} 个几何内点`;
+        const referenceDate = observation.geometry?.reference_date || observation.step_reference_date;
+        match.textContent = observation.geometry?.reference
+          ? "逐日位置链起点"
+          : `${observation.geometry?.inliers || 0} 个几何内点${referenceDate ? ` · 对比 ${referenceDate.slice(5)}` : ""}`;
         const evidence = document.createElement("small");
-        evidence.textContent = observation.evidence || "树干根点与环境关系一致";
+        const stepDistance = number(observation.step_distance_m);
+        const stepLabel = referenceDate && stepDistance != null ? `距前一匹配日采集点 ${stepDistance.toFixed(1)} 米 · ` : "";
+        evidence.textContent = `${stepLabel}${observation.evidence || "树干根点与环境关系一致"}`;
         caption.append(date, match, evidence);
         figure.append(button, caption);
         el.frames.appendChild(figure);
@@ -645,7 +650,7 @@ if (root) {
       addAssetIndicator("跨天身份", `${asset.day_count || 0} 天`, "至少连续三天可确认的独立乔木");
       addAssetIndicator("图像几何", geometry.inliers == null ? "基准" : `${geometry.inliers}+`, "SIFT 几何内点门限不少于 50");
       addAssetIndicator("根点闭合", geometry.rootError == null ? "已校验" : `${geometry.rootError.toFixed(1)}/1000`, "自动确认门限不超过 20/1000");
-      addAssetIndicator("身份范围", "同视角", "同车、同相机、位置 5 米内、航向差 10°内", "fair");
+      addAssetIndicator("身份范围", "逐日同视角", "同车、同相机，每步位置 5 米内、航向差 10°内", "fair");
     }
     if (el.inspectionSummary) el.inspectionSummary.textContent = asset.signature || "跨天树干、树冠与固定环境关系一致。";
     replaceFindingList(el.observations, observations.map((item) => `${item.date}：${item.evidence || "同一实体匹配通过"}`), "暂无跨天观测");

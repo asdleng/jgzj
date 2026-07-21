@@ -2,6 +2,8 @@
 import importlib.util
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "build_green_tree_assets.py"
@@ -76,6 +78,83 @@ class GreenTreeAssetsTest(unittest.TestCase):
         self.assertEqual(
             [item["sample"]["sample_id"] for item in jobs[0]["dates"]],
             ["today", "day20-good", "day18-good", "day17-good"],
+        )
+
+    def test_select_jobs_follows_each_previous_position_instead_of_latest_anchor(self):
+        rows = [
+            sample("today", "2026-07-21", 22.5, 114.2, 0.1),
+            sample("day20-step4m", "2026-07-20", 22.500036, 114.2, 0.1),
+            sample("day19-step4m", "2026-07-19", 22.500072, 114.2, 0.1),
+        ]
+        inspections = [{
+            "sample_id": "today",
+            "vehicle_id": "BIT-0042",
+            "collected_at": "2026-07-21T08:00:00.000Z",
+            "vegetation_types": {"trees": True},
+            "view_assessments": [{"camera_id": "camera4", "vegetation_visible": True, "vegetation_types": {"trees": True}}],
+        }]
+        jobs, _ = MODULE.select_jobs(rows, inspections, 4, 2, 5, 10)
+        self.assertEqual(len(jobs), 1)
+        dates = jobs[0]["dates"]
+        self.assertEqual([item["sample"]["sample_id"] for item in dates], ["today", "day20-step4m", "day19-step4m"])
+        self.assertLess(dates[2]["step_distance_m"], 5)
+        self.assertGreater(dates[2]["anchor_distance_m"], 5)
+        self.assertEqual(dates[2]["reference_date"], "2026-07-20")
+
+    def test_select_jobs_uses_nearest_position_with_heading_as_a_gate(self):
+        rows = [
+            sample("today", "2026-07-21", 22.5, 114.2, 0.0),
+            sample("day20-nearest", "2026-07-20", 22.500009, 114.2, 0.157),
+            sample("day20-farther", "2026-07-20", 22.500018, 114.2, 0.0),
+            sample("day19", "2026-07-19", 22.500009, 114.2, 0.157),
+        ]
+        inspections = [{
+            "sample_id": "today",
+            "vehicle_id": "BIT-0042",
+            "collected_at": "2026-07-21T08:00:00.000Z",
+            "vegetation_types": {"trees": True},
+            "view_assessments": [{"camera_id": "camera4", "vegetation_visible": True, "vegetation_types": {"trees": True}}],
+        }]
+        jobs, _ = MODULE.select_jobs(rows, inspections, 4, 2, 5, 10)
+        self.assertEqual(jobs[0]["dates"][1]["sample"]["sample_id"], "day20-nearest")
+
+    def test_geometry_validation_compares_adjacent_dates(self):
+        track = {"observations": [
+            {"date": "2026-07-21", "root_1000": [500, 500]},
+            {"date": "2026-07-20", "root_1000": [500, 500]},
+            {"date": "2026-07-19", "root_1000": [500, 500]},
+        ]}
+        job = {"dates": [
+            {"date": date, "frame": {"image_path": f"{date}.jpg"}}
+            for date in ("2026-07-21", "2026-07-20", "2026-07-19")
+        ]}
+        args = SimpleNamespace(
+            min_days=3,
+            frames_root=Path("/frames"),
+            min_inliers=50,
+            min_inlier_ratio=0.15,
+            max_root_error=20,
+        )
+        metrics = {
+            "matrix": MODULE.np.eye(3),
+            "reference_shape": (100, 100, 3),
+            "candidate_shape": (100, 100, 3),
+            "good_matches": 100,
+            "inliers": 80,
+            "inlier_ratio": 0.8,
+        }
+        with patch.object(MODULE, "frame_path", side_effect=lambda _, frame: Path(frame["image_path"])), \
+                patch.object(MODULE.cv2, "imread", side_effect=lambda path, _: path), \
+                patch.object(MODULE, "homography_metrics", return_value=metrics) as homography:
+            result = MODULE.validate_track_geometry(track, job, args)
+        self.assertTrue(result["passed"])
+        self.assertEqual(
+            [(item["reference_date"], item["date"]) for item in result["pairs"]],
+            [("2026-07-21", "2026-07-20"), ("2026-07-20", "2026-07-19")],
+        )
+        self.assertEqual(
+            [call.args for call in homography.call_args_list],
+            [("2026-07-21.jpg", "2026-07-20.jpg"), ("2026-07-20.jpg", "2026-07-19.jpg")],
         )
 
     def test_normalize_tracks_keeps_only_valid_unique_dates(self):
