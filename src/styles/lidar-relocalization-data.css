@@ -1,3 +1,25 @@
+.lidar-reloc-vehicle-readiness {
+  display: block;
+  max-width: 360px;
+  margin-top: 5px;
+  color: #94a3b8;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lidar-reloc-vehicle-readiness[data-state="ok"] {
+  color: #86efac;
+}
+
+.lidar-reloc-vehicle-readiness[data-state="warn"] {
+  color: #fde68a;
+}
+
+.lidar-reloc-vehicle-readiness[data-state="error"] {
+  color: #fca5a5;
+}
+
 .lidar-dataset-panel {
   display: grid;
   gap: 14px;

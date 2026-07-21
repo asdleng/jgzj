@@ -46,6 +46,14 @@ POLICY_SCRIPT = PROJECT_ROOT / "scripts" / "yolo_closed_loop_policy.py"
 FINETUNE_ROOT = PROJECT_ROOT / "finetune"
 FINETUNE_RUNTIME = RUNTIME_ROOT / "finetune"
 EVENT_FEEDBACK_ROOT = RUNTIME_ROOT / "yolo_loop" / "datasets" / "yolo_event_feedback_v1"
+QWEN_NO_ROOT = Path(os.environ.get(
+    "YOLO_FINETUNE_QWEN_NO_ROOT",
+    "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+))
+WEB_FIRE_SMOKE_DATASET = Path(os.environ.get(
+    "YOLO_FINETUNE_WEB_FIRE_SMOKE_DATASET",
+    str(RUNTIME_ROOT / "yolo_loop" / "datasets" / "fire_smoke_web_candidates_v3"),
+))
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 A100_HOST = os.environ.get("YOLO_A100_HOST", "192.168.80.49")
@@ -238,6 +246,24 @@ def write_json(path: Path, payload: Any) -> None:
     tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
+
+
+def iter_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8", errors="ignore") as handle:
+        for raw in handle:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                row = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
 
 
 def sha256_file(path: Path) -> str:
@@ -721,6 +747,245 @@ def hardlink_or_copy(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
+def read_sidecar_json(image: Path) -> dict[str, Any]:
+    candidates = [
+        image.with_suffix(image.suffix + ".json"),
+        image.with_suffix(".json"),
+        image.parent / f"{image.name}.json",
+    ]
+    for path in candidates:
+        if path.exists():
+            return load_json(path, {})
+    return {}
+
+
+def normalized_blob(*values: Any) -> str:
+    return normalize_name(" ".join(str(value or "") for value in values))
+
+
+def fire_smoke_negative_aliases(target_name: str, qwen_target: str) -> list[str]:
+    aliases = set(pull_aliases_for(target_name))
+    aliases.update(pull_aliases_for(qwen_target))
+    if normalize_name(target_name) in {"fire", "smoke"} or qwen_target in {"fire", "smoke"}:
+        aliases.update(["fire", "smoke"])
+    return sorted(alias for alias in aliases if alias)
+
+
+def collect_qwen_no_candidates(args: argparse.Namespace, aliases: list[str]) -> list[dict[str, Any]]:
+    root = Path(args.qwen_no_root)
+    if not root.exists():
+        return []
+    alias_tokens = {normalize_name(alias) for alias in aliases if alias}
+    rows: list[dict[str, Any]] = []
+    for image in root.rglob("*"):
+        if not image.is_file() or image.suffix.lower() not in IMAGE_EXTS:
+            continue
+        meta = read_sidecar_json(image)
+        task_names = {
+            normalize_name(task.get("event_name") or task.get("class_name") or task.get("target") or "")
+            for task in (meta.get("no_tasks") or [])
+            if isinstance(task, dict)
+        }
+        if alias_tokens:
+            matched_task = any(name in alias_tokens for name in task_names if name)
+            if not matched_task:
+                blob = normalized_blob(image, json.dumps(meta, ensure_ascii=False, sort_keys=True))
+                if not any(alias in blob for alias in alias_tokens):
+                    continue
+        rows.append({
+            "image": image.resolve(),
+            "label": "",
+            "source": "qwen_vl_infer_temporary_no",
+            "split": "qwen_no",
+            "meta": meta,
+        })
+        if len(rows) >= args.external_negative_max_candidates:
+            break
+    return rows
+
+
+def image_path_from_web_row(dataset: Path, row: dict[str, Any], manifest_by_sha: dict[str, dict[str, Any]]) -> Path | None:
+    image_value = row.get("image") or row.get("image_path") or row.get("relative_path")
+    sha = str(row.get("image_sha256") or row.get("sha256") or "")
+    if not image_value and sha and sha in manifest_by_sha:
+        image_value = manifest_by_sha[sha].get("image") or manifest_by_sha[sha].get("image_path")
+    if image_value:
+        path = Path(str(image_value))
+        if not path.is_absolute():
+            path = dataset / path
+        if path.exists():
+            return path.resolve()
+    if sha:
+        for ext in IMAGE_EXTS:
+            path = dataset / "images" / "review" / f"{sha[:24]}{ext}"
+            if path.exists():
+                return path.resolve()
+    return None
+
+
+def collect_web_hard_negative_candidates(args: argparse.Namespace, aliases: list[str]) -> list[dict[str, Any]]:
+    dataset = Path(args.web_fire_smoke_dataset)
+    review_path = dataset / "qwen_review_manifest.jsonl"
+    manifest_path = dataset / "manifest_selected_images.jsonl"
+    if not review_path.exists():
+        return []
+    manifest_by_sha: dict[str, dict[str, Any]] = {}
+    for row in iter_jsonl(manifest_path):
+        sha = str(row.get("sha256") or row.get("image_sha256") or "")
+        if sha:
+            manifest_by_sha[sha] = row
+
+    rows: list[dict[str, Any]] = []
+    for row in iter_jsonl(review_path):
+        scene = normalize_name(row.get("scene") or row.get("review_scene") or "")
+        model_scene = normalize_name(row.get("model_scene") or "")
+        box_count = int(row.get("box_count") or 0)
+        if scene != "hard_negative" and model_scene != "hard_negative":
+            continue
+        if box_count > 0:
+            continue
+        image = image_path_from_web_row(dataset, row, manifest_by_sha)
+        if not image:
+            continue
+        rows.append({
+            "image": image,
+            "label": "",
+            "source": "fire_smoke_web_candidates_qwen_hard_negative",
+            "split": "web_hard_negative",
+            "meta": row,
+        })
+        if len(rows) >= args.external_negative_max_candidates:
+            break
+    return rows
+
+
+def select_hard_negatives_from_candidates(
+    *,
+    model: Any,
+    class_id: int,
+    candidates: list[dict[str, Any]],
+    requested: int,
+    source_bucket: str,
+    args: argparse.Namespace,
+    rng: random.Random,
+    selected: list[dict[str, Any]],
+    used: set[str],
+) -> dict[str, Any]:
+    if requested <= 0:
+        return {"requested": requested, "selected": 0, "candidates": len(candidates), "scanned": 0}
+    rng.shuffle(candidates)
+    scan_limit = min(
+        len(candidates),
+        max(args.min_external_negative_scan, requested * args.scan_multiplier),
+    )
+    scan = candidates[:scan_limit]
+    preds = predict_batch(model, [row["image"] for row in scan], args)
+    count = 0
+    not_hard = 0
+    duplicate = 0
+    for row in scan:
+        if count >= requested:
+            break
+        score = score_negative(preds.get(Path(row["image"]).resolve(), []), class_id, args)
+        if score["bucket"] != "hard_negative":
+            not_hard += 1
+            continue
+        source_row = {
+            "image": row["image"],
+            "label": "",
+            "source": row.get("source") or source_bucket,
+            "split": row.get("split") or "",
+            "meta": row.get("meta") or {},
+        }
+        if add_selected(selected, used, source_row, "hard_negative", source_bucket, score, label_mode="empty", label_lines=[]):
+            count += 1
+        else:
+            duplicate += 1
+    return {
+        "requested": requested,
+        "selected": count,
+        "candidates": len(candidates),
+        "scanned": len(scan),
+        "not_hard": not_hard,
+        "duplicate": duplicate,
+    }
+
+
+def select_external_hard_negatives(
+    model: Any,
+    class_id: int,
+    target_name: str,
+    qwen_target: str,
+    args: argparse.Namespace,
+    rng: random.Random,
+    selected: list[dict[str, Any]],
+    used: set[str],
+) -> dict[str, Any]:
+    requested_total = max(0, args.external_hard_neg)
+    if args.skip_external_negatives:
+        return {"requested": requested_total, "selected": 0, "skipped": True}
+    if requested_total <= 0:
+        return {"requested": 0, "selected": 0, "skipped": True}
+    aliases = fire_smoke_negative_aliases(target_name, qwen_target)
+    qwen_need = min(args.qwen_no_hard_neg, requested_total)
+    web_need = min(args.web_hard_neg, max(0, requested_total - qwen_need))
+    if qwen_need + web_need < requested_total:
+        web_need += requested_total - qwen_need - web_need
+
+    qwen_candidates = collect_qwen_no_candidates(args, aliases)
+    qwen_summary = select_hard_negatives_from_candidates(
+        model=model,
+        class_id=class_id,
+        candidates=qwen_candidates,
+        requested=qwen_need,
+        source_bucket="qwen_no_hard_negative",
+        args=args,
+        rng=rng,
+        selected=selected,
+        used=used,
+    )
+    web_candidates = collect_web_hard_negative_candidates(args, aliases)
+    web_summary = select_hard_negatives_from_candidates(
+        model=model,
+        class_id=class_id,
+        candidates=web_candidates,
+        requested=web_need,
+        source_bucket="web_qwen_hard_negative",
+        args=args,
+        rng=rng,
+        selected=selected,
+        used=used,
+    )
+    selected_count = int(qwen_summary.get("selected") or 0) + int(web_summary.get("selected") or 0)
+    if selected_count < requested_total:
+        remaining = requested_total - selected_count
+        combined = qwen_candidates + web_candidates
+        refill_summary = select_hard_negatives_from_candidates(
+            model=model,
+            class_id=class_id,
+            candidates=combined,
+            requested=remaining,
+            source_bucket="external_local_hard_negative_refill",
+            args=args,
+            rng=rng,
+            selected=selected,
+            used=used,
+        )
+        selected_count += int(refill_summary.get("selected") or 0)
+    else:
+        refill_summary = {"requested": 0, "selected": 0, "skipped": True}
+    return {
+        "requested": requested_total,
+        "selected": selected_count,
+        "aliases": aliases,
+        "qwen_no_root": str(args.qwen_no_root),
+        "web_fire_smoke_dataset": str(args.web_fire_smoke_dataset),
+        "qwen_no_hard_negative": qwen_summary,
+        "web_qwen_hard_negative": web_summary,
+        "refill": refill_summary,
+    }
+
+
 def pull_low_conf_images(class_name: str, run_dir: Path, args: argparse.Namespace) -> tuple[Path | None, dict[str, Any]]:
     if args.skip_pull:
         return None, {"skipped": True}
@@ -1049,12 +1314,12 @@ def fill_external_shortfall_from_original(
     positives: list[dict[str, Any]],
     negatives: list[dict[str, Any]],
     feedback_summary: dict[str, Any],
-    pulled_summary: dict[str, Any],
+    external_negative_summary: dict[str, Any],
     rng: random.Random,
 ) -> dict[str, Any]:
-    filled = {"feedback_hard_positive": 0, "pulled_hard_negative": 0}
+    filled = {"feedback_hard_positive": 0, "external_hard_negative": 0}
     missing_feedback = max(0, int(feedback_summary.get("requested") or 0) - int(feedback_summary.get("selected") or 0))
-    missing_pulled = max(0, int(pulled_summary.get("requested") or 0) - int(pulled_summary.get("selected") or 0))
+    missing_external = max(0, int(external_negative_summary.get("requested") or 0) - int(external_negative_summary.get("selected") or 0))
     pos_rows = positives[:]
     neg_rows = negatives[:]
     rng.shuffle(pos_rows)
@@ -1066,11 +1331,11 @@ def fill_external_shortfall_from_original(
         if add_selected(selected, used, row, "hard_positive", "feedback_hard_positive_fallback", score):
             filled["feedback_hard_positive"] += 1
     for row in neg_rows:
-        if filled["pulled_hard_negative"] >= missing_pulled:
+        if filled["external_hard_negative"] >= missing_external:
             break
-        score = {"reason": "fallback_original_for_pulled_hard_negative", "target_conf": None, "max_iou": None}
-        if add_selected(selected, used, row, "hard_negative", "pulled_hard_negative_fallback", score):
-            filled["pulled_hard_negative"] += 1
+        score = {"reason": "fallback_original_for_external_hard_negative", "target_conf": None, "max_iou": None}
+        if add_selected(selected, used, row, "hard_negative", "external_hard_negative_fallback", score):
+            filled["external_hard_negative"] += 1
     return filled
 
 
@@ -1277,6 +1542,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-train", action="store_true")
     parser.add_argument("--skip-pull", action="store_true")
+    parser.add_argument("--skip-external-negatives", action="store_true")
     parser.add_argument("--skip-qwen", action="store_true")
     parser.add_argument("--skip-feedback", action="store_true")
     parser.add_argument("--allow-qwen-failure", action="store_true")
@@ -1285,8 +1551,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--original-hard-pos", type=int, default=150)
     parser.add_argument("--original-normal-neg", type=int, default=400)
     parser.add_argument("--original-hard-neg", type=int, default=100)
-    parser.add_argument("--pulled-hard-neg", type=int, default=200)
+    parser.add_argument("--external-hard-neg", type=int, default=None)
+    parser.add_argument("--pulled-hard-neg", type=int, default=200, help="Compatibility alias for --external-hard-neg.")
+    parser.add_argument("--qwen-no-hard-neg", type=int, default=100)
+    parser.add_argument("--web-hard-neg", type=int, default=100)
     parser.add_argument("--feedback-hard-pos", type=int, default=150)
+
+    parser.add_argument("--qwen-no-root", type=Path, default=QWEN_NO_ROOT)
+    parser.add_argument("--web-fire-smoke-dataset", type=Path, default=WEB_FIRE_SMOKE_DATASET)
+    parser.add_argument("--external-negative-max-candidates", type=int, default=20000)
+    parser.add_argument("--min-external-negative-scan", type=int, default=1000)
 
     parser.add_argument("--pull-limit", type=int, default=1000)
     parser.add_argument("--pull-lookback-days", type=int, default=7)
@@ -1346,12 +1620,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_arg_parser().parse_args()
+    if args.external_hard_neg is None:
+        args.external_hard_neg = args.pulled_hard_neg
     if args.epochs < 1 or args.epochs > 10:
         raise SystemExit("--epochs must be in [1, 10].")
     if args.class_id < 0:
         raise SystemExit("--class-id must be >= 0.")
     if args.pull_retries < 1:
         raise SystemExit("--pull-retries must be >= 1.")
+    if args.external_hard_neg < 0:
+        raise SystemExit("--external-hard-neg must be >= 0.")
 
     model_info = resolve_model(args.model)
     if model_info.task != "detect":
@@ -1379,11 +1657,11 @@ def main() -> None:
         "qwen_class": qwen_target,
         "run_tag": run_tag,
         "run_dir": str(run_dir),
-        "pull_script": str(args.pull_script),
-        "pull_ssh_key": str(args.pull_ssh_key),
-        "pull_ssh_options": pull_ssh_args(args),
-        "pull_retries": args.pull_retries,
-        "pull_retry_sleep": args.pull_retry_sleep,
+        "qwen_no_root": str(args.qwen_no_root),
+        "web_fire_smoke_dataset": str(args.web_fire_smoke_dataset),
+        "external_hard_neg": args.external_hard_neg,
+        "qwen_no_hard_neg": args.qwen_no_hard_neg,
+        "web_hard_neg": args.web_hard_neg,
     }
     write_json(run_dir / "resolved_model.json", resolved)
     print(json.dumps(resolved, ensure_ascii=False, indent=2), flush=True)
@@ -1407,15 +1685,23 @@ def main() -> None:
 
     original_summary = select_original_samples(model, positives, negatives, args.class_id, args, rng, selected, used)
     feedback_summary = select_feedback_hard_positives(model, args.class_id, target_name, qwen_target, args, rng, selected, used)
-    pull_dir, pull_summary = pull_low_conf_images(target_name, run_dir, args)
-    pulled_summary = select_pulled_hard_negatives(model, args.class_id, qwen_target, pull_dir, run_dir, args, rng, selected, used)
+    external_negative_summary = select_external_hard_negatives(
+        model,
+        args.class_id,
+        target_name,
+        qwen_target,
+        args,
+        rng,
+        selected,
+        used,
+    )
     fallback_summary = fill_external_shortfall_from_original(
         selected=selected,
         used=used,
         positives=positives,
         negatives=negatives,
         feedback_summary=feedback_summary,
-        pulled_summary=pulled_summary,
+        external_negative_summary=external_negative_summary,
         rng=rng,
     )
 
@@ -1440,13 +1726,14 @@ def main() -> None:
             "feedback_hard_positive": args.feedback_hard_pos,
             "original_normal_negative": args.original_normal_neg,
             "original_hard_negative": args.original_hard_neg,
-            "pulled_hard_negative": args.pulled_hard_neg,
+            "external_hard_negative": args.external_hard_neg,
+            "qwen_no_hard_negative": args.qwen_no_hard_neg,
+            "web_qwen_hard_negative": args.web_hard_neg,
         },
         "selection": {
             "original": original_summary,
             "feedback_hard_positive": feedback_summary,
-            "pull_low_conf": pull_summary,
-            "pulled_hard_negative": pulled_summary,
+            "external_hard_negative": external_negative_summary,
             "external_shortfall_fallback": fallback_summary,
         },
         "dataset": dataset_summary,

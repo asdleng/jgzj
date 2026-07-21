@@ -2,6 +2,7 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 const readline = require('readline');
+const { WebSocketServer } = require('ws');
 
 const CONTROL_VEHICLE_ID = 'BIT-0041';
 const CONTROL_ENDPOINTS = new Set(['bootstrap', 'status', 'acquire', 'command', 'heartbeat', 'release', 'estop']);
@@ -64,6 +65,102 @@ function requestRemoteDriveSidecar(upstreamBase, endpoint, method, payload, cont
     if (body) request.write(body);
     request.end();
   });
+}
+
+function createRemoteDriveWebSocketGateway(options = {}) {
+  const upstreamBase = options.upstreamBase || `http://127.0.0.1:${Number(process.env.REMOTE_DRIVE_PORT || 18766)}`;
+  const websocketServer = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  const allowedEndpoints = new Set(['command', 'heartbeat', 'release', 'estop']);
+
+  websocketServer.on('connection', (websocket) => {
+    let activeSessionId = '';
+    let activeToken = '';
+
+    websocket.on('message', async (raw, isBinary) => {
+      if (isBinary) {
+        websocket.close(1003, 'text messages only');
+        return;
+      }
+      let message;
+      try {
+        message = JSON.parse(raw.toString('utf8'));
+      } catch (_error) {
+        websocket.close(1007, 'invalid json');
+        return;
+      }
+      const endpoint = String(message.endpoint || '');
+      const requestId = message.id == null ? null : String(message.id);
+      const payload = message.payload && typeof message.payload === 'object' ? message.payload : {};
+      const controlToken = String(message.token || '');
+      if (!allowedEndpoints.has(endpoint) || !controlToken) {
+        if (requestId != null && websocket.readyState === 1) {
+          websocket.send(JSON.stringify({ id: requestId, ok: false, status: 400, error: 'invalid control message' }));
+        }
+        return;
+      }
+      const sessionId = String(payload.session_id || '');
+      if (sessionId) {
+        activeSessionId = sessionId;
+        activeToken = controlToken;
+      }
+      try {
+        const response = await requestRemoteDriveSidecar(
+          upstreamBase,
+          endpoint,
+          'POST',
+          payload,
+          controlToken,
+          endpoint === 'release' || endpoint === 'estop' ? 5000 : 2000
+        );
+        let responsePayload = {};
+        try {
+          responsePayload = JSON.parse(response.text);
+        } catch (_error) {
+          responsePayload = { error: 'invalid sidecar response' };
+        }
+        if (response.status >= 200 && response.status < 300 && (endpoint === 'release' || endpoint === 'estop')) {
+          activeSessionId = '';
+          activeToken = '';
+        }
+        if (requestId != null && websocket.readyState === 1) {
+          websocket.send(JSON.stringify({
+            id: requestId,
+            ok: response.status >= 200 && response.status < 300 && responsePayload.ok !== false,
+            status: response.status,
+            payload: responsePayload,
+            error: responsePayload.error || null
+          }));
+        }
+      } catch (error) {
+        if (requestId != null && websocket.readyState === 1) {
+          websocket.send(JSON.stringify({ id: requestId, ok: false, status: 503, error: error.message }));
+        }
+      }
+    });
+
+    websocket.on('close', () => {
+      if (!activeSessionId || !activeToken) return;
+      void requestRemoteDriveSidecar(
+        upstreamBase,
+        'estop',
+        'POST',
+        { session_id: activeSessionId },
+        activeToken,
+        2000
+      ).catch(() => {});
+    });
+  });
+
+  return {
+    handleUpgrade(req, socket, head) {
+      websocketServer.handleUpgrade(req, socket, head, (websocket) => {
+        websocketServer.emit('connection', websocket, req);
+      });
+    },
+    close() {
+      websocketServer.close();
+    }
+  };
 }
 
 function startRemoteDriveSidecar(rootDir, options = {}) {
@@ -268,6 +365,7 @@ function registerRemoteDriveRoutes(app, options = {}) {
 module.exports = {
   CONTROL_ENDPOINTS,
   WEBRTC_TARGETS,
+  createRemoteDriveWebSocketGateway,
   normalizeWebRtcHttpStatus,
   requestRemoteDriveSidecar,
   registerRemoteDriveRoutes,

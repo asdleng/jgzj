@@ -2,9 +2,9 @@ const DEFAULT_DEVICE_ID = "a001I3829202711775712260";
 const DEFAULT_VEHICLE_ID = "BIT-0041";
 const CONTROL_VEHICLE_ID = "BIT-0041";
 const CONTROL_API_BASE = "/api/remote-drive";
+const CONTROL_WS_PATH = "/ws/remote-drive";
 const CONTROL_HEARTBEAT_MS = 100;
 const CONTROL_LEASE_HEARTBEAT_MS = 200;
-const CONTROL_LEASE_REQUEST_TIMEOUT_MS = 2000;
 const CONTROL_REQUEST_TIMEOUT_MS = 1500;
 const STEERING_COMMAND_DEG = 250;
 const DRIVE_ACCELERATOR_PERCENT = 8;
@@ -36,13 +36,16 @@ let clockTimer = null;
 let toastTimer = null;
 let controlHeartbeatTimer = null;
 let controlLeaseHeartbeatTimer = null;
+let controlSocket = null;
+let controlSocketPromise = null;
+let controlSocketRequestId = 0;
 let controlStatusTimer = null;
 let controlStatusInFlight = false;
 let unloadReleaseSent = false;
 let gearShiftTimer = null;
 const activeMotionControls = new Set();
 const criticalControlCommands = [];
-const controlLeaseRequests = new Set();
+const controlSocketRequests = new Map();
 
 const controlState = {
   token: "",
@@ -520,6 +523,97 @@ async function controlApi(path, payload = null, options = {}) {
   return data;
 }
 
+function controlSocketUrl() {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}${CONTROL_WS_PATH}`;
+}
+
+function rejectControlSocketRequests(error) {
+  controlSocketRequests.forEach(({ reject, timeout }) => {
+    window.clearTimeout(timeout);
+    reject(error);
+  });
+  controlSocketRequests.clear();
+}
+
+function ensureControlSocket() {
+  if (controlSocket?.readyState === WebSocket.OPEN) return Promise.resolve(controlSocket);
+  if (controlSocketPromise) return controlSocketPromise;
+  controlSocketPromise = new Promise((resolve, reject) => {
+    const socket = new WebSocket(controlSocketUrl());
+    controlSocket = socket;
+    const connectTimeout = window.setTimeout(() => {
+      socket.close();
+      reject(new Error("实时控制通道连接超时"));
+    }, 8000);
+    socket.addEventListener("open", () => {
+      window.clearTimeout(connectTimeout);
+      resolve(socket);
+    }, { once: true });
+    socket.addEventListener("message", (event) => {
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      const pending = controlSocketRequests.get(String(message.id || ""));
+      if (!pending) return;
+      controlSocketRequests.delete(String(message.id));
+      window.clearTimeout(pending.timeout);
+      if (message.ok) pending.resolve(message.payload || {});
+      else pending.reject(new Error(message.error || `控制通道 HTTP ${message.status || 503}`));
+    });
+    socket.addEventListener("error", () => {
+      window.clearTimeout(connectTimeout);
+      reject(new Error("实时控制通道连接失败"));
+    }, { once: true });
+    socket.addEventListener("close", () => {
+      window.clearTimeout(connectTimeout);
+      if (controlSocket === socket) controlSocket = null;
+      controlSocketPromise = null;
+      rejectControlSocketRequests(new Error("实时控制通道已断开"));
+      if (controlState.sessionActive) failLocalControl("实时控制通道已断开，车端已执行制动");
+    });
+  }).finally(() => {
+    controlSocketPromise = null;
+  });
+  return controlSocketPromise;
+}
+
+async function controlSocketApi(endpoint, payload, timeoutMs = CONTROL_REQUEST_TIMEOUT_MS) {
+  const socket = await ensureControlSocket();
+  controlSocketRequestId += 1;
+  const id = String(controlSocketRequestId);
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      controlSocketRequests.delete(id);
+      reject(new Error("控制通道响应超时"));
+    }, timeoutMs);
+    controlSocketRequests.set(id, { resolve, reject, timeout });
+    socket.send(JSON.stringify({
+      id,
+      endpoint,
+      token: controlState.token,
+      payload,
+    }));
+  });
+}
+
+function sendControlSocketHeartbeat() {
+  if (!controlState.sessionActive || !controlState.sessionId) return;
+  if (controlState.transportMode === "mock") return;
+  if (controlSocket?.readyState !== WebSocket.OPEN) {
+    void ensureControlSocket().then(sendControlSocketHeartbeat).catch(() => {});
+    return;
+  }
+  controlSocket.send(JSON.stringify({
+    endpoint: "heartbeat",
+    token: controlState.token,
+    payload: { session_id: controlState.sessionId },
+  }));
+}
+
 function applyControlConstraints(constraints = {}) {
   controlState.constraints = { ...controlState.constraints, ...constraints };
   const maxSteering = Number(controlState.constraints.max_steering_deg) || 250;
@@ -601,20 +695,22 @@ async function sendControlCommand() {
   advanceCommandSequence();
   const sessionId = controlState.sessionId;
   const command = criticalControlCommands.shift() || buildControlCommand();
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), CONTROL_REQUEST_TIMEOUT_MS);
   try {
-    await controlApi(`${CONTROL_API_BASE}/command`, {
+    const payload = {
       session_id: sessionId,
       sequence: controlState.sequence,
       command,
-    }, { signal: controller.signal });
+    };
+    if (controlState.transportMode === "mock") {
+      await controlApi(`${CONTROL_API_BASE}/command`, payload);
+    } else {
+      await controlSocketApi("command", payload, CONTROL_REQUEST_TIMEOUT_MS);
+    }
   } catch (error) {
     if (controlState.sessionId === sessionId) {
-      failLocalControl(error.name === "AbortError" ? "控制指令超时，车端已执行制动" : error.message);
+      failLocalControl(error.message);
     }
   } finally {
-    window.clearTimeout(timeout);
     controlState.commandInFlight = false;
     renderControlState();
     if ((controlState.commandQueued || criticalControlCommands.length) && controlState.sessionActive) {
@@ -627,9 +723,9 @@ function startControlHeartbeat() {
   window.clearInterval(controlHeartbeatTimer);
   window.clearInterval(controlLeaseHeartbeatTimer);
   controlHeartbeatTimer = window.setInterval(queueControlCommand, CONTROL_HEARTBEAT_MS);
-  controlLeaseHeartbeatTimer = window.setInterval(sendControlLeaseHeartbeat, CONTROL_LEASE_HEARTBEAT_MS);
+  controlLeaseHeartbeatTimer = window.setInterval(sendControlSocketHeartbeat, CONTROL_LEASE_HEARTBEAT_MS);
   queueControlCommand();
-  sendControlLeaseHeartbeat();
+  sendControlSocketHeartbeat();
 }
 
 function stopControlHeartbeat() {
@@ -637,24 +733,8 @@ function stopControlHeartbeat() {
   window.clearInterval(controlLeaseHeartbeatTimer);
   controlHeartbeatTimer = null;
   controlLeaseHeartbeatTimer = null;
-  controlLeaseRequests.forEach((controller) => controller.abort());
-  controlLeaseRequests.clear();
   controlState.commandQueued = false;
   criticalControlCommands.length = 0;
-}
-
-function sendControlLeaseHeartbeat() {
-  if (!controlState.sessionActive || !controlState.sessionId) return;
-  const sessionId = controlState.sessionId;
-  const controller = new AbortController();
-  controlLeaseRequests.add(controller);
-  const timeout = window.setTimeout(() => controller.abort(), CONTROL_LEASE_REQUEST_TIMEOUT_MS);
-  void controlApi(`${CONTROL_API_BASE}/heartbeat`, { session_id: sessionId }, { signal: controller.signal })
-    .catch(() => {})
-    .finally(() => {
-      window.clearTimeout(timeout);
-      controlLeaseRequests.delete(controller);
-    });
 }
 
 function failLocalControl(message) {
@@ -685,6 +765,7 @@ async function acquireControl() {
   controlState.acquiring = true;
   renderControlState();
   try {
+    if (controlState.transportMode !== "mock") await ensureControlSocket();
     const result = await controlApi(`${CONTROL_API_BASE}/acquire`, {
       vehicle_id: activeVehicleId,
       video_ready: videosReadyForControl(),
@@ -722,9 +803,17 @@ async function releaseControl(reason = "release", options = {}) {
   renderControlState();
   if (!sessionId) return;
   try {
-    await controlApi(`${CONTROL_API_BASE}/${reason === "estop" ? "estop" : "release"}`, {
-      session_id: sessionId,
-    });
+    if (controlState.transportMode === "mock") {
+      await controlApi(`${CONTROL_API_BASE}/${reason === "estop" ? "estop" : "release"}`, {
+        session_id: sessionId,
+      });
+    } else {
+      await controlSocketApi(
+        reason === "estop" ? "estop" : "release",
+        { session_id: sessionId },
+        5000,
+      );
+    }
     controlState.backendSessionActive = false;
     if (!options.silent && wasActive) {
       showToast(reason === "estop" ? "实车紧急停止已执行" : "实车控制已释放", reason === "estop");

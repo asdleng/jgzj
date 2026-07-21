@@ -27,7 +27,7 @@ const registerRuntimeControlRoutes = require('./runtime-control');
 const registerThreeDgsRoutes = require('./three-dgs');
 const registerCrowdCpmRoutes = require('./crowd-cpm');
 const registerParkPcmRoutes = require('./park-pcm');
-const { registerRemoteDriveRoutes } = require('./remote-drive');
+const { createRemoteDriveWebSocketGateway, registerRemoteDriveRoutes } = require('./remote-drive');
 const registerOneApiProxyRoutes = require('./one-api-proxy');
 const { registerLidarMapUploadProxyRoutes } = require('./lidar-map-upload-proxy');
 const { createAsyncTtlCache } = require('./async-ttl-cache');
@@ -36,6 +36,10 @@ const { registerSemanticAnchorInferRoutes } = require('./semantic-anchor-infer')
 const {
   registerLidarRelocalizationDatasetRoutes
 } = require('./lidar-relocalization-dataset');
+const {
+  buildLidarRelocalizationVehicleAvailability,
+  readLidarRelocalizationAvailabilityState
+} = require('./lidar-relocalization-availability');
 const {
   effectiveYoloWebAuditVerdict,
   isYoloWebCrawlerSummary,
@@ -307,6 +311,14 @@ const lidarRelocalizationIndexedVehicles = new Set(
 const lidarRelocalizationIndexRegistryPath = path.resolve(
   process.env.LIDAR_RELOCALIZATION_INDEX_REGISTRY ||
     path.join(lidarRelocalizationRoot, 'relocalization6_vehicle_index_registry.json')
+);
+const lidarRelocalizationUploadQueueStatePath = path.resolve(
+  process.env.LIDAR_RELOCALIZATION_UPLOAD_QUEUE_STATE ||
+    path.join(lidarRelocalizationRoot, 'fleet_map_refresh_uploads_20260720', 'parallel-queue-state.json')
+);
+const lidarRelocalizationCandidateStateDir = path.resolve(
+  process.env.LIDAR_RELOCALIZATION_CANDIDATE_STATE_DIR ||
+    path.join(lidarRelocalizationRoot, 'fleet_index_candidate_state_20260720')
 );
 const lidarRelocalizationBlockedVehicles = new Map([
   ['BIT-0026', 'repeated_place_false_accepts'],
@@ -16939,18 +16951,37 @@ app.get('/api/lidar-relocalization/vehicles', authStore.requirePermission('vehic
         vehicleMap.set(vehicleId, vehicle);
       }
     });
+    const registry = await readLidarRelocIndexRegistry();
+    const runtimeState = await readLidarRelocalizationAvailabilityState({
+      queueStatePath: lidarRelocalizationUploadQueueStatePath,
+      candidateStateDir: lidarRelocalizationCandidateStateDir
+    });
+    const availability = buildLidarRelocalizationVehicleAvailability({
+      cloudVehicles: Array.from(vehicleMap.values()),
+      staticIndexedVehicles: lidarRelocalizationIndexedVehicles,
+      dynamicIndexedVehicles: new Set(Object.keys(registry.vehicles)),
+      blockedVehicles: lidarRelocalizationBlockedVehicles,
+      failedVehicleIds: runtimeState.failedVehicleIds,
+      queueTasks: runtimeState.queueTasks
+    });
     return res.json({
       ok: true,
-      vehicles: Array.from(vehicleMap.values())
-        .map((vehicle) => ({
-          vehicle_id: getCloudOpsVehicleId(vehicle),
-          plate_number: vehicle?.plate_number || null,
-          last_seen: vehicle?.last_seen || null,
-          tool_count: vehicle?.tool_count ?? null,
-          has_telemetry: Boolean(vehicle?.has_telemetry),
-          telemetry: vehicle?.telemetry || null
-        }))
-        .sort((left, right) => String(left.vehicle_id).localeCompare(String(right.vehicle_id)))
+      summary: availability.summary,
+      sources: {
+        index_registry_updated_at: registry.updated_at,
+        upload_queue_updated_at: runtimeState.queueUpdatedAt
+      },
+      vehicles: availability.vehicles.map(({ vehicle_id: vehicleId, cloud_vehicle: vehicle, relocalization }) => ({
+        vehicle_id: vehicleId,
+        plate_number: vehicle?.plate_number || null,
+        last_seen: vehicle?.last_seen || null,
+        tool_count: vehicle?.tool_count ?? null,
+        has_heartbeat: Boolean(vehicle?.has_heartbeat),
+        has_snapshot: Boolean(vehicle?.has_snapshot),
+        has_telemetry: Boolean(vehicle?.has_telemetry),
+        telemetry: vehicle?.telemetry || null,
+        relocalization
+      }))
     });
   } catch (error) {
     return res.status(502).json({
@@ -18944,6 +18975,7 @@ registerRemoteDriveRoutes(app, {
   operationAuditStore,
   rootDir: path.resolve(__dirname, '..')
 });
+const remoteDriveWebSocketGateway = createRemoteDriveWebSocketGateway();
 registerMapPackageUploadRoutes(app, {
   requirePermission: (permission) => authStore.requirePermission(permission),
   uploadRoot: mapPackageUploadRoot,
@@ -19324,6 +19356,25 @@ async function handleWebSocketUpgrade(req, socket, head) {
     pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname;
   } catch (_error) {
     writeUpgradeError(socket, 400, 'Bad Request');
+    return;
+  }
+
+  if (pathname === '/ws/remote-drive') {
+    try {
+      const auth = await authStore.getAuthFromRequest(req);
+      if (!auth) {
+        writeUpgradeError(socket, 401, 'Unauthorized');
+        return;
+      }
+      if (!authStore.hasPermission(auth.user, 'vehicle:control')) {
+        writeUpgradeError(socket, 403, 'Forbidden');
+        return;
+      }
+      remoteDriveWebSocketGateway.handleUpgrade(req, socket, head);
+    } catch (error) {
+      console.warn(`remote drive websocket error path=${req.url}: ${error.message}`);
+      writeUpgradeError(socket, 500, 'Internal Server Error');
+    }
     return;
   }
 

@@ -6,6 +6,7 @@
   const DATASET_URL = "/api/lidar-relocalization/dataset";
   const statusNode = document.getElementById("lidar-reloc-status");
   const vehicleSelect = document.getElementById("lidar-reloc-vehicle");
+  const vehicleReadinessNode = document.getElementById("lidar-reloc-vehicle-readiness");
   const refreshBtn = document.getElementById("lidar-reloc-refresh");
   const captureBtn = document.getElementById("lidar-reloc-capture");
   const inferBtn = document.getElementById("lidar-reloc-infer");
@@ -77,8 +78,9 @@
 
   function updateButtons() {
     const hasVehicle = Boolean(currentVehicleId);
+    const vehicleReady = selectedVehicle()?.relocalization?.usable === true;
     const captureTools = currentStatus?.tools?.capture_tools || [];
-    const inferReady = Boolean(currentStatus?.tools?.inference);
+    const inferReady = Boolean(currentStatus?.tools?.inference && currentStatus?.model?.service_ready);
     if (captureBtn) {
       captureBtn.disabled = busy || !hasVehicle || !captureTools.length;
       captureBtn.textContent = captureTools.some((name) => String(name).startsWith("lidar."))
@@ -86,9 +88,25 @@
         : "抓取上下文";
     }
     if (inferBtn) {
-      inferBtn.disabled = busy || !hasVehicle;
+      inferBtn.disabled = busy || !hasVehicle || !vehicleReady || !inferReady;
       inferBtn.dataset.ready = inferReady ? "yes" : "no";
     }
+  }
+
+  function selectedVehicle() {
+    return vehicles.find((vehicle) => vehicle.vehicle_id === currentVehicleId) || null;
+  }
+
+  function updateVehicleReadiness() {
+    if (!vehicleReadinessNode) return;
+    const readiness = selectedVehicle()?.relocalization;
+    if (!readiness) {
+      vehicleReadinessNode.textContent = currentVehicleId ? "未取得该车可用性状态" : "请选择车辆";
+      vehicleReadinessNode.dataset.state = "warn";
+      return;
+    }
+    vehicleReadinessNode.textContent = `${readiness.status_label} · ${readiness.detail}`;
+    vehicleReadinessNode.dataset.state = readiness.usable ? "ok" : readiness.status === "blocked" ? "error" : "warn";
   }
 
   async function requestJson(url, options = {}) {
@@ -742,23 +760,38 @@
     if (!vehicleSelect) return;
     vehicleSelect.innerHTML = "";
     if (!vehicles.length) {
-      vehicleSelect.appendChild(new Option("暂无在线车辆", ""));
+      vehicleSelect.appendChild(new Option("暂无车辆", ""));
+      updateVehicleReadiness();
       return;
     }
-    vehicles.forEach((vehicle) => {
-      const id = String(vehicle.vehicle_id || vehicle.plate_number || "").trim();
-      if (!id) return;
-      const option = new Option(`${id}${vehicle.tool_count ? ` · tools ${vehicle.tool_count}` : ""}`, id);
-      vehicleSelect.appendChild(option);
-    });
+    const readyVehicles = vehicles.filter((vehicle) => vehicle.relocalization?.usable === true);
+    const unavailableVehicles = vehicles.filter((vehicle) => vehicle.relocalization?.usable !== true);
+    const appendGroup = (label, entries) => {
+      if (!entries.length) return;
+      const group = document.createElement("optgroup");
+      group.label = `${label}（${entries.length}）`;
+      entries.forEach((vehicle) => {
+        const id = String(vehicle.vehicle_id || vehicle.plate_number || "").trim();
+        if (!id) return;
+        const readiness = vehicle.relocalization || {};
+        const option = new Option(`${id} · ${readiness.status_label || "状态未知"}`, id);
+        option.title = readiness.detail || "";
+        group.appendChild(option);
+      });
+      vehicleSelect.appendChild(group);
+    };
+    appendGroup("可试", readyVehicles);
+    appendGroup("暂不可用", unavailableVehicles);
     if (!currentVehicleId || !vehicles.some((vehicle) => vehicle.vehicle_id === currentVehicleId)) {
       const preferred =
-        vehicles.find((vehicle) => Number(vehicle.tool_count) > 0)?.vehicle_id ||
+        readyVehicles[0]?.vehicle_id ||
         vehicles[0]?.vehicle_id ||
         "";
       currentVehicleId = preferred;
     }
     vehicleSelect.value = currentVehicleId;
+    updateVehicleReadiness();
+    updateButtons();
   }
 
   async function loadVehicles() {
@@ -766,7 +799,11 @@
     const data = await requestJson(VEHICLES_URL);
     vehicles = Array.isArray(data.vehicles) ? data.vehicles.filter((vehicle) => vehicle.vehicle_id) : [];
     renderVehicles();
-    setStatus(vehicles.length ? `已加载 ${vehicles.length} 台车` : "暂无在线车辆", vehicles.length ? "ok" : "warn");
+    const usableCount = vehicles.filter((vehicle) => vehicle.relocalization?.usable === true).length;
+    setStatus(
+      vehicles.length ? `可试 ${usableCount} 台 · 共 ${vehicles.length} 台` : "暂无车辆",
+      usableCount ? "ok" : "warn"
+    );
   }
 
   async function loadStatus() {
@@ -891,6 +928,11 @@
 
   async function inferPose() {
     if (!currentVehicleId) return;
+    const readiness = selectedVehicle()?.relocalization;
+    if (readiness?.usable !== true) {
+      setStatus(readiness?.detail || "当前车辆暂不可运行重定位", "warn");
+      return;
+    }
     setBusy(true);
     setStatus("推测粗位姿...", "loading");
     setResultState("推理中", "loading");
@@ -937,6 +979,9 @@
 
   vehicleSelect?.addEventListener("change", () => {
     currentVehicleId = vehicleSelect.value;
+    currentStatus = null;
+    updateVehicleReadiness();
+    updateButtons();
     if (datasetVehicles().some((vehicle) => vehicle.vehicle_id === currentVehicleId)) {
       selectDatasetVehicle(currentVehicleId);
     }
