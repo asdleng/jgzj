@@ -33,6 +33,20 @@ import "../styles/lidar-relocalization-data.css";
     <button id="lidar-reloc-infer" class="cloud-ops-toolbar-button lidar-reloc-primary" type="button" disabled>运行重定位</button>
   </div>
 
+  <section class="lidar-reloc-visual-panel">
+    <div class="lidar-reloc-result-head">
+      <div>
+        <p class="lidar-reloc-panel-kicker">VISUALIZATION</p>
+        <h4>全局地图与当前帧叠加</h4>
+      </div>
+      <p id="lidar-reloc-visual-state" class="cloud-ops-inline-status" data-state="idle">等待推理</p>
+    </div>
+    <div class="lidar-reloc-visual-wrap">
+      <canvas id="lidar-reloc-bev" width="960" height="560" aria-label="BEV relocalization visualization"></canvas>
+      <div id="lidar-reloc-legend" class="lidar-reloc-legend"></div>
+    </div>
+  </section>
+
   <div class="lidar-reloc-grid">
     <section class="lidar-reloc-panel">
       <div class="lidar-reloc-panel-head">
@@ -59,11 +73,28 @@ import "../styles/lidar-relocalization-data.css";
     </section>
   </div>
 
+  <section class="lidar-reloc-result">
+    <div class="lidar-reloc-result-head">
+      <div>
+        <p class="lidar-reloc-panel-kicker">RESULT</p>
+        <h4>粗位姿结果</h4>
+      </div>
+      <p id="lidar-reloc-result-state" class="cloud-ops-inline-status" data-state="idle">等待推理</p>
+    </div>
+    <div id="lidar-reloc-result" class="lidar-reloc-result-body">
+      <p class="lidar-reloc-empty">先选择车辆并刷新状态。</p>
+    </div>
+    <details class="lidar-reloc-raw">
+      <summary>原始 JSON</summary>
+      <pre id="lidar-reloc-json">等待执行...</pre>
+    </details>
+  </section>
+
   <section class="lidar-dataset-panel" aria-labelledby="lidar-dataset-title">
     <div class="lidar-reloc-result-head">
       <div>
         <p class="lidar-reloc-panel-kicker">CAPTURE DATASET</p>
-        <h4 id="lidar-dataset-title">车队采集数据</h4>
+        <h4 id="lidar-dataset-title">车端采集数据</h4>
       </div>
       <div class="lidar-dataset-head-actions">
         <p id="lidar-dataset-state" class="cloud-ops-inline-status" data-state="idle">待加载</p>
@@ -122,37 +153,6 @@ import "../styles/lidar-relocalization-data.css";
         <div id="lidar-dataset-preview-meta" class="lidar-dataset-preview-meta"></div>
       </div>
     </div>
-  </section>
-
-  <section class="lidar-reloc-visual-panel">
-    <div class="lidar-reloc-result-head">
-      <div>
-        <p class="lidar-reloc-panel-kicker">VISUALIZATION</p>
-        <h4>全局地图与当前帧叠加</h4>
-      </div>
-      <p id="lidar-reloc-visual-state" class="cloud-ops-inline-status" data-state="idle">等待推理</p>
-    </div>
-    <div class="lidar-reloc-visual-wrap">
-      <canvas id="lidar-reloc-bev" width="960" height="560" aria-label="BEV relocalization visualization"></canvas>
-      <div id="lidar-reloc-legend" class="lidar-reloc-legend"></div>
-    </div>
-  </section>
-
-  <section class="lidar-reloc-result">
-    <div class="lidar-reloc-result-head">
-      <div>
-        <p class="lidar-reloc-panel-kicker">RESULT</p>
-        <h4>粗位姿结果</h4>
-      </div>
-      <p id="lidar-reloc-result-state" class="cloud-ops-inline-status" data-state="idle">等待推理</p>
-    </div>
-    <div id="lidar-reloc-result" class="lidar-reloc-result-body">
-      <p class="lidar-reloc-empty">先选择车辆并刷新状态。</p>
-    </div>
-    <details class="lidar-reloc-raw">
-      <summary>原始 JSON</summary>
-      <pre id="lidar-reloc-json">等待执行...</pre>
-    </details>
   </section>
 </section>
 

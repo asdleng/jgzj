@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784623304425_62ae969c",
+  "received_at_ms": 1784623306196,
+  "created_at_ms": 1784623306424,
+  "expires_at_ms": 1784882506424,
+  "device_id": "福田大院",
+  "camera_id": "1",
+  "edge_ts": 1784623304425,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "6d6f476362c65d38355d6b3b0c982741c27b9b5084d4db5390d03c0c20c82e4e",
+  "temporary_image_path": "20260721/164146_req_1784623304425_62ae969c_6d6f476362c65d38.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_cca5c1b2",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:41:46",
+  "labeler_started_at_ms": 1784623306538
+}

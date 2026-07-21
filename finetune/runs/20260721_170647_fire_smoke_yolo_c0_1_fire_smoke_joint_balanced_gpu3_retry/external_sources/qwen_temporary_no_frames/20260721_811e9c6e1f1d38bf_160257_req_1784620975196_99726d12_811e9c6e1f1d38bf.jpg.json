@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784620975196_99726d12",
+  "received_at_ms": 1784620977640,
+  "created_at_ms": 1784620978059,
+  "expires_at_ms": 1784880178059,
+  "device_id": "时间广场",
+  "camera_id": "1",
+  "edge_ts": 1784620975196,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "811e9c6e1f1d38bf4821b864229b552305642ce8eb5d75bcec89287b89c9cb91",
+  "temporary_image_path": "20260721/160257_req_1784620975196_99726d12_811e9c6e1f1d38bf.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_557a9b32",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:02:58",
+  "labeler_started_at_ms": 1784620978064
+}

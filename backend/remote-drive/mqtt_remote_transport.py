@@ -1,10 +1,4 @@
-"""Guarded MQTT transport for BIT-0041 remote control.
-
-The command path uses the vehicle's existing NanoMQ broker.  A separate ROS
-guard is started over SSH and observes the commands after ``/mqtt_cam`` has
-delivered them on the main controller.  The guard can therefore stop the
-vehicle locally even if the laptop disappears from the network.
-"""
+"""Direct MQTT v5 transport for BIT-0041 remote control."""
 
 from __future__ import annotations
 
@@ -43,6 +37,7 @@ TRANSPORT_HEARTBEAT_S = 0.10
 MQTT_SEND_TIMEOUT_S = 0.50
 VEHICLE_STATE_TIMEOUT_S = 1.50
 REMOTE_STEERING_LIMIT_DEG = 250
+REMOTE_ACCELERATOR_LIMIT_PERCENT = 30
 CONTROL_SSH_TARGET = os.environ.get("VEHICLE_CONTROL_SSH_TARGET", "nvidia@100.98.77.65")
 CONTROL_SSH_KEY = os.environ.get("VEHICLE_CONTROL_SSH_KEY", "/home/weilin/.ssh/id_ed25519")
 REQUIRE_ROS_GUARD = os.environ.get("VEHICLE_CONTROL_REQUIRE_ROS_GUARD", "0").strip().lower() in {
@@ -263,7 +258,13 @@ def encode_remote_command(command: Dict[str, Any], sequence: int, timestamp_ms: 
         -REMOTE_STEERING_LIMIT_DEG,
         min(REMOTE_STEERING_LIMIT_DEG, -int(round(float(command.get("steering", 0.0))))),
     )
-    accelerator = max(0, min(25, int(round(float(command.get("accelerator", 0.0)) * 100.0))))
+    accelerator = max(
+        0,
+        min(
+            REMOTE_ACCELERATOR_LIMIT_PERCENT,
+            int(round(float(command.get("accelerator", 0.0)) * 100.0)),
+        ),
+    )
     brake = max(0, min(100, int(round(float(command.get("brake", 100.0))))))
     steer_lamp = int(command.get("steer_lamp", 0))
 

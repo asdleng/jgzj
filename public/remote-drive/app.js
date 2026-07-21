@@ -7,7 +7,8 @@ const CONTROL_HEARTBEAT_MS = 100;
 const CONTROL_LEASE_HEARTBEAT_MS = 200;
 const CONTROL_REQUEST_TIMEOUT_MS = 5000;
 const STEERING_COMMAND_DEG = 250;
-const DRIVE_ACCELERATOR_PERCENT = 8;
+const DRIVE_ACCELERATOR_PERCENT = 30;
+const DRIVE_ACCELERATOR_RAMP_STEP_PERCENT = 2;
 const GEAR_SHIFT_SETTLE_MS = 300;
 const PLAY_TARGETS = {
   edge: {
@@ -71,7 +72,7 @@ const controlState = {
   lastError: "",
   constraints: {
     max_steering_deg: 250,
-    max_accelerator_percent: 25,
+    max_accelerator_percent: 30,
   },
 };
 
@@ -619,7 +620,7 @@ function sendControlSocketHeartbeat() {
 function applyControlConstraints(constraints = {}) {
   controlState.constraints = { ...controlState.constraints, ...constraints };
   const maxSteering = Number(controlState.constraints.max_steering_deg) || 250;
-  const maxAccelerator = Number(controlState.constraints.max_accelerator_percent) || 25;
+  const maxAccelerator = Number(controlState.constraints.max_accelerator_percent) || 30;
   controlState.steering = Math.max(-maxSteering, Math.min(maxSteering, controlState.steering));
   controlState.accelerator = Math.max(0, Math.min(maxAccelerator, controlState.accelerator));
 }
@@ -744,7 +745,10 @@ async function sendControlCommand() {
 function startControlHeartbeat() {
   window.clearInterval(controlHeartbeatTimer);
   window.clearInterval(controlLeaseHeartbeatTimer);
-  controlHeartbeatTimer = window.setInterval(queueControlCommand, CONTROL_HEARTBEAT_MS);
+  controlHeartbeatTimer = window.setInterval(() => {
+    advanceThrottleRamp();
+    queueControlCommand();
+  }, CONTROL_HEARTBEAT_MS);
   controlLeaseHeartbeatTimer = window.setInterval(sendControlSocketHeartbeat, CONTROL_LEASE_HEARTBEAT_MS);
   queueControlCommand();
   sendControlSocketHeartbeat();
@@ -882,6 +886,30 @@ function updateSteeringIntent() {
   controlState.steering = left === right ? 0 : left ? limit : -limit;
 }
 
+function driveAcceleratorTarget() {
+  return Math.min(
+    DRIVE_ACCELERATOR_PERCENT,
+    Number(controlState.constraints.max_accelerator_percent) || DRIVE_ACCELERATOR_PERCENT,
+  );
+}
+
+function advanceThrottleRamp() {
+  if (
+    !canSendMotion()
+    || !activeMotionControls.has("throttle")
+    || activeMotionControls.has("brake")
+    || controlState.gear !== controlState.driveGear
+  ) return;
+  const target = driveAcceleratorTarget();
+  if (controlState.accelerator >= target) return;
+  controlState.brake = 0;
+  controlState.accelerator = Math.min(
+    target,
+    controlState.accelerator + DRIVE_ACCELERATOR_RAMP_STEP_PERCENT,
+  );
+  renderControlState();
+}
+
 function applyLongitudinalIntent() {
   cancelGearShift();
   const throttle = activeMotionControls.has("throttle");
@@ -914,8 +942,8 @@ function applyLongitudinalIntent() {
     ) return;
     controlState.brake = 0;
     controlState.accelerator = Math.min(
-      DRIVE_ACCELERATOR_PERCENT,
-      Number(controlState.constraints.max_accelerator_percent) || DRIVE_ACCELERATOR_PERCENT,
+      driveAcceleratorTarget(),
+      DRIVE_ACCELERATOR_RAMP_STEP_PERCENT,
     );
     renderControlState();
     queueControlCommand();

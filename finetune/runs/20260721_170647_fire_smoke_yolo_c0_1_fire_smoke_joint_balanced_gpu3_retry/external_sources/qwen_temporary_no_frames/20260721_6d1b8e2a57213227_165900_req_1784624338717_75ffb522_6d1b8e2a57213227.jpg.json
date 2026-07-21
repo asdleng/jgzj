@@ -1,0 +1,33 @@
+{
+  "schema": "qwen_ws_checker_temporary_no_frame.v1",
+  "source": "qwen_binary_no_frame",
+  "request_id": "req_1784624338717_75ffb522",
+  "received_at_ms": 1784624340760,
+  "created_at_ms": 1784624340990,
+  "expires_at_ms": 1784883540990,
+  "device_id": "艾盛",
+  "camera_id": "1",
+  "edge_ts": 1784624338717,
+  "model": "Qwen3.6-27B-MM",
+  "image_mime_type": "image/jpeg",
+  "image_sha256": "6d1b8e2a572132276c89e385e5c17cc114bdb8bb3d126b2520a7f2842f66e152",
+  "temporary_image_path": "20260721/165900_req_1784624338717_75ffb522_6d1b8e2a57213227.jpg",
+  "no_tasks": [
+    {
+      "task_idx": 0,
+      "task_id": "task_4e23229c",
+      "event_name": "smoke",
+      "answer": "NO",
+      "pass": false,
+      "crop_box": [
+        0,
+        0,
+        1920,
+        1080
+      ]
+    }
+  ],
+  "labeler_status": "processing",
+  "archived_at": "2026-07-21 16:59:00",
+  "labeler_started_at_ms": 1784624340991
+}
