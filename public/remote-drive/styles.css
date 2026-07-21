@@ -660,9 +660,7 @@ h1 {
   font-size: 12px;
 }
 
-.deadman-button,
-.emergency-button,
-.aux-button {
+.motion-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -672,169 +670,105 @@ h1 {
   touch-action: none;
 }
 
-.deadman-button {
-  width: 100%;
-  height: 46px;
+.motion-pad {
+  display: grid;
+  width: min(100%, 282px);
+  grid-template-columns: repeat(3, minmax(0, 86px));
+  grid-template-rows: repeat(3, 58px);
   gap: 8px;
-  border: 1px solid #80672f;
-  background: #332d1d;
-  color: var(--amber);
-  font-size: 12px;
-  font-weight: 750;
+  justify-content: center;
+  margin-inline: auto;
 }
 
-.deadman-button[data-active="true"] {
-  border-color: var(--amber);
-  background: #4a3b1d;
-  box-shadow: inset 0 0 0 1px rgba(240, 184, 79, 0.2);
-}
-
-.deadman-button svg,
-.emergency-button svg {
-  width: 18px;
-  height: 18px;
-}
-
-.gear-fieldset {
-  margin-top: 13px;
-}
-
-.gear-selector {
-  display: grid;
-  height: 42px;
-  grid-template-columns: repeat(4, 1fr);
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-}
-
-.gear-selector input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.gear-selector label {
-  display: grid;
-  cursor: pointer;
-  place-items: center;
-  border-right: 1px solid var(--line);
-  color: var(--muted);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 13px;
-  font-weight: 750;
-}
-
-.gear-selector label:last-child {
-  border-right: 0;
-}
-
-.gear-selector input:checked + label {
-  background: #294034;
-  color: var(--green);
-}
-
-.gear-selector input:disabled + label {
-  cursor: not-allowed;
-  opacity: 0.46;
-}
-
-.range-control {
-  display: block;
+.motion-button {
   min-width: 0;
-}
-
-.steering-control {
-  margin-top: 14px;
-}
-
-.range-heading {
-  margin-bottom: 5px;
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.range-heading output {
+  gap: 5px;
+  border: 1px solid var(--line-strong);
+  background: #171b17;
   color: var(--text);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 750;
 }
 
-.steering-scale {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: -2px;
-  color: #717b72;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 8px;
-}
-
-input[type="range"] {
-  width: 100%;
-  height: 22px;
-  margin: 0;
-  accent-color: var(--cyan);
-  cursor: pointer;
-}
-
-input[type="range"]:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-.pedal-controls {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 12px;
-}
-
-.brake-range {
-  accent-color: var(--red) !important;
-}
-
-.accelerator-range {
-  accent-color: var(--green) !important;
-}
-
-.auxiliary-controls {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 7px;
-}
-
-.aux-button {
-  aspect-ratio: 1;
-  min-width: 0;
-  border: 1px solid var(--line);
-  background: #151815;
-  color: var(--muted);
-}
-
-.aux-button svg {
+.motion-button svg {
   width: 17px;
   height: 17px;
 }
 
-.aux-button[aria-pressed="true"] {
-  border-color: rgba(240, 184, 79, 0.5);
-  background: #3b321e;
-  color: var(--amber);
+.motion-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
-.emergency-button {
-  width: 100%;
-  height: 46px;
-  gap: 8px;
-  border: 1px solid #8a3b37;
+.motion-button[data-active="true"] {
+  border-color: rgba(95, 195, 126, 0.65);
+  background: #294034;
+  color: var(--green);
+}
+
+.motion-forward {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.motion-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.motion-stop {
+  grid-column: 2;
+  grid-row: 2;
+  border-color: rgba(239, 109, 101, 0.48);
+  background: #361c1a;
+  color: #ffaaa4;
+}
+
+.motion-stop[data-active="true"] {
+  border-color: rgba(239, 109, 101, 0.65);
   background: #431f1d;
   color: #ffaaa4;
+}
+
+.motion-right {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.motion-reverse {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.motion-command-state {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 14px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+
+.motion-command-state > span,
+.motion-command-state small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.motion-command-state strong,
+.motion-command-state small {
+  text-align: right;
+}
+
+.motion-command-state strong {
   font-size: 12px;
-  font-weight: 800;
 }
 
 .transport-status {
-  margin-top: 11px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 9px;
 }
@@ -1200,7 +1134,6 @@ label:has(+ input:focus-visible) {
   }
 
   .command-section,
-  .auxiliary-section,
   .safety-section {
     max-width: 720px;
     margin-inline: auto;

@@ -4,6 +4,9 @@ const CONTROL_VEHICLE_ID = "BIT-0041";
 const CONTROL_API_BASE = "/api/remote-drive";
 const CONTROL_HEARTBEAT_MS = 100;
 const CONTROL_REQUEST_TIMEOUT_MS = 280;
+const STEERING_COMMAND_DEG = 20;
+const DRIVE_ACCELERATOR_PERCENT = 8;
+const GEAR_SHIFT_SETTLE_MS = 300;
 const PLAY_TARGETS = {
   edge: {
     id: "edge",
@@ -33,6 +36,8 @@ let controlHeartbeatTimer = null;
 let controlStatusTimer = null;
 let controlStatusInFlight = false;
 let unloadReleaseSent = false;
+let gearShiftTimer = null;
+const activeMotionControls = new Set();
 
 const controlState = {
   token: "",
@@ -43,7 +48,7 @@ const controlState = {
   backendSessionActive: false,
   transportAlive: false,
   transportMode: "",
-  deadman: false,
+  commandEnabled: false,
   emergency: false,
   gear: "P",
   steering: 0,
@@ -57,12 +62,6 @@ const controlState = {
   constraints: {
     max_steering_deg: 180,
     max_accelerator_percent: 25,
-  },
-  auxiliary: {
-    left: false,
-    right: false,
-    hazard: false,
-    headlight: false,
   },
 };
 
@@ -87,15 +86,8 @@ const elements = {
   controlGateDetail: document.getElementById("controlGateDetail"),
   controlAvailability: document.getElementById("controlAvailability"),
   controlSessionButton: document.getElementById("controlSessionButton"),
-  deadmanButton: document.getElementById("deadmanButton"),
-  deadmanLabel: document.getElementById("deadmanLabel"),
-  steeringInput: document.getElementById("steeringInput"),
-  steeringOutput: document.getElementById("steeringOutput"),
-  brakeInput: document.getElementById("brakeInput"),
-  brakeOutput: document.getElementById("brakeOutput"),
-  acceleratorInput: document.getElementById("acceleratorInput"),
-  acceleratorOutput: document.getElementById("acceleratorOutput"),
-  emergencyButton: document.getElementById("emergencyButton"),
+  motionCommandLabel: document.getElementById("motionCommandLabel"),
+  motionCommandDetail: document.getElementById("motionCommandDetail"),
   commandSequence: document.getElementById("commandSequence"),
   telemetrySpeed: document.getElementById("telemetrySpeed"),
   telemetryGear: document.getElementById("telemetryGear"),
@@ -459,18 +451,19 @@ async function copyCurrentLink() {
   }
 }
 
-function resetMotionState() {
-  controlState.deadman = false;
+function cancelGearShift() {
+  window.clearTimeout(gearShiftTimer);
+  gearShiftTimer = null;
+}
+
+function resetMotionState(commandEnabled = false) {
+  cancelGearShift();
+  activeMotionControls.clear();
+  controlState.commandEnabled = commandEnabled;
   controlState.gear = "P";
   controlState.steering = 0;
   controlState.brake = 100;
   controlState.accelerator = 0;
-}
-
-function resetAuxiliaryState() {
-  Object.keys(controlState.auxiliary).forEach((key) => {
-    controlState.auxiliary[key] = false;
-  });
 }
 
 function advanceCommandSequence() {
@@ -519,14 +512,8 @@ function applyControlConstraints(constraints = {}) {
   controlState.constraints = { ...controlState.constraints, ...constraints };
   const maxSteering = Number(controlState.constraints.max_steering_deg) || 180;
   const maxAccelerator = Number(controlState.constraints.max_accelerator_percent) || 25;
-  elements.steeringInput.min = String(-maxSteering);
-  elements.steeringInput.max = String(maxSteering);
-  elements.acceleratorInput.max = String(maxAccelerator);
-  const scale = document.querySelector(".steering-scale");
-  if (scale) {
-    scale.children[0].textContent = String(-maxSteering);
-    scale.children[2].textContent = String(maxSteering);
-  }
+  controlState.steering = Math.max(-maxSteering, Math.min(maxSteering, controlState.steering));
+  controlState.accelerator = Math.max(0, Math.min(maxAccelerator, controlState.accelerator));
 }
 
 async function bootstrapControl() {
@@ -571,17 +558,14 @@ async function pollControlStatus() {
 }
 
 function buildControlCommand() {
-  const steerLamp = controlState.auxiliary.hazard
-    ? 3
-    : controlState.auxiliary.left ? 1 : controlState.auxiliary.right ? 2 : 0;
   return {
-    deadman: controlState.deadman,
+    deadman: controlState.commandEnabled && controlState.sessionActive && !controlState.emergency,
     gear: controlState.gear,
     steering: controlState.steering,
     brake: controlState.brake,
     accelerator: controlState.accelerator,
-    steer_lamp: steerLamp,
-    front_lamp: controlState.auxiliary.headlight ? 1 : 0,
+    steer_lamp: 0,
+    front_lamp: 0,
   };
 }
 
@@ -641,7 +625,6 @@ function failLocalControl(message) {
   controlState.emergency = true;
   controlState.lastError = message;
   resetMotionState();
-  resetAuxiliaryState();
   renderControlState();
   showToast(message, true);
 }
@@ -672,11 +655,10 @@ async function acquireControl() {
     controlState.emergency = false;
     controlState.lastError = "";
     controlState.sequence = 0;
-    resetMotionState();
-    resetAuxiliaryState();
+    resetMotionState(true);
     applyControlConstraints(result.constraints);
     startControlHeartbeat();
-    showToast("BIT-0041 实车控制已接管");
+    showToast("BIT-0041 已接管，可直接控制");
   } catch (error) {
     controlState.lastError = error.message;
     showToast(error.message, true);
@@ -696,7 +678,6 @@ async function releaseControl(reason = "release", options = {}) {
   controlState.transportAlive = false;
   controlState.emergency = Boolean(options.emergency);
   resetMotionState();
-  resetAuxiliaryState();
   renderControlState();
   if (!sessionId) return;
   try {
@@ -734,66 +715,119 @@ function releaseControlOnUnload() {
   });
 }
 
-function setDeadman(active) {
-  const canEnable = controlState.sessionActive && !controlState.emergency;
-  if (active && !canEnable) return;
-  if (controlState.deadman === active) {
-    if (!active) queueControlCommand();
+function canSendMotion() {
+  return controlState.sessionActive && controlState.commandEnabled && !controlState.emergency;
+}
+
+function updateSteeringIntent() {
+  const left = activeMotionControls.has("left");
+  const right = activeMotionControls.has("right");
+  const limit = Math.min(
+    STEERING_COMMAND_DEG,
+    Number(controlState.constraints.max_steering_deg) || STEERING_COMMAND_DEG,
+  );
+  controlState.steering = left === right ? 0 : left ? -limit : limit;
+}
+
+function applyLongitudinalIntent() {
+  cancelGearShift();
+  const forward = activeMotionControls.has("forward");
+  const reverse = activeMotionControls.has("reverse");
+
+  if (forward === reverse) {
+    controlState.accelerator = 0;
+    controlState.brake = forward ? 100 : 0;
+    renderControlState();
+    queueControlCommand();
     return;
   }
-  controlState.deadman = active;
-  if (!active) {
-    resetMotionState();
-    resetAuxiliaryState();
+
+  const motion = forward ? "forward" : "reverse";
+  const targetGear = forward ? "D" : "R";
+  const applyThrottle = () => {
+    if (!canSendMotion() || !activeMotionControls.has(motion) || controlState.gear !== targetGear) return;
+    controlState.brake = 0;
+    controlState.accelerator = Math.min(
+      DRIVE_ACCELERATOR_PERCENT,
+      Number(controlState.constraints.max_accelerator_percent) || DRIVE_ACCELERATOR_PERCENT,
+    );
+    renderControlState();
+    queueControlCommand();
+  };
+
+  if (controlState.gear !== targetGear) {
+    controlState.gear = targetGear;
+    controlState.accelerator = 0;
+    controlState.brake = 100;
+    renderControlState();
+    queueControlCommand();
+    gearShiftTimer = window.setTimeout(() => {
+      gearShiftTimer = null;
+      applyThrottle();
+    }, GEAR_SHIFT_SETTLE_MS);
+    return;
   }
+
+  applyThrottle();
+}
+
+function engageMotion(name) {
+  if (!canSendMotion() || !["forward", "reverse", "left", "right"].includes(name)) return;
+  activeMotionControls.add(name);
+  if (name === "left" || name === "right") updateSteeringIntent();
+  if (name === "forward" || name === "reverse") applyLongitudinalIntent();
   renderControlState();
   queueControlCommand();
 }
 
-function setSteering(value) {
-  if (!controlState.deadman) return;
-  const limit = Number(controlState.constraints.max_steering_deg) || 180;
-  controlState.steering = Math.max(-limit, Math.min(limit, Number(value) || 0));
+function releaseMotion(name) {
+  if (!activeMotionControls.delete(name)) return;
+  if (name === "left" || name === "right") updateSteeringIntent();
+  if (name === "forward" || name === "reverse") applyLongitudinalIntent();
   renderControlState();
   queueControlCommand();
 }
 
-function setBrake(value) {
-  if (!controlState.deadman) return;
-  controlState.brake = Math.max(0, Math.min(100, Number(value) || 0));
-  if (controlState.brake > 0) controlState.accelerator = 0;
+function neutralizeMotion() {
+  if (!canSendMotion()) return;
+  const hadMotion = activeMotionControls.size > 0
+    || controlState.accelerator > 0
+    || controlState.steering !== 0;
+  if (!hadMotion) return;
+  cancelGearShift();
+  activeMotionControls.clear();
+  controlState.steering = 0;
+  controlState.accelerator = 0;
+  controlState.brake = controlState.gear === "P" ? 100 : 0;
   renderControlState();
   queueControlCommand();
 }
 
-function setAccelerator(value) {
-  if (!controlState.deadman) return;
-  const limit = Number(controlState.constraints.max_accelerator_percent) || 25;
-  controlState.accelerator = Math.max(0, Math.min(limit, Number(value) || 0));
-  if (controlState.accelerator > 0) controlState.brake = 0;
+function stopMotion() {
+  if (!canSendMotion()) return;
+  cancelGearShift();
+  activeMotionControls.clear();
+  controlState.gear = "P";
+  controlState.steering = 0;
+  controlState.accelerator = 0;
+  controlState.brake = 100;
   renderControlState();
   queueControlCommand();
 }
 
-function setAuxiliary(name, active) {
-  if (!controlState.deadman || !(name in controlState.auxiliary)) return;
-  if (name === "hazard" && active) {
-    controlState.auxiliary.left = false;
-    controlState.auxiliary.right = false;
-  }
-  if ((name === "left" || name === "right") && active) {
-    controlState.auxiliary.hazard = false;
-    controlState.auxiliary[name === "left" ? "right" : "left"] = false;
-  }
-  controlState.auxiliary[name] = active;
-  renderControlState();
-  queueControlCommand();
+function motionStateLabel() {
+  const labels = [];
+  if (activeMotionControls.has("forward")) labels.push("前进");
+  if (activeMotionControls.has("reverse")) labels.push("后退");
+  if (controlState.steering < 0) labels.push("左转");
+  if (controlState.steering > 0) labels.push("右转");
+  if (labels.length) return labels.join(" · ");
+  return controlState.brake >= 50 ? "停止" : "待命";
 }
 
 function renderControlState() {
   const selectedControlVehicle = activeVehicleId === CONTROL_VEHICLE_ID;
   const active = controlState.sessionActive && !controlState.emergency;
-  const authorized = active && controlState.deadman;
   const videoReady = videosReadyForControl();
   const vehicleReady = Boolean(controlState.vehicle?.ready_for_acquire);
   const occupied = controlState.backendSessionActive && !controlState.sessionActive;
@@ -802,54 +836,36 @@ function renderControlState() {
     && vehicleReady
     && !occupied
     && !controlState.acquiring;
-  const gearInputs = document.querySelectorAll('input[name="gear"]');
-  const auxiliaryButtons = document.querySelectorAll("[data-aux]");
+  const motionButtons = document.querySelectorAll("[data-motion]");
 
   elements.controlSessionButton.disabled = !(active || controlState.emergency || canAcquire) || controlState.acquiring;
-  elements.deadmanButton.disabled = !active;
-  elements.steeringInput.disabled = !authorized;
-  elements.brakeInput.disabled = !authorized;
-  elements.acceleratorInput.disabled = !authorized;
-  elements.emergencyButton.disabled = !active;
-  gearInputs.forEach((input) => {
-    input.disabled = !authorized;
-    input.checked = input.value === controlState.gear;
-  });
-  auxiliaryButtons.forEach((button) => {
-    const name = button.dataset.aux;
-    button.disabled = !authorized;
-    button.setAttribute("aria-pressed", String(Boolean(controlState.auxiliary[name])));
+  motionButtons.forEach((button) => {
+    const name = button.dataset.motion;
+    button.disabled = !active;
+    if (name !== "stop") button.setAttribute("aria-pressed", String(activeMotionControls.has(name)));
+    button.dataset.active = String(name === "stop"
+      ? active && controlState.brake >= 50 && controlState.gear === "P"
+      : activeMotionControls.has(name));
   });
 
-  elements.steeringInput.value = String(controlState.steering);
-  elements.brakeInput.value = String(controlState.brake);
-  elements.acceleratorInput.value = String(controlState.accelerator);
-  elements.steeringOutput.textContent = `${Math.round(controlState.steering)} deg`;
-  elements.brakeOutput.textContent = `${Math.round(controlState.brake)}%`;
-  elements.acceleratorOutput.textContent = `${Math.round(controlState.accelerator)} / ${Math.round(controlState.constraints.max_accelerator_percent)}%`;
+  elements.motionCommandLabel.textContent = motionStateLabel();
+  elements.motionCommandDetail.textContent = `${controlState.gear} · 转向 ${Math.round(controlState.steering)} deg`;
   elements.commandSequence.textContent = String(controlState.sequence % 10000).padStart(4, "0");
 
   elements.controlStatusBadge.className = "control-status-badge";
   elements.controlGate.dataset.state = "locked";
-  elements.deadmanButton.dataset.active = String(authorized);
   if (controlState.emergency) {
     elements.controlStatusBadge.classList.add("is-emergency");
     elements.controlStatusText.textContent = "急停";
     elements.controlGate.dataset.state = "emergency";
     elements.controlGateLabel.textContent = "实车控制已急停";
     elements.controlGateDetail.textContent = controlState.lastError || "指令已归零，远控模式已退出";
-  } else if (authorized) {
-    elements.controlStatusBadge.classList.add("is-authorized");
-    elements.controlStatusText.textContent = "行驶使能";
-    elements.controlGate.dataset.state = "authorized";
-    elements.controlGateLabel.textContent = "实车指令发送中";
-    elements.controlGateDetail.textContent = "松开使能立即制动并退出远控模式";
   } else if (active) {
     elements.controlStatusBadge.classList.add("is-active");
-    elements.controlStatusText.textContent = "已接管";
+    elements.controlStatusText.textContent = "控制中";
     elements.controlGate.dataset.state = "active";
-    elements.controlGateLabel.textContent = "BIT-0041 已接管";
-    elements.controlGateDetail.textContent = "等待行驶使能";
+    elements.controlGateLabel.textContent = "实车指令发送中";
+    elements.controlGateDetail.textContent = "控制链路稳定，指令持续发送";
   } else if (controlState.acquiring) {
     elements.controlStatusBadge.classList.add("is-ready");
     elements.controlStatusText.textContent = "接管中";
@@ -876,8 +892,7 @@ function renderControlState() {
   sessionButtonLabel.textContent = controlState.emergency
     ? "确认复位"
     : controlState.acquiring ? "接管中"
-      : active ? "释放实车" : "接管实车";
-  elements.deadmanLabel.textContent = authorized ? "保持使能" : "按住使能";
+      : active ? "释放车辆" : "接管车辆";
 
   const vehicle = controlState.vehicle;
   elements.telemetrySpeed.textContent = Number.isFinite(Number(vehicle?.speed_kph))
@@ -930,56 +945,59 @@ function bindControlConsole() {
     }
   });
 
-  elements.deadmanButton.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    setDeadman(true);
-  });
-  elements.deadmanButton.addEventListener("keydown", (event) => {
-    if (["Enter", " "].includes(event.key) && !event.repeat) {
-      event.preventDefault();
-      setDeadman(true);
+  document.querySelectorAll("[data-motion]").forEach((button) => {
+    const name = button.dataset.motion;
+    if (name === "stop") {
+      button.addEventListener("click", stopMotion);
+      return;
     }
-  });
-  elements.deadmanButton.addEventListener("keyup", (event) => {
-    if (["Enter", " "].includes(event.key)) setDeadman(false);
-  });
-
-  window.addEventListener("pointerup", () => setDeadman(false));
-  window.addEventListener("pointercancel", () => setDeadman(false));
-  window.addEventListener("blur", () => setDeadman(false));
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) setDeadman(false);
-  });
-
-  document.querySelectorAll('input[name="gear"]').forEach((input) => {
-    input.addEventListener("change", () => {
-      if (!controlState.deadman || !input.checked) return;
-      if (input.value !== controlState.gear && controlState.brake < 50) {
-        showToast("换挡前制动必须达到 50%", true);
-        renderControlState();
-        return;
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      button.setPointerCapture?.(event.pointerId);
+      engageMotion(name);
+    });
+    const releasePointer = (event) => {
+      if (event.pointerId !== undefined && button.hasPointerCapture?.(event.pointerId)) {
+        button.releasePointerCapture(event.pointerId);
       }
-      controlState.gear = input.value;
-      renderControlState();
-      queueControlCommand();
-    });
+      releaseMotion(name);
+    };
+    button.addEventListener("pointerup", releasePointer);
+    button.addEventListener("pointercancel", releasePointer);
+    button.addEventListener("lostpointercapture", () => releaseMotion(name));
   });
 
-  elements.steeringInput.addEventListener("input", () => setSteering(elements.steeringInput.value));
-  elements.steeringInput.addEventListener("pointerup", () => setSteering(0));
-  elements.steeringInput.addEventListener("pointercancel", () => setSteering(0));
-  elements.brakeInput.addEventListener("input", () => setBrake(elements.brakeInput.value));
-  elements.acceleratorInput.addEventListener("input", () => setAccelerator(elements.acceleratorInput.value));
-
-  document.querySelectorAll("[data-aux]").forEach((button) => {
-    const name = button.dataset.aux;
-    button.addEventListener("click", () => {
-      setAuxiliary(name, !controlState.auxiliary[name]);
-    });
+  const keyToMotion = {
+    ArrowUp: "forward",
+    KeyW: "forward",
+    ArrowDown: "reverse",
+    KeyS: "reverse",
+    ArrowLeft: "left",
+    KeyA: "left",
+    ArrowRight: "right",
+    KeyD: "right",
+  };
+  document.addEventListener("keydown", (event) => {
+    if (!canSendMotion() || event.target.closest?.("input, select, textarea, [contenteditable='true']")) return;
+    if (event.code === "Space") {
+      event.preventDefault();
+      if (!event.repeat) stopMotion();
+      return;
+    }
+    const motion = keyToMotion[event.code];
+    if (!motion) return;
+    event.preventDefault();
+    if (!event.repeat) engageMotion(motion);
   });
-
-  elements.emergencyButton.addEventListener("click", () => {
-    void releaseControl("estop", { emergency: true });
+  document.addEventListener("keyup", (event) => {
+    const motion = keyToMotion[event.code];
+    if (!motion || !canSendMotion()) return;
+    event.preventDefault();
+    releaseMotion(motion);
+  });
+  window.addEventListener("blur", neutralizeMotion);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) neutralizeMotion();
   });
 }
 

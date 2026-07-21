@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="dark">
   <title>车端远程驾驶台</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="./styles.css?v=20260720-jgzj-remote-drive-1">
+  <link rel="stylesheet" href="./styles.css?v=20260721-direct-control-1">
   <script data-cfasync="false" src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script data-cfasync="false" src="./app.js?v=20260720-jgzj-remote-drive-1" defer></script>
+  <script data-cfasync="false" src="./app.js?v=20260721-direct-control-1" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -262,7 +262,7 @@
               </div>
               <button class="secondary-button" id="controlSessionButton" type="button" disabled>
                 <i data-lucide="power"></i>
-                <span>接管实车</span>
+                <span>接管车辆</span>
               </button>
             </div>
           </section>
@@ -309,66 +309,33 @@
               <span class="command-sequence">SEQ <strong id="commandSequence">0000</strong></span>
             </div>
 
-            <button class="deadman-button" id="deadmanButton" type="button" disabled>
-              <i data-lucide="fingerprint"></i>
-              <span id="deadmanLabel">按住使能</span>
-            </button>
-
-            <fieldset class="gear-fieldset">
-              <legend>档位</legend>
-              <div class="gear-selector">
-                <input type="radio" name="gear" id="gearP" value="P" checked disabled>
-                <label for="gearP">P</label>
-                <input type="radio" name="gear" id="gearR" value="R" disabled>
-                <label for="gearR">R</label>
-                <input type="radio" name="gear" id="gearN" value="N" disabled>
-                <label for="gearN">N</label>
-                <input type="radio" name="gear" id="gearD" value="D" disabled>
-                <label for="gearD">D</label>
-              </div>
-            </fieldset>
-
-            <label class="range-control steering-control" for="steeringInput">
-              <span class="range-heading">
-                <span>方向盘</span>
-                <output id="steeringOutput" for="steeringInput">0 deg</output>
-              </span>
-              <span class="steering-scale" aria-hidden="true"><span>-180</span><span>0</span><span>180</span></span>
-              <input id="steeringInput" type="range" min="-180" max="180" step="1" value="0" disabled>
-            </label>
-
-            <div class="pedal-controls">
-              <label class="range-control" for="brakeInput">
-                <span class="range-heading"><span>制动</span><output id="brakeOutput" for="brakeInput">100%</output></span>
-                <input id="brakeInput" class="brake-range" type="range" min="0" max="100" step="1" value="100" disabled>
-              </label>
-              <label class="range-control" for="acceleratorInput">
-                <span class="range-heading"><span>加速</span><output id="acceleratorOutput" for="acceleratorInput">0 / 25%</output></span>
-                <input id="acceleratorInput" class="accelerator-range" type="range" min="0" max="25" step="1" value="0" disabled>
-              </label>
+            <div class="motion-pad" aria-label="车辆方向控制">
+              <button class="motion-button motion-forward" type="button" data-motion="forward" aria-label="前进" aria-pressed="false" disabled>
+                <i data-lucide="arrow-up"></i>
+                <span>前进</span>
+              </button>
+              <button class="motion-button motion-left" type="button" data-motion="left" aria-label="左转" aria-pressed="false" disabled>
+                <i data-lucide="arrow-left"></i>
+                <span>左转</span>
+              </button>
+              <button class="motion-button motion-stop" type="button" data-motion="stop" aria-label="停止" disabled>
+                <i data-lucide="square"></i>
+                <span>停止</span>
+              </button>
+              <button class="motion-button motion-right" type="button" data-motion="right" aria-label="右转" aria-pressed="false" disabled>
+                <i data-lucide="arrow-right"></i>
+                <span>右转</span>
+              </button>
+              <button class="motion-button motion-reverse" type="button" data-motion="reverse" aria-label="后退" aria-pressed="false" disabled>
+                <i data-lucide="arrow-down"></i>
+                <span>后退</span>
+              </button>
             </div>
-          </section>
-
-          <section class="console-section auxiliary-section">
-            <div class="section-heading-row">
-              <div>
-                <span class="section-kicker">AUXILIARY</span>
-                <h3>灯光与信号</h3>
-              </div>
+            <div class="motion-command-state" aria-live="polite">
+              <span>当前指令</span>
+              <strong id="motionCommandLabel">停止</strong>
+              <small id="motionCommandDetail">P · 转向 0 deg</small>
             </div>
-            <div class="auxiliary-controls">
-              <button class="aux-button" type="button" data-aux="left" title="左转灯" aria-label="左转灯" aria-pressed="false" disabled><i data-lucide="arrow-left"></i></button>
-              <button class="aux-button" type="button" data-aux="hazard" title="双闪" aria-label="双闪" aria-pressed="false" disabled><i data-lucide="triangle-alert"></i></button>
-              <button class="aux-button" type="button" data-aux="right" title="右转灯" aria-label="右转灯" aria-pressed="false" disabled><i data-lucide="arrow-right"></i></button>
-              <button class="aux-button" type="button" data-aux="headlight" title="近光灯" aria-label="近光灯" aria-pressed="false" disabled><i data-lucide="lightbulb"></i></button>
-            </div>
-          </section>
-
-          <section class="console-section safety-section">
-            <button class="emergency-button" id="emergencyButton" type="button" disabled>
-              <i data-lucide="octagon-x"></i>
-              <span>紧急停止</span>
-            </button>
             <div class="transport-status">
               <span><i data-lucide="shield-check"></i> 服务器安全网关</span>
               <strong id="transportStatus">CONNECTING</strong>
