@@ -1,42 +1,4 @@
 {
-  "model": "fire_smoke_yolo",
-  "task_id": "fire_smoke_yolo",
-  "title": "火源烟雾",
-  "task": "detect",
-  "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
-  "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
-  "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
-  "class_id": 0,
-  "class_name": "fire",
-  "qwen_class": "fire",
-  "run_tag": "20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun",
-  "run_dir": "/home/admin1/jgzj/finetune/runs/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun",
-  "pull_script": "/home/admin1/pull_remote_dateconf_filter_py36.py",
-  "pull_ssh_key": "/home/admin1/.ssh/id_ed25519_data_ps_pull",
-  "pull_ssh_options": [
-    "--ssh-option=-o",
-    "--ssh-option=BatchMode=yes",
-    "--ssh-option=-o",
-    "--ssh-option=ConnectTimeout=20",
-    "--ssh-option=-o",
-    "--ssh-option=StrictHostKeyChecking=no",
-    "--ssh-option=-i",
-    "--ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull"
-  ],
-  "pull_retries": 3,
-  "pull_retry_sleep": 10.0
-}
-[2026-07-21 11:00:18] original_scan positives=9200/12670 negatives=4000/107152
-[2026-07-21 11:08:58] run: /usr/bin/python3 /home/admin1/pull_remote_dateconf_filter_py36.py --ssh-option=-o --ssh-option=BatchMode=yes --ssh-option=-o --ssh-option=ConnectTimeout=20 --ssh-option=-o --ssh-option=StrictHostKeyChecking=no --ssh-option=-i --ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull --output-dir /home/admin1/jgzj/finetune/runs/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun/tmp/pulled_low_conf_7d --classes fire --min-conf 0.0 --max-conf 0.5 --strict-max-conf --max-images 1000 --time-from 2026-07-15 --time-to 2026-07-21
-[2026-07-21 11:10:18] run: /usr/bin/python3 /home/admin1/jgzj/scripts/patrol_qwen_label_vehicle_uploads.py --frames-root /home/admin1/jgzj/finetune/runs/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun/tmp/qwen_frames --output-root /home/admin1/jgzj/finetune/runs/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun/tmp/qwen_labels --source '' --image-list /home/admin1/jgzj/finetune/runs/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun/tmp/qwen_image_list.txt --workers 2 --service-url http://127.0.0.1:18016 --max-side 960 --jpeg-quality 82 --timeout-s 120 --max-tokens 768
-[2026-07-21 11:38:00] run: ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no sari@192.168.80.49 'mkdir -p /home/sari/jgzj_yolo_finetune/scripts /home/sari/jgzj_yolo_finetune/weights /home/sari/jgzj_yolo_finetune/datasets/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun /home/sari/jgzj_yolo_finetune/logs'
-[2026-07-21 11:38:01] run: rsync -a -e 'ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no' /home/admin1/jgzj/.runtime/reliable_vehicle_yolo_20260704/train_reliable_yolo_finetune.py sari@192.168.80.49:/home/sari/jgzj_yolo_finetune/scripts/train_reliable_yolo_finetune.py
-[2026-07-21 11:38:01] run: rsync -a -e 'ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no' /home/admin1/jgzj/scripts/yolo_closed_loop_policy.py sari@192.168.80.49:/home/sari/jgzj_yolo_finetune/scripts/yolo_closed_loop_policy.py
-[2026-07-21 11:38:02] run: rsync -a -e 'ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no' /home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt sari@192.168.80.49:/home/sari/jgzj_yolo_finetune/weights/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun_fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt
-[2026-07-21 11:38:06] run: rsync -a -e 'ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no' /home/admin1/jgzj/.runtime/finetune/datasets/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun/fire_smoke_yolo_c0_fire_finetune/ sari@192.168.80.49:/home/sari/jgzj_yolo_finetune/datasets/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun/fire_smoke_yolo_c0_fire_finetune/
-[2026-07-21 11:38:51] run: rsync -a -e 'ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no' /home/admin1/jgzj/finetune/runs/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun.a100_finetune.sh sari@192.168.80.49:/home/sari/jgzj_yolo_finetune/logs/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun.a100_finetune.sh
-[2026-07-21 11:38:51] run: ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no sari@192.168.80.49 'tmux new-session -d -s yolo-finetune-gpu2-20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun '"'"'bash /home/sari/jgzj_yolo_finetune/logs/20260721_105942_fire_smoke_yolo_c0_fire_train_gpu2_rerun.a100_finetune.sh'"'"''
-{
   "schema": "jgzj_yolo_target_finetune.v1",
   "created_at": "2026-07-21T11:38:00.443067+08:00",
   "resolved": {
