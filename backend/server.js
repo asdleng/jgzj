@@ -16,6 +16,10 @@ try {
   sharp = null;
 }
 const { createAuthStore } = require('./auth-store');
+const {
+  buildPrivateNavigationItems,
+  buildProtectedAppPages
+} = require('./private-app-pages');
 const { createMailer } = require('./mailer');
 const { createOperationAuditStore, normalizeRecord } = require('./operation-audit-store');
 const registerCloudMappingRoutes = require('./cloud-mapping');
@@ -18959,93 +18963,32 @@ function loginRedirectUrl(req) {
   return `/login?next=${next}`;
 }
 
-const privateNavigationItems = [
-  {
-    href: '/app/robot-ai-workbench',
-    label: 'AI工作台',
-    permissions: ['ai:chat', 'ai:detect', 'ai:history:read']
-  },
-  {
-    href: '/app/yolo-label-review',
-    label: 'YOLO标签',
-    permissions: ['ai:yolo:review']
-  },
-  {
-    href: '/app/cloud-operations',
-    label: '云端运维',
-    permissions: ['vehicle:read', 'runtime:read']
-  },
-  {
-    href: '/app/remote-driving',
-    label: '远程驾驶',
-    permissions: ['vehicle:control']
-  },
-  {
-    href: '/app/cloud-operations-test',
-    label: '云端运维(测试)',
-    permissions: ['vehicle:read', 'runtime:read']
-  },
-  {
-    href: '/app/lidar-relocalization',
-    label: '激光重定位',
-    permissions: ['vehicle:read']
-  },
-  {
-    href: '/app/park-crowd',
-    label: '园区人流',
-    permissions: ['vehicle:read']
-  },
-  {
-    href: '/app/green-management',
-    label: '绿化管理',
-    permissions: ['vehicle:read']
-  },
-  {
-    href: '/app/vehicle-devops',
-    label: '车辆代码',
-    permissions: ['vehicle:code:read', 'vehicle:code:write']
-  },
-  {
-    href: '/app/three-dgs',
-    label: '3DGS',
-    permissions: ['three-dgs:run']
-  },
-  {
-    href: '/app/operation-history',
-    label: '操作记录',
-    permissions: ['audit:read']
-  },
-  {
-    href: '/app/distributed-map-management',
-    label: '地图管理',
-    permissions: ['vehicle:path:write']
-  }
-];
+const privateNavigationItems = buildPrivateNavigationItems();
 
 const gatedSitePages = [
   {
     paths: ['/cloud-operations', '/cloud-operations/'],
-    permissions: ['vehicle:read', 'runtime:read'],
+    permissions: ['page:cloud-operations:view'],
     redirectTo: '/app/cloud-operations'
   },
   {
     paths: ['/vehicle-devops', '/vehicle-devops/'],
-    permissions: ['vehicle:code:read', 'vehicle:code:write'],
+    permissions: ['page:vehicle-devops:view'],
     redirectTo: '/app/vehicle-devops'
   },
   {
     paths: ['/cloud-mapping', '/cloud-mapping/'],
-    permissions: ['mapping:run'],
+    permissions: ['page:cloud-mapping:view'],
     redirectTo: '/app/cloud-mapping'
   },
   {
     paths: ['/three-dgs', '/three-dgs/'],
-    permissions: ['three-dgs:run'],
+    permissions: ['page:three-dgs:view'],
     redirectTo: '/app/three-dgs'
   },
   {
     paths: ['/distributed-map-management', '/distributed-map-management/'],
-    permissions: ['vehicle:path:write'],
+    permissions: ['page:distributed-map-management:view'],
     redirectTo: '/app/distributed-map-management'
   }
 ];
@@ -19083,88 +19026,7 @@ app.get('/api/site/private-navigation', async (req, res) => {
   return res.json({ ok: true, items });
 });
 
-const protectedAppPages = [
-  {
-    paths: ['/app/robot-ai-workbench', '/app/robot-ai-workbench/'],
-    file: 'app/robot-ai-workbench/index.html',
-    permissions: ['ai:chat', 'ai:detect', 'ai:history:read']
-  },
-  {
-    paths: ['/app/cloud-operations', '/app/cloud-operations/'],
-    file: 'app/cloud-operations/index.html',
-    permissions: ['vehicle:read', 'runtime:read']
-  },
-  {
-    paths: ['/app/cloud-operations-test', '/app/cloud-operations-test/'],
-    file: 'app/cloud-operations-test/index.html',
-    permissions: ['vehicle:read', 'runtime:read']
-  },
-  {
-    paths: ['/app/remote-driving', '/app/remote-driving/'],
-    file: 'app/remote-driving/index.html',
-    permissions: ['vehicle:control']
-  },
-  {
-    paths: ['/app/lidar-relocalization', '/app/lidar-relocalization/'],
-    file: 'app/lidar-relocalization/index.html',
-    permissions: ['vehicle:read']
-  },
-  {
-    paths: ['/app/park-crowd', '/app/park-crowd/'],
-    file: 'app/park-crowd/index.html',
-    permissions: ['vehicle:read']
-  },
-  {
-    paths: ['/app/park-pcm', '/app/park-pcm/'],
-    file: 'app/park-pcm/index.html',
-    permissions: ['vehicle:read']
-  },
-  {
-    paths: ['/app/green-management', '/app/green-management/'],
-    file: 'app/green-management/index.html',
-    permissions: ['vehicle:read']
-  },
-  {
-    paths: ['/app/vehicle-devops', '/app/vehicle-devops/'],
-    file: 'app/vehicle-devops/index.html',
-    permissions: ['vehicle:code:read', 'vehicle:code:write']
-  },
-  {
-    paths: ['/app/intelligent-ai-dialogue', '/app/intelligent-ai-dialogue/'],
-    file: 'app/robot-ai-workbench/index.html',
-    permissions: ['ai:chat']
-  },
-  {
-    paths: ['/app/edge-cloud-ai-inspection', '/app/edge-cloud-ai-inspection/'],
-    file: 'app/robot-ai-workbench/index.html',
-    permissions: ['ai:detect', 'ai:history:read']
-  },
-  {
-    paths: ['/app/yolo-label-review', '/app/yolo-label-review/'],
-    file: 'app/yolo-label-review/index.html',
-    permissions: ['ai:yolo:review']
-  },
-  {
-    paths: ['/app/cloud-mapping', '/app/cloud-mapping/'],
-    file: 'app/cloud-mapping/index.html',
-    permissions: ['mapping:run']
-  },
-  {
-    paths: ['/app/three-dgs', '/app/three-dgs/'],
-    file: 'app/three-dgs/index.html',
-    permissions: ['three-dgs:run']
-  },
-  {
-    paths: ['/app/operation-history', '/app/operation-history/'],
-    file: 'app/operation-history/index.html',
-    permissions: ['audit:read']
-  },
-  {
-    paths: ['/app/distributed-map-management', '/app/distributed-map-management/'],
-    file: 'app/distributed-map-management/index.html',
-    permissions: ['vehicle:path:write']
-  }
-];
+const protectedAppPages = buildProtectedAppPages();
 
 function renderProtectedAppGate({ title, detail, status }) {
   const safeTitle = String(title || '访问受限')

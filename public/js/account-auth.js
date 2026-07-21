@@ -431,6 +431,7 @@
     groupedPermissions().forEach(([group, permissions]) => {
       const groupNode = document.createElement("fieldset");
       groupNode.className = "site-auth-permission-group";
+      groupNode.dataset.permissionGroup = group;
       const legend = document.createElement("legend");
       legend.textContent = group;
       groupNode.appendChild(legend);

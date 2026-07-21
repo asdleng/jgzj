@@ -1,9 +1,16 @@
 const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
+const {
+  PAGE_PERMISSIONS,
+  inferLegacyPagePermissions
+} = require('./private-app-pages');
+
+const AUTH_STORE_VERSION = 3;
 
 const PERMISSIONS = [
   { id: 'site:private:view', label: '查看非公开页面', group: '网站' },
+  ...PAGE_PERMISSIONS,
   { id: 'ai:chat', label: '体验 AI 对话', group: 'AI' },
   { id: 'ai:detect', label: '体验 AI 检测', group: 'AI' },
   { id: 'ai:history:read', label: '查看 AI 检测历史', group: 'AI' },
@@ -22,7 +29,10 @@ const PERMISSIONS = [
 
 const ALL_PERMISSION_IDS = PERMISSIONS.map((item) => item.id);
 const REGISTERED_DEFAULT_PERMISSIONS = ['site:private:view'];
-const OPERATOR_ALL_PERMISSIONS = ALL_PERMISSION_IDS.filter((permission) => permission !== 'audit:read');
+const OPERATOR_EXCLUDED_PERMISSIONS = new Set(['audit:read', 'page:operation-history:view']);
+const OPERATOR_ALL_PERMISSIONS = ALL_PERMISSION_IDS.filter(
+  (permission) => !OPERATOR_EXCLUDED_PERMISSIONS.has(permission)
+);
 const SESSION_COOKIE_NAME = 'jgzj_session';
 const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -225,7 +235,7 @@ class AuthStore {
 
     const previousVersion = state && typeof state === 'object' ? Number(state.version || 1) : 0;
     const next = {
-      version: 2,
+      version: AUTH_STORE_VERSION,
       users: {},
       sessions: {},
       email_verification_tokens: {},
@@ -258,6 +268,12 @@ class AuthStore {
     });
 
     Object.values(next.users).forEach((user) => {
+      if (previousVersion < AUTH_STORE_VERSION && !user.super_admin) {
+        user.permissions = [
+          ...(Array.isArray(user.permissions) ? user.permissions : []),
+          ...inferLegacyPagePermissions(user.permissions)
+        ];
+      }
       this.normalizeStoredUser(user);
       if (previousVersion < 2) {
         user.email_verified = false;
@@ -266,7 +282,7 @@ class AuthStore {
       }
     });
     this.cleanupEmailVerificationTokens(next);
-    next.version = 2;
+    next.version = AUTH_STORE_VERSION;
 
     await this.persist(next);
     return next;
@@ -910,6 +926,7 @@ function createAuthStore(options = {}) {
 }
 
 module.exports = {
+  AUTH_STORE_VERSION,
   ALL_PERMISSION_IDS,
   OPERATOR_ALL_PERMISSIONS,
   PERMISSIONS,
