@@ -84,6 +84,9 @@ class CloudStatusClient:
         last_seen = self._parse_time(vehicle.get("last_seen"))
         age_s = (now - last_seen).total_seconds() if last_seen else None
         telemetry_age_s = vehicle_state.get("data_age_s")
+        cloud_telemetry_fresh = bool(vehicle.get("has_telemetry")) and (
+            telemetry_age_s is not None and float(telemetry_age_s) <= 2.0
+        )
         active_issues = []
         if vehicle.get("vehicle_id") != CONTROL_VEHICLE_ID or vehicle.get("vin") != CONTROL_VIN:
             active_issues.append("车辆身份不匹配")
@@ -91,18 +94,18 @@ class CloudStatusClient:
             active_issues.append("车辆云端状态过期")
         if not heartbeat.get("master_ping_ok"):
             active_issues.append("主控不可达")
-        if not vehicle.get("has_telemetry"):
-            active_issues.append("车辆遥测不可用")
-        if telemetry_age_s is None or float(telemetry_age_s) > 2.0:
-            active_issues.append("底盘遥测过期")
-        if not vehicle_state.get("ready"):
-            active_issues.append("车辆未就绪")
-        if vehicle_state.get("emergency_stop_pressed"):
-            active_issues.append("物理急停已触发")
-        if vehicle_state.get("collision_stop"):
-            active_issues.append("碰撞停已触发")
+        # Cloud telemetry arrives in batches and is not the motion safety authority.
+        # When it is fresh, use it as an early rejection; the ROS guard always
+        # rechecks fresh chassis state before publishing any control command.
+        if cloud_telemetry_fresh:
+            if not vehicle_state.get("ready"):
+                active_issues.append("车辆未就绪")
+            if vehicle_state.get("emergency_stop_pressed"):
+                active_issues.append("物理急停已触发")
+            if vehicle_state.get("collision_stop"):
+                active_issues.append("碰撞停已触发")
         issues = list(active_issues)
-        if abs(float(vehicle_state.get("speed_kph") or 0.0)) > 0.1:
+        if cloud_telemetry_fresh and abs(float(vehicle_state.get("speed_kph") or 0.0)) > 0.1:
             issues.append("车辆未静止")
         raw_gear = vehicle_state.get("gear")
         return {
@@ -121,6 +124,7 @@ class CloudStatusClient:
             "collision_stop": bool(vehicle_state.get("collision_stop")),
             "master_reachable": bool(heartbeat.get("master_ping_ok")),
             "camera_ready": bool(topics.get("/miivii_gmsl_ros/camera1/compressed")),
+            "cloud_telemetry_fresh": cloud_telemetry_fresh,
         }
 
     def get(self, force: bool = False) -> Dict[str, Any]:
