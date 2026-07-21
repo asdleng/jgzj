@@ -36,7 +36,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
         }
         const content = frame.contentDocument?.querySelector(".operation-workspace");
         if (!content) return;
-        const contentHeight = Math.ceil(content.getBoundingClientRect().bottom + (frame.contentWindow?.scrollY || 0));
+        const contentHeight = Math.ceil(content.getBoundingClientRect().bottom + (frame.contentWindow?.scrollY || 0)) + 2;
         if (contentHeight > 0) frame.style.height = `${contentHeight}px`;
       });
     };
