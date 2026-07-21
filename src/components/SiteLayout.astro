@@ -18,6 +18,7 @@ const {
   noindex = false,
   authMode = "controller",
   embedded = false,
+  showContact = true,
   structuredData = []
 } = Astro.props;
 
@@ -100,7 +101,7 @@ const isAppPage = String(currentPath).startsWith("/app/");
       </button>
     ) : null}
 
-    {!embedded ? (
+    {!embedded && showContact ? (
       <section id="contact" class="mx-auto max-w-screen-xl px-4 pb-10">
         <div class="contact-band reveal" data-reveal>
           <p class="contact-band-kicker">商务联系</p>

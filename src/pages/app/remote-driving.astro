@@ -8,6 +8,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
   description="BIT-0041 实车环视监看与安全远程驾驶工作台。"
   currentPath="/app/remote-driving"
   noindex={true}
+  showContact={false}
 >
   <main class="remote-driving-main">
     <iframe
@@ -33,26 +34,35 @@ import SiteLayout from "../../components/SiteLayout.astro";
           frame.style.removeProperty("height");
           return;
         }
-        const documentElement = frame.contentDocument?.documentElement;
-        const body = frame.contentDocument?.body;
-        if (!documentElement || !body) return;
-        const contentHeight = Math.max(documentElement.scrollHeight, body.scrollHeight);
+        const content = frame.contentDocument?.querySelector(".operation-workspace");
+        if (!content) return;
+        const contentHeight = Math.ceil(content.getBoundingClientRect().bottom + (frame.contentWindow?.scrollY || 0));
         if (contentHeight > 0) frame.style.height = `${contentHeight}px`;
       });
     };
 
     const observeFrame = () => {
       resizeObserver?.disconnect();
-      const documentElement = frame?.contentDocument?.documentElement;
-      const body = frame?.contentDocument?.body;
-      if (!documentElement || !body) return;
+      const content = frame?.contentDocument?.querySelector(".operation-workspace");
+      if (!content) return;
       resizeObserver = new ResizeObserver(syncFrameHeight);
-      resizeObserver.observe(documentElement);
-      resizeObserver.observe(body);
+      resizeObserver.observe(content);
       syncFrameHeight();
     };
 
-    frame?.addEventListener("load", observeFrame);
+    const observeLoadedFrame = () => {
+      if (!frame?.contentDocument?.querySelector(".app-shell")) return false;
+      observeFrame();
+      return true;
+    };
+
+    const readinessTimer = window.setInterval(() => {
+      if (observeLoadedFrame()) window.clearInterval(readinessTimer);
+    }, 100);
+    frame?.addEventListener("load", () => {
+      window.clearInterval(readinessTimer);
+      observeFrame();
+    });
     observeFrame();
     mobileLayout.addEventListener("change", syncFrameHeight);
     window.addEventListener("resize", syncFrameHeight, { passive: true });
