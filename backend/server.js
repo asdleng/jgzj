@@ -23,6 +23,7 @@ const registerRuntimeControlRoutes = require('./runtime-control');
 const registerThreeDgsRoutes = require('./three-dgs');
 const registerCrowdCpmRoutes = require('./crowd-cpm');
 const registerParkPcmRoutes = require('./park-pcm');
+const { registerRemoteDriveRoutes } = require('./remote-drive');
 const registerOneApiProxyRoutes = require('./one-api-proxy');
 const { createAsyncTtlCache } = require('./async-ttl-cache');
 const { registerMapPackageUploadRoutes } = require('./map-package-upload');
@@ -18932,6 +18933,11 @@ registerParkPcmRoutes(app, {
   patrolFlowUploadToken,
   rootDir: path.resolve(__dirname, '..')
 });
+registerRemoteDriveRoutes(app, {
+  requirePermission: (permission) => authStore.requirePermission(permission),
+  operationAuditStore,
+  rootDir: path.resolve(__dirname, '..')
+});
 registerMapPackageUploadRoutes(app, {
   requirePermission: (permission) => authStore.requirePermission(permission),
   uploadRoot: mapPackageUploadRoot,
@@ -18968,6 +18974,11 @@ const privateNavigationItems = [
     href: '/app/cloud-operations',
     label: '云端运维',
     permissions: ['vehicle:read', 'runtime:read']
+  },
+  {
+    href: '/app/remote-driving',
+    label: '远程驾驶',
+    permissions: ['vehicle:control']
   },
   {
     href: '/app/cloud-operations-test',
@@ -19087,6 +19098,11 @@ const protectedAppPages = [
     paths: ['/app/cloud-operations-test', '/app/cloud-operations-test/'],
     file: 'app/cloud-operations-test/index.html',
     permissions: ['vehicle:read', 'runtime:read']
+  },
+  {
+    paths: ['/app/remote-driving', '/app/remote-driving/'],
+    file: 'app/remote-driving/index.html',
+    permissions: ['vehicle:control']
   },
   {
     paths: ['/app/lidar-relocalization', '/app/lidar-relocalization/'],

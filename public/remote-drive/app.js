@@ -1,0 +1,1068 @@
+const DEFAULT_DEVICE_ID = "a001I3829202711775712260";
+const DEFAULT_VEHICLE_ID = "BIT-0041";
+const CONTROL_VEHICLE_ID = "BIT-0041";
+const CONTROL_API_BASE = "/api/remote-drive";
+const CONTROL_HEARTBEAT_MS = 100;
+const CONTROL_REQUEST_TIMEOUT_MS = 280;
+const PLAY_TARGETS = {
+  edge: {
+    id: "edge",
+    label: "边缘",
+    host: "120.25.209.170",
+    apiBase: `${CONTROL_API_BASE}/webrtc/edge`,
+    timeoutMs: 10000,
+  },
+  origin: {
+    id: "origin",
+    label: "源站",
+    host: "47.112.103.12",
+    apiBase: `${CONTROL_API_BASE}/webrtc/origin`,
+    timeoutMs: 10000,
+  },
+};
+
+const players = new Map();
+let activeDeviceId = DEFAULT_DEVICE_ID;
+let activeVehicleId = DEFAULT_VEHICLE_ID;
+let activeRouteMode = "auto";
+let connectGeneration = 0;
+let aggregateTimer = null;
+let clockTimer = null;
+let toastTimer = null;
+let controlHeartbeatTimer = null;
+let controlStatusTimer = null;
+let controlStatusInFlight = false;
+let unloadReleaseSent = false;
+
+const controlState = {
+  token: "",
+  sessionId: "",
+  sessionActive: false,
+  acquiring: false,
+  backendOnline: false,
+  backendSessionActive: false,
+  transportAlive: false,
+  transportMode: "",
+  deadman: false,
+  emergency: false,
+  gear: "P",
+  steering: 0,
+  brake: 100,
+  accelerator: 0,
+  sequence: 0,
+  commandInFlight: false,
+  commandQueued: false,
+  vehicle: null,
+  lastError: "",
+  constraints: {
+    max_steering_deg: 180,
+    max_accelerator_percent: 25,
+  },
+  auxiliary: {
+    left: false,
+    right: false,
+    hazard: false,
+    headlight: false,
+  },
+};
+
+const elements = {
+  form: document.getElementById("connectionForm"),
+  vehicleSelect: document.getElementById("vehicleSelect"),
+  reconnectAllButton: document.getElementById("reconnectAllButton"),
+  copyLinkButton: document.getElementById("copyLinkButton"),
+  videoGrid: document.getElementById("videoGrid"),
+  fleetStatusDot: document.getElementById("fleetStatusDot"),
+  fleetStatusText: document.getElementById("fleetStatusText"),
+  activeDeviceId: document.getElementById("activeDeviceId"),
+  onlineCount: document.getElementById("onlineCount"),
+  aggregateBitrate: document.getElementById("aggregateBitrate"),
+  activeRoute: document.getElementById("activeRoute"),
+  localClock: document.getElementById("localClock"),
+  toast: document.getElementById("toast"),
+  controlStatusBadge: document.getElementById("controlStatusBadge"),
+  controlStatusText: document.getElementById("controlStatusText"),
+  controlGate: document.getElementById("controlGate"),
+  controlGateLabel: document.getElementById("controlGateLabel"),
+  controlGateDetail: document.getElementById("controlGateDetail"),
+  controlAvailability: document.getElementById("controlAvailability"),
+  controlSessionButton: document.getElementById("controlSessionButton"),
+  deadmanButton: document.getElementById("deadmanButton"),
+  deadmanLabel: document.getElementById("deadmanLabel"),
+  steeringInput: document.getElementById("steeringInput"),
+  steeringOutput: document.getElementById("steeringOutput"),
+  brakeInput: document.getElementById("brakeInput"),
+  brakeOutput: document.getElementById("brakeOutput"),
+  acceleratorInput: document.getElementById("acceleratorInput"),
+  acceleratorOutput: document.getElementById("acceleratorOutput"),
+  emergencyButton: document.getElementById("emergencyButton"),
+  commandSequence: document.getElementById("commandSequence"),
+  telemetrySpeed: document.getElementById("telemetrySpeed"),
+  telemetryGear: document.getElementById("telemetryGear"),
+  telemetryTargetSteering: document.getElementById("telemetryTargetSteering"),
+  telemetryCommandAck: document.getElementById("telemetryCommandAck"),
+  telemetrySteering: document.getElementById("telemetrySteering"),
+  telemetryRearSteering: document.getElementById("telemetryRearSteering"),
+  telemetrySoc: document.getElementById("telemetrySoc"),
+  transportStatus: document.getElementById("transportStatus"),
+  transportStatusRow: document.querySelector(".transport-status"),
+};
+
+class StreamPlayer {
+  constructor(tile) {
+    this.tile = tile;
+    this.channel = tile.dataset.channel;
+    this.video = tile.querySelector("video");
+    this.stateTitle = tile.querySelector(".stream-state strong");
+    this.stateLabel = tile.querySelector(".state-label");
+    this.resolution = tile.querySelector(".resolution");
+    this.bitrate = tile.querySelector(".bitrate");
+    this.rtt = tile.querySelector(".rtt");
+    this.pc = null;
+    this.mediaStream = null;
+    this.statsTimer = null;
+    this.reconnectTimer = null;
+    this.abortController = null;
+    this.state = "idle";
+    this.route = null;
+    this.lastBytes = 0;
+    this.lastStatsAt = 0;
+    this.lastDecodedFrames = 0;
+    this.lastFrameAt = 0;
+    this.bitrateMbps = 0;
+    this.manualClose = false;
+    this.attempt = 0;
+
+    tile.querySelector(".reconnect-button").addEventListener("click", () => {
+      this.connect(activeDeviceId, activeRouteMode, connectGeneration);
+    });
+    tile.querySelector(".focus-button").addEventListener("click", () => toggleFocus(tile));
+    tile.querySelector(".fullscreen-button").addEventListener("click", () => requestTileFullscreen(tile));
+  }
+
+  async connect(deviceId, routeMode, generation) {
+    this.close(false);
+    this.manualClose = false;
+    this.attempt += 1;
+    const currentAttempt = this.attempt;
+    this.setState("connecting", "正在连接");
+
+    const targets = routeMode === "auto"
+      ? [PLAY_TARGETS.edge, PLAY_TARGETS.origin]
+      : [PLAY_TARGETS[routeMode]];
+
+    let lastError = null;
+    for (const target of targets) {
+      if (generation !== connectGeneration || currentAttempt !== this.attempt) return;
+      try {
+        this.setState("connecting", `连接${target.label}`);
+        await this.openTarget(deviceId, target, generation, currentAttempt);
+        if (generation !== connectGeneration || currentAttempt !== this.attempt) return;
+        this.route = target;
+        this.setState("live", "实时");
+        this.startStats();
+        updateAggregateStatus();
+        return;
+      } catch (error) {
+        lastError = error;
+        this.destroyPeer();
+      }
+    }
+
+    if (generation !== connectGeneration || currentAttempt !== this.attempt) return;
+    this.setState("error", "连接失败");
+    this.scheduleReconnect(deviceId, routeMode, generation);
+    console.warn(`Channel ${this.channel} connection failed`, lastError);
+  }
+
+  async openTarget(deviceId, target, generation, attempt) {
+    const pc = new RTCPeerConnection({ bundlePolicy: "max-bundle" });
+    const mediaStream = new MediaStream();
+    this.pc = pc;
+    this.mediaStream = mediaStream;
+    this.video.srcObject = mediaStream;
+
+    pc.addTransceiver("audio", { direction: "recvonly" });
+    pc.addTransceiver("video", { direction: "recvonly" });
+    pc.ontrack = (event) => {
+      if (!mediaStream.getTracks().some((track) => track.id === event.track.id)) {
+        mediaStream.addTrack(event.track);
+      }
+      this.video.play().catch(() => {});
+    };
+    pc.onconnectionstatechange = () => {
+      if (generation !== connectGeneration || attempt !== this.attempt || this.manualClose) return;
+      if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+        this.setState("error", "连接中断");
+        this.scheduleReconnect(deviceId, activeRouteMode, generation);
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    const apiUrl = `${target.apiBase}/play/`;
+    const app = `live/${deviceId}`;
+    const streamUrl = `webrtc://${target.host}/${app}/${this.channel}`;
+    this.abortController = new AbortController();
+    const timeout = window.setTimeout(() => this.abortController?.abort(), target.timeoutMs);
+
+    try {
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: this.abortController.signal,
+        body: JSON.stringify({
+          api: apiUrl,
+          tid: createTid(),
+          streamurl: streamUrl,
+          clientip: null,
+          sdp: offer.sdp,
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data || Number(data.code) !== 0 || !data.sdp) {
+        throw new Error(data?.msg || data?.message || `HTTP ${response.status}`);
+      }
+      await pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: data.sdp }));
+      await waitForVideo(this.video, target.timeoutMs);
+    } finally {
+      window.clearTimeout(timeout);
+      this.abortController = null;
+    }
+  }
+
+  startStats() {
+    window.clearInterval(this.statsTimer);
+    this.lastBytes = 0;
+    this.lastStatsAt = 0;
+    this.lastDecodedFrames = 0;
+    this.lastFrameAt = Date.now();
+    this.statsTimer = window.setInterval(() => this.collectStats(), 1000);
+    this.collectStats();
+  }
+
+  async collectStats() {
+    if (!this.pc || this.pc.connectionState === "closed") return;
+    try {
+      const stats = await this.pc.getStats();
+      let inbound = null;
+      let pair = null;
+      stats.forEach((report) => {
+        if (report.type === "inbound-rtp" && report.kind === "video") inbound = report;
+        if (report.type === "candidate-pair" && report.state === "succeeded" && report.nominated) pair = report;
+      });
+
+      const now = Date.now();
+      if (inbound) {
+        if (this.lastStatsAt && inbound.bytesReceived >= this.lastBytes) {
+          const seconds = (now - this.lastStatsAt) / 1000;
+          this.bitrateMbps = seconds > 0 ? ((inbound.bytesReceived - this.lastBytes) * 8) / seconds / 1_000_000 : 0;
+        }
+        this.lastBytes = inbound.bytesReceived || 0;
+        this.lastStatsAt = now;
+        const decoded = inbound.framesDecoded || 0;
+        if (decoded > this.lastDecodedFrames) this.lastFrameAt = now;
+        this.lastDecodedFrames = decoded;
+
+        const width = inbound.frameWidth || this.video.videoWidth;
+        const height = inbound.frameHeight || this.video.videoHeight;
+        this.resolution.textContent = width && height ? `${width}x${height}` : "-";
+        this.bitrate.textContent = `${this.bitrateMbps.toFixed(2)} Mbps`;
+      }
+      this.rtt.textContent = pair?.currentRoundTripTime != null
+        ? `RTT ${Math.round(pair.currentRoundTripTime * 1000)} ms`
+        : "RTT -";
+
+      if (this.state === "live" && now - this.lastFrameAt > 7000) {
+        this.setState("error", "画面中断");
+        this.scheduleReconnect(activeDeviceId, activeRouteMode, connectGeneration);
+      }
+      updateAggregateStatus();
+    } catch (error) {
+      console.debug(`Channel ${this.channel} stats unavailable`, error);
+    }
+  }
+
+  scheduleReconnect(deviceId, routeMode, generation) {
+    if (this.manualClose || this.reconnectTimer || generation !== connectGeneration) return;
+    const delay = Math.min(15000, 2500 + this.attempt * 1000);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect(deviceId, routeMode, generation);
+    }, delay);
+  }
+
+  setState(state, label) {
+    this.state = state;
+    this.tile.dataset.state = state;
+    this.stateTitle.textContent = label;
+    this.stateLabel.textContent = state === "live" ? "实时" : state === "connecting" ? "连接中" : state === "error" ? "异常" : "离线";
+    const dot = this.tile.querySelector(".live-pill .status-dot");
+    dot.className = `status-dot ${state}`;
+    updateAggregateStatus();
+  }
+
+  close(manual = true) {
+    this.manualClose = manual;
+    this.attempt += 1;
+    window.clearInterval(this.statsTimer);
+    window.clearTimeout(this.reconnectTimer);
+    this.statsTimer = null;
+    this.reconnectTimer = null;
+    this.abortController?.abort();
+    this.abortController = null;
+    this.destroyPeer();
+    this.route = null;
+    this.bitrateMbps = 0;
+    this.resolution.textContent = "-";
+    this.bitrate.textContent = "0.00 Mbps";
+    this.rtt.textContent = "RTT -";
+    if (manual) this.setState("idle", "等待连接");
+  }
+
+  destroyPeer() {
+    if (this.pc) {
+      this.pc.ontrack = null;
+      this.pc.onconnectionstatechange = null;
+      this.pc.getTransceivers().forEach((transceiver) => transceiver.stop?.());
+      this.pc.close();
+      this.pc = null;
+    }
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach((track) => track.stop());
+      this.mediaStream = null;
+    }
+    this.video.srcObject = null;
+  }
+}
+
+function createTid() {
+  return Number.parseInt(String(Date.now() * Math.random() * 100), 10).toString(16).slice(0, 7);
+}
+
+function waitForVideo(video, timeoutMs) {
+  if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => finish(new Error("等待视频帧超时")), timeoutMs);
+    const onReady = () => finish();
+    const finish = (error) => {
+      window.clearTimeout(timer);
+      video.removeEventListener("loadeddata", onReady);
+      video.removeEventListener("playing", onReady);
+      error ? reject(error) : resolve();
+    };
+    video.addEventListener("loadeddata", onReady, { once: true });
+    video.addEventListener("playing", onReady, { once: true });
+  });
+}
+
+function readRouteMode() {
+  return document.querySelector('input[name="route"]:checked')?.value || "auto";
+}
+
+function connectAll() {
+  const selectedOption = elements.vehicleSelect.selectedOptions[0];
+  const deviceId = selectedOption?.value?.trim() || "";
+  const vehicleId = selectedOption?.dataset.vehicleId || "";
+  if (!/^[A-Za-z0-9_-]{6,80}$/.test(deviceId)) {
+    showToast("车辆配置不完整", true);
+    elements.vehicleSelect.focus();
+    return;
+  }
+
+  activeDeviceId = deviceId;
+  activeVehicleId = vehicleId || DEFAULT_VEHICLE_ID;
+  activeRouteMode = readRouteMode();
+  connectGeneration += 1;
+  const generation = connectGeneration;
+  updateUrl();
+  elements.activeDeviceId.textContent = activeVehicleId;
+  localStorage.setItem("vehicleStreamViewer.deviceId", activeDeviceId);
+  localStorage.setItem("vehicleStreamViewer.vehicleId", activeVehicleId);
+  localStorage.setItem("vehicleStreamViewer.route", activeRouteMode);
+
+  players.forEach((player, index) => {
+    window.setTimeout(() => player.connect(activeDeviceId, activeRouteMode, generation), index * 180);
+  });
+  showToast(`正在连接 ${activeVehicleId}`);
+}
+
+function updateAggregateStatus() {
+  const list = [...players.values()];
+  const live = list.filter((player) => player.state === "live");
+  const connecting = list.filter((player) => player.state === "connecting");
+  const totalBitrate = live.reduce((sum, player) => sum + player.bitrateMbps, 0);
+  const routeLabels = [...new Set(live.map((player) => player.route?.label).filter(Boolean))];
+
+  elements.onlineCount.textContent = `${live.length} / ${list.length || 4}`;
+  elements.aggregateBitrate.textContent = `${totalBitrate.toFixed(2)} Mbps`;
+  elements.activeRoute.textContent = routeLabels.length ? routeLabels.join(" + ") : "-";
+
+  let state = "idle";
+  let label = "等待连接";
+  if (live.length === list.length && list.length) {
+    state = "live";
+    label = `${live.length} 路实时画面`;
+  } else if (live.length) {
+    state = "connecting";
+    label = `${live.length} 路在线，正在恢复其余画面`;
+  } else if (connecting.length) {
+    state = "connecting";
+    label = "正在建立视频连接";
+  } else if (list.some((player) => player.state === "error")) {
+    state = "error";
+    label = "视频连接异常，正在重试";
+  }
+  elements.fleetStatusDot.className = `status-dot ${state}`;
+  elements.fleetStatusText.textContent = label;
+  renderControlState();
+}
+
+function updateUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("vehicle", activeVehicleId);
+  url.searchParams.delete("device_id");
+  if (activeRouteMode === "auto") url.searchParams.delete("route");
+  else url.searchParams.set("route", activeRouteMode);
+  window.history.replaceState(null, "", url);
+}
+
+function toggleFocus(tile) {
+  const isFocused = tile.classList.contains("is-focused");
+  elements.videoGrid.classList.toggle("has-focus", !isFocused);
+  document.querySelectorAll(".stream-tile").forEach((item) => item.classList.remove("is-focused"));
+  if (!isFocused) tile.classList.add("is-focused");
+}
+
+function requestTileFullscreen(tile) {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+    return;
+  }
+  tile.requestFullscreen?.().catch(() => showToast("浏览器未允许全屏", true));
+}
+
+async function copyCurrentLink() {
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    showToast("当前监看链接已复制");
+  } catch {
+    const input = document.createElement("input");
+    input.value = window.location.href;
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
+    showToast("当前监看链接已复制");
+  }
+}
+
+function resetMotionState() {
+  controlState.deadman = false;
+  controlState.gear = "P";
+  controlState.steering = 0;
+  controlState.brake = 100;
+  controlState.accelerator = 0;
+}
+
+function resetAuxiliaryState() {
+  Object.keys(controlState.auxiliary).forEach((key) => {
+    controlState.auxiliary[key] = false;
+  });
+}
+
+function advanceCommandSequence() {
+  controlState.sequence += 1;
+}
+
+function videosReadyForControl() {
+  const list = [...players.values()];
+  return list.length === 4 && list.every((player) => (
+    player.state === "live"
+    && player.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+    && player.video.videoWidth > 0
+  ));
+}
+
+async function controlApi(path, payload = null, options = {}) {
+  const request = {
+    method: payload ? "POST" : "GET",
+    cache: "no-store",
+    headers: {},
+  };
+  if (payload) {
+    request.headers["Content-Type"] = "application/json";
+    if (controlState.token) request.headers["X-Control-Token"] = controlState.token;
+    request.body = JSON.stringify(payload);
+    request.keepalive = Boolean(options.keepalive);
+  }
+  if (options.signal) request.signal = options.signal;
+  const response = await fetch(path, request);
+  const data = await response.json().catch(() => ({}));
+  if (response.status === 403 && payload && !options.tokenRetried) {
+    const bootstrap = await fetch(`${CONTROL_API_BASE}/bootstrap`, { cache: "no-store" }).then((result) => result.json());
+    if (bootstrap.ok && bootstrap.token) {
+      controlState.token = bootstrap.token;
+      applyControlConstraints(bootstrap.constraints);
+      return controlApi(path, payload, { ...options, tokenRetried: true });
+    }
+  }
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || `控制网关 HTTP ${response.status}`);
+  }
+  return data;
+}
+
+function applyControlConstraints(constraints = {}) {
+  controlState.constraints = { ...controlState.constraints, ...constraints };
+  const maxSteering = Number(controlState.constraints.max_steering_deg) || 180;
+  const maxAccelerator = Number(controlState.constraints.max_accelerator_percent) || 25;
+  elements.steeringInput.min = String(-maxSteering);
+  elements.steeringInput.max = String(maxSteering);
+  elements.acceleratorInput.max = String(maxAccelerator);
+  const scale = document.querySelector(".steering-scale");
+  if (scale) {
+    scale.children[0].textContent = String(-maxSteering);
+    scale.children[2].textContent = String(maxSteering);
+  }
+}
+
+async function bootstrapControl() {
+  try {
+    const bootstrap = await controlApi(`${CONTROL_API_BASE}/bootstrap`);
+    controlState.token = bootstrap.token || "";
+    applyControlConstraints(bootstrap.constraints);
+    controlState.backendOnline = true;
+    await pollControlStatus();
+  } catch (error) {
+    controlState.backendOnline = false;
+    controlState.lastError = error.message;
+    renderControlState();
+  }
+  window.clearInterval(controlStatusTimer);
+  controlStatusTimer = window.setInterval(pollControlStatus, 750);
+}
+
+async function pollControlStatus() {
+  if (controlStatusInFlight) return;
+  controlStatusInFlight = true;
+  try {
+    const status = await controlApi(`${CONTROL_API_BASE}/status`);
+    controlState.backendOnline = true;
+    controlState.backendSessionActive = Boolean(status.session_active || status.acquiring);
+    controlState.transportAlive = Boolean(status.transport_alive);
+    controlState.transportMode = status.transport_mode || "";
+    controlState.vehicle = status.vehicle || null;
+    controlState.lastError = status.last_error || "";
+    applyControlConstraints(status.constraints);
+    if (controlState.sessionActive && (!status.session_active || !status.transport_alive)) {
+      failLocalControl(status.last_error || "实车控制链路已断开");
+    }
+  } catch (error) {
+    controlState.backendOnline = false;
+    controlState.lastError = error.message;
+    if (controlState.sessionActive) failLocalControl("服务器控制网关失联，车端已执行超时制动");
+  } finally {
+    controlStatusInFlight = false;
+    renderControlState();
+  }
+}
+
+function buildControlCommand() {
+  const steerLamp = controlState.auxiliary.hazard
+    ? 3
+    : controlState.auxiliary.left ? 1 : controlState.auxiliary.right ? 2 : 0;
+  return {
+    deadman: controlState.deadman,
+    gear: controlState.gear,
+    steering: controlState.steering,
+    brake: controlState.brake,
+    accelerator: controlState.accelerator,
+    steer_lamp: steerLamp,
+    front_lamp: controlState.auxiliary.headlight ? 1 : 0,
+  };
+}
+
+function queueControlCommand() {
+  if (!controlState.sessionActive || !controlState.sessionId) return;
+  if (controlState.commandInFlight) {
+    controlState.commandQueued = true;
+    return;
+  }
+  void sendControlCommand();
+}
+
+async function sendControlCommand() {
+  if (!controlState.sessionActive || !controlState.sessionId || controlState.commandInFlight) return;
+  controlState.commandInFlight = true;
+  controlState.commandQueued = false;
+  advanceCommandSequence();
+  const sessionId = controlState.sessionId;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), CONTROL_REQUEST_TIMEOUT_MS);
+  try {
+    await controlApi(`${CONTROL_API_BASE}/command`, {
+      session_id: sessionId,
+      sequence: controlState.sequence,
+      command: buildControlCommand(),
+    }, { signal: controller.signal });
+  } catch (error) {
+    if (controlState.sessionId === sessionId) {
+      failLocalControl(error.name === "AbortError" ? "控制指令超时，车端已执行制动" : error.message);
+    }
+  } finally {
+    window.clearTimeout(timeout);
+    controlState.commandInFlight = false;
+    renderControlState();
+    if (controlState.commandQueued && controlState.sessionActive) queueControlCommand();
+  }
+}
+
+function startControlHeartbeat() {
+  window.clearInterval(controlHeartbeatTimer);
+  controlHeartbeatTimer = window.setInterval(queueControlCommand, CONTROL_HEARTBEAT_MS);
+  queueControlCommand();
+}
+
+function stopControlHeartbeat() {
+  window.clearInterval(controlHeartbeatTimer);
+  controlHeartbeatTimer = null;
+  controlState.commandQueued = false;
+}
+
+function failLocalControl(message) {
+  if (!controlState.sessionActive && !controlState.sessionId) return;
+  stopControlHeartbeat();
+  controlState.sessionActive = false;
+  controlState.sessionId = "";
+  controlState.transportAlive = false;
+  controlState.emergency = true;
+  controlState.lastError = message;
+  resetMotionState();
+  resetAuxiliaryState();
+  renderControlState();
+  showToast(message, true);
+}
+
+async function acquireControl() {
+  if (controlState.emergency) {
+    controlState.emergency = false;
+    controlState.lastError = "";
+    renderControlState();
+    showToast("软件急停状态已确认复位");
+    return;
+  }
+  if (activeVehicleId !== CONTROL_VEHICLE_ID) {
+    showToast("当前只开放 BIT-0041 实车控制", true);
+    return;
+  }
+  controlState.acquiring = true;
+  renderControlState();
+  try {
+    const result = await controlApi(`${CONTROL_API_BASE}/acquire`, {
+      vehicle_id: activeVehicleId,
+      video_ready: videosReadyForControl(),
+    });
+    controlState.sessionId = result.session_id;
+    controlState.sessionActive = true;
+    controlState.backendSessionActive = true;
+    controlState.transportAlive = true;
+    controlState.emergency = false;
+    controlState.lastError = "";
+    controlState.sequence = 0;
+    resetMotionState();
+    resetAuxiliaryState();
+    applyControlConstraints(result.constraints);
+    startControlHeartbeat();
+    showToast("BIT-0041 实车控制已接管");
+  } catch (error) {
+    controlState.lastError = error.message;
+    showToast(error.message, true);
+  } finally {
+    controlState.acquiring = false;
+    renderControlState();
+    void pollControlStatus();
+  }
+}
+
+async function releaseControl(reason = "release", options = {}) {
+  const sessionId = controlState.sessionId;
+  const wasActive = controlState.sessionActive;
+  stopControlHeartbeat();
+  controlState.sessionActive = false;
+  controlState.sessionId = "";
+  controlState.transportAlive = false;
+  controlState.emergency = Boolean(options.emergency);
+  resetMotionState();
+  resetAuxiliaryState();
+  renderControlState();
+  if (!sessionId) return;
+  try {
+    await controlApi(`${CONTROL_API_BASE}/${reason === "estop" ? "estop" : "release"}`, {
+      session_id: sessionId,
+    });
+    controlState.backendSessionActive = false;
+    if (!options.silent && wasActive) {
+      showToast(reason === "estop" ? "实车紧急停止已执行" : "实车控制已释放", reason === "estop");
+    }
+  } catch (error) {
+    controlState.lastError = error.message;
+    if (!options.silent) showToast(error.message, true);
+  } finally {
+    renderControlState();
+    void pollControlStatus();
+  }
+}
+
+function releaseControlOnUnload() {
+  if (unloadReleaseSent || !controlState.sessionId || !controlState.token) return;
+  unloadReleaseSent = true;
+  const body = JSON.stringify({
+    token: controlState.token,
+    session_id: controlState.sessionId,
+  });
+  void fetch(`${CONTROL_API_BASE}/estop`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Control-Token": controlState.token,
+    },
+    body,
+    keepalive: true,
+  });
+}
+
+function setDeadman(active) {
+  const canEnable = controlState.sessionActive && !controlState.emergency;
+  if (active && !canEnable) return;
+  if (controlState.deadman === active) {
+    if (!active) queueControlCommand();
+    return;
+  }
+  controlState.deadman = active;
+  if (!active) {
+    resetMotionState();
+    resetAuxiliaryState();
+  }
+  renderControlState();
+  queueControlCommand();
+}
+
+function setSteering(value) {
+  if (!controlState.deadman) return;
+  const limit = Number(controlState.constraints.max_steering_deg) || 180;
+  controlState.steering = Math.max(-limit, Math.min(limit, Number(value) || 0));
+  renderControlState();
+  queueControlCommand();
+}
+
+function setBrake(value) {
+  if (!controlState.deadman) return;
+  controlState.brake = Math.max(0, Math.min(100, Number(value) || 0));
+  if (controlState.brake > 0) controlState.accelerator = 0;
+  renderControlState();
+  queueControlCommand();
+}
+
+function setAccelerator(value) {
+  if (!controlState.deadman) return;
+  const limit = Number(controlState.constraints.max_accelerator_percent) || 25;
+  controlState.accelerator = Math.max(0, Math.min(limit, Number(value) || 0));
+  if (controlState.accelerator > 0) controlState.brake = 0;
+  renderControlState();
+  queueControlCommand();
+}
+
+function setAuxiliary(name, active) {
+  if (!controlState.deadman || !(name in controlState.auxiliary)) return;
+  if (name === "hazard" && active) {
+    controlState.auxiliary.left = false;
+    controlState.auxiliary.right = false;
+  }
+  if ((name === "left" || name === "right") && active) {
+    controlState.auxiliary.hazard = false;
+    controlState.auxiliary[name === "left" ? "right" : "left"] = false;
+  }
+  controlState.auxiliary[name] = active;
+  renderControlState();
+  queueControlCommand();
+}
+
+function renderControlState() {
+  const selectedControlVehicle = activeVehicleId === CONTROL_VEHICLE_ID;
+  const active = controlState.sessionActive && !controlState.emergency;
+  const authorized = active && controlState.deadman;
+  const videoReady = videosReadyForControl();
+  const vehicleReady = Boolean(controlState.vehicle?.ready_for_acquire);
+  const occupied = controlState.backendSessionActive && !controlState.sessionActive;
+  const canAcquire = selectedControlVehicle
+    && controlState.backendOnline
+    && vehicleReady
+    && !occupied
+    && !controlState.acquiring;
+  const gearInputs = document.querySelectorAll('input[name="gear"]');
+  const auxiliaryButtons = document.querySelectorAll("[data-aux]");
+
+  elements.controlSessionButton.disabled = !(active || controlState.emergency || canAcquire) || controlState.acquiring;
+  elements.deadmanButton.disabled = !active;
+  elements.steeringInput.disabled = !authorized;
+  elements.brakeInput.disabled = !authorized;
+  elements.acceleratorInput.disabled = !authorized;
+  elements.emergencyButton.disabled = !active;
+  gearInputs.forEach((input) => {
+    input.disabled = !authorized;
+    input.checked = input.value === controlState.gear;
+  });
+  auxiliaryButtons.forEach((button) => {
+    const name = button.dataset.aux;
+    button.disabled = !authorized;
+    button.setAttribute("aria-pressed", String(Boolean(controlState.auxiliary[name])));
+  });
+
+  elements.steeringInput.value = String(controlState.steering);
+  elements.brakeInput.value = String(controlState.brake);
+  elements.acceleratorInput.value = String(controlState.accelerator);
+  elements.steeringOutput.textContent = `${Math.round(controlState.steering)} deg`;
+  elements.brakeOutput.textContent = `${Math.round(controlState.brake)}%`;
+  elements.acceleratorOutput.textContent = `${Math.round(controlState.accelerator)} / ${Math.round(controlState.constraints.max_accelerator_percent)}%`;
+  elements.commandSequence.textContent = String(controlState.sequence % 10000).padStart(4, "0");
+
+  elements.controlStatusBadge.className = "control-status-badge";
+  elements.controlGate.dataset.state = "locked";
+  elements.deadmanButton.dataset.active = String(authorized);
+  if (controlState.emergency) {
+    elements.controlStatusBadge.classList.add("is-emergency");
+    elements.controlStatusText.textContent = "急停";
+    elements.controlGate.dataset.state = "emergency";
+    elements.controlGateLabel.textContent = "实车控制已急停";
+    elements.controlGateDetail.textContent = controlState.lastError || "指令已归零，远控模式已退出";
+  } else if (authorized) {
+    elements.controlStatusBadge.classList.add("is-authorized");
+    elements.controlStatusText.textContent = "行驶使能";
+    elements.controlGate.dataset.state = "authorized";
+    elements.controlGateLabel.textContent = "实车指令发送中";
+    elements.controlGateDetail.textContent = "松开使能立即制动并退出远控模式";
+  } else if (active) {
+    elements.controlStatusBadge.classList.add("is-active");
+    elements.controlStatusText.textContent = "已接管";
+    elements.controlGate.dataset.state = "active";
+    elements.controlGateLabel.textContent = "BIT-0041 已接管";
+    elements.controlGateDetail.textContent = "等待行驶使能";
+  } else if (controlState.acquiring) {
+    elements.controlStatusBadge.classList.add("is-ready");
+    elements.controlStatusText.textContent = "接管中";
+    elements.controlGate.dataset.state = "ready";
+    elements.controlGateLabel.textContent = "正在建立实车链路";
+    elements.controlGateDetail.textContent = "正在校验 MQTT 控制与车端安全监护";
+  } else if (canAcquire) {
+    elements.controlStatusBadge.classList.add("is-ready");
+    elements.controlStatusText.textContent = "可接管";
+    elements.controlGate.dataset.state = "ready";
+    elements.controlGateLabel.textContent = "安全预检通过";
+    elements.controlGateDetail.textContent = `BIT-0041 静止，当前 ${[...players.values()].filter((player) => player.state === "live").length}/4 路画面`;
+  } else {
+    elements.controlStatusText.textContent = "未接管";
+    elements.controlGateLabel.textContent = selectedControlVehicle ? "控制暂不可用" : "当前车辆仅监看";
+    elements.controlGateDetail.textContent = controlState.lastError
+      || (!controlState.backendOnline ? "服务器控制网关不可用"
+        : occupied ? "已有实车控制会话"
+          : !vehicleReady ? (controlState.vehicle?.issues || ["车辆安全预检未通过"])[0]
+            : "当前只允许控制 BIT-0041");
+  }
+
+  const sessionButtonLabel = elements.controlSessionButton.querySelector("span");
+  sessionButtonLabel.textContent = controlState.emergency
+    ? "确认复位"
+    : controlState.acquiring ? "接管中"
+      : active ? "释放实车" : "接管实车";
+  elements.deadmanLabel.textContent = authorized ? "保持使能" : "按住使能";
+
+  const vehicle = controlState.vehicle;
+  elements.telemetrySpeed.textContent = Number.isFinite(Number(vehicle?.speed_kph))
+    ? Number(vehicle.speed_kph).toFixed(1) : "--";
+  elements.telemetryGear.textContent = vehicle?.gear || "--";
+  elements.telemetryTargetSteering.textContent = Number.isFinite(Number(vehicle?.remote_steering_deg))
+    ? String(Math.round(Number(vehicle.remote_steering_deg))) : "--";
+  if (vehicle?.local_telemetry) {
+    const age = Number.isFinite(Number(vehicle.remote_command_age_ms))
+      ? `${Math.round(Number(vehicle.remote_command_age_ms))}ms` : "实时";
+    elements.telemetryCommandAck.textContent = vehicle.remote_mode_enabled
+      ? `车端已收到 · ${age}` : `车端安全态 · ${age}`;
+    elements.telemetryCommandAck.dataset.state = vehicle.remote_mode_enabled ? "received" : "safe";
+  } else {
+    elements.telemetryCommandAck.textContent = "等待车端";
+    elements.telemetryCommandAck.dataset.state = "idle";
+  }
+  elements.telemetrySteering.textContent = Number.isFinite(Number(vehicle?.front_steering_deg))
+    ? String(Math.round(Number(vehicle.front_steering_deg))) : "--";
+  elements.telemetryRearSteering.textContent = Number.isFinite(Number(vehicle?.rear_steering_deg))
+    ? String(Math.round(Number(vehicle.rear_steering_deg))) : "--";
+  elements.telemetrySoc.textContent = Number.isFinite(Number(vehicle?.battery_soc))
+    ? String(Math.round(Number(vehicle.battery_soc))) : "--";
+
+  let availability = "当前车辆仅支持视频";
+  if (selectedControlVehicle) {
+    availability = active ? "本页已持有实车控制权"
+      : !controlState.backendOnline ? "服务器安全网关离线"
+        : occupied ? "实车控制会话已占用"
+          : !vehicleReady ? (controlState.vehicle?.issues || ["车辆安全预检未通过"])[0]
+            : videoReady ? "车辆静止，可接管" : "车辆静止，无画面也可接管";
+  }
+  elements.controlAvailability.textContent = availability;
+
+  elements.transportStatusRow.dataset.state = active ? "active" : controlState.backendOnline ? "ready" : "offline";
+  const transportLabel = controlState.transportMode === "mqtt"
+    ? "MQTT"
+    : controlState.transportMode === "mock" ? "MOCK" : "ROS";
+  elements.transportStatus.textContent = active
+    ? `${transportLabel} ACTIVE`
+    : controlState.backendOnline ? `${transportLabel} READY` : "OFFLINE";
+}
+
+function bindControlConsole() {
+  elements.controlSessionButton.addEventListener("click", () => {
+    if (controlState.sessionActive) {
+      void releaseControl("release");
+    } else {
+      void acquireControl();
+    }
+  });
+
+  elements.deadmanButton.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    setDeadman(true);
+  });
+  elements.deadmanButton.addEventListener("keydown", (event) => {
+    if (["Enter", " "].includes(event.key) && !event.repeat) {
+      event.preventDefault();
+      setDeadman(true);
+    }
+  });
+  elements.deadmanButton.addEventListener("keyup", (event) => {
+    if (["Enter", " "].includes(event.key)) setDeadman(false);
+  });
+
+  window.addEventListener("pointerup", () => setDeadman(false));
+  window.addEventListener("pointercancel", () => setDeadman(false));
+  window.addEventListener("blur", () => setDeadman(false));
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) setDeadman(false);
+  });
+
+  document.querySelectorAll('input[name="gear"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      if (!controlState.deadman || !input.checked) return;
+      if (input.value !== controlState.gear && controlState.brake < 50) {
+        showToast("换挡前制动必须达到 50%", true);
+        renderControlState();
+        return;
+      }
+      controlState.gear = input.value;
+      renderControlState();
+      queueControlCommand();
+    });
+  });
+
+  elements.steeringInput.addEventListener("input", () => setSteering(elements.steeringInput.value));
+  elements.steeringInput.addEventListener("pointerup", () => setSteering(0));
+  elements.steeringInput.addEventListener("pointercancel", () => setSteering(0));
+  elements.brakeInput.addEventListener("input", () => setBrake(elements.brakeInput.value));
+  elements.acceleratorInput.addEventListener("input", () => setAccelerator(elements.acceleratorInput.value));
+
+  document.querySelectorAll("[data-aux]").forEach((button) => {
+    const name = button.dataset.aux;
+    button.addEventListener("click", () => {
+      setAuxiliary(name, !controlState.auxiliary[name]);
+    });
+  });
+
+  elements.emergencyButton.addEventListener("click", () => {
+    void releaseControl("estop", { emergency: true });
+  });
+}
+
+function showToast(message, isError = false) {
+  window.clearTimeout(toastTimer);
+  elements.toast.textContent = message;
+  elements.toast.className = `toast visible${isError ? " error" : ""}`;
+  toastTimer = window.setTimeout(() => {
+    elements.toast.className = "toast";
+  }, 2600);
+}
+
+function loadInitialState() {
+  const params = new URLSearchParams(window.location.search);
+  const requestedVehicleId = params.get("vehicle");
+  const requestedDeviceId = params.get("device_id");
+  const savedVehicleId = localStorage.getItem("vehicleStreamViewer.vehicleId");
+  const savedDeviceId = localStorage.getItem("vehicleStreamViewer.deviceId");
+  const route = params.get("route") || localStorage.getItem("vehicleStreamViewer.route") || "auto";
+  const options = [...elements.vehicleSelect.options];
+  const selectedOption = options.find((option) => option.dataset.vehicleId === requestedVehicleId)
+    || options.find((option) => option.value === requestedDeviceId)
+    || options.find((option) => option.dataset.vehicleId === savedVehicleId)
+    || options.find((option) => option.value === savedDeviceId)
+    || options.find((option) => option.dataset.vehicleId === DEFAULT_VEHICLE_ID);
+  if (selectedOption) {
+    elements.vehicleSelect.value = selectedOption.value;
+    activeDeviceId = selectedOption.value;
+    activeVehicleId = selectedOption.dataset.vehicleId || DEFAULT_VEHICLE_ID;
+  }
+  activeRouteMode = PLAY_TARGETS[route] || route === "auto" ? route : "auto";
+  elements.activeDeviceId.textContent = activeVehicleId;
+  const routeInput = document.querySelector(`input[name="route"][value="${activeRouteMode}"]`);
+  if (routeInput) routeInput.checked = true;
+}
+
+function initialize() {
+  loadInitialState();
+  bindControlConsole();
+  document.querySelectorAll(".stream-tile").forEach((tile) => {
+    const player = new StreamPlayer(tile);
+    players.set(player.channel, player);
+  });
+
+  elements.form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void releaseControl("estop", { emergency: false, silent: true }).finally(connectAll);
+  });
+  elements.vehicleSelect.addEventListener("change", () => {
+    void releaseControl("estop", { emergency: false, silent: true }).finally(connectAll);
+  });
+  elements.reconnectAllButton.addEventListener("click", () => {
+    void releaseControl("estop", { emergency: false, silent: true }).finally(connectAll);
+  });
+  elements.copyLinkButton.addEventListener("click", copyCurrentLink);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && elements.videoGrid.classList.contains("has-focus")) {
+      elements.videoGrid.classList.remove("has-focus");
+      document.querySelectorAll(".stream-tile").forEach((tile) => tile.classList.remove("is-focused"));
+    }
+  });
+  window.addEventListener("beforeunload", () => {
+    releaseControlOnUnload();
+    players.forEach((player) => player.close(true));
+  });
+  window.addEventListener("pagehide", releaseControlOnUnload);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && [...players.values()].some((player) => player.state !== "live")) connectAll();
+  });
+
+  clockTimer = window.setInterval(() => {
+    elements.localClock.textContent = new Intl.DateTimeFormat("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(new Date());
+  }, 1000);
+  aggregateTimer = window.setInterval(updateAggregateStatus, 1000);
+  window.setTimeout(() => window.lucide?.createIcons(), 0);
+  connectAll();
+  renderControlState();
+  void bootstrapControl();
+}
+
+initialize();

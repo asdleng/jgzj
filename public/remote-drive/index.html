@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>车端远程驾驶台</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./styles.css?v=20260720-jgzj-remote-drive-1">
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+  <script src="./app.js?v=20260720-jgzj-remote-drive-1" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="brand-icon" aria-hidden="true">
+          <i data-lucide="cctv"></i>
+        </div>
+        <div>
+          <h1>车端远程驾驶台</h1>
+          <div class="fleet-status" aria-live="polite">
+            <span class="status-dot" id="fleetStatusDot"></span>
+            <span id="fleetStatusText">等待连接</span>
+          </div>
+        </div>
+      </div>
+
+      <form class="connection-controls" id="connectionForm">
+        <label class="device-field" for="vehicleSelect">
+          <span>车辆</span>
+          <select id="vehicleSelect" name="vehicle">
+            <optgroup label="BIT 车队">
+              <option value="a001i3829202651720595339" data-vehicle-id="BIT-0011">BIT-0011</option>
+              <option value="a001I3829202691723622254" data-vehicle-id="BIT-0013">BIT-0013</option>
+              <option value="a001I3829202591733810464" data-vehicle-id="BIT-0016">BIT-0016</option>
+              <option value="a001I3829202911732775610" data-vehicle-id="BIT-0019">BIT-0019</option>
+              <option value="a001I3829202661733810464" data-vehicle-id="BIT-0020">BIT-0020</option>
+              <option value="a001I382920271I382920271" data-vehicle-id="BIT-0022">BIT-0022</option>
+              <option value="a001I3829202831732866810" data-vehicle-id="BIT-0030">BIT-0030</option>
+              <option value="a001I3829202911763350050" data-vehicle-id="BIT-0031">BIT-0031</option>
+              <option value="a001I3829202901763433057" data-vehicle-id="BIT-0032">BIT-0032</option>
+              <option value="a001J2507800691764296379" data-vehicle-id="BIT-0033">BIT-0033</option>
+              <option value="a001J2507800731763913599" data-vehicle-id="BIT-0034">BIT-0034</option>
+              <option value="a001J3770700651775700467" data-vehicle-id="BIT-0036">BIT-0036</option>
+              <option value="a001J2507800531775700672" data-vehicle-id="BIT-0037">BIT-0037</option>
+              <option value="a001I3829202881775700760" data-vehicle-id="BIT-0038">BIT-0038</option>
+              <option value="a001J2507800651775701476" data-vehicle-id="BIT-0039">BIT-0039</option>
+              <option value="a001I3829202741775711588" data-vehicle-id="BIT-0040">BIT-0040</option>
+              <option value="a001I3829202711775712260" data-vehicle-id="BIT-0041" selected>BIT-0041</option>
+              <option value="a001J3770700371775713195" data-vehicle-id="BIT-0042">BIT-0042</option>
+              <option value="a001J2507800931782713473" data-vehicle-id="BIT-0046">BIT-0046</option>
+              <option value="a001I3829202651778135815" data-vehicle-id="BIT-0047">BIT-0047</option>
+            </optgroup>
+            <optgroup label="FTUGV 车队">
+              <option value="a001I3829202641733810464" data-vehicle-id="FTUGV-002">FTUGV-002</option>
+              <option value="a001i3829202651720596608" data-vehicle-id="FTUGV-004">FTUGV-004</option>
+            </optgroup>
+          </select>
+        </label>
+
+        <fieldset class="route-control">
+          <legend>线路</legend>
+          <div class="segmented-control">
+            <input type="radio" name="route" id="routeAuto" value="auto" checked>
+            <label for="routeAuto">自动</label>
+            <input type="radio" name="route" id="routeEdge" value="edge">
+            <label for="routeEdge">边缘</label>
+            <input type="radio" name="route" id="routeOrigin" value="origin">
+            <label for="routeOrigin">源站</label>
+          </div>
+        </fieldset>
+
+        <button class="primary-button" type="submit">
+          <i data-lucide="radio-tower"></i>
+          <span>连接</span>
+        </button>
+        <button class="icon-button" id="reconnectAllButton" type="button" title="全部重连" aria-label="全部重连">
+          <i data-lucide="refresh-cw"></i>
+        </button>
+        <button class="icon-button" id="copyLinkButton" type="button" title="复制当前链接" aria-label="复制当前链接">
+          <i data-lucide="link"></i>
+        </button>
+      </form>
+    </header>
+
+    <main>
+      <section class="status-strip" aria-label="连接概览">
+        <div class="status-item">
+          <span class="status-label">车辆</span>
+          <strong id="activeDeviceId">BIT-0041</strong>
+        </div>
+        <div class="status-item">
+          <span class="status-label">在线画面</span>
+          <strong id="onlineCount">0 / 4</strong>
+        </div>
+        <div class="status-item">
+          <span class="status-label">接收码率</span>
+          <strong id="aggregateBitrate">0.00 Mbps</strong>
+        </div>
+        <div class="status-item">
+          <span class="status-label">活动线路</span>
+          <strong id="activeRoute">-</strong>
+        </div>
+        <div class="status-item status-item-time">
+          <span class="status-label">本地时间</span>
+          <strong id="localClock">--:--:--</strong>
+        </div>
+      </section>
+
+      <section class="operation-workspace">
+        <div class="camera-workspace">
+          <div class="workspace-heading">
+            <div>
+              <span class="section-kicker">LIVE CAMERA</span>
+              <h2>环视视频</h2>
+            </div>
+            <span class="camera-layout-label">四路同步</span>
+          </div>
+
+          <section class="video-grid" id="videoGrid" aria-label="车辆摄像头">
+        <article class="stream-tile" data-channel="1">
+          <video autoplay muted playsinline></video>
+          <div class="stream-scrim" aria-hidden="true"></div>
+          <div class="stream-header">
+            <div class="stream-title">
+              <span class="stream-number">01</span>
+              <div>
+                <h2>车前</h2>
+                <span class="stream-path">通道 /1</span>
+              </div>
+            </div>
+            <div class="tile-actions">
+              <button class="tile-icon-button reconnect-button" type="button" title="重连车前" aria-label="重连车前">
+                <i data-lucide="refresh-cw"></i>
+              </button>
+              <button class="tile-icon-button focus-button" type="button" title="聚焦车前" aria-label="聚焦车前">
+                <i data-lucide="maximize-2"></i>
+              </button>
+              <button class="tile-icon-button fullscreen-button" type="button" title="全屏车前" aria-label="全屏车前">
+                <i data-lucide="scan"></i>
+              </button>
+            </div>
+          </div>
+          <div class="stream-state" aria-live="polite">
+            <span class="state-spinner"></span>
+            <strong>等待连接</strong>
+            <span>FRONT CAMERA</span>
+          </div>
+          <div class="stream-footer">
+            <span class="live-pill"><span class="status-dot"></span><span class="state-label">离线</span></span>
+            <div class="stream-metrics">
+              <span class="resolution">-</span>
+              <span class="bitrate">0.00 Mbps</span>
+              <span class="rtt">RTT -</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="stream-tile" data-channel="2">
+          <video autoplay muted playsinline></video>
+          <div class="stream-scrim" aria-hidden="true"></div>
+          <div class="stream-header">
+            <div class="stream-title">
+              <span class="stream-number">02</span>
+              <div>
+                <h2>车后</h2>
+                <span class="stream-path">通道 /2</span>
+              </div>
+            </div>
+            <div class="tile-actions">
+              <button class="tile-icon-button reconnect-button" type="button" title="重连车后" aria-label="重连车后"><i data-lucide="refresh-cw"></i></button>
+              <button class="tile-icon-button focus-button" type="button" title="聚焦车后" aria-label="聚焦车后"><i data-lucide="maximize-2"></i></button>
+              <button class="tile-icon-button fullscreen-button" type="button" title="全屏车后" aria-label="全屏车后"><i data-lucide="scan"></i></button>
+            </div>
+          </div>
+          <div class="stream-state" aria-live="polite"><span class="state-spinner"></span><strong>等待连接</strong><span>REAR CAMERA</span></div>
+          <div class="stream-footer">
+            <span class="live-pill"><span class="status-dot"></span><span class="state-label">离线</span></span>
+            <div class="stream-metrics"><span class="resolution">-</span><span class="bitrate">0.00 Mbps</span><span class="rtt">RTT -</span></div>
+          </div>
+        </article>
+
+        <article class="stream-tile" data-channel="3">
+          <video autoplay muted playsinline></video>
+          <div class="stream-scrim" aria-hidden="true"></div>
+          <div class="stream-header">
+            <div class="stream-title">
+              <span class="stream-number">03</span>
+              <div>
+                <h2>车左</h2>
+                <span class="stream-path">通道 /3</span>
+              </div>
+            </div>
+            <div class="tile-actions">
+              <button class="tile-icon-button reconnect-button" type="button" title="重连车左" aria-label="重连车左"><i data-lucide="refresh-cw"></i></button>
+              <button class="tile-icon-button focus-button" type="button" title="聚焦车左" aria-label="聚焦车左"><i data-lucide="maximize-2"></i></button>
+              <button class="tile-icon-button fullscreen-button" type="button" title="全屏车左" aria-label="全屏车左"><i data-lucide="scan"></i></button>
+            </div>
+          </div>
+          <div class="stream-state" aria-live="polite"><span class="state-spinner"></span><strong>等待连接</strong><span>LEFT CAMERA</span></div>
+          <div class="stream-footer">
+            <span class="live-pill"><span class="status-dot"></span><span class="state-label">离线</span></span>
+            <div class="stream-metrics"><span class="resolution">-</span><span class="bitrate">0.00 Mbps</span><span class="rtt">RTT -</span></div>
+          </div>
+        </article>
+
+        <article class="stream-tile" data-channel="4">
+          <video autoplay muted playsinline></video>
+          <div class="stream-scrim" aria-hidden="true"></div>
+          <div class="stream-header">
+            <div class="stream-title">
+              <span class="stream-number">04</span>
+              <div>
+                <h2>车右</h2>
+                <span class="stream-path">通道 /4</span>
+              </div>
+            </div>
+            <div class="tile-actions">
+              <button class="tile-icon-button reconnect-button" type="button" title="重连车右" aria-label="重连车右"><i data-lucide="refresh-cw"></i></button>
+              <button class="tile-icon-button focus-button" type="button" title="聚焦车右" aria-label="聚焦车右"><i data-lucide="maximize-2"></i></button>
+              <button class="tile-icon-button fullscreen-button" type="button" title="全屏车右" aria-label="全屏车右"><i data-lucide="scan"></i></button>
+            </div>
+          </div>
+          <div class="stream-state" aria-live="polite"><span class="state-spinner"></span><strong>等待连接</strong><span>RIGHT CAMERA</span></div>
+          <div class="stream-footer">
+            <span class="live-pill"><span class="status-dot"></span><span class="state-label">离线</span></span>
+            <div class="stream-metrics"><span class="resolution">-</span><span class="bitrate">0.00 Mbps</span><span class="rtt">RTT -</span></div>
+          </div>
+        </article>
+          </section>
+        </div>
+
+        <aside class="drive-console" aria-label="远程驾驶控制台">
+          <header class="console-header">
+            <div>
+              <span class="section-kicker">REMOTE DRIVE</span>
+              <h2>驾驶控制</h2>
+            </div>
+            <span class="control-status-badge" id="controlStatusBadge">
+              <span class="status-dot"></span>
+              <span id="controlStatusText">未接管</span>
+            </span>
+          </header>
+
+          <section class="console-section mode-section">
+            <div class="real-control-identity">
+              <span class="gate-icon"><i data-lucide="car-front"></i></span>
+              <div>
+                <strong>BIT-0041 实车控制</strong>
+                <span id="controlAvailability">正在读取车辆状态</span>
+              </div>
+            </div>
+
+            <div class="control-gate" id="controlGate">
+              <div class="gate-state">
+                <span class="gate-icon"><i data-lucide="lock-keyhole"></i></span>
+                <div>
+                  <strong id="controlGateLabel">等待安全预检</strong>
+                  <span id="controlGateDetail">正在连接服务器控制网关</span>
+                </div>
+              </div>
+              <button class="secondary-button" id="controlSessionButton" type="button" disabled>
+                <i data-lucide="power"></i>
+                <span>接管实车</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="telemetry-grid" aria-label="车辆遥测">
+            <div class="telemetry-item">
+              <span>车速</span>
+              <strong id="telemetrySpeed">--</strong>
+              <small>km/h</small>
+            </div>
+            <div class="telemetry-item">
+              <span>档位</span>
+              <strong id="telemetryGear">--</strong>
+              <small>GEAR</small>
+            </div>
+            <div class="telemetry-item">
+              <span>车端目标</span>
+              <strong id="telemetryTargetSteering">--</strong>
+              <small id="telemetryCommandAck" data-state="idle">等待车端</small>
+            </div>
+            <div class="telemetry-item">
+              <span>前轮反馈</span>
+              <strong id="telemetrySteering">--</strong>
+              <small>deg</small>
+            </div>
+            <div class="telemetry-item">
+              <span>后轮反馈</span>
+              <strong id="telemetryRearSteering">--</strong>
+              <small>deg</small>
+            </div>
+            <div class="telemetry-item">
+              <span>电量</span>
+              <strong id="telemetrySoc">--</strong>
+              <small>%</small>
+            </div>
+          </section>
+
+          <section class="console-section command-section">
+            <div class="section-heading-row">
+              <div>
+                <span class="section-kicker">MOTION</span>
+                <h3>行驶指令</h3>
+              </div>
+              <span class="command-sequence">SEQ <strong id="commandSequence">0000</strong></span>
+            </div>
+
+            <button class="deadman-button" id="deadmanButton" type="button" disabled>
+              <i data-lucide="fingerprint"></i>
+              <span id="deadmanLabel">按住使能</span>
+            </button>
+
+            <fieldset class="gear-fieldset">
+              <legend>档位</legend>
+              <div class="gear-selector">
+                <input type="radio" name="gear" id="gearP" value="P" checked disabled>
+                <label for="gearP">P</label>
+                <input type="radio" name="gear" id="gearR" value="R" disabled>
+                <label for="gearR">R</label>
+                <input type="radio" name="gear" id="gearN" value="N" disabled>
+                <label for="gearN">N</label>
+                <input type="radio" name="gear" id="gearD" value="D" disabled>
+                <label for="gearD">D</label>
+              </div>
+            </fieldset>
+
+            <label class="range-control steering-control" for="steeringInput">
+              <span class="range-heading">
+                <span>方向盘</span>
+                <output id="steeringOutput" for="steeringInput">0 deg</output>
+              </span>
+              <span class="steering-scale" aria-hidden="true"><span>-180</span><span>0</span><span>180</span></span>
+              <input id="steeringInput" type="range" min="-180" max="180" step="1" value="0" disabled>
+            </label>
+
+            <div class="pedal-controls">
+              <label class="range-control" for="brakeInput">
+                <span class="range-heading"><span>制动</span><output id="brakeOutput" for="brakeInput">100%</output></span>
+                <input id="brakeInput" class="brake-range" type="range" min="0" max="100" step="1" value="100" disabled>
+              </label>
+              <label class="range-control" for="acceleratorInput">
+                <span class="range-heading"><span>加速</span><output id="acceleratorOutput" for="acceleratorInput">0 / 25%</output></span>
+                <input id="acceleratorInput" class="accelerator-range" type="range" min="0" max="25" step="1" value="0" disabled>
+              </label>
+            </div>
+          </section>
+
+          <section class="console-section auxiliary-section">
+            <div class="section-heading-row">
+              <div>
+                <span class="section-kicker">AUXILIARY</span>
+                <h3>灯光与信号</h3>
+              </div>
+            </div>
+            <div class="auxiliary-controls">
+              <button class="aux-button" type="button" data-aux="left" title="左转灯" aria-label="左转灯" aria-pressed="false" disabled><i data-lucide="arrow-left"></i></button>
+              <button class="aux-button" type="button" data-aux="hazard" title="双闪" aria-label="双闪" aria-pressed="false" disabled><i data-lucide="triangle-alert"></i></button>
+              <button class="aux-button" type="button" data-aux="right" title="右转灯" aria-label="右转灯" aria-pressed="false" disabled><i data-lucide="arrow-right"></i></button>
+              <button class="aux-button" type="button" data-aux="headlight" title="近光灯" aria-label="近光灯" aria-pressed="false" disabled><i data-lucide="lightbulb"></i></button>
+            </div>
+          </section>
+
+          <section class="console-section safety-section">
+            <button class="emergency-button" id="emergencyButton" type="button" disabled>
+              <i data-lucide="octagon-x"></i>
+              <span>紧急停止</span>
+            </button>
+            <div class="transport-status">
+              <span><i data-lucide="shield-check"></i> 服务器安全网关</span>
+              <strong id="transportStatus">CONNECTING</strong>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
