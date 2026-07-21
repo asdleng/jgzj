@@ -44,7 +44,7 @@ MAX_BODY_BYTES = 16 * 1024
 ACCESS_LOG = os.environ.get("VEHICLE_VIEWER_ACCESS_LOG", "1").strip().lower() not in {"0", "false", "no"}
 GEAR_TO_CAN = {"P": 0, "R": 1, "N": 2, "D": 3}
 CAN_TO_GEAR = {0: "P", 1: "R", 2: "N", 3: "D"}
-VEHICLE_GEAR = {0: "D", 1: "R", 2: "N", 3: "P"}
+VEHICLE_GEAR = {0: "P", 1: "R", 2: "N", 3: "D"}
 
 
 class GatewayError(RuntimeError):
@@ -508,6 +508,10 @@ class ControlGateway:
                 vehicle["gear"] = VEHICLE_GEAR.get(int(transport_telemetry.get("gear", -1)), "--")
                 vehicle["front_steering_deg"] = float(transport_telemetry.get("front_steering_deg") or 0.0)
                 vehicle["rear_steering_deg"] = float(transport_telemetry.get("rear_steering_deg") or 0.0)
+                vehicle["epb"] = bool(transport_telemetry.get("epb"))
+                vehicle["motor_brake"] = bool(transport_telemetry.get("motor_brake"))
+                vehicle["brake_pressure"] = float(transport_telemetry.get("brake_pressure") or 0.0)
+                vehicle["raw_chassis_status"] = bool(transport_telemetry.get("raw_chassis_status"))
                 vehicle["remote_mode_enabled"] = bool(transport_telemetry.get("remote_mode_enabled"))
                 vehicle["remote_gear_cmd"] = int(transport_telemetry.get("remote_gear_cmd", 0))
                 vehicle["remote_brake_percent"] = float(
@@ -518,6 +522,22 @@ class ControlGateway:
                 )
                 vehicle["remote_command_age_ms"] = round(
                     float(transport_telemetry.get("command_age_s") or 0.0) * 1000.0,
+                    1,
+                )
+                vehicle["downstream_mode_value"] = int(
+                    transport_telemetry.get("downstream_mode_value", 0)
+                )
+                vehicle["downstream_gear_cmd"] = int(
+                    transport_telemetry.get("downstream_gear_cmd", 0)
+                )
+                vehicle["downstream_brake_percent"] = float(
+                    transport_telemetry.get("downstream_brake_percent", 100.0)
+                )
+                vehicle["downstream_steering_deg"] = float(
+                    transport_telemetry.get("downstream_steering_deg", 0.0)
+                )
+                vehicle["downstream_command_age_ms"] = round(
+                    float(transport_telemetry.get("downstream_command_age_s") or 0.0) * 1000.0,
                     1,
                 )
                 vehicle["local_telemetry"] = True
