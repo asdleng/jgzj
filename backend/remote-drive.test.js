@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   CONTROL_ENDPOINTS,
   WEBRTC_TARGETS,
+  normalizeWebRtcHttpStatus,
   registerRemoteDriveRoutes,
   startRemoteDriveSidecar
 } = require('./remote-drive');
@@ -48,4 +49,13 @@ test('remote drive sidecar can be explicitly disabled for tests', () => {
     ready: false,
     disabled: true
   });
+});
+
+test('inactive SRS streams remain a business response instead of a browser HTTP error', () => {
+  assert.equal(
+    normalizeWebRtcHttpStatus(404, JSON.stringify({ code: 404, msg: 'stream not active: live/car/1' })),
+    200
+  );
+  assert.equal(normalizeWebRtcHttpStatus(404, JSON.stringify({ code: 404, msg: 'route missing' })), 404);
+  assert.equal(normalizeWebRtcHttpStatus(502, JSON.stringify({ code: 502, msg: 'upstream failed' })), 502);
 });

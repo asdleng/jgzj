@@ -13,6 +13,21 @@ function boolEnv(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
 
+function normalizeWebRtcHttpStatus(status, responseText) {
+  if (Number(status) !== 404) {
+    return Number(status);
+  }
+  try {
+    const payload = JSON.parse(String(responseText || ''));
+    if (Number(payload.code) === 404 && /stream not active/i.test(String(payload.msg || payload.message || ''))) {
+      return 200;
+    }
+  } catch (_error) {
+    return Number(status);
+  }
+  return Number(status);
+}
+
 function startRemoteDriveSidecar(rootDir, options = {}) {
   if (boolEnv(process.env.REMOTE_DRIVE_SIDECAR_DISABLED) || options.disabled) {
     return { child: null, ready: false, disabled: true };
@@ -205,7 +220,7 @@ function registerRemoteDriveRoutes(app, options = {}) {
         signal: controller.signal
       });
       const text = await response.text();
-      res.status(response.status);
+      res.status(normalizeWebRtcHttpStatus(response.status, text));
       res.setHeader('Cache-Control', 'private, no-store');
       res.type(response.headers.get('content-type') || 'application/json').send(text);
     } catch (error) {
@@ -224,6 +239,7 @@ function registerRemoteDriveRoutes(app, options = {}) {
 module.exports = {
   CONTROL_ENDPOINTS,
   WEBRTC_TARGETS,
+  normalizeWebRtcHttpStatus,
   registerRemoteDriveRoutes,
   startRemoteDriveSidecar
 };
