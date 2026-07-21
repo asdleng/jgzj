@@ -152,7 +152,7 @@
       hasBox: true,
       taskKind: "detect",
       autoClassFilter: false,
-      preferredSource: "web_crawler"
+      preferredSource: "finetune_dataset"
     },
     trash: {
       label: "垃圾事件 · 全部来源 · 默认显示框",
@@ -209,6 +209,7 @@
     { value: "", label: "全部来源" },
     { value: "vehicle_collection", label: "车辆自采" },
     { value: "web_crawler", label: "网络搜索数据集" },
+    { value: "finetune_dataset", label: "Finetune训练集" },
     { value: "checker_archive", label: "云端校核" },
     { value: "public_dataset", label: "公开数据集" }
   ];
@@ -813,7 +814,11 @@
   function datasetSourceGroup(dataset) {
     if (dataset?.source_type === "vehicle_collection") return "vehicle_collection";
     if (dataset?.source_type === "web_crawler" || dataset?.web_crawler || dataset?.summary?.web_crawler) return "web_crawler";
+    if (dataset?.source_type === "finetune_dataset" || dataset?.finetune || dataset?.summary?.finetune) return "finetune_dataset";
     const text = datasetSearchText(dataset);
+    if (text.includes("finetune")) {
+      return "finetune_dataset";
+    }
     const publicTokens = [
       "public",
       "ccpd",

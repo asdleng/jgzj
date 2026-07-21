@@ -3071,10 +3071,30 @@ function yoloReviewSourceLabel(sourceType) {
   if (sourceType === 'web_crawler') {
     return '网络搜索数据集';
   }
+  if (sourceType === 'finetune_dataset') {
+    return 'Finetune训练集';
+  }
   if (sourceType === 'checker_archive') {
     return '车端校核数据';
   }
   return 'YOLO数据集';
+}
+
+function isYoloFinetuneReviewSummary(summary) {
+  if (!summary || typeof summary !== 'object') {
+    return false;
+  }
+  return String(summary.schema || '') === 'jgzj_yolo_finetune_review_dataset.v1' || Boolean(summary.finetune);
+}
+
+function yoloDatasetSourceTypeForSummary(summary, stats = {}) {
+  if (stats.web_crawler) {
+    return 'web_crawler';
+  }
+  if (isYoloFinetuneReviewSummary(summary)) {
+    return 'finetune_dataset';
+  }
+  return 'checker_archive';
 }
 
 function patrolAutoLabelCachePathForSha(imageSha256) {
@@ -4463,7 +4483,7 @@ async function buildYoloDatasetList() {
           stats.web_crawler.review_queue_images = exactReviewQueue;
         }
       }
-      const sourceType = stats.web_crawler ? 'web_crawler' : 'checker_archive';
+      const sourceType = yoloDatasetSourceTypeForSummary(summary, stats);
       const feedback = summary.feedback && typeof summary.feedback === 'object'
         ? {
             total_images: Number(summary.feedback.total_images || 0),
@@ -4504,6 +4524,7 @@ async function buildYoloDatasetList() {
         max_task_id: summary.max_task_id ?? null,
         total_images: stats.total_images,
         web_crawler: stats.web_crawler || null,
+        finetune: summary.finetune || null,
         feedback,
         training_eligible: stats.web_crawler ? stats.web_crawler.training_eligible : null
       });
@@ -4613,7 +4634,7 @@ async function resolveYoloDataset(datasetId) {
       stats.web_crawler.review_queue_images = exactReviewQueue;
     }
   }
-  const sourceType = stats.web_crawler ? 'web_crawler' : 'checker_archive';
+  const sourceType = yoloDatasetSourceTypeForSummary(summary, stats);
   const normalizedSummary = {
     ...summary,
     images: stats.images || {},
@@ -4621,7 +4642,8 @@ async function resolveYoloDataset(datasetId) {
     boxes: stats.boxes || null,
     answers: stats.answers || null,
     by_class_yes: stats.by_class_yes || null,
-    web_crawler: stats.web_crawler || null
+    web_crawler: stats.web_crawler || null,
+    finetune: summary.finetune || null
   };
   return {
     id: `${spec.alias}:${toForwardSlashPath(path.relative(spec.root, datasetDir))}`,
