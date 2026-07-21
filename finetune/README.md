@@ -32,5 +32,6 @@ Notes:
 - External low-confidence samples are pulled through
   `/home/admin1/pull_remote_dateconf_filter_py36.py` when present, with
   `/home/admin1/.ssh/id_ed25519_data_ps_pull` passed to the data-source SSH
-  connection by default. They are labeled through
+  connection by default. Pulls retry 3 times by default to tolerate transient
+  SSH timeouts. They are labeled through
   `scripts/patrol_qwen_label_vehicle_uploads.py`.

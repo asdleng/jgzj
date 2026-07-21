@@ -1,0 +1,168 @@
+{
+  "model": "fire_smoke_yolo",
+  "task_id": "fire_smoke_yolo",
+  "title": "火源烟雾",
+  "task": "detect",
+  "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+  "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+  "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+  "class_id": 0,
+  "class_name": "fire",
+  "qwen_class": "fire",
+  "run_tag": "20260721_test_pull_fix_light",
+  "run_dir": "/home/admin1/jgzj/finetune/runs/20260721_test_pull_fix_light",
+  "pull_script": "/home/admin1/pull_remote_dateconf_filter_py36.py",
+  "pull_ssh_key": "/home/admin1/.ssh/id_ed25519_data_ps_pull",
+  "pull_ssh_options": [
+    "--ssh-option=-o",
+    "--ssh-option=BatchMode=yes",
+    "--ssh-option=-o",
+    "--ssh-option=ConnectTimeout=20",
+    "--ssh-option=-o",
+    "--ssh-option=StrictHostKeyChecking=no",
+    "--ssh-option=-i",
+    "--ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull"
+  ],
+  "pull_retries": 3,
+  "pull_retry_sleep": 5.0
+}
+[2026-07-21 10:09:46] original_scan positives=8/12670 negatives=8/107152
+[2026-07-21 10:09:49] run: /usr/bin/python3 /home/admin1/pull_remote_dateconf_filter_py36.py --ssh-option=-o --ssh-option=BatchMode=yes --ssh-option=-o --ssh-option=ConnectTimeout=20 --ssh-option=-o --ssh-option=StrictHostKeyChecking=no --ssh-option=-i --ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull --output-dir /home/admin1/jgzj/finetune/runs/20260721_test_pull_fix_light/tmp/pulled_low_conf_7d --classes fire --min-conf 0.0 --max-conf 0.5 --strict-max-conf --max-images 5 --time-from 2026-07-15 --time-to 2026-07-21
+[2026-07-21 10:10:14] run: /usr/bin/python3 /home/admin1/pull_remote_dateconf_filter_py36.py --ssh-option=-o --ssh-option=BatchMode=yes --ssh-option=-o --ssh-option=ConnectTimeout=20 --ssh-option=-o --ssh-option=StrictHostKeyChecking=no --ssh-option=-i --ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull --output-dir /home/admin1/jgzj/finetune/runs/20260721_test_pull_fix_light/tmp/pulled_low_conf_7d --classes fire --min-conf 0.0 --max-conf 0.5 --strict-max-conf --max-images 5 --time-from 2026-07-15 --time-to 2026-07-21
+[2026-07-21 10:10:39] run: /usr/bin/python3 /home/admin1/pull_remote_dateconf_filter_py36.py --ssh-option=-o --ssh-option=BatchMode=yes --ssh-option=-o --ssh-option=ConnectTimeout=20 --ssh-option=-o --ssh-option=StrictHostKeyChecking=no --ssh-option=-i --ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull --output-dir /home/admin1/jgzj/finetune/runs/20260721_test_pull_fix_light/tmp/pulled_low_conf_7d --classes fire --min-conf 0.0 --max-conf 0.5 --strict-max-conf --max-images 5 --time-from 2026-07-15 --time-to 2026-07-21
+[2026-07-21 10:10:59] run: /usr/bin/python3 /home/admin1/pull_remote_dateconf_filter_py36.py --ssh-option=-o --ssh-option=BatchMode=yes --ssh-option=-o --ssh-option=ConnectTimeout=20 --ssh-option=-o --ssh-option=StrictHostKeyChecking=no --ssh-option=-i --ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull --output-dir /home/admin1/jgzj/finetune/runs/20260721_test_pull_fix_light/tmp/pulled_low_conf_30d --classes fire --min-conf 0.0 --max-conf 0.5 --strict-max-conf --max-images 5 --time-from 2026-06-22 --time-to 2026-07-21
+[2026-07-21 10:11:24] run: /usr/bin/python3 /home/admin1/pull_remote_dateconf_filter_py36.py --ssh-option=-o --ssh-option=BatchMode=yes --ssh-option=-o --ssh-option=ConnectTimeout=20 --ssh-option=-o --ssh-option=StrictHostKeyChecking=no --ssh-option=-i --ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull --output-dir /home/admin1/jgzj/finetune/runs/20260721_test_pull_fix_light/tmp/pulled_low_conf_30d --classes fire --min-conf 0.0 --max-conf 0.5 --strict-max-conf --max-images 5 --time-from 2026-06-22 --time-to 2026-07-21
+[2026-07-21 10:11:50] run: /usr/bin/python3 /home/admin1/pull_remote_dateconf_filter_py36.py --ssh-option=-o --ssh-option=BatchMode=yes --ssh-option=-o --ssh-option=ConnectTimeout=20 --ssh-option=-o --ssh-option=StrictHostKeyChecking=no --ssh-option=-i --ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull --output-dir /home/admin1/jgzj/finetune/runs/20260721_test_pull_fix_light/tmp/pulled_low_conf_30d --classes fire --min-conf 0.0 --max-conf 0.5 --strict-max-conf --max-images 5 --time-from 2026-06-22 --time-to 2026-07-21
+{
+  "schema": "jgzj_yolo_target_finetune.v1",
+  "created_at": "2026-07-21T10:12:10.218321+08:00",
+  "resolved": {
+    "model": "fire_smoke_yolo",
+    "task_id": "fire_smoke_yolo",
+    "title": "火源烟雾",
+    "task": "detect",
+    "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+    "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+    "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+    "class_id": 0,
+    "class_name": "fire",
+    "qwen_class": "fire",
+    "run_tag": "20260721_test_pull_fix_light",
+    "run_dir": "/home/admin1/jgzj/finetune/runs/20260721_test_pull_fix_light",
+    "pull_script": "/home/admin1/pull_remote_dateconf_filter_py36.py",
+    "pull_ssh_key": "/home/admin1/.ssh/id_ed25519_data_ps_pull",
+    "pull_ssh_options": [
+      "--ssh-option=-o",
+      "--ssh-option=BatchMode=yes",
+      "--ssh-option=-o",
+      "--ssh-option=ConnectTimeout=20",
+      "--ssh-option=-o",
+      "--ssh-option=StrictHostKeyChecking=no",
+      "--ssh-option=-i",
+      "--ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull"
+    ],
+    "pull_retries": 3,
+    "pull_retry_sleep": 5.0
+  },
+  "availability": {
+    "original_positive_images": 12670,
+    "original_negative_images": 107152
+  },
+  "thresholds": {
+    "predict_conf_floor": 0.001,
+    "predict_nms_iou": 0.7,
+    "pos_iou_threshold": 0.5,
+    "normal_pos_min_conf": 0.5,
+    "hard_neg_min_conf": 0.25
+  },
+  "requested": {
+    "original_normal_positive": 1,
+    "original_hard_positive": 1,
+    "feedback_hard_positive": 0,
+    "original_normal_negative": 1,
+    "original_hard_negative": 1,
+    "pulled_hard_negative": 0
+  },
+  "selection": {
+    "original": {
+      "requested": {
+        "original_normal_positive": 1,
+        "original_hard_positive": 1,
+        "original_normal_negative": 1,
+        "original_hard_negative": 1
+      },
+      "selected": {
+        "original_normal_positive": 1,
+        "original_hard_positive": 1,
+        "original_normal_negative": 1,
+        "original_hard_negative": 1
+      },
+      "scanned_positive": 8,
+      "scanned_negative": 8
+    },
+    "feedback_hard_positive": {
+      "requested": 0,
+      "selected": 0,
+      "candidates": 685,
+      "scanned": 8,
+      "aliases": [
+        "fire"
+      ]
+    },
+    "pull_low_conf": {
+      "error": "RuntimeError(\"command_failed rc=1 cmd=/usr/bin/python3 /home/admin1/pull_remote_dateconf_filter_py36.py --ssh-option=-o --ssh-option=BatchMode=yes --ssh-option=-o --ssh-option=ConnectTimeout=20 --ssh-option=-o --ssh-option=StrictHostKeyChecking=no --ssh-option=-i --ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull --output-dir /home/admin1/jgzj/finetune/runs/20260721_test_pull_fix_light/tmp/pulled_low_conf_30d --classes fire --min-conf 0.0 --max-conf 0.5 --strict-max-conf --max-images 5 --time-from 2026-06-22 --time-to 2026-07-21\\nstdout=remote: ps@100.91.32.35\\nremote db: /home/ps/dataring/data/app.db\\nremote raw root: /mnt/storage/raw\\nlocal output dir: /home/admin1/jgzj/finetune/runs/20260721_test_pull_fix_light/tmp/pulled_low_conf_30d\\nclasses: ['fire']\\nexclude classes: []\\nmin conf: 0.0\\nstrict min conf: False\\nmax conf: 0.5\\nstrict max conf: True\\nmax images: 5\\ndate range: 2026-06-22 ~ 2026-07-21\\n--------------------------------------------------------------------------------\\n\\nstderr=ssh: connect to host 100.91.32.35 port 22: Connection timed out\\nremote query/staging failed, exit code: 255\\n\")",
+      "lookback_days": 30,
+      "attempt": 3,
+      "pull_retries": 3,
+      "aliases": [
+        "fire"
+      ],
+      "pull_script": "/home/admin1/pull_remote_dateconf_filter_py36.py",
+      "ssh_options": [
+        "--ssh-option=-o",
+        "--ssh-option=BatchMode=yes",
+        "--ssh-option=-o",
+        "--ssh-option=ConnectTimeout=20",
+        "--ssh-option=-o",
+        "--ssh-option=StrictHostKeyChecking=no",
+        "--ssh-option=-i",
+        "--ssh-option=/home/admin1/.ssh/id_ed25519_data_ps_pull"
+      ]
+    },
+    "pulled_hard_negative": {
+      "requested": 0,
+      "selected": 0,
+      "skipped": true
+    },
+    "external_shortfall_fallback": {
+      "feedback_hard_positive": 0,
+      "pulled_hard_negative": 0
+    }
+  },
+  "dataset": {
+    "dataset_dir": "/home/admin1/jgzj/.runtime/finetune/datasets/20260721_test_pull_fix_light/fire_smoke_yolo_c0_fire_finetune",
+    "data_yaml": "/home/admin1/jgzj/.runtime/finetune/datasets/20260721_test_pull_fix_light/fire_smoke_yolo_c0_fire_finetune/data.yaml",
+    "samples": 4,
+    "split_counts": {
+      "train": 3,
+      "val": 0,
+      "test": 1
+    },
+    "category_counts": {
+      "normal_positive": 1,
+      "hard_positive": 1,
+      "hard_negative": 1,
+      "normal_negative": 1
+    },
+    "source_counts": {
+      "original_normal_positive": 1,
+      "original_hard_positive": 1,
+      "original_hard_negative": 1,
+      "original_normal_negative": 1
+    },
+    "manifest": "/home/admin1/jgzj/.runtime/finetune/datasets/20260721_test_pull_fix_light/fire_smoke_yolo_c0_fire_finetune/samples_manifest.jsonl"
+  },
+  "training": {
+    "skipped": true
+  }
+}
