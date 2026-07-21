@@ -23,7 +23,8 @@ if (root) {
     routes: "/api/park-pcm/crowd/routes",
     greenInspections: "/api/park-pcm/green/inspections",
     greenInspect: "/api/park-pcm/green/inspect",
-    greenStatus: "/api/park-pcm/green/status"
+    greenStatus: "/api/park-pcm/green/status",
+    treeAssets: "/api/park-pcm/green/tree-assets"
   };
   const SAMPLE_LIMIT = 8000;
   const ROUTE_MAX_POINTS = 900;
@@ -64,8 +65,18 @@ if (root) {
     observations: root.querySelector("[data-gm-observations]"),
     issues: root.querySelector("[data-gm-issues]"),
     recommendations: root.querySelector("[data-gm-recommendations]"),
+    ledgerTitle: root.querySelector("[data-gm-ledger-title]"),
+    ledgerKicker: root.querySelector("[data-gm-ledger-kicker]"),
+    ledgerSummary: root.querySelector("[data-gm-ledger-summary]"),
+    ledgerModes: [...root.querySelectorAll("[data-gm-ledger-mode]")],
+    ledgerPanels: [...root.querySelectorAll("[data-gm-ledger-panel]")],
+    treeAssetTableBody: root.querySelector("[data-gm-tree-asset-table-body]"),
+    treeScope: root.querySelector("[data-gm-tree-scope]"),
+    treeReview: root.querySelector("[data-gm-tree-review]"),
+    treeReviewMeta: root.querySelector("[data-gm-tree-review-meta]"),
+    treeReviewActions: [...root.querySelectorAll("[data-gm-tree-review-action]")],
+    scoreTitle: root.querySelector("[data-gm-score-title]"),
     vegetationTableBody: root.querySelector("[data-gm-vegetation-table-body]"),
-    vegetationTableSummary: root.querySelector("[data-gm-vegetation-table-summary]"),
     vegetationFilters: [...root.querySelectorAll("[data-gm-vegetation-filter]")],
     vegetationFilterCounts: Object.fromEntries(
       [...root.querySelectorAll("[data-gm-filter-count]")]
@@ -101,6 +112,9 @@ if (root) {
   el.vegetationTotals = Object.fromEntries(
     [...root.querySelectorAll("[data-gm-vegetation]")].map((node) => [node.dataset.gmVegetation, node])
   );
+  el.treeStats = Object.fromEntries(
+    [...root.querySelectorAll("[data-gm-tree-stat]")].map((node) => [node.dataset.gmTreeStat, node])
+  );
   el.progressBar = root.querySelector("[data-gm-progress-bar]");
   const state = {
     busy: false,
@@ -116,6 +130,12 @@ if (root) {
     inspectionPending: new Set(),
     inspectionErrors: new Map(),
     selectedSampleId: "",
+    ledgerMode: "assets",
+    treeAssets: [],
+    treeAssetSummary: null,
+    treeAssetScopeNotice: "",
+    selectedAssetId: "",
+    treeReviewBusy: false,
     vegetationFilter: "all",
     vegetationTablePage: 0,
     viewMode: "perspective",
@@ -328,6 +348,258 @@ if (root) {
     return fileName.replace(/^\d{4}-\d{2}-\d{2}[_-]\d{2}[-:]\d{2}[-:]\d{2}[_-]?/, "") || fileName;
   }
 
+  function treeReviewLabel(status) {
+    return {
+      confirmed: "人工确认",
+      rejected: "误匹配",
+      unreviewed: "待复核"
+    }[status] || "待复核";
+  }
+
+  function treeReviewState(status) {
+    return status === "confirmed" ? "clear" : status === "rejected" ? "issue" : "attention";
+  }
+
+  function setLedgerMode(mode) {
+    state.ledgerMode = mode === "nodes" ? "nodes" : "assets";
+    el.ledgerModes.forEach((button) => {
+      button.setAttribute("aria-selected", String(button.dataset.gmLedgerMode === state.ledgerMode));
+    });
+    el.ledgerPanels.forEach((panel) => {
+      panel.hidden = panel.dataset.gmLedgerPanel !== state.ledgerMode;
+    });
+    if (el.ledgerTitle) el.ledgerTitle.textContent = state.ledgerMode === "assets" ? "树木资产台账" : "植被分布表";
+    if (el.ledgerKicker) el.ledgerKicker.textContent = state.ledgerMode === "assets" ? "TREE ASSET REGISTER" : "VEGETATION DISTRIBUTION";
+    if (state.ledgerMode === "assets") renderTreeAssetTable();
+    else renderVegetationTable();
+  }
+
+  function geometrySummary(asset) {
+    const pairs = Array.isArray(asset?.geometry_validation?.pairs) ? asset.geometry_validation.pairs : [];
+    if (!pairs.length) return { label: "基准帧", inliers: null, rootError: null };
+    const inliers = pairs.map((item) => number(item.inliers)).filter((value) => value != null);
+    const rootErrors = pairs.map((item) => number(item.root_error_normalized)).filter((value) => value != null);
+    return {
+      label: inliers.length ? `${Math.min(...inliers)}+ 内点` : "已通过",
+      inliers: inliers.length ? Math.min(...inliers) : null,
+      rootError: rootErrors.length ? Math.max(...rootErrors) : null
+    };
+  }
+
+  function updateTreeAssetOverview() {
+    const summary = state.treeAssetSummary || {};
+    if (el.overview["tree-assets"]) el.overview["tree-assets"].textContent = String(summary.asset_count ?? 0);
+    if (el.overview["tree-assets-note"]) {
+      el.overview["tree-assets-note"].textContent = `${summary.multi_day_count || 0} 棵跨天 · ${summary.human_confirmed_count || 0} 棵已确认`;
+    }
+    if (el.treeStats.matched) el.treeStats.matched.textContent = String(summary.auto_matched_count || 0);
+    if (el.treeStats.confirmed) el.treeStats.confirmed.textContent = String(summary.human_confirmed_count || 0);
+    if (el.treeStats.pending) el.treeStats.pending.textContent = String(summary.needs_review_count || 0);
+  }
+
+  function appendAssetTextCell(row, primary, secondary = "") {
+    const cell = document.createElement("td");
+    const block = document.createElement("div");
+    block.className = "gm-table-location";
+    const strong = document.createElement("strong");
+    strong.textContent = primary;
+    const small = document.createElement("small");
+    small.textContent = secondary;
+    block.append(strong, small);
+    cell.appendChild(block);
+    row.appendChild(cell);
+  }
+
+  function renderTreeAssetTable() {
+    if (!el.treeAssetTableBody) return;
+    updateTreeAssetOverview();
+    if (el.treeScope) el.treeScope.textContent = state.treeAssetScopeNotice || "资产 ID 当前限定为同车、同相机、同一路侧视角。";
+    if (state.ledgerMode === "assets" && el.ledgerSummary) {
+      el.ledgerSummary.textContent = state.treeAssets.length
+        ? `${state.vehicleId} · ${state.treeAssets.length} 棵候选 · 点击查看多天证据`
+        : `${state.vehicleId || "当前车辆"} 暂无合格跨天树木资产`;
+    }
+    el.treeAssetTableBody.replaceChildren();
+    if (!state.treeAssets.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 5;
+      cell.className = "gm-table-empty";
+      cell.textContent = "暂未找到满足位置、航向和图像几何门限的独立乔木";
+      row.appendChild(cell);
+      el.treeAssetTableBody.appendChild(row);
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    state.treeAssets.forEach((asset) => {
+      const geometry = geometrySummary(asset);
+      const row = document.createElement("tr");
+      row.dataset.assetId = asset.asset_id;
+      row.dataset.selected = String(asset.asset_id === state.selectedAssetId);
+      appendAssetTextCell(row, asset.asset_id, `${asset.vehicle_id || "-"} · ${asset.camera_id || "相机"}`);
+      appendAssetTextCell(row, `${Number(asset.day_count || 0)} 天`, `${Number(asset.observation_count || 0)} 条观测`);
+      appendAssetTextCell(row, formatTime(asset.last_seen), asset.dates?.length ? asset.dates.slice().sort().join(" / ") : "-");
+      appendAssetTextCell(row, geometry.label, geometry.rootError == null ? "根点已校验" : `根点误差 ${geometry.rootError.toFixed(1)}/1000`);
+      const reviewCell = document.createElement("td");
+      const review = document.createElement("span");
+      review.className = "gm-tree-review-state";
+      review.dataset.state = asset.review_status || "unreviewed";
+      review.textContent = treeReviewLabel(asset.review_status);
+      reviewCell.appendChild(review);
+      row.appendChild(reviewCell);
+      fragment.appendChild(row);
+    });
+    el.treeAssetTableBody.appendChild(fragment);
+  }
+
+  function addAssetIndicator(label, value, note, stateName = "good") {
+    if (!el.indicators) return;
+    const item = document.createElement("div");
+    item.className = "gm-indicator gm-tree-indicator";
+    item.dataset.state = stateName;
+    const name = document.createElement("span");
+    name.textContent = label;
+    const result = document.createElement("strong");
+    result.textContent = value;
+    const detail = document.createElement("p");
+    detail.textContent = note;
+    item.append(name, result, detail);
+    el.indicators.appendChild(item);
+  }
+
+  function renderTreeAssetDetail(asset) {
+    if (!asset) return;
+    state.selectedAssetId = asset.asset_id;
+    if (el.nodeTitle) el.nodeTitle.textContent = asset.asset_id;
+    if (el.nodeMeta) {
+      const station = asset.observation_station || {};
+      el.nodeMeta.textContent = `${asset.vehicle_id || "-"} · ${asset.camera_id || "相机"} · ${asset.day_count || 0} 天 ${asset.observation_count || 0} 次观测 · 车辆观察站 ${formatCoord(station.gaode_longitude)}, ${formatCoord(station.gaode_latitude)}`;
+    }
+    if (el.nodeHealth) {
+      el.nodeHealth.dataset.state = treeReviewState(asset.review_status);
+      el.nodeHealth.textContent = treeReviewLabel(asset.review_status);
+    }
+    if (el.treeReview) el.treeReview.hidden = false;
+    if (el.treeReviewMeta) {
+      el.treeReviewMeta.textContent = asset.review_status === "confirmed"
+        ? `已由 ${asset.reviewed_by || "人工"} 确认 · ${formatTime(asset.reviewed_at)}`
+        : "自动匹配已通过严格门限，仍建议人工确认后纳入正式盘点。";
+    }
+    el.treeReviewActions.forEach((button) => {
+      button.disabled = state.treeReviewBusy || button.dataset.gmTreeReviewAction === asset.review_status;
+    });
+    const observations = Array.isArray(asset.observations) ? asset.observations.slice(0, 4) : [];
+    if (el.frames) {
+      el.frames.replaceChildren();
+      observations.forEach((observation) => {
+        const figure = document.createElement("figure");
+        figure.className = "gm-frame gm-tree-frame";
+        figure.dataset.state = "good";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "gm-frame-button";
+        button.setAttribute("aria-label", `查看 ${observation.date} 树木观测`);
+        const image = document.createElement("img");
+        image.loading = "eager";
+        image.decoding = "async";
+        image.alt = `${asset.asset_id} ${observation.date}`;
+        image.src = redactedImageUrl(observation.image_url);
+        button.appendChild(image);
+        const box = Array.isArray(observation.bbox_1000) ? observation.bbox_1000 : [];
+        if (box.length === 4) {
+          const marker = document.createElement("span");
+          marker.className = "gm-tree-bbox";
+          marker.style.left = `${box[0] / 10}%`;
+          marker.style.top = `${box[1] / 10}%`;
+          marker.style.width = `${(box[2] - box[0]) / 10}%`;
+          marker.style.height = `${(box[3] - box[1]) / 10}%`;
+          button.appendChild(marker);
+        }
+        button.addEventListener("click", () => openPreview(observation, {
+          vehicle_id: asset.vehicle_id,
+          collected_at: observation.collected_at
+        }));
+        const caption = document.createElement("figcaption");
+        const date = document.createElement("span");
+        date.textContent = observation.date || formatTime(observation.collected_at);
+        const match = document.createElement("strong");
+        match.textContent = observation.geometry?.reference ? "身份基准帧" : `${observation.geometry?.inliers || 0} 个几何内点`;
+        const evidence = document.createElement("small");
+        evidence.textContent = observation.evidence || "树干根点与环境关系一致";
+        caption.append(date, match, evidence);
+        figure.append(button, caption);
+        el.frames.appendChild(figure);
+      });
+    }
+    const scored = observations.filter((item) => number(item.context_health_score) != null);
+    const latestScore = scored.length ? number(scored[0].context_health_score) : null;
+    const earliestScore = scored.length ? number(scored[scored.length - 1].context_health_score) : null;
+    const delta = latestScore != null && earliestScore != null ? latestScore - earliestScore : null;
+    if (el.scoreTitle) el.scoreTitle.textContent = "最近节点综合评分";
+    if (el.healthScore) el.healthScore.textContent = latestScore == null ? "-" : String(latestScore);
+    if (el.healthGrade) el.healthGrade.textContent = delta == null ? "暂无可比变化" : `跨期 ${delta > 0 ? "+" : ""}${delta} 分`;
+    if (el.scoreReason) el.scoreReason.textContent = "评分来自该树所在采集节点的四路绿化环境，不等同于单树健康诊断。";
+    if (el.healthPanel) el.healthPanel.dataset.state = "clear";
+    if (el.indicators) {
+      el.indicators.replaceChildren();
+      const geometry = geometrySummary(asset);
+      addAssetIndicator("跨天身份", `${asset.day_count || 0} 天`, "至少连续三天可确认的独立乔木");
+      addAssetIndicator("图像几何", geometry.inliers == null ? "基准" : `${geometry.inliers}+`, "SIFT 几何内点门限不少于 50");
+      addAssetIndicator("根点闭合", geometry.rootError == null ? "已校验" : `${geometry.rootError.toFixed(1)}/1000`, "自动确认门限不超过 20/1000");
+      addAssetIndicator("身份范围", "同视角", "同车、同相机、位置 5 米内、航向差 10°内", "fair");
+    }
+    if (el.inspectionSummary) el.inspectionSummary.textContent = asset.signature || "跨天树干、树冠与固定环境关系一致。";
+    replaceFindingList(el.observations, observations.map((item) => `${item.date}：${item.evidence || "同一实体匹配通过"}`), "暂无跨天观测");
+    replaceFindingList(
+      el.issues,
+      ["当前地图坐标是车辆观察站位置，不是树木实测三维坐标；尚未进行跨相机全园区唯一合并。"],
+      "暂无身份边界说明",
+      true
+    );
+    replaceFindingList(
+      el.recommendations,
+      asset.review_status === "confirmed" ? ["该资产已人工确认，可用于后续健康变化跟踪。"] : ["确认框内确为同一棵独立乔木后，再纳入正式树木盘点。"],
+      "暂无审核动作",
+      asset.review_status === "confirmed"
+    );
+  }
+
+  function selectTreeAsset(assetId, focus = true) {
+    const asset = state.treeAssets.find((item) => item.asset_id === assetId) || state.treeAssets[0];
+    if (!asset) return;
+    setLedgerMode("assets");
+    renderTreeAssetDetail(asset);
+    renderTreeAssetTable();
+    const observation = (asset.observations || []).find((item) => state.visibleSampleById.has(String(item.sample_id || "")));
+    const nodePosition = observation ? state.nodePositions.get(String(observation.sample_id)) : null;
+    if (state.selectedRing && nodePosition) {
+      state.selectedRing.position.x = nodePosition.x;
+      state.selectedRing.position.z = nodePosition.z;
+      state.selectedRing.visible = true;
+    }
+    if (focus && nodePosition && state.controls && state.camera) {
+      const nextTarget = new THREE.Vector3(nodePosition.x, 0, nodePosition.z);
+      const offset = state.camera.position.clone().sub(state.controls.target);
+      state.controls.target.copy(nextTarget);
+      state.camera.position.copy(nextTarget.clone().add(offset));
+      state.controls.update();
+    }
+    requestSceneRender(3);
+  }
+
+  async function loadTreeAssets() {
+    const requestedVehicle = state.vehicleId;
+    if (!requestedVehicle) return;
+    const query = new URLSearchParams({ vehicle_id: requestedVehicle, limit: "300" });
+    const payload = await fetchJson(`${API.treeAssets}?${query.toString()}`).catch(() => ({ assets: [], summary: {} }));
+    if (state.vehicleId !== requestedVehicle) return;
+    state.treeAssets = Array.isArray(payload.assets) ? payload.assets : [];
+    state.treeAssetSummary = payload.summary || {};
+    state.treeAssetScopeNotice = payload.scope_notice || "";
+    if (!state.treeAssets.some((item) => item.asset_id === state.selectedAssetId)) state.selectedAssetId = "";
+    renderTreeAssetTable();
+  }
+
   function filteredVegetationSamples() {
     const rows = state.vegetationFilter === "all"
       ? state.visibleSamples
@@ -369,8 +641,8 @@ if (root) {
     el.vegetationFilters.forEach((button) => {
       button.setAttribute("aria-pressed", String(button.dataset.gmVegetationFilter === state.vegetationFilter));
     });
-    if (el.vegetationTableSummary) {
-      el.vegetationTableSummary.textContent = state.dateKey
+    if (state.ledgerMode === "nodes" && el.ledgerSummary) {
+      el.ledgerSummary.textContent = state.dateKey
         ? `${formatDateKey(state.dateKey)} · ${state.visibleSamples.length} 个地点 · ${analyzedCount} 已识别`
         : "等待当前日期数据";
     }
@@ -596,12 +868,16 @@ if (root) {
       const capture = vehicle?.last_patrol_flow_capture;
       const option = document.createElement("option");
       option.value = vehicle.vehicle_id;
+      const assetLabel = Number(vehicle.tree_asset_count || 0) > 0 ? ` · 树木资产 ${vehicle.tree_asset_count}` : "";
       option.textContent = captureTime(vehicle)
-        ? `${vehicle.vehicle_id} · 最新采集 ${formatTime(capture?.collected_at)}`
+        ? `${vehicle.vehicle_id}${assetLabel} · 最新采集 ${formatTime(capture?.collected_at)}`
         : `${vehicle.vehicle_id} · 暂无采集`;
       el.vehicle.appendChild(option);
     });
-    return ranked.find((vehicle) => captureTime(vehicle))?.vehicle_id || ranked[0]?.vehicle_id || "";
+    return ranked.find((vehicle) => Number(vehicle.tree_asset_count || 0) > 0)?.vehicle_id
+      || ranked.find((vehicle) => captureTime(vehicle))?.vehicle_id
+      || ranked[0]?.vehicle_id
+      || "";
   }
 
   function renderDateOptions(samples, preferredDate = "") {
@@ -1078,6 +1354,8 @@ if (root) {
   }
 
   function renderSampleDetail(sample) {
+    if (el.treeReview) el.treeReview.hidden = true;
+    if (el.scoreTitle) el.scoreTitle.textContent = "植被健康度";
     if (!sample) {
       if (el.nodeTitle) el.nodeTitle.textContent = "采集节点";
       if (el.nodeMeta) el.nodeMeta.textContent = "在地图中选择采集节点。";
@@ -1669,6 +1947,10 @@ if (root) {
       return;
     }
     state.selectedSampleId = sampleId(sample, state.visibleSamples.indexOf(sample));
+    if (focus) {
+      state.selectedAssetId = "";
+      setLedgerMode("nodes");
+    }
     syncVegetationTableSelection();
     renderSampleDetail(sample);
     renderProjects(sample);
@@ -1743,6 +2025,9 @@ if (root) {
       updateSummary(state.visibleSamples, state.routes);
       renderVegetationTable();
       await buildMap(state.visibleSamples, state.routes);
+      if (state.ledgerMode === "assets" && state.treeAssets.length) {
+        selectTreeAsset(state.selectedAssetId || state.treeAssets[0].asset_id, false);
+      }
       setStatus("数据已更新", "ok");
     } finally {
       setBusy(false);
@@ -1765,7 +2050,10 @@ if (root) {
         source: "all",
         limit: String(SAMPLE_LIMIT)
       });
-      const payload = await fetchJson(`${API.samples}?${query.toString()}`);
+      const [payload] = await Promise.all([
+        fetchJson(`${API.samples}?${query.toString()}`),
+        loadTreeAssets()
+      ]);
       setLoadProgress(44, `已读取 ${formatNumber(payload.samples?.length || 0)} 个近期节点`);
       state.allSamples = (Array.isArray(payload.samples) ? payload.samples : [])
         .filter((sample) => !sample?.skipped && samplePosition(sample));
@@ -1860,6 +2148,45 @@ if (root) {
       state.vegetationFilter = button.dataset.gmVegetationFilter || "all";
       state.vegetationTablePage = 0;
       renderVegetationTable();
+    });
+  });
+  el.ledgerModes.forEach((button) => {
+    button.addEventListener("click", () => {
+      const mode = button.dataset.gmLedgerMode;
+      setLedgerMode(mode);
+      if (mode === "assets" && state.treeAssets.length) {
+        selectTreeAsset(state.selectedAssetId || state.treeAssets[0].asset_id, false);
+      }
+      if (mode === "nodes" && state.selectedSampleId) {
+        renderSampleDetail(state.visibleSampleById.get(state.selectedSampleId));
+      }
+    });
+  });
+  el.treeAssetTableBody?.addEventListener("click", (event) => {
+    const row = event.target.closest("tr[data-asset-id]");
+    if (row?.dataset.assetId) selectTreeAsset(row.dataset.assetId, true);
+  });
+  el.treeReviewActions.forEach((button) => {
+    button.addEventListener("click", async () => {
+      const assetId = state.selectedAssetId;
+      const reviewStatus = button.dataset.gmTreeReviewAction;
+      if (!assetId || state.treeReviewBusy) return;
+      state.treeReviewBusy = true;
+      el.treeReviewActions.forEach((item) => { item.disabled = true; });
+      try {
+        await fetchJson(`${API.treeAssets}/${encodeURIComponent(assetId)}/review`, {
+          method: "PATCH",
+          body: { review_status: reviewStatus }
+        });
+        await loadTreeAssets();
+        if (state.treeAssets.length) selectTreeAsset(assetId, false);
+      } catch (error) {
+        if (el.treeReviewMeta) el.treeReviewMeta.textContent = `审核保存失败：${error.message || "请求失败"}`;
+      } finally {
+        state.treeReviewBusy = false;
+        const asset = state.treeAssets.find((item) => item.asset_id === state.selectedAssetId);
+        if (asset) renderTreeAssetDetail(asset);
+      }
     });
   });
   el.vegetationTablePrev?.addEventListener("click", () => {

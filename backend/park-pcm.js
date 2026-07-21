@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+const { registerGreenTreeAssetRoutes } = require('./green-tree-assets');
 
 const execFileAsync = promisify(execFile);
 
@@ -7483,11 +7484,18 @@ print(len(faces))
     }
   });
 
+  const greenTreeAssetRuntime = registerGreenTreeAssetRoutes(app, {
+    requirePermission,
+    rootDir,
+    runtimeRoot
+  });
+
   app.get('/api/park-pcm/green/vehicles', requirePermission('vehicle:read'), async (_req, res) => {
     try {
-      const [vehicles, samples] = await Promise.all([
+      const [vehicles, samples, treeAssets] = await Promise.all([
         listVehicles().catch(() => []),
-        readCrowdSampleLogForAxis({ source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE })
+        readCrowdSampleLogForAxis({ source: VEHICLE_PATROL_FLOW_SAMPLE_SOURCE }),
+        greenTreeAssetRuntime.store.list({ include_rejected: false, limit: 1000 }).catch(() => ({ assets: [] }))
       ]);
       const nowMs = Date.now();
       const vehicleMeta = new Map(
@@ -7496,6 +7504,11 @@ print(len(faces))
           .map((vehicle) => [String(vehicle.vehicle_id), vehicle])
       );
       const latestByVehicle = new Map();
+      const treeAssetCountByVehicle = new Map();
+      (treeAssets.assets || []).forEach((asset) => {
+        const vehicleId = String(asset?.vehicle_id || '').trim();
+        if (vehicleId) treeAssetCountByVehicle.set(vehicleId, (treeAssetCountByVehicle.get(vehicleId) || 0) + 1);
+      });
       samples.forEach((sample) => {
         const vehicleId = String(sample?.vehicle_id || '').trim();
         const collectedAtMs = sampleCollectedAtMs(sample);
@@ -7522,6 +7535,7 @@ print(len(faces))
             last_seen_age_s: ageS,
             fresh: ageS != null && ageS * 1000 <= freshVehicleMs,
             tool_count: vehicle.tool_count == null ? null : vehicle.tool_count,
+            tree_asset_count: treeAssetCountByVehicle.get(vehicleId) || 0,
             telemetry: {
               speed_kph: numberValue(vehicle?.telemetry?.vehicle?.speed_kph ?? vehicle?.telemetry?.vehicle?.speed),
               battery_soc: numberValue(vehicle?.telemetry?.vehicle?.battery_soc),

@@ -43,6 +43,11 @@
       <strong data-gm-overview="average-score">-</strong>
       <em data-gm-overview="score-range">暂无评分</em>
     </article>
+    <article class="gm-overview-stat gm-overview-stat--trees">
+      <span>树木资产</span>
+      <strong data-gm-overview="tree-assets">-</strong>
+      <em data-gm-overview="tree-assets-note">等待跨天匹配</em>
+    </article>
     <article class="gm-overview-stat gm-overview-stat--clear">
       <span>状态良好</span>
       <strong data-gm-overview="clear-count">-</strong>
@@ -140,42 +145,72 @@
     <section class="gm-vegetation-ledger" aria-label="植被分布表">
       <header class="gm-ledger-head">
         <div>
-          <p class="gm-kicker">VEGETATION DISTRIBUTION</p>
-          <h2>植被分布表</h2>
+          <p class="gm-kicker" data-gm-ledger-kicker>TREE ASSET REGISTER</p>
+          <h2 data-gm-ledger-title>树木资产台账</h2>
         </div>
-        <p data-gm-vegetation-table-summary>等待当前日期数据</p>
+        <p data-gm-ledger-summary>等待跨天匹配数据</p>
       </header>
-      <div class="gm-ledger-toolbar">
-        <div class="gm-ledger-filters" role="group" aria-label="植被类型筛选">
-          <button type="button" data-gm-vegetation-filter="all" aria-pressed="true">全部 <b data-gm-filter-count="all">0</b></button>
-          <button type="button" data-gm-vegetation-filter="trees" aria-pressed="false">乔木 <b data-gm-filter-count="trees">0</b></button>
-          <button type="button" data-gm-vegetation-filter="shrubs" aria-pressed="false">灌木 <b data-gm-filter-count="shrubs">0</b></button>
-          <button type="button" data-gm-vegetation-filter="lawn_or_groundcover" aria-pressed="false">草坪 <b data-gm-filter-count="lawn_or_groundcover">0</b></button>
-        </div>
-        <div class="gm-ledger-pagination">
-          <button type="button" data-gm-table-prev aria-label="上一页" title="上一页">‹</button>
-          <span data-gm-table-page>第 1 / 1 页</span>
-          <button type="button" data-gm-table-next aria-label="下一页" title="下一页">›</button>
-        </div>
+      <div class="gm-ledger-mode-tabs" role="tablist" aria-label="台账类型">
+        <button type="button" role="tab" data-gm-ledger-mode="assets" aria-selected="true">树木资产</button>
+        <button type="button" role="tab" data-gm-ledger-mode="nodes" aria-selected="false">采集节点</button>
       </div>
-      <div class="gm-vegetation-table-wrap">
-        <table class="gm-vegetation-table">
-          <thead>
-            <tr>
-              <th scope="col">时间 / 地点</th>
-              <th scope="col">乔木</th>
-              <th scope="col">灌木</th>
-              <th scope="col">草坪</th>
-              <th scope="col">绿化指标</th>
-              <th scope="col">状态</th>
-              <th scope="col"><span class="gm-visually-hidden">操作</span></th>
-            </tr>
-          </thead>
-          <tbody data-gm-vegetation-table-body>
-            <tr><td colspan="7" class="gm-table-empty">等待当前日期数据</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <section class="gm-tree-asset-panel" data-gm-ledger-panel="assets" role="tabpanel">
+        <div class="gm-tree-asset-summary">
+          <span>自动匹配 <strong data-gm-tree-stat="matched">0</strong></span>
+          <span>人工确认 <strong data-gm-tree-stat="confirmed">0</strong></span>
+          <span>待复核 <strong data-gm-tree-stat="pending">0</strong></span>
+        </div>
+        <div class="gm-vegetation-table-wrap gm-tree-asset-table-wrap">
+          <table class="gm-vegetation-table gm-tree-asset-table">
+            <thead>
+              <tr>
+                <th scope="col">资产 ID / 机位</th>
+                <th scope="col">跨天记录</th>
+                <th scope="col">最近发现</th>
+                <th scope="col">几何匹配</th>
+                <th scope="col">复核</th>
+              </tr>
+            </thead>
+            <tbody data-gm-tree-asset-table-body>
+              <tr><td colspan="5" class="gm-table-empty">等待树木资产数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="gm-tree-scope-note" data-gm-tree-scope>资产 ID 当前限定为同车、同相机、同一路侧视角。</p>
+      </section>
+      <section data-gm-ledger-panel="nodes" role="tabpanel" hidden>
+        <div class="gm-ledger-toolbar">
+          <div class="gm-ledger-filters" role="group" aria-label="植被类型筛选">
+            <button type="button" data-gm-vegetation-filter="all" aria-pressed="true">全部 <b data-gm-filter-count="all">0</b></button>
+            <button type="button" data-gm-vegetation-filter="trees" aria-pressed="false">乔木 <b data-gm-filter-count="trees">0</b></button>
+            <button type="button" data-gm-vegetation-filter="shrubs" aria-pressed="false">灌木 <b data-gm-filter-count="shrubs">0</b></button>
+            <button type="button" data-gm-vegetation-filter="lawn_or_groundcover" aria-pressed="false">草坪 <b data-gm-filter-count="lawn_or_groundcover">0</b></button>
+          </div>
+          <div class="gm-ledger-pagination">
+            <button type="button" data-gm-table-prev aria-label="上一页" title="上一页">‹</button>
+            <span data-gm-table-page>第 1 / 1 页</span>
+            <button type="button" data-gm-table-next aria-label="下一页" title="下一页">›</button>
+          </div>
+        </div>
+        <div class="gm-vegetation-table-wrap">
+          <table class="gm-vegetation-table">
+            <thead>
+              <tr>
+                <th scope="col">时间 / 地点</th>
+                <th scope="col">乔木</th>
+                <th scope="col">灌木</th>
+                <th scope="col">草坪</th>
+                <th scope="col">绿化指标</th>
+                <th scope="col">状态</th>
+                <th scope="col"><span class="gm-visually-hidden">操作</span></th>
+              </tr>
+            </thead>
+            <tbody data-gm-vegetation-table-body>
+              <tr><td colspan="7" class="gm-table-empty">等待当前日期数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </section>
   </section>
 
@@ -188,12 +223,19 @@
       <span data-gm-node-health data-state="pending">待分析</span>
     </header>
     <p class="gm-node-meta" data-gm-node-meta>在地图或表格中选择采集节点。</p>
+    <div class="gm-tree-review-actions" data-gm-tree-review hidden>
+      <p data-gm-tree-review-meta>自动匹配结果等待人工复核。</p>
+      <div>
+        <button type="button" data-gm-tree-review-action="confirmed">确认同一棵树</button>
+        <button type="button" data-gm-tree-review-action="rejected">标记误匹配</button>
+      </div>
+    </div>
     <div class="gm-frame-grid" data-gm-frames>
       <p class="gm-empty">等待四路现场图片。</p>
     </div>
     <section class="gm-health-panel" data-state="pending">
       <div class="gm-health-score">
-        <span>植被健康度</span>
+        <span data-gm-score-title>植被健康度</span>
         <strong data-gm-health-score>-</strong>
         <em data-gm-health-grade>选择节点后分析</em>
         <p data-gm-score-reason>五维评分依据将在分析后显示。</p>
@@ -2614,6 +2656,255 @@
     .gm-brief-row .gm-archive-locate {
       grid-column: 2;
       justify-self: start;
+    }
+  }
+
+  .gm-overview {
+    grid-template-columns: minmax(220px, 1.25fr) repeat(5, minmax(105px, 0.62fr)) minmax(250px, 1.35fr);
+  }
+
+  .gm-overview-stat--trees {
+    border-left-color: #79a56f !important;
+  }
+
+  .gm-ledger-mode-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    margin-top: 10px;
+    border: 1px solid #405745;
+  }
+
+  .gm-ledger-mode-tabs button {
+    min-height: 36px;
+    border: 0;
+    border-right: 1px solid #405745;
+    background: #14281d;
+    color: #9da99d;
+    font: inherit;
+    font-size: 0.7rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .gm-ledger-mode-tabs button:last-child {
+    border-right: 0;
+  }
+
+  .gm-ledger-mode-tabs button[aria-selected="true"] {
+    background: #3b371f;
+    color: #e2c77d;
+    box-shadow: inset 0 -2px 0 #d0a442;
+  }
+
+  [data-gm-ledger-panel][hidden],
+  .gm-tree-review-actions[hidden] {
+    display: none !important;
+  }
+
+  [data-gm-ledger-panel] {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .gm-tree-asset-panel {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .gm-tree-asset-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    margin: 9px 0 7px;
+    border-top: 1px solid #314737;
+    border-bottom: 1px solid #314737;
+  }
+
+  .gm-tree-asset-summary span {
+    padding: 8px 7px;
+    border-right: 1px solid #314737;
+    color: #87978a;
+    font-size: 0.65rem;
+    text-align: center;
+  }
+
+  .gm-tree-asset-summary span:last-child {
+    border-right: 0;
+  }
+
+  .gm-tree-asset-summary strong {
+    margin-left: 5px;
+    color: #dbb957;
+  }
+
+  .gm-tree-asset-table-wrap {
+    flex: 1 1 auto;
+  }
+
+  .gm-tree-asset-table tbody tr {
+    cursor: pointer;
+  }
+
+  .gm-tree-asset-table td:nth-child(2),
+  .gm-tree-asset-table td:nth-child(3),
+  .gm-tree-asset-table td:nth-child(4) {
+    min-width: 88px;
+  }
+
+  .gm-tree-asset-table .gm-table-location small {
+    display: block;
+    max-width: 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .gm-tree-review-state {
+    display: inline-flex;
+    min-height: 24px;
+    align-items: center;
+    padding: 0 7px;
+    border: 1px solid #75642f;
+    color: #d6b556;
+    font-size: 0.62rem;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .gm-tree-review-state[data-state="confirmed"] {
+    border-color: #547954;
+    color: #9fc48a;
+  }
+
+  .gm-tree-review-state[data-state="rejected"] {
+    border-color: #7c4037;
+    color: #d66b5b;
+  }
+
+  .gm-tree-scope-note {
+    margin: 8px 0 0;
+    color: #748579;
+    font-size: 0.62rem;
+    line-height: 1.45;
+  }
+
+  .gm-tree-review-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 10px 0 2px;
+    padding: 9px 10px;
+    border: 1px solid #3e543f;
+    background: #12241a;
+  }
+
+  .gm-tree-review-actions p {
+    margin: 0;
+    color: #87978a;
+    font-size: 0.68rem;
+  }
+
+  .gm-tree-review-actions > div {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 7px;
+  }
+
+  .gm-tree-review-actions button {
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid #607650;
+    border-radius: 2px;
+    background: #1d3525;
+    color: #bcd0aa;
+    font: inherit;
+    font-size: 0.67rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .gm-tree-review-actions button[data-gm-tree-review-action="rejected"] {
+    border-color: #6f4038;
+    background: #33211d;
+    color: #d9a096;
+  }
+
+  .gm-tree-review-actions button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .gm-tree-frame .gm-frame-button {
+    position: relative;
+  }
+
+  .gm-tree-bbox {
+    position: absolute;
+    z-index: 2;
+    border: 2px solid #e2b84f;
+    box-shadow: 0 0 0 1px rgba(13, 28, 17, 0.8), inset 0 0 0 1px rgba(13, 28, 17, 0.6);
+    pointer-events: none;
+  }
+
+  .gm-tree-bbox::after {
+    position: absolute;
+    top: -20px;
+    left: -2px;
+    padding: 2px 5px;
+    background: #d3a83f;
+    color: #142016;
+    content: "TREE";
+    font-size: 0.56rem;
+    font-weight: 900;
+  }
+
+  .gm-tree-indicator {
+    grid-template-columns: minmax(70px, 0.7fr) minmax(58px, 0.4fr) minmax(150px, 1.8fr);
+  }
+
+  .gm-tree-indicator p {
+    grid-column: auto;
+    margin: 0;
+  }
+
+  @media (max-width: 1500px) {
+    .gm-overview {
+      grid-template-columns: minmax(240px, 1.2fr) repeat(3, minmax(120px, 0.7fr));
+    }
+
+    .gm-overview > article {
+      border-bottom: 1px solid var(--gm-line);
+    }
+  }
+
+  @media (max-width: 700px) {
+    .gm-overview {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .gm-progress-overview,
+    .gm-distribution {
+      grid-column: 1 / -1;
+    }
+
+    .gm-tree-review-actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .gm-tree-review-actions > div,
+    .gm-tree-review-actions button {
+      flex: 1 1 0;
+    }
+
+    .gm-tree-indicator {
+      grid-template-columns: minmax(80px, 1fr) minmax(70px, 0.6fr);
+    }
+
+    .gm-tree-indicator p {
+      grid-column: 1 / -1;
     }
   }
 </style>
