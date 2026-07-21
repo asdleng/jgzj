@@ -27,7 +27,8 @@
       ]
     }
   ],
-  "labeler_status": "processing",
+  "labeler_status": "positive_promoted",
   "archived_at": "2026-07-21 17:02:14",
-  "labeler_started_at_ms": 1784624534808
+  "labeler_started_at_ms": 1784624534808,
+  "labeler_finished_at_ms": 1784635084319
 }
