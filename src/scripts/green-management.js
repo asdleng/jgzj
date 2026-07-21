@@ -35,6 +35,7 @@ if (root) {
   const el = {
     status: root.querySelector("[data-gm-status]"),
     auth: root.querySelector("[data-gm-auth]"),
+    recordDate: root.querySelector("[data-gm-record-date]"),
     vehicle: root.querySelector("[data-gm-vehicle]"),
     date: root.querySelector("[data-gm-date]"),
     refresh: root.querySelector("[data-gm-refresh]"),
@@ -73,6 +74,10 @@ if (root) {
     vegetationTablePrev: root.querySelector("[data-gm-table-prev]"),
     vegetationTableNext: root.querySelector("[data-gm-table-next]"),
     vegetationTablePage: root.querySelector("[data-gm-table-page]"),
+    timeline: root.querySelector("[data-gm-timeline]"),
+    brief: root.querySelector("[data-gm-brief]"),
+    briefTitle: root.querySelector("[data-gm-brief-title]"),
+    briefMeta: root.querySelector("[data-gm-brief-meta]"),
     projects: root.querySelector("[data-gm-projects]"),
     projectSummary: root.querySelector("[data-gm-project-summary]"),
     preview: root.querySelector("[data-gm-preview]"),
@@ -453,6 +458,9 @@ if (root) {
     el.vegetationTableBody?.querySelectorAll("tr[data-sample-id]").forEach((row) => {
       row.dataset.selected = String(row.dataset.sampleId === state.selectedSampleId);
     });
+    root.querySelectorAll("[data-gm-archive-sample]").forEach((entry) => {
+      entry.dataset.selected = String(entry.dataset.gmArchiveSample === state.selectedSampleId);
+    });
   }
 
   function issueTypeLabel(type) {
@@ -701,10 +709,151 @@ if (root) {
     setMetric("images", String(imageCount));
     setMetric("issues", String(issueCount));
     setMetric("analyzed", `${inspections.length}/${samples.length}`);
+    renderArchiveSummary(samples);
     updateQueueMetric();
     if (el.mapMeta) {
       el.mapMeta.textContent = `${state.vehicleId || "-"} · ${formatDateKey(state.dateKey)} · ${samples.length} 节点 · ${inspections.length} 已分析`;
     }
+  }
+
+  function archiveEvidence(inspection) {
+    const issues = Array.isArray(inspection?.issues) ? inspection.issues : [];
+    if (issues.length) return `${issueTypeLabel(issues[0].type)}：${issues[0].evidence || "需要人工复核"}`;
+    const observations = Array.isArray(inspection?.observations) ? inspection.observations : [];
+    if (observations.length) {
+      return `${observationCategoryLabel(observations[0].category)}：${observations[0].evidence || "已完成图像分析"}`;
+    }
+    if (inspection?.status === "not_assessable") return "画面证据不足，暂不生成健康判断。";
+    if (inspection) return inspection.summary || "已完成四路绿化影像分析。";
+    return "等待进入图像分析队列。";
+  }
+
+  function appendArchiveLocateButton(target, sample, label = "定位节点") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "gm-archive-locate";
+    button.dataset.gmArchiveSample = sampleId(sample, state.visibleSamples.indexOf(sample));
+    button.textContent = label;
+    target.appendChild(button);
+  }
+
+  function renderArchiveSummary(samples) {
+    if (el.recordDate) {
+      el.recordDate.textContent = state.dateKey
+        ? `${formatDateKey(state.dateKey)} · ${state.vehicleId || "巡逻车辆"}`
+        : "正在读取巡检日期";
+    }
+
+    if (el.timeline) {
+      el.timeline.replaceChildren();
+      const timelineSamples = samples.slice(-6);
+      if (!timelineSamples.length) {
+        const empty = document.createElement("p");
+        empty.className = "gm-empty";
+        empty.textContent = "当前日期没有有效采集节点。";
+        el.timeline.appendChild(empty);
+      } else {
+        timelineSamples.forEach((sample) => {
+          const inspection = inspectionFor(sample);
+          const entry = document.createElement("article");
+          entry.className = "gm-timeline-entry";
+          entry.dataset.state = inspection?.status || "pending";
+          entry.dataset.gmArchiveSample = sampleId(sample, state.visibleSamples.indexOf(sample));
+
+          const time = document.createElement("time");
+          time.textContent = formatTime(sample.collected_at, false);
+          const marker = document.createElement("i");
+          marker.setAttribute("aria-hidden", "true");
+          const copy = document.createElement("div");
+          const title = document.createElement("strong");
+          title.textContent = inspection
+            ? `${inspectionStatusLabel(inspection)} · 健康度 ${inspection.health_score ?? "无法判断"}`
+            : "等待绿化分析";
+          const detail = document.createElement("p");
+          detail.textContent = archiveEvidence(inspection);
+          copy.append(title, detail);
+          entry.append(time, marker, copy);
+          appendArchiveLocateButton(entry, sample, "查看");
+          el.timeline.appendChild(entry);
+        });
+      }
+    }
+
+    if (el.brief) {
+      const analyzed = samples.filter((sample) => inspectionFor(sample));
+      const rows = [];
+      samples.forEach((sample) => {
+        const inspection = inspectionFor(sample);
+        if (!inspection) return;
+        const issues = Array.isArray(inspection.issues) ? inspection.issues : [];
+        const recommendations = Array.isArray(inspection.recommendations) ? inspection.recommendations : [];
+        const severity = issues.some((issue) => issue.severity === "high")
+          ? "high"
+          : issues.length || recommendations.length
+            ? "medium"
+            : "low";
+        if (recommendations.length) {
+          recommendations.slice(0, 1).forEach((recommendation) => rows.push({
+            sample,
+            priority: severity,
+            title: recommendation.action || "建议现场复核",
+            detail: recommendation.reason || archiveEvidence(inspection)
+          }));
+        } else if (issues.length) {
+          rows.push({
+            sample,
+            priority: severity,
+            title: `${issueTypeLabel(issues[0].type)}，建议现场复核`,
+            detail: issues[0].evidence || archiveEvidence(inspection)
+          });
+        }
+      });
+
+      if (el.briefTitle) el.briefTitle.textContent = `${state.vehicleId || "当前车辆"} · 当日养护简报`;
+      if (el.briefMeta) {
+        el.briefMeta.textContent = state.dateKey
+          ? `${formatDateKey(state.dateKey)} · 已分析 ${analyzed.length}/${samples.length} 个节点 · ${rows.length} 条有证据建议`
+          : "等待当前日期分析结果。";
+      }
+      el.brief.replaceChildren();
+      rows.slice(0, 6).forEach((row) => {
+        const item = document.createElement("article");
+        item.className = "gm-brief-row";
+        item.dataset.priority = row.priority;
+        item.dataset.gmArchiveSample = sampleId(row.sample, state.visibleSamples.indexOf(row.sample));
+        const priority = document.createElement("span");
+        priority.className = "gm-brief-priority";
+        priority.textContent = row.priority === "high" ? "高优先级" : row.priority === "medium" ? "建议复核" : "持续观察";
+        const copy = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = row.title;
+        const detail = document.createElement("p");
+        detail.textContent = `${formatTime(row.sample.collected_at)} · ${row.detail}`;
+        copy.append(title, detail);
+        item.append(priority, copy);
+        appendArchiveLocateButton(item, row.sample);
+        el.brief.appendChild(item);
+      });
+      if (!rows.length) {
+        const item = document.createElement("article");
+        item.className = "gm-brief-row";
+        item.dataset.priority = analyzed.length ? "clear" : "pending";
+        const priority = document.createElement("span");
+        priority.className = "gm-brief-priority";
+        priority.textContent = analyzed.length ? "当前状态" : "分析进度";
+        const copy = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = analyzed.length ? "已分析节点未见需要生成养护建议的问题" : "等待节点分析完成";
+        const detail = document.createElement("p");
+        detail.textContent = analyzed.length
+          ? "继续按当前路线巡检；无明确问题时不生成工单。"
+          : "分析完成后只汇总有明确四路影像证据的观察。";
+        copy.append(title, detail);
+        item.append(priority, copy);
+        el.brief.appendChild(item);
+      }
+    }
+    syncVegetationTableSelection();
   }
 
   function setProject(name, title, detail, projectState = "unknown") {
@@ -1724,6 +1873,11 @@ if (root) {
   el.vegetationTableBody?.addEventListener("click", (event) => {
     const button = event.target.closest(".gm-table-locate");
     const id = button?.dataset.sampleId;
+    if (id) selectSample(id, true);
+  });
+  root.addEventListener("click", (event) => {
+    const entry = event.target.closest("[data-gm-archive-sample]");
+    const id = entry?.dataset.gmArchiveSample;
     if (id) selectSample(id, true);
   });
   el.previewClose?.addEventListener("click", () => el.preview?.close());

@@ -4,18 +4,29 @@
   data-amap-key="8c2f9f3401e8d0ddfd619074c5f034ef"
 >
   <header class="gm-header">
-    <div class="gm-heading">
-      <p class="gm-kicker">PARK LANDSCAPE OPERATIONS</p>
-      <h1>绿化管理</h1>
-      <p>四向影像、植被健康与养护复核</p>
+    <div class="gm-brand-lockup">
+      <span class="gm-brand-seal" aria-hidden="true">绿</span>
+      <div class="gm-heading">
+        <p class="gm-kicker">LANDSCAPE GUARDIAN · PATROL DOSSIER</p>
+        <h1>绿化管理 · 巡检档案</h1>
+        <p>园区路线、四向影像、植被健康与养护复核</p>
+      </div>
     </div>
-    <div class="gm-live-status" data-gm-status data-state="loading" role="status">
-      <span aria-hidden="true"></span>
-      <strong>数据加载中</strong>
+    <div class="gm-header-tools">
+      <p class="gm-record-date" data-gm-record-date>正在读取巡检日期</p>
+      <div class="gm-live-status" data-gm-status data-state="loading" role="status">
+        <span aria-hidden="true"></span>
+        <strong>数据加载中</strong>
+      </div>
     </div>
   </header>
 
   <div class="gm-auth" data-gm-auth hidden></div>
+
+  <div class="gm-section-rule" aria-hidden="true">
+    <span>园区绿化档案 · LANDSCAPE DOSSIER</span>
+    <i></i>
+  </div>
 
   <section class="gm-overview" aria-label="全园区绿化分析总览">
     <article class="gm-progress-overview">
@@ -171,7 +182,7 @@
   <aside class="gm-inspector" aria-live="polite">
     <header class="gm-inspector-head">
       <div>
-        <p class="gm-kicker">CAPTURE NODE · FOUR CAMERA REVIEW</p>
+        <p class="gm-kicker">CAPTURE DOSSIER · FOUR CAMERA EVIDENCE</p>
         <h2 data-gm-node-title>采集节点</h2>
       </div>
       <span data-gm-node-health data-state="pending">待分析</span>
@@ -213,6 +224,36 @@
       </div>
     </section>
   </aside>
+
+  <section class="gm-archive-band" aria-label="巡检时间线与养护简报">
+    <section class="gm-timeline-panel">
+      <header>
+        <div>
+          <p class="gm-kicker">PATROL TIMELINE</p>
+          <h2>当日状态时间线</h2>
+        </div>
+        <p>按真实采集节点与分析结论生成</p>
+      </header>
+      <div class="gm-timeline-list" data-gm-timeline>
+        <p class="gm-empty">等待当前日期巡检记录。</p>
+      </div>
+    </section>
+
+    <section class="gm-brief-panel">
+      <header>
+        <div>
+          <p class="gm-kicker">DAILY MAINTENANCE BRIEF</p>
+          <h2 data-gm-brief-title>当日养护简报</h2>
+        </div>
+        <span>AI 汇总 · 人工复核</span>
+      </header>
+      <p class="gm-brief-meta" data-gm-brief-meta>等待当前日期分析结果。</p>
+      <div class="gm-brief-list" data-gm-brief>
+        <p class="gm-empty">暂无可汇总的绿化分析。</p>
+      </div>
+      <p class="gm-brief-note">只汇总画面中有明确证据的观察与建议；不会因指标空缺自动生成问题或工单。</p>
+    </section>
+  </section>
 
   <section class="gm-flow-band">
     <header>
@@ -1863,6 +1904,716 @@
 
     .gm-frame figcaption {
       min-height: 86px;
+    }
+  }
+
+  /* Archive theme: keeps the live operational layout while matching the patrol dossier reference. */
+  body:has(.green-management) {
+    background: #0a1610;
+  }
+
+  body:has(.green-management) .site-nav {
+    border-bottom: 1px solid #2c4335;
+    background: #0d1a13;
+    box-shadow: none;
+  }
+
+  body:has(.green-management) .site-nav a {
+    color: #c9c6b7;
+  }
+
+  body:has(.green-management) .site-nav a:hover,
+  body:has(.green-management) .site-nav a[aria-current="page"] {
+    color: #d3aa4d;
+  }
+
+  .green-management-main {
+    padding-top: 14px !important;
+    background: #0a1610;
+    color: #e8e3d5;
+  }
+
+  .green-management {
+    --gm-green: #82a875;
+    --gm-green-dark: #5f865c;
+    --gm-blue: #6999a1;
+    --gm-amber: #d0a442;
+    --gm-red: #cf5846;
+    --gm-ink: #e8e3d5;
+    --gm-muted: #8f9b8c;
+    --gm-line: #304839;
+    --gm-surface: #112219;
+    --gm-surface-strong: #0d1c15;
+    --gm-surface-soft: #182d21;
+    width: min(1680px, 100%);
+    padding: 22px 30px 64px;
+    color: var(--gm-ink);
+  }
+
+  .gm-header {
+    align-items: center;
+    margin-bottom: 18px;
+    padding: 15px 4px 23px;
+    border-bottom-color: var(--gm-line);
+  }
+
+  .gm-brand-lockup,
+  .gm-header-tools,
+  .gm-section-rule,
+  .gm-timeline-panel > header,
+  .gm-brief-panel > header {
+    display: flex;
+    align-items: center;
+  }
+
+  .gm-brand-lockup {
+    min-width: 0;
+    gap: 16px;
+  }
+
+  .gm-brand-seal {
+    display: grid;
+    width: 56px;
+    height: 56px;
+    flex: 0 0 auto;
+    place-items: center;
+    border: 1px solid #ad8530;
+    border-radius: 50%;
+    color: #d0a442;
+    font-size: 1.32rem;
+    font-weight: 500;
+  }
+
+  .gm-heading h1 {
+    margin-top: 6px;
+    color: #eee8d9;
+    font-size: 2rem;
+    font-weight: 650;
+  }
+
+  .gm-heading > p:last-child {
+    margin-top: 7px;
+    color: #8d9a8b;
+    font-size: 0.82rem;
+  }
+
+  .gm-kicker {
+    color: #bd9235;
+    font-size: 0.66rem;
+    font-weight: 750;
+  }
+
+  .gm-header-tools {
+    flex: 0 0 auto;
+    gap: 14px;
+  }
+
+  .gm-record-date {
+    margin: 0;
+    color: #9aa393;
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+
+  .gm-live-status {
+    min-height: 38px;
+    border-color: #3a5140;
+    border-radius: 2px;
+    background: #102019;
+    color: #cbc8ba;
+  }
+
+  .gm-section-rule {
+    gap: 15px;
+    margin: 0 0 15px;
+    color: #c69a39;
+    font-size: 0.68rem;
+    font-weight: 750;
+  }
+
+  .gm-section-rule i {
+    height: 1px;
+    flex: 1 1 auto;
+    background: #3a503e;
+  }
+
+  .gm-overview {
+    gap: 0;
+    margin-bottom: 14px;
+    border: 1px solid var(--gm-line);
+    background: #0f1f17;
+  }
+
+  .gm-overview > article {
+    min-height: 142px;
+    border: 0;
+    border-right: 1px solid var(--gm-line);
+    border-radius: 0;
+    background: #12241a;
+    box-shadow: none;
+  }
+
+  .gm-overview > article:last-child {
+    border-right: 0;
+  }
+
+  .gm-progress-overview {
+    border-left: 3px solid #c89b3a !important;
+  }
+
+  .gm-overview-label span,
+  .gm-distribution header span,
+  .gm-overview-stat > span {
+    color: #b9bdad;
+  }
+
+  .gm-overview-label em,
+  .gm-distribution header em,
+  .gm-overview-stat em,
+  .gm-progress-overview p {
+    color: #7f8e80;
+  }
+
+  .gm-progress-overview > strong,
+  .gm-overview-stat > strong {
+    color: #d6ad51;
+  }
+
+  .gm-progress-overview > strong {
+    font-size: 2.8rem;
+  }
+
+  .gm-overview-stat {
+    border-top: 0 !important;
+    border-left: 2px solid #6b8e69 !important;
+  }
+
+  .gm-overview-stat--score { border-left-color: #c89b3a !important; }
+  .gm-overview-stat--review { border-left-color: #c89b3a !important; }
+  .gm-overview-stat--issue { border-left-color: #bd5141 !important; }
+  .gm-overview-stat--clear > strong { color: #99bb83; }
+  .gm-overview-stat--issue > strong { color: #d46b5a; }
+
+  .gm-progress-track,
+  .gm-band-row > i {
+    border-radius: 0;
+    background: #263b2e;
+  }
+
+  .gm-progress-track i {
+    border-radius: 0;
+    background: #c99b39;
+  }
+
+  .gm-band-row > i > b {
+    background: #91ad78;
+  }
+
+  .gm-band-row[data-band="good"] > i > b { background: #6e9aa0; }
+  .gm-band-row[data-band="watch"] > i > b { background: #c89b3a; }
+  .gm-band-row[data-band="poor"] > i > b { background: #c95a49; }
+
+  .gm-toolbar,
+  .gm-context-metrics {
+    border-color: var(--gm-line);
+    border-radius: 0;
+    background: #0f2018;
+  }
+
+  .gm-field select,
+  .gm-button,
+  .gm-mode-switch {
+    border-color: #415744;
+    border-radius: 2px;
+    background: #182d21;
+    color: #ddd9ca;
+  }
+
+  .gm-mode-switch button[aria-pressed="true"] {
+    background: #d0a442;
+    color: #152016;
+  }
+
+  .gm-button--primary {
+    border-color: #d0a442;
+    background: #d0a442;
+    color: #172117;
+  }
+
+  .gm-context-metrics strong {
+    color: #d8ae50;
+  }
+
+  .gm-workspace {
+    grid-template-columns: minmax(0, 1.42fr) minmax(500px, 0.92fr);
+    gap: 12px;
+    min-height: 620px;
+  }
+
+  .gm-map-stage,
+  .gm-vegetation-ledger,
+  .gm-inspector,
+  .gm-flow-band,
+  .gm-timeline-panel,
+  .gm-brief-panel {
+    border-color: var(--gm-line);
+    border-radius: 2px;
+    background: var(--gm-surface-strong);
+    box-shadow: none;
+  }
+
+  .gm-map-stage,
+  .gm-vegetation-ledger {
+    height: 620px;
+    min-height: 620px;
+    max-height: 620px;
+  }
+
+  .gm-map-stage,
+  .gm-map-canvas {
+    background: #07110d;
+  }
+
+  .gm-map-topline > div,
+  .gm-map-topline > p,
+  .gm-map-source,
+  .gm-map-tooltip {
+    border-color: #415544;
+    background: #0b1912;
+    color: #c6c7b9;
+  }
+
+  .gm-vegetation-table th {
+    background: #102018;
+    color: #b29a63;
+  }
+
+  .gm-vegetation-table tbody tr:hover {
+    background: #182d21;
+  }
+
+  .gm-vegetation-table tbody tr[data-selected="true"] {
+    background: #243725;
+    box-shadow: inset 3px 0 0 #d0a442;
+  }
+
+  .gm-ledger-filters button,
+  .gm-ledger-pagination button,
+  .gm-table-locate,
+  .gm-archive-locate {
+    border-color: #435744;
+    border-radius: 2px;
+    background: #172b20;
+    color: #c7c5b7;
+  }
+
+  .gm-ledger-filters button[aria-pressed="true"] {
+    border-color: #b88d35;
+    background: #3b371f;
+    color: #e1c476;
+  }
+
+  .gm-inspector {
+    margin-top: 14px;
+    padding: 22px;
+  }
+
+  .gm-inspector h2,
+  .gm-operation-note h3,
+  .gm-vegetation-ledger h2,
+  .gm-flow-band h2,
+  .gm-timeline-panel h2,
+  .gm-brief-panel h2 {
+    color: #e8e3d5;
+    font-weight: 650;
+  }
+
+  .gm-inspector-head > span {
+    display: grid;
+    width: 66px;
+    height: 66px;
+    padding: 5px;
+    place-items: center;
+    border-width: 2px;
+    border-color: #9a7830;
+    border-radius: 50%;
+    background: transparent;
+    color: #d0a442;
+    text-align: center;
+    transform: rotate(-6deg);
+  }
+
+  .gm-inspector-head > span[data-state="clear"] {
+    border-color: #6f9a69;
+    background: transparent;
+    color: #9bbc86;
+  }
+
+  .gm-inspector-head > span[data-state="attention"] {
+    border-color: #c69b3f;
+    background: transparent;
+    color: #ddb95e;
+  }
+
+  .gm-inspector-head > span[data-state="issue"] {
+    border-color: #bd5141;
+    background: transparent;
+    color: #db6755;
+  }
+
+  .gm-frame {
+    border-color: #334c3a;
+    border-radius: 2px;
+    background: #08130e;
+  }
+
+  .gm-frame figcaption {
+    border-top-color: #344c3b;
+    background: #12231a;
+  }
+
+  .gm-frame figcaption strong,
+  .gm-health-score strong {
+    color: #d5ad51;
+  }
+
+  .gm-health-panel {
+    border-color: #304839;
+  }
+
+  .gm-indicator {
+    border-color: #314938;
+    border-radius: 2px;
+    background: #15281e;
+  }
+
+  .gm-inspection-summary {
+    border-left-color: #c89b3a;
+    background: #1d3022;
+    color: #d8d5c7;
+  }
+
+  .gm-observation-block li,
+  .gm-finding-columns li {
+    border-left-color: #8b7335;
+    background: #14271d;
+    color: #c9c9bb;
+  }
+
+  .gm-flow-band {
+    padding: 22px;
+  }
+
+  .gm-project-grid article {
+    min-height: 118px;
+    border-color: #334b3a;
+    border-top-color: #8a7135;
+    border-radius: 2px;
+    background: #14261c;
+  }
+
+  .gm-archive-band {
+    display: grid;
+    grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+    gap: 12px;
+    margin-top: 14px;
+  }
+
+  .gm-timeline-panel,
+  .gm-brief-panel {
+    min-width: 0;
+    padding: 22px;
+  }
+
+  .gm-timeline-panel > header,
+  .gm-brief-panel > header {
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--gm-line);
+  }
+
+  .gm-timeline-panel h2,
+  .gm-brief-panel h2 {
+    margin: 4px 0 0;
+    font-size: 1.18rem;
+  }
+
+  .gm-timeline-panel > header > p,
+  .gm-brief-panel > header > span,
+  .gm-brief-meta,
+  .gm-brief-note {
+    margin: 0;
+    color: #879487;
+    font-size: 0.68rem;
+    line-height: 1.5;
+  }
+
+  .gm-brief-panel > header > span {
+    padding: 5px 8px;
+    border: 1px solid #816928;
+    color: #cda443;
+  }
+
+  .gm-timeline-list {
+    position: relative;
+  }
+
+  .gm-timeline-list::before {
+    position: absolute;
+    top: 22px;
+    bottom: 22px;
+    left: 78px;
+    width: 1px;
+    background: #405642;
+    content: "";
+  }
+
+  .gm-timeline-entry {
+    position: relative;
+    display: grid;
+    grid-template-columns: 64px 13px minmax(0, 1fr) auto;
+    gap: 11px;
+    min-height: 82px;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid #263d2e;
+  }
+
+  .gm-timeline-entry:last-child {
+    border-bottom: 0;
+  }
+
+  .gm-timeline-entry[data-selected="true"],
+  .gm-brief-row[data-selected="true"] {
+    background: #1b2e20;
+    box-shadow: inset 3px 0 0 #c99c3b;
+  }
+
+  .gm-timeline-entry time {
+    color: #c89b3a;
+    font-size: 0.67rem;
+    font-weight: 700;
+    text-align: right;
+  }
+
+  .gm-timeline-entry > i {
+    position: relative;
+    z-index: 1;
+    display: block;
+    width: 10px;
+    height: 10px;
+    border: 2px solid #0d1c15;
+    border-radius: 50%;
+    background: #7f9f70;
+    box-shadow: 0 0 0 1px #7f9f70;
+  }
+
+  .gm-timeline-entry[data-state="attention"] > i { background: #c99b3a; box-shadow: 0 0 0 1px #c99b3a; }
+  .gm-timeline-entry[data-state="issue"] > i { background: #c95646; box-shadow: 0 0 0 1px #c95646; }
+  .gm-timeline-entry[data-state="pending"] > i,
+  .gm-timeline-entry[data-state="not_assessable"] > i { background: #708078; box-shadow: 0 0 0 1px #708078; }
+
+  .gm-timeline-entry > div,
+  .gm-brief-row > div {
+    min-width: 0;
+  }
+
+  .gm-timeline-entry strong,
+  .gm-brief-row strong {
+    display: block;
+    overflow: hidden;
+    color: #ddd9ca;
+    font-size: 0.76rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .gm-timeline-entry p,
+  .gm-brief-row p {
+    display: -webkit-box;
+    overflow: hidden;
+    margin: 6px 0 0;
+    color: #8d998c;
+    font-size: 0.67rem;
+    line-height: 1.45;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .gm-archive-locate {
+    min-width: 42px;
+    height: 30px;
+    padding: 0 8px;
+    border-width: 1px;
+    border-style: solid;
+    font: inherit;
+    font-size: 0.63rem;
+    font-weight: 750;
+    cursor: pointer;
+  }
+
+  .gm-archive-locate:hover,
+  .gm-archive-locate:focus-visible {
+    border-color: #bd9135;
+    color: #dbb957;
+  }
+
+  .gm-brief-meta {
+    padding: 11px 0;
+  }
+
+  .gm-brief-list {
+    border-top: 1px solid #263d2e;
+  }
+
+  .gm-brief-row {
+    display: grid;
+    grid-template-columns: 78px minmax(0, 1fr) auto;
+    gap: 14px;
+    min-height: 82px;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #304739;
+  }
+
+  .gm-brief-priority {
+    justify-self: start;
+    padding: 5px 7px;
+    border: 1px solid #6f784b;
+    color: #aab58c;
+    font-size: 0.62rem;
+    white-space: nowrap;
+  }
+
+  .gm-brief-row[data-priority="high"] .gm-brief-priority {
+    border-color: #793d34;
+    color: #d86b59;
+  }
+
+  .gm-brief-row[data-priority="medium"] .gm-brief-priority {
+    border-color: #79652e;
+    color: #d2aa4b;
+  }
+
+  .gm-brief-row[data-priority="clear"] .gm-brief-priority {
+    border-color: #4f724f;
+    color: #91b77f;
+  }
+
+  .gm-brief-note {
+    padding-top: 12px;
+  }
+
+  @media (max-width: 1180px) {
+    .gm-workspace {
+      grid-template-columns: 1fr;
+    }
+
+    .gm-map-stage,
+    .gm-vegetation-ledger {
+      height: 600px;
+      min-height: 600px;
+      max-height: 600px;
+    }
+
+    .gm-archive-band {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .green-management {
+      padding: 14px 12px 44px;
+    }
+
+    .gm-header {
+      gap: 16px;
+    }
+
+    .gm-brand-seal {
+      width: 44px;
+      height: 44px;
+      font-size: 1.05rem;
+    }
+
+    .gm-heading h1 {
+      font-size: 1.45rem;
+    }
+
+    .gm-header-tools {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .gm-record-date {
+      white-space: normal;
+    }
+
+    .gm-overview {
+      gap: 0;
+    }
+
+    .gm-overview > article {
+      border-right: 1px solid var(--gm-line);
+      border-bottom: 1px solid var(--gm-line);
+    }
+
+    .gm-progress-overview > strong {
+      font-size: 2.35rem;
+    }
+
+    .gm-map-stage {
+      height: 58vh;
+      min-height: 480px;
+      max-height: 620px;
+    }
+
+    .gm-vegetation-ledger {
+      height: 540px;
+      min-height: 540px;
+      max-height: 540px;
+    }
+
+    .gm-inspector-head > span {
+      width: 54px;
+      height: 54px;
+      font-size: 0.65rem;
+    }
+
+    .gm-timeline-panel,
+    .gm-brief-panel {
+      padding: 15px;
+    }
+
+    .gm-timeline-panel > header,
+    .gm-brief-panel > header {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .gm-timeline-list::before {
+      left: 61px;
+    }
+
+    .gm-timeline-entry {
+      grid-template-columns: 48px 11px minmax(0, 1fr);
+      gap: 8px;
+    }
+
+    .gm-timeline-entry .gm-archive-locate {
+      grid-column: 3;
+      justify-self: start;
+    }
+
+    .gm-brief-row {
+      grid-template-columns: 76px minmax(0, 1fr);
+      gap: 10px;
+    }
+
+    .gm-brief-row .gm-archive-locate {
+      grid-column: 2;
+      justify-self: start;
     }
   }
 </style>
