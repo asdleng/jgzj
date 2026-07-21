@@ -22,7 +22,7 @@ from websocket_status.msg import vehicleStatus
 PUBLISH_HZ = 20.0
 COMMAND_TIMEOUT_S = 2.0
 BRAKE_HOLD_S = 0.40
-MAX_STEERING_DEG = 180.0
+MAX_STEERING_DEG = 250.0
 MAX_ACCEL = 0.25
 REQUIRED_CONSUMER = "/auto_ad_remote_control"
 VEHICLE_STATUS_TIMEOUT_S = 0.75
@@ -152,7 +152,7 @@ def build_message(mode_enable, gear, accelerator, brake, steering, live_counter,
     message.remote_SteerLamp = state.get("steer_lamp", 0) if mode_enable else 0
     message.remote_UtralStopEnable = 1
     message.remote_FrontLamp = state.get("front_lamp", 0) if mode_enable else 0
-    message.remote_AdScreenCmd = 0
+    message.remote_AdScreenCmd = 1
     message.remote_LiveCounter = live_counter
     message.remote_AmbientCmd = 0
     message.reserved = 0

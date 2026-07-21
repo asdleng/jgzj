@@ -35,12 +35,14 @@ last_remote_command = {
     "remote_gear_cmd": 0,
     "remote_brake_percent": 100.0,
     "remote_steering_deg": 0.0,
+    "remote_ad_screen_cmd": 1,
 }
 last_downstream_command = {
     "downstream_mode_value": 0,
     "downstream_gear_cmd": 0,
     "downstream_brake_percent": 100.0,
     "downstream_steering_deg": 0.0,
+    "downstream_ad_screen_cmd": 1,
 }
 stop_reason = ""
 
@@ -67,6 +69,7 @@ def chassis_status_callback(message):
         "epb": bool(joystick.IDM_EPB_St),
         "motor_brake": bool(motor.motorBrake),
         "brake_pressure": float(vehicle_extra.veh_brake_pressure),
+        "ad_screen_on": bool(vehicle_extra.vehAdScreenSt),
         "running_mode": int(vehicle.vehRunningMode),
         "brake_fault": bool(vehicle.brakeFaultLampSt),
         "steer_fault": bool(vehicle.steerFaultLampSt),
@@ -101,6 +104,7 @@ def mqtt_command_callback(message):
             "remote_gear_cmd": int(message.remote_GearCmd),
             "remote_brake_percent": float(message.remote_BrakePedal),
             "remote_steering_deg": float(message.remote_SteeringAngle),
+            "remote_ad_screen_cmd": int(message.remote_AdScreenCmd),
         })
         if enabled:
             ever_enabled = True
@@ -124,6 +128,7 @@ def downstream_command_callback(message):
             "downstream_gear_cmd": int(message.remote_GearCmd),
             "downstream_brake_percent": float(message.remote_BrakePedal),
             "downstream_steering_deg": float(message.remote_SteeringAngle),
+            "downstream_ad_screen_cmd": int(message.remote_AdScreenCmd),
         })
 
 
@@ -204,7 +209,7 @@ def build_message(mode_enable, gear, live_counter):
     message.remote_SteerLamp = 0
     message.remote_UtralStopEnable = 1
     message.remote_FrontLamp = 0
-    message.remote_AdScreenCmd = 0
+    message.remote_AdScreenCmd = 1
     message.remote_LiveCounter = live_counter
     message.remote_AmbientCmd = 0
     message.reserved = 0

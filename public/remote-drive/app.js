@@ -3,8 +3,8 @@ const DEFAULT_VEHICLE_ID = "BIT-0041";
 const CONTROL_VEHICLE_ID = "BIT-0041";
 const CONTROL_API_BASE = "/api/remote-drive";
 const CONTROL_HEARTBEAT_MS = 100;
-const CONTROL_REQUEST_TIMEOUT_MS = 280;
-const STEERING_COMMAND_DEG = 20;
+const CONTROL_REQUEST_TIMEOUT_MS = 1500;
+const STEERING_COMMAND_DEG = 250;
 const DRIVE_ACCELERATOR_PERCENT = 8;
 const GEAR_SHIFT_SETTLE_MS = 300;
 const PLAY_TARGETS = {
@@ -38,6 +38,7 @@ let controlStatusInFlight = false;
 let unloadReleaseSent = false;
 let gearShiftTimer = null;
 const activeMotionControls = new Set();
+const criticalControlCommands = [];
 
 const controlState = {
   token: "",
@@ -60,7 +61,7 @@ const controlState = {
   vehicle: null,
   lastError: "",
   constraints: {
-    max_steering_deg: 180,
+    max_steering_deg: 250,
     max_accelerator_percent: 25,
   },
 };
@@ -459,6 +460,7 @@ function cancelGearShift() {
 function resetMotionState(commandEnabled = false) {
   cancelGearShift();
   activeMotionControls.clear();
+  criticalControlCommands.length = 0;
   controlState.commandEnabled = commandEnabled;
   controlState.gear = "P";
   controlState.steering = 0;
@@ -510,7 +512,7 @@ async function controlApi(path, payload = null, options = {}) {
 
 function applyControlConstraints(constraints = {}) {
   controlState.constraints = { ...controlState.constraints, ...constraints };
-  const maxSteering = Number(controlState.constraints.max_steering_deg) || 180;
+  const maxSteering = Number(controlState.constraints.max_steering_deg) || 250;
   const maxAccelerator = Number(controlState.constraints.max_accelerator_percent) || 25;
   controlState.steering = Math.max(-maxSteering, Math.min(maxSteering, controlState.steering));
   controlState.accelerator = Math.max(0, Math.min(maxAccelerator, controlState.accelerator));
@@ -566,11 +568,15 @@ function buildControlCommand() {
     accelerator: controlState.accelerator,
     steer_lamp: 0,
     front_lamp: 0,
+    ad_screen: 1,
   };
 }
 
-function queueControlCommand() {
+function queueControlCommand(command = null, options = {}) {
   if (!controlState.sessionActive || !controlState.sessionId) return;
+  if (options.critical) {
+    criticalControlCommands.push(command || buildControlCommand());
+  }
   if (controlState.commandInFlight) {
     controlState.commandQueued = true;
     return;
@@ -584,13 +590,14 @@ async function sendControlCommand() {
   controlState.commandQueued = false;
   advanceCommandSequence();
   const sessionId = controlState.sessionId;
+  const command = criticalControlCommands.shift() || buildControlCommand();
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), CONTROL_REQUEST_TIMEOUT_MS);
   try {
     await controlApi(`${CONTROL_API_BASE}/command`, {
       session_id: sessionId,
       sequence: controlState.sequence,
-      command: buildControlCommand(),
+      command,
     }, { signal: controller.signal });
   } catch (error) {
     if (controlState.sessionId === sessionId) {
@@ -600,7 +607,9 @@ async function sendControlCommand() {
     window.clearTimeout(timeout);
     controlState.commandInFlight = false;
     renderControlState();
-    if (controlState.commandQueued && controlState.sessionActive) queueControlCommand();
+    if ((controlState.commandQueued || criticalControlCommands.length) && controlState.sessionActive) {
+      queueControlCommand();
+    }
   }
 }
 
@@ -614,6 +623,7 @@ function stopControlHeartbeat() {
   window.clearInterval(controlHeartbeatTimer);
   controlHeartbeatTimer = null;
   controlState.commandQueued = false;
+  criticalControlCommands.length = 0;
 }
 
 function failLocalControl(message) {
@@ -760,7 +770,8 @@ function applyLongitudinalIntent() {
     controlState.accelerator = 0;
     controlState.brake = 100;
     renderControlState();
-    queueControlCommand();
+    criticalControlCommands.length = 0;
+    queueControlCommand(buildControlCommand(), { critical: true });
     gearShiftTimer = window.setTimeout(() => {
       gearShiftTimer = null;
       applyThrottle();
@@ -796,6 +807,7 @@ function neutralizeMotion() {
   if (!hadMotion) return;
   cancelGearShift();
   activeMotionControls.clear();
+  criticalControlCommands.length = 0;
   controlState.steering = 0;
   controlState.accelerator = 0;
   controlState.brake = controlState.gear === "P" ? 100 : 0;
@@ -807,12 +819,13 @@ function stopMotion() {
   if (!canSendMotion()) return;
   cancelGearShift();
   activeMotionControls.clear();
+  criticalControlCommands.length = 0;
   controlState.gear = "P";
   controlState.steering = 0;
   controlState.accelerator = 0;
   controlState.brake = 100;
   renderControlState();
-  queueControlCommand();
+  queueControlCommand(buildControlCommand(), { critical: true });
 }
 
 function motionStateLabel() {

@@ -36,9 +36,9 @@ CONTROL_TRANSPORT = os.environ.get("VEHICLE_CONTROL_TRANSPORT", "mqtt").strip().
 CONTROL_VEHICLE_ID = "BIT-0041"
 CONTROL_VIN = "a001I3829202711775712260"
 CONTROL_SSH_TARGET = os.environ.get("VEHICLE_CONTROL_SSH_TARGET", "nvidia@100.98.77.65")
-COMMAND_TIMEOUT_S = 0.35
+COMMAND_TIMEOUT_S = 0.80
 MAX_CLOUD_AGE_S = 45.0
-MAX_STEERING_DEG = 180.0
+MAX_STEERING_DEG = 250.0
 MAX_ACCELERATOR_PERCENT = 25.0
 MAX_BODY_BYTES = 16 * 1024
 ACCESS_LOG = os.environ.get("VEHICLE_VIEWER_ACCESS_LOG", "1").strip().lower() not in {"0", "false", "no"}
@@ -372,6 +372,7 @@ class ControlGateway:
             "steering": 0.0,
             "steer_lamp": 0,
             "front_lamp": 0,
+            "ad_screen": 1,
             "horn": 0,
         }
 
@@ -398,6 +399,7 @@ class ControlGateway:
             "steering": steering,
             "steer_lamp": max(0, min(3, int(raw.get("steer_lamp", 0)))),
             "front_lamp": 1 if raw.get("front_lamp") else 0,
+            "ad_screen": 1,
             "horn": 0,
         }
 
@@ -467,6 +469,7 @@ class ControlGateway:
             "steering": round(float(command.get("steering", 0.0)), 1),
             "steer_lamp": int(command.get("steer_lamp", 0)),
             "front_lamp": int(command.get("front_lamp", 0)),
+            "ad_screen": int(command.get("ad_screen", 1)),
         }
 
     def release(self, session_id: str, reason: str = "release") -> Dict[str, Any]:
@@ -511,6 +514,7 @@ class ControlGateway:
                 vehicle["epb"] = bool(transport_telemetry.get("epb"))
                 vehicle["motor_brake"] = bool(transport_telemetry.get("motor_brake"))
                 vehicle["brake_pressure"] = float(transport_telemetry.get("brake_pressure") or 0.0)
+                vehicle["ad_screen_on"] = bool(transport_telemetry.get("ad_screen_on"))
                 vehicle["raw_chassis_status"] = bool(transport_telemetry.get("raw_chassis_status"))
                 vehicle["remote_mode_enabled"] = bool(transport_telemetry.get("remote_mode_enabled"))
                 vehicle["remote_gear_cmd"] = int(transport_telemetry.get("remote_gear_cmd", 0))
@@ -519,6 +523,9 @@ class ControlGateway:
                 )
                 vehicle["remote_steering_deg"] = float(
                     transport_telemetry.get("remote_steering_deg", 0.0)
+                )
+                vehicle["remote_ad_screen_cmd"] = int(
+                    transport_telemetry.get("remote_ad_screen_cmd", 1)
                 )
                 vehicle["remote_command_age_ms"] = round(
                     float(transport_telemetry.get("command_age_s") or 0.0) * 1000.0,
@@ -535,6 +542,9 @@ class ControlGateway:
                 )
                 vehicle["downstream_steering_deg"] = float(
                     transport_telemetry.get("downstream_steering_deg", 0.0)
+                )
+                vehicle["downstream_ad_screen_cmd"] = int(
+                    transport_telemetry.get("downstream_ad_screen_cmd", 1)
                 )
                 vehicle["downstream_command_age_ms"] = round(
                     float(transport_telemetry.get("downstream_command_age_s") or 0.0) * 1000.0,

@@ -38,6 +38,8 @@ MQTT_HOST = os.environ.get("VEHICLE_MQTT_HOST", "120.77.179.98")
 MQTT_PORT = int(os.environ.get("VEHICLE_MQTT_PORT", "1883"))
 CONTROL_VIN = "a001I3829202711775712260"
 CONTROL_TOPIC = f"/auto-rd/rdu/{CONTROL_VIN}"
+TRANSPORT_HEARTBEAT_S = 0.10
+REMOTE_STEERING_LIMIT_DEG = 250
 CONTROL_SSH_TARGET = os.environ.get("VEHICLE_CONTROL_SSH_TARGET", "nvidia@100.98.77.65")
 CONTROL_SSH_KEY = os.environ.get("VEHICLE_CONTROL_SSH_KEY", "/home/weilin/.ssh/id_ed25519")
 
@@ -175,7 +177,10 @@ def encode_remote_command(command: Dict[str, Any], sequence: int, timestamp_ms: 
     enabled = 1 if command.get("deadman") else 0
     can_gear = int(command.get("gear", 0))
     mqtt_gear = {0: 0, 1: 3, 2: 1, 3: 2}.get(can_gear, 0)
-    steering_request = max(-180, min(180, -int(round(float(command.get("steering", 0.0))))))
+    steering_request = max(
+        -REMOTE_STEERING_LIMIT_DEG,
+        min(REMOTE_STEERING_LIMIT_DEG, -int(round(float(command.get("steering", 0.0))))),
+    )
     accelerator = max(0, min(25, int(round(float(command.get("accelerator", 0.0)) * 100.0))))
     brake = max(0, min(100, int(round(float(command.get("brake", 100.0))))))
     steer_lamp = int(command.get("steer_lamp", 0))
@@ -190,7 +195,7 @@ def encode_remote_command(command: Dict[str, Any], sequence: int, timestamp_ms: 
         1 if steer_lamp == 1 else 0,
         1 if steer_lamp == 2 else 0,
         1 if steer_lamp == 3 else 0,
-        0,
+        1 if command.get("ad_screen", True) else 0,
         0,
         1 if command.get("horn") else 0,
         0,
@@ -526,6 +531,8 @@ class GuardedMqttTransport:
         self._event: Optional[Dict[str, Any]] = None
         self._fault_event: Optional[Dict[str, Any]] = None
         self._closed = False
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: Optional[threading.Thread] = None
 
     def _set_fault(self, event: Dict[str, Any]) -> None:
         with self._lock:
@@ -551,6 +558,13 @@ class GuardedMqttTransport:
                 on_fault=self._mqtt_fault,
             )
             self.client.connect()
+            self._heartbeat_stop.clear()
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat_loop,
+                name="remote-mqtt-heartbeat",
+                daemon=True,
+            )
+            self._heartbeat_thread.start()
             self._event = {
                 "event": "ready",
                 "transport": "mqtt",
@@ -567,6 +581,26 @@ class GuardedMqttTransport:
         payload = encode_remote_command(command, self._sequence)
         self.client.publish(payload)
 
+    def _heartbeat_loop(self) -> None:
+        while not self._heartbeat_stop.wait(TRANSPORT_HEARTBEAT_S):
+            with self._lock:
+                if self._closed:
+                    return
+                command = dict(self._last_command)
+                if not command:
+                    continue
+                try:
+                    self._publish(command)
+                except Exception as error:
+                    self._set_fault(
+                        {
+                            "event": "closed",
+                            "reason": "mqtt_heartbeat_failed",
+                            "detail": str(error),
+                        }
+                    )
+                    return
+
     def send(self, payload: Dict[str, Any]) -> None:
         with self._lock:
             if self._closed:
@@ -582,6 +616,7 @@ class GuardedMqttTransport:
             if self._closed:
                 return
             self._closed = True
+            self._heartbeat_stop.set()
             client = self.client
             if client and client.is_alive():
                 try:
@@ -595,6 +630,7 @@ class GuardedMqttTransport:
                             "steering": 0.0,
                             "steer_lamp": 0,
                             "front_lamp": 0,
+                            "ad_screen": 1,
                             "horn": 0,
                         }
                         for _ in range(8):
@@ -608,6 +644,7 @@ class GuardedMqttTransport:
                         "steering": 0.0,
                         "steer_lamp": 0,
                         "front_lamp": 0,
+                        "ad_screen": 1,
                         "horn": 0,
                     }
                     for _ in range(4):
@@ -619,6 +656,10 @@ class GuardedMqttTransport:
                 client.close()
             self.client = None
         self.guard.close(reason)
+        heartbeat_thread = self._heartbeat_thread
+        if heartbeat_thread and heartbeat_thread is not threading.current_thread():
+            heartbeat_thread.join(timeout=1.0)
+        self._heartbeat_thread = None
 
     def is_alive(self) -> bool:
         with self._lock:
