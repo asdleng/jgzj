@@ -29,6 +29,7 @@ const registerCrowdCpmRoutes = require('./crowd-cpm');
 const registerParkPcmRoutes = require('./park-pcm');
 const { registerRemoteDriveRoutes } = require('./remote-drive');
 const registerOneApiProxyRoutes = require('./one-api-proxy');
+const { registerLidarMapUploadProxyRoutes } = require('./lidar-map-upload-proxy');
 const { createAsyncTtlCache } = require('./async-ttl-cache');
 const { registerMapPackageUploadRoutes } = require('./map-package-upload');
 const { registerSemanticAnchorInferRoutes } = require('./semantic-anchor-infer');
@@ -1232,6 +1233,7 @@ registerOneApiProxyRoutes(app, {
   rootDir: path.resolve(__dirname, '..'),
   statusAuthMiddleware: authStore.requirePermission('ai:chat')
 });
+registerLidarMapUploadProxyRoutes(app);
 app.use(express.json({ limit: '16mb' }));
 
 function normalizeReply(text) {
