@@ -37,6 +37,7 @@ CONTROL_VEHICLE_ID = "BIT-0041"
 CONTROL_VIN = "a001I3829202711775712260"
 CONTROL_SSH_TARGET = os.environ.get("VEHICLE_CONTROL_SSH_TARGET", "nvidia@100.98.77.65")
 COMMAND_TIMEOUT_S = 0.80
+VEHICLE_COMMAND_TIMEOUT_S = 1.50
 MAX_CLOUD_AGE_S = 45.0
 MAX_STEERING_DEG = 250.0
 MAX_ACCELERATOR_PERCENT = 25.0
@@ -347,8 +348,10 @@ class ControlGateway:
         )
         self.time_fn = time_fn
         self.lock = threading.RLock()
+        self.lease_lock = threading.Lock()
         self.token = secrets.token_urlsafe(32)
         self.session_id: Optional[str] = None
+        self.lease_session_id: Optional[str] = None
         self.acquiring = False
         self.transport: Optional[Any] = None
         self.last_browser_at = 0.0
@@ -360,6 +363,32 @@ class ControlGateway:
         if start_watchdog:
             threading.Thread(target=self._watchdog_loop, name="control-watchdog", daemon=True).start()
             threading.Thread(target=self._safety_loop, name="vehicle-safety-watchdog", daemon=True).start()
+
+    def _start_browser_lease(self, session_id: str) -> None:
+        with self.lease_lock:
+            self.lease_session_id = session_id
+            self.last_browser_at = self.time_fn()
+
+    def _renew_browser_lease(self, session_id: str) -> bool:
+        with self.lease_lock:
+            if not self.lease_session_id or not hmac.compare_digest(str(session_id), self.lease_session_id):
+                return False
+            self.last_browser_at = self.time_fn()
+            return True
+
+    def _browser_lease_expired(self, session_id: str) -> bool:
+        with self.lease_lock:
+            return bool(
+                not self.lease_session_id
+                or not hmac.compare_digest(str(session_id), self.lease_session_id)
+                or self.time_fn() - self.last_browser_at > COMMAND_TIMEOUT_S
+            )
+
+    def _clear_browser_lease(self, session_id: str) -> None:
+        with self.lease_lock:
+            if self.lease_session_id and hmac.compare_digest(str(session_id), self.lease_session_id):
+                self.lease_session_id = None
+                self.last_browser_at = 0.0
 
     @staticmethod
     def _safe_command() -> Dict[str, Any]:
@@ -423,7 +452,7 @@ class ControlGateway:
                     raise GatewayError("本地控制网关正在退出", HTTPStatus.SERVICE_UNAVAILABLE)
                 self.transport = transport
                 self.session_id = uuid.uuid4().hex
-                self.last_browser_at = self.time_fn()
+                self._start_browser_lease(self.session_id)
                 self.last_sequence = -1
                 self.last_command = safe_command
                 self.last_error = ""
@@ -453,11 +482,16 @@ class ControlGateway:
             if not self.transport or not self.transport.is_alive():
                 raise GatewayError("实车控制链路已断开", HTTPStatus.SERVICE_UNAVAILABLE)
             sanitized = self._sanitize(raw)
+            self._renew_browser_lease(session_id)
             self.transport.send(sanitized)
             self.last_sequence = sequence
-            self.last_browser_at = self.time_fn()
             self.last_command = sanitized
             return {"ok": True, "sequence": sequence, "applied": self._public_command(sanitized)}
+
+    def heartbeat(self, session_id: str) -> Dict[str, Any]:
+        if not self._renew_browser_lease(session_id):
+            raise GatewayError("实车控制会话无效", HTTPStatus.CONFLICT)
+        return {"ok": True, "session_active": True}
 
     @staticmethod
     def _public_command(command: Dict[str, Any]) -> Dict[str, Any]:
@@ -484,6 +518,7 @@ class ControlGateway:
             self.session_id = None
             self.last_command = self._safe_command()
             self.last_sequence = -1
+            self._clear_browser_lease(str(session_id or ""))
         if transport:
             transport.close("estop" if reason == "estop" else "release")
         return {"ok": True, "released": True, "reason": reason}
@@ -494,7 +529,7 @@ class ControlGateway:
             "max_steering_deg": MAX_STEERING_DEG,
             "max_accelerator_percent": MAX_ACCELERATOR_PERCENT,
             "command_timeout_ms": int(COMMAND_TIMEOUT_S * 1000),
-            "vehicle_command_timeout_ms": 600,
+            "vehicle_command_timeout_ms": int(VEHICLE_COMMAND_TIMEOUT_S * 1000),
             "requires_deadman": True,
             "video_required": False,
         }
@@ -569,7 +604,8 @@ class ControlGateway:
         with self.lock:
             if not self.session_id:
                 return
-            expired = self.time_fn() - self.last_browser_at > COMMAND_TIMEOUT_S
+            active_session_id = self.session_id
+            expired = self._browser_lease_expired(active_session_id)
             dead_transport = not self.transport or not self.transport.is_alive()
             transport_event = self.transport.fault_event if self.transport else None
             event_name = (transport_event or {}).get("event")
@@ -584,6 +620,8 @@ class ControlGateway:
             )
             if not expired and not dead_transport and not remote_fault:
                 return
+            if expired and not self._browser_lease_expired(active_session_id):
+                return
             transport = self.transport
             if transport_event:
                 self.last_transport_event = transport_event
@@ -591,12 +629,15 @@ class ControlGateway:
             self.session_id = None
             self.last_command = self._safe_command()
             self.last_sequence = -1
+            self._clear_browser_lease(active_session_id)
             if expired:
                 self.last_error = "浏览器心跳超时，已退出实车控制"
             elif remote_fault:
                 reason = (transport_event or {}).get("reason")
                 if reason == "heartbeat_timeout":
-                    self.last_error = "车端控制链路超过 0.6 秒未更新，已制动并退出"
+                    self.last_error = "车端 MQTT 输入超过 1.5 秒未更新，已制动并退出"
+                elif reason == "downstream_timeout":
+                    self.last_error = "车端远控下游超过 1.5 秒未更新，已制动并退出"
                 elif reason == "external_remote_command":
                     self.last_error = "检测到其他远控指令，已制动并退出"
                 else:
@@ -628,6 +669,7 @@ class ControlGateway:
             self.session_id = None
             self.last_command = self._safe_command()
             self.last_sequence = -1
+            self._clear_browser_lease(session_id)
             issues = vehicle.get("active_issues") or ["车辆运行时安全状态异常"]
             self.last_error = "车辆安全状态异常，已退出实车控制: " + "；".join(issues)
         if transport:
@@ -721,6 +763,8 @@ class RequestHandler(SimpleHTTPRequestHandler):
                     int(payload.get("sequence", -1)),
                     payload.get("command") or {},
                 )
+            elif path == "/api/control/heartbeat":
+                result = GATEWAY.heartbeat(str(payload.get("session_id", "")))
             elif path == "/api/control/release":
                 result = GATEWAY.release(str(payload.get("session_id", "")), "release")
             elif path == "/api/control/estop":

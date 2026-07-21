@@ -39,6 +39,7 @@ MQTT_PORT = int(os.environ.get("VEHICLE_MQTT_PORT", "1883"))
 CONTROL_VIN = "a001I3829202711775712260"
 CONTROL_TOPIC = f"/auto-rd/rdu/{CONTROL_VIN}"
 TRANSPORT_HEARTBEAT_S = 0.10
+MQTT_SEND_TIMEOUT_S = 0.50
 REMOTE_STEERING_LIMIT_DEG = 250
 CONTROL_SSH_TARGET = os.environ.get("VEHICLE_CONTROL_SSH_TARGET", "nvidia@100.98.77.65")
 CONTROL_SSH_KEY = os.environ.get("VEHICLE_CONTROL_SSH_KEY", "/home/weilin/.ssh/id_ed25519")
@@ -259,6 +260,13 @@ class MqttWireClient:
     def connect(self) -> None:
         try:
             sock = socket.create_connection((MQTT_HOST, MQTT_PORT), timeout=3.0)
+            send_timeout_seconds = int(MQTT_SEND_TIMEOUT_S)
+            send_timeout_microseconds = int((MQTT_SEND_TIMEOUT_S - send_timeout_seconds) * 1_000_000)
+            sock.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_SNDTIMEO,
+                struct.pack("ll", send_timeout_seconds, send_timeout_microseconds),
+            )
             sock.settimeout(3.0)
             self.sock = sock
             variable = _mqtt_string("MQTT") + bytes([4, 0xC2]) + struct.pack("!H", 10)

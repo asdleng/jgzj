@@ -12,7 +12,7 @@ from can_msg.msg import Chassis_CAN_Status, DCU_VCU_Cmd_0x601_cloud
 
 
 PUBLISH_HZ = 20.0
-COMMAND_TIMEOUT_S = 0.60
+COMMAND_TIMEOUT_S = 1.50
 BRAKE_HOLD_S = 0.40
 REQUIRED_CONSUMER = "/auto_ad_remote_control"
 EXPECTED_SOURCE = "/mqtt_cam"

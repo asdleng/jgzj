@@ -1,9 +1,10 @@
 const path = require('path');
+const http = require('http');
 const { spawn } = require('child_process');
 const readline = require('readline');
 
 const CONTROL_VEHICLE_ID = 'BIT-0041';
-const CONTROL_ENDPOINTS = new Set(['bootstrap', 'status', 'acquire', 'command', 'release', 'estop']);
+const CONTROL_ENDPOINTS = new Set(['bootstrap', 'status', 'acquire', 'command', 'heartbeat', 'release', 'estop']);
 const WEBRTC_TARGETS = {
   edge: 'http://120.25.209.170:9999/rtc-edge/v1/play/',
   origin: 'http://47.112.103.12:1985/rtc/v1/play/'
@@ -26,6 +27,43 @@ function normalizeWebRtcHttpStatus(status, responseText) {
     return Number(status);
   }
   return Number(status);
+}
+
+function requestRemoteDriveSidecar(upstreamBase, endpoint, method, payload, controlToken, timeoutMs) {
+  const body = method === 'POST' ? JSON.stringify(payload || {}) : '';
+  const target = new URL(`/api/control/${endpoint}`, upstreamBase);
+  return new Promise((resolve, reject) => {
+    const request = http.request(target, {
+      method,
+      agent: false,
+      headers: {
+        Accept: 'application/json',
+        ...(controlToken ? { 'X-Control-Token': controlToken } : {}),
+        ...(method === 'POST' ? {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body)
+        } : {})
+      }
+    }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => {
+        resolve({
+          status: Number(response.statusCode || 502),
+          contentType: response.headers['content-type'] || 'application/json',
+          text: Buffer.concat(chunks).toString('utf8')
+        });
+      });
+    });
+    request.setTimeout(timeoutMs, () => {
+      const error = new Error('remote drive sidecar request timed out');
+      error.name = 'AbortError';
+      request.destroy(error);
+    });
+    request.on('error', reject);
+    if (body) request.write(body);
+    request.end();
+  });
 }
 
 function startRemoteDriveSidecar(rootDir, options = {}) {
@@ -145,26 +183,18 @@ function registerRemoteDriveRoutes(app, options = {}) {
       return res.status(404).json({ ok: false, error: 'remote_drive_endpoint_not_found' });
     }
     const startedAt = Date.now();
-    const controller = new AbortController();
     const timeoutMs = endpoint === 'acquire' ? 45000 : 5000;
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const headers = { Accept: 'application/json' };
       const controlToken = String(req.headers['x-control-token'] || '').trim();
-      if (controlToken) {
-        headers['X-Control-Token'] = controlToken;
-      }
-      const init = {
+      const response = await requestRemoteDriveSidecar(
+        upstreamBase,
+        endpoint,
         method,
-        headers,
-        signal: controller.signal
-      };
-      if (method === 'POST') {
-        headers['Content-Type'] = 'application/json';
-        init.body = JSON.stringify(req.body || {});
-      }
-      const response = await fetch(`${upstreamBase}/api/control/${endpoint}`, init);
-      const text = await response.text();
+        req.body || {},
+        controlToken,
+        timeoutMs
+      );
+      const text = response.text;
       let auditDetail = { duration_ms: Date.now() - startedAt };
       try {
         const payload = JSON.parse(text);
@@ -180,7 +210,7 @@ function registerRemoteDriveRoutes(app, options = {}) {
       await recordRemoteDriveAudit(options.operationAuditStore, req, endpoint, response.status, auditDetail);
       res.status(response.status);
       res.setHeader('Cache-Control', 'private, no-store');
-      res.type(response.headers.get('content-type') || 'application/json').send(text);
+      res.type(response.contentType).send(text);
     } catch (error) {
       const detail = error.name === 'AbortError'
         ? '远程驾驶安全网关响应超时'
@@ -194,8 +224,6 @@ function registerRemoteDriveRoutes(app, options = {}) {
         error: detail,
         sidecar_ready: sidecar.ready
       });
-    } finally {
-      clearTimeout(timeout);
     }
   };
 
@@ -203,6 +231,7 @@ function registerRemoteDriveRoutes(app, options = {}) {
   app.get('/api/remote-drive/status', permission, proxy('status', 'GET'));
   app.post('/api/remote-drive/acquire', permission, proxy('acquire', 'POST'));
   app.post('/api/remote-drive/command', permission, proxy('command', 'POST'));
+  app.post('/api/remote-drive/heartbeat', permission, proxy('heartbeat', 'POST'));
   app.post('/api/remote-drive/release', permission, proxy('release', 'POST'));
   app.post('/api/remote-drive/estop', permission, proxy('estop', 'POST'));
   app.post('/api/remote-drive/webrtc/:route/play', permission, async (req, res) => {
@@ -240,6 +269,7 @@ module.exports = {
   CONTROL_ENDPOINTS,
   WEBRTC_TARGETS,
   normalizeWebRtcHttpStatus,
+  requestRemoteDriveSidecar,
   registerRemoteDriveRoutes,
   startRemoteDriveSidecar
 };

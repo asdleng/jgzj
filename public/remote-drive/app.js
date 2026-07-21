@@ -3,6 +3,8 @@ const DEFAULT_VEHICLE_ID = "BIT-0041";
 const CONTROL_VEHICLE_ID = "BIT-0041";
 const CONTROL_API_BASE = "/api/remote-drive";
 const CONTROL_HEARTBEAT_MS = 100;
+const CONTROL_LEASE_HEARTBEAT_MS = 200;
+const CONTROL_LEASE_REQUEST_TIMEOUT_MS = 2000;
 const CONTROL_REQUEST_TIMEOUT_MS = 1500;
 const STEERING_COMMAND_DEG = 250;
 const DRIVE_ACCELERATOR_PERCENT = 8;
@@ -33,12 +35,14 @@ let aggregateTimer = null;
 let clockTimer = null;
 let toastTimer = null;
 let controlHeartbeatTimer = null;
+let controlLeaseHeartbeatTimer = null;
 let controlStatusTimer = null;
 let controlStatusInFlight = false;
 let unloadReleaseSent = false;
 let gearShiftTimer = null;
 const activeMotionControls = new Set();
 const criticalControlCommands = [];
+const controlLeaseRequests = new Set();
 
 const controlState = {
   token: "",
@@ -621,15 +625,36 @@ async function sendControlCommand() {
 
 function startControlHeartbeat() {
   window.clearInterval(controlHeartbeatTimer);
+  window.clearInterval(controlLeaseHeartbeatTimer);
   controlHeartbeatTimer = window.setInterval(queueControlCommand, CONTROL_HEARTBEAT_MS);
+  controlLeaseHeartbeatTimer = window.setInterval(sendControlLeaseHeartbeat, CONTROL_LEASE_HEARTBEAT_MS);
   queueControlCommand();
+  sendControlLeaseHeartbeat();
 }
 
 function stopControlHeartbeat() {
   window.clearInterval(controlHeartbeatTimer);
+  window.clearInterval(controlLeaseHeartbeatTimer);
   controlHeartbeatTimer = null;
+  controlLeaseHeartbeatTimer = null;
+  controlLeaseRequests.forEach((controller) => controller.abort());
+  controlLeaseRequests.clear();
   controlState.commandQueued = false;
   criticalControlCommands.length = 0;
+}
+
+function sendControlLeaseHeartbeat() {
+  if (!controlState.sessionActive || !controlState.sessionId) return;
+  const sessionId = controlState.sessionId;
+  const controller = new AbortController();
+  controlLeaseRequests.add(controller);
+  const timeout = window.setTimeout(() => controller.abort(), CONTROL_LEASE_REQUEST_TIMEOUT_MS);
+  void controlApi(`${CONTROL_API_BASE}/heartbeat`, { session_id: sessionId }, { signal: controller.signal })
+    .catch(() => {})
+    .finally(() => {
+      window.clearTimeout(timeout);
+      controlLeaseRequests.delete(controller);
+    });
 }
 
 function failLocalControl(message) {
