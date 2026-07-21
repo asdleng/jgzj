@@ -633,7 +633,7 @@ def run(args):
     return build
 
 
-def parse_args():
+def parse_args(argv=None):
     root = Path("/home/admin1/jgzj")
     runtime = root / ".runtime/park-pcm"
     parser = argparse.ArgumentParser()
@@ -646,9 +646,9 @@ def parse_args():
     parser.add_argument("--lock-path", type=Path, default=runtime / "green-tree-assets.lock")
     parser.add_argument("--service-url", default="http://127.0.0.1:18001/v1/chat/completions")
     parser.add_argument("--model", default="Qwen3.6-27B-MM")
-    parser.add_argument("--max-anchors", type=int, default=8)
-    parser.add_argument("--max-jobs", type=int, default=4)
-    parser.add_argument("--anchor-separation-m", type=float, default=10.0)
+    parser.add_argument("--max-anchors", type=int, default=32)
+    parser.add_argument("--max-jobs", type=int, default=40)
+    parser.add_argument("--anchor-separation-m", type=float, default=2.0)
     parser.add_argument("--position-gate-m", type=float, default=5.0)
     parser.add_argument("--heading-gate-deg", type=float, default=10.0)
     parser.add_argument("--history-days", type=int, default=8)
@@ -661,7 +661,7 @@ def parse_args():
     parser.add_argument("--max-tokens", type=int, default=1800)
     parser.add_argument("--timeout-s", type=int, default=240)
     parser.add_argument("--force", action="store_true")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main():

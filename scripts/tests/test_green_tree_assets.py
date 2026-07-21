@@ -26,6 +26,12 @@ def sample(identifier, date, latitude, longitude, heading, camera="camera4"):
 
 
 class GreenTreeAssetsTest(unittest.TestCase):
+    def test_dense_patrol_defaults_cover_two_meter_capture_spacing(self):
+        args = MODULE.parse_args([])
+        self.assertEqual(args.max_anchors, 32)
+        self.assertEqual(args.max_jobs, 40)
+        self.assertEqual(args.anchor_separation_m, 2.0)
+
     def test_angle_difference_wraps(self):
         self.assertLess(MODULE.angle_difference(3.13, -3.13), 0.03)
 

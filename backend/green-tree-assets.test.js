@@ -6,12 +6,17 @@ const test = require('node:test');
 
 const {
   ASSET_SCHEMA,
+  DEFAULT_WORKER_MAX_JOBS,
   createGreenTreeAssetStore,
   nextShanghaiRunDelayMs,
   normalizeReviewStatus,
   shanghaiDayKey,
   summarizeAssets
 } = require('./green-tree-assets');
+
+test('daily worker capacity covers dense two-meter patrol anchors', () => {
+  assert.equal(DEFAULT_WORKER_MAX_JOBS, 40);
+});
 
 async function fixture() {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'green-tree-assets-'));

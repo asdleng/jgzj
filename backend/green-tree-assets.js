@@ -7,6 +7,7 @@ const ASSET_SCHEMA = 'park_green_tree_assets.v1';
 const REVIEW_SCHEMA = 'park_green_tree_asset_reviews.v1';
 const REVIEW_STATUSES = new Set(['unreviewed', 'confirmed', 'rejected']);
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_WORKER_MAX_JOBS = 40;
 
 function nowIso() {
   return new Date().toISOString();
@@ -184,7 +185,7 @@ function registerGreenTreeAssetRoutes(app, options = {}) {
   const scriptPath = path.resolve(options.scriptPath || path.join(rootDir, 'scripts/build_green_tree_assets.py'));
   const logPath = path.join(runtimeRoot, 'green-tree-assets-worker.log');
   const pythonPath = String(options.pythonPath || process.env.GREEN_TREE_ASSET_PYTHON || '/usr/bin/python3');
-  const maxJobs = integerOption(process.env.GREEN_TREE_ASSET_MAX_JOBS, 4, 1, 12);
+  const maxJobs = integerOption(process.env.GREEN_TREE_ASSET_MAX_JOBS, DEFAULT_WORKER_MAX_JOBS, 1, 64);
   const autoEnabled = String(process.env.GREEN_TREE_ASSET_AUTO_ENABLED || 'true').toLowerCase() !== 'false';
   const autoHour = integerOption(process.env.GREEN_TREE_ASSET_AUTO_HOUR, 2, 0, 23);
   const autoMinute = integerOption(process.env.GREEN_TREE_ASSET_AUTO_MINUTE, 30, 0, 59);
@@ -295,6 +296,7 @@ function registerGreenTreeAssetRoutes(app, options = {}) {
 
 module.exports = {
   ASSET_SCHEMA,
+  DEFAULT_WORKER_MAX_JOBS,
   REVIEW_SCHEMA,
   createGreenTreeAssetStore,
   mergeReview,

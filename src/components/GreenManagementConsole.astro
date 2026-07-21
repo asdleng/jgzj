@@ -3153,7 +3153,13 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+    max-height: 276px;
     margin-top: 12px;
+    overflow-y: auto;
+    overscroll-behavior-block: contain;
+    padding-right: 5px;
+    scrollbar-color: #8a7135 #14261c;
+    scrollbar-width: thin;
   }
 
   .gm-tree-card {
@@ -3312,6 +3318,7 @@
 
     .gm-tree-card-list {
       grid-template-columns: 1fr;
+      max-height: 420px;
     }
   }
 
