@@ -1,0 +1,29 @@
+{
+  "db_path": "/home/ps/dataring/data/app.db",
+  "raw_root": "/mnt/storage/raw",
+  "classes": [
+    "fire",
+    "smoke"
+  ],
+  "exclude_classes": [],
+  "min_conf": 0.0,
+  "strict_min_conf": false,
+  "max_conf": 0.5,
+  "strict_max_conf": true,
+  "max_images": 1000,
+  "start_date": "2026-07-15",
+  "end_date": "2026-07-21",
+  "sqlite_rows": 2391080,
+  "date_filtered_rows": 217559,
+  "dedup_items": 217559,
+  "skip_date_parse": 0,
+  "skip_no_image": 0,
+  "skip_unmatched": 177215,
+  "matched_images_total": 40344,
+  "matched_images": 1000,
+  "truncated_by_max_images": 39344,
+  "staging_dir": "/tmp/pull_remote_dateconf_filter/pull_images_1appborb",
+  "images_dir": "/tmp/pull_remote_dateconf_filter/pull_images_1appborb/images",
+  "manifest_path": "/tmp/pull_remote_dateconf_filter/pull_images_1appborb/manifest.jsonl",
+  "summary_path": "/tmp/pull_remote_dateconf_filter/pull_images_1appborb/summary.json"
+}

@@ -30,5 +30,7 @@ Notes:
   because hard-sample selection relies on detection boxes, confidence, and IoU.
 - Epochs are capped at 10. Defaults are 8 epochs, patience 3, batch 32.
 - External low-confidence samples are pulled through
-  `/home/admin1/pull_remote_dateconf_filter.py` and labeled through
+  `/home/admin1/pull_remote_dateconf_filter_py36.py` when present, with
+  `/home/admin1/.ssh/id_ed25519_data_ps_pull` passed to the data-source SSH
+  connection by default. They are labeled through
   `scripts/patrol_qwen_label_vehicle_uploads.py`.

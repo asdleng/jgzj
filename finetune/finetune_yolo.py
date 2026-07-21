@@ -29,7 +29,13 @@ RUNTIME_ROOT = PROJECT_ROOT / ".runtime"
 MODEL_SERVICE_ROOT = RUNTIME_ROOT / "yolo_model_service"
 MODEL_REGISTRY = MODEL_SERVICE_ROOT / "model_registry.json"
 WEIGHTS_DIR = MODEL_SERVICE_ROOT / "weights"
-PULL_SCRIPT = Path(os.environ.get("JGZJ_PULL_SCRIPT", "/home/admin1/pull_remote_dateconf_filter.py"))
+DEFAULT_PULL_SCRIPT_PY36 = Path("/home/admin1/pull_remote_dateconf_filter_py36.py")
+DEFAULT_PULL_SCRIPT = Path("/home/admin1/pull_remote_dateconf_filter.py")
+PULL_SCRIPT = Path(os.environ.get(
+    "JGZJ_PULL_SCRIPT",
+    str(DEFAULT_PULL_SCRIPT_PY36 if DEFAULT_PULL_SCRIPT_PY36.exists() else DEFAULT_PULL_SCRIPT),
+))
+PULL_SSH_KEY = Path(os.environ.get("JGZJ_PULL_SSH_KEY", "/home/admin1/.ssh/id_ed25519_data_ps_pull"))
 QWEN_LABEL_SCRIPT = PROJECT_ROOT / "scripts" / "patrol_qwen_label_vehicle_uploads.py"
 TRAIN_SCRIPT = RUNTIME_ROOT / "reliable_vehicle_yolo_20260704" / "train_reliable_yolo_finetune.py"
 POLICY_SCRIPT = PROJECT_ROOT / "scripts" / "yolo_closed_loop_policy.py"
@@ -160,6 +166,18 @@ def run(cmd: list[str], *, timeout: int = 600, check: bool = True) -> subprocess
             f"stderr={result.stderr[-4000:]}"
         )
     return result
+
+
+def pull_ssh_args(args: argparse.Namespace) -> list[str]:
+    options = list(getattr(args, "pull_ssh_option", []) or [])
+    key_value = str(getattr(args, "pull_ssh_key", "") or "").strip()
+    key = Path(key_value) if key_value else None
+    if key and key.exists() and "-i" not in options and "IdentityFile" not in " ".join(options):
+        options.extend(["-i", str(key)])
+    out: list[str] = []
+    for option in options:
+        out.append(f"--ssh-option={option}")
+    return out
 
 
 def a100(command: str, *, timeout: int = 120, check: bool = True) -> subprocess.CompletedProcess:
@@ -702,6 +720,14 @@ def pull_low_conf_images(class_name: str, run_dir: Path, args: argparse.Namespac
     if args.skip_pull:
         return None, {"skipped": True}
     aliases = pull_aliases_for(class_name)
+    pull_script = Path(args.pull_script)
+    if not pull_script.exists():
+        return None, {
+            "error": f"pull_script_missing:{pull_script}",
+            "aliases": aliases,
+            "pull_script": str(pull_script),
+        }
+    ssh_args = pull_ssh_args(args)
     today = cn_now().date()
     attempts = [args.pull_lookback_days]
     if args.pull_fallback_days > args.pull_lookback_days:
@@ -714,7 +740,8 @@ def pull_low_conf_images(class_name: str, run_dir: Path, args: argparse.Namespac
             shutil.rmtree(out_dir)
         cmd = [
             sys.executable,
-            str(PULL_SCRIPT),
+            str(pull_script),
+            *ssh_args,
             "--output-dir",
             str(out_dir),
             "--classes",
@@ -734,12 +761,20 @@ def pull_low_conf_images(class_name: str, run_dir: Path, args: argparse.Namespac
         try:
             result = run(cmd, timeout=args.pull_timeout, check=True)
         except Exception as exc:
-            last_summary = {"error": repr(exc), "lookback_days": days, "aliases": aliases}
+            last_summary = {
+                "error": repr(exc),
+                "lookback_days": days,
+                "aliases": aliases,
+                "pull_script": str(pull_script),
+                "ssh_options": ssh_args,
+            }
             continue
         summary = load_json(out_dir / "summary.json", {})
         summary["stdout_tail"] = result.stdout[-2000:]
         summary["lookback_days"] = days
         summary["aliases"] = aliases
+        summary["pull_script"] = str(pull_script)
+        summary["ssh_options"] = ssh_args
         last_summary = summary
         if int(summary.get("matched_images") or 0) >= args.pull_limit or days == attempts[-1]:
             return out_dir, summary
@@ -1239,6 +1274,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pull-min-conf", type=float, default=0.0)
     parser.add_argument("--pull-max-conf", type=float, default=0.5)
     parser.add_argument("--pull-timeout", type=int, default=3600)
+    parser.add_argument(
+        "--pull-script",
+        type=Path,
+        default=PULL_SCRIPT,
+        help="Low-confidence image pull helper. Defaults to the Python 3.6 compatible script when present.",
+    )
+    parser.add_argument(
+        "--pull-ssh-key",
+        type=Path,
+        default=PULL_SSH_KEY,
+        help="SSH identity file for the remote data source pull helper. Use an empty path plus --pull-ssh-option to override.",
+    )
+    parser.add_argument(
+        "--pull-ssh-option",
+        action="append",
+        default=[],
+        help="Extra --ssh-option passed through to the pull helper. Repeat for multiple options.",
+    )
 
     parser.add_argument("--predict-conf-floor", type=float, default=0.001)
     parser.add_argument("--predict-nms-iou", type=float, default=0.7)
@@ -1302,6 +1355,9 @@ def main() -> None:
         "qwen_class": qwen_target,
         "run_tag": run_tag,
         "run_dir": str(run_dir),
+        "pull_script": str(args.pull_script),
+        "pull_ssh_key": str(args.pull_ssh_key),
+        "pull_ssh_options": pull_ssh_args(args),
     }
     write_json(run_dir / "resolved_model.json", resolved)
     print(json.dumps(resolved, ensure_ascii=False, indent=2), flush=True)
