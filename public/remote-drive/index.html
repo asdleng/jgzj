@@ -306,11 +306,17 @@
                 <span class="section-kicker">MOTION</span>
                 <h3>行驶指令</h3>
               </div>
-              <span class="command-sequence">SEQ <strong id="commandSequence">0000</strong></span>
+              <div class="command-heading-actions">
+                <button class="gear-toggle-button" id="gearToggleButton" type="button" aria-label="切换为 R 挡" disabled>
+                  <i data-lucide="repeat-2"></i>
+                  <span id="gearToggleLabel">D 挡</span>
+                </button>
+                <span class="command-sequence">SEQ <strong id="commandSequence">0000</strong></span>
+              </div>
             </div>
 
             <div class="motion-pad" aria-label="车辆方向控制">
-              <button class="motion-button motion-forward" type="button" data-motion="forward" aria-label="前进" aria-pressed="false" disabled>
+              <button class="motion-button motion-forward" type="button" data-motion="throttle" aria-label="前进" aria-pressed="false" disabled>
                 <i data-lucide="arrow-up"></i>
                 <span>前进</span>
               </button>
@@ -326,9 +332,9 @@
                 <i data-lucide="arrow-right"></i>
                 <span>右转</span>
               </button>
-              <button class="motion-button motion-reverse" type="button" data-motion="reverse" aria-label="后退" aria-pressed="false" disabled>
+              <button class="motion-button motion-brake" type="button" data-motion="brake" aria-label="制动" aria-pressed="false" disabled>
                 <i data-lucide="arrow-down"></i>
-                <span>后退</span>
+                <span>制动</span>
               </button>
             </div>
             <div class="motion-command-state" aria-live="polite">

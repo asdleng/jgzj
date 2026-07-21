@@ -51,6 +51,7 @@ const controlState = {
   transportMode: "",
   commandEnabled: false,
   emergency: false,
+  driveGear: "D",
   gear: "P",
   steering: 0,
   brake: 100,
@@ -89,6 +90,10 @@ const elements = {
   controlSessionButton: document.getElementById("controlSessionButton"),
   motionCommandLabel: document.getElementById("motionCommandLabel"),
   motionCommandDetail: document.getElementById("motionCommandDetail"),
+  gearToggleButton: document.getElementById("gearToggleButton"),
+  gearToggleLabel: document.getElementById("gearToggleLabel"),
+  throttleButton: document.querySelector('[data-motion="throttle"]'),
+  throttleButtonLabel: document.querySelector('[data-motion="throttle"] span'),
   commandSequence: document.getElementById("commandSequence"),
   telemetrySpeed: document.getElementById("telemetrySpeed"),
   telemetryGear: document.getElementById("telemetryGear"),
@@ -462,6 +467,7 @@ function resetMotionState(commandEnabled = false) {
   activeMotionControls.clear();
   criticalControlCommands.length = 0;
   controlState.commandEnabled = commandEnabled;
+  controlState.driveGear = "D";
   controlState.gear = "P";
   controlState.steering = 0;
   controlState.brake = 100;
@@ -736,26 +742,39 @@ function updateSteeringIntent() {
     STEERING_COMMAND_DEG,
     Number(controlState.constraints.max_steering_deg) || STEERING_COMMAND_DEG,
   );
-  controlState.steering = left === right ? 0 : left ? -limit : limit;
+  controlState.steering = left === right ? 0 : left ? limit : -limit;
 }
 
 function applyLongitudinalIntent() {
   cancelGearShift();
-  const forward = activeMotionControls.has("forward");
-  const reverse = activeMotionControls.has("reverse");
+  const throttle = activeMotionControls.has("throttle");
+  const brake = activeMotionControls.has("brake");
 
-  if (forward === reverse) {
+  if (brake) {
+    criticalControlCommands.length = 0;
     controlState.accelerator = 0;
-    controlState.brake = forward ? 100 : 0;
+    controlState.brake = 100;
+    renderControlState();
+    queueControlCommand(buildControlCommand(), { critical: true });
+    return;
+  }
+
+  if (!throttle) {
+    controlState.accelerator = 0;
+    controlState.brake = controlState.gear === "P" ? 100 : 0;
     renderControlState();
     queueControlCommand();
     return;
   }
 
-  const motion = forward ? "forward" : "reverse";
-  const targetGear = forward ? "D" : "R";
+  const targetGear = controlState.driveGear;
   const applyThrottle = () => {
-    if (!canSendMotion() || !activeMotionControls.has(motion) || controlState.gear !== targetGear) return;
+    if (
+      !canSendMotion()
+      || !activeMotionControls.has("throttle")
+      || activeMotionControls.has("brake")
+      || controlState.gear !== targetGear
+    ) return;
     controlState.brake = 0;
     controlState.accelerator = Math.min(
       DRIVE_ACCELERATOR_PERCENT,
@@ -782,11 +801,35 @@ function applyLongitudinalIntent() {
   applyThrottle();
 }
 
+function toggleDriveGear() {
+  if (!canSendMotion()) return;
+  cancelGearShift();
+  activeMotionControls.delete("throttle");
+  controlState.driveGear = controlState.driveGear === "D" ? "R" : "D";
+  controlState.accelerator = 0;
+  controlState.brake = 100;
+  criticalControlCommands.length = 0;
+  renderControlState();
+  queueControlCommand(buildControlCommand(), { critical: true });
+  gearShiftTimer = window.setTimeout(() => {
+    gearShiftTimer = null;
+    if (!canSendMotion()) return;
+    controlState.gear = controlState.driveGear;
+    controlState.accelerator = 0;
+    controlState.brake = 100;
+    renderControlState();
+    queueControlCommand(buildControlCommand(), { critical: true });
+  }, GEAR_SHIFT_SETTLE_MS);
+}
+
 function engageMotion(name) {
-  if (!canSendMotion() || !["forward", "reverse", "left", "right"].includes(name)) return;
+  if (!canSendMotion() || !["throttle", "brake", "left", "right"].includes(name)) return;
   activeMotionControls.add(name);
   if (name === "left" || name === "right") updateSteeringIntent();
-  if (name === "forward" || name === "reverse") applyLongitudinalIntent();
+  if (name === "throttle" || name === "brake") {
+    applyLongitudinalIntent();
+    return;
+  }
   renderControlState();
   queueControlCommand();
 }
@@ -794,7 +837,10 @@ function engageMotion(name) {
 function releaseMotion(name) {
   if (!activeMotionControls.delete(name)) return;
   if (name === "left" || name === "right") updateSteeringIntent();
-  if (name === "forward" || name === "reverse") applyLongitudinalIntent();
+  if (name === "throttle" || name === "brake") {
+    applyLongitudinalIntent();
+    return;
+  }
   renderControlState();
   queueControlCommand();
 }
@@ -830,10 +876,10 @@ function stopMotion() {
 
 function motionStateLabel() {
   const labels = [];
-  if (activeMotionControls.has("forward")) labels.push("前进");
-  if (activeMotionControls.has("reverse")) labels.push("后退");
-  if (controlState.steering < 0) labels.push("左转");
-  if (controlState.steering > 0) labels.push("右转");
+  if (activeMotionControls.has("brake")) labels.push("制动");
+  else if (activeMotionControls.has("throttle")) labels.push(controlState.driveGear === "D" ? "前进" : "后退");
+  if (activeMotionControls.has("left")) labels.push("左转");
+  if (activeMotionControls.has("right")) labels.push("右转");
   if (labels.length) return labels.join(" · ");
   return controlState.brake >= 50 ? "停止" : "待命";
 }
@@ -860,6 +906,16 @@ function renderControlState() {
       ? active && controlState.brake >= 50 && controlState.gear === "P"
       : activeMotionControls.has(name));
   });
+
+  elements.gearToggleButton.disabled = !active;
+  elements.gearToggleButton.dataset.gear = controlState.driveGear;
+  elements.gearToggleButton.setAttribute(
+    "aria-label",
+    `切换为 ${controlState.driveGear === "D" ? "R" : "D"} 挡`,
+  );
+  elements.gearToggleLabel.textContent = `${controlState.driveGear} 挡`;
+  elements.throttleButtonLabel.textContent = controlState.driveGear === "D" ? "前进" : "后退";
+  elements.throttleButton.setAttribute("aria-label", controlState.driveGear === "D" ? "前进" : "后退");
 
   elements.motionCommandLabel.textContent = motionStateLabel();
   elements.motionCommandDetail.textContent = `${controlState.gear} · 转向 ${Math.round(controlState.steering)} deg`;
@@ -958,6 +1014,8 @@ function bindControlConsole() {
     }
   });
 
+  elements.gearToggleButton.addEventListener("click", toggleDriveGear);
+
   document.querySelectorAll("[data-motion]").forEach((button) => {
     const name = button.dataset.motion;
     if (name === "stop") {
@@ -981,10 +1039,10 @@ function bindControlConsole() {
   });
 
   const keyToMotion = {
-    ArrowUp: "forward",
-    KeyW: "forward",
-    ArrowDown: "reverse",
-    KeyS: "reverse",
+    ArrowUp: "throttle",
+    KeyW: "throttle",
+    ArrowDown: "brake",
+    KeyS: "brake",
     ArrowLeft: "left",
     KeyA: "left",
     ArrowRight: "right",
@@ -995,6 +1053,11 @@ function bindControlConsole() {
     if (event.code === "Space") {
       event.preventDefault();
       if (!event.repeat) stopMotion();
+      return;
+    }
+    if (event.code === "KeyR") {
+      event.preventDefault();
+      if (!event.repeat) toggleDriveGear();
       return;
     }
     const motion = keyToMotion[event.code];

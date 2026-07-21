@@ -660,6 +660,38 @@ h1 {
   font-size: 12px;
 }
 
+.command-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gear-toggle-button {
+  display: inline-flex;
+  min-width: 64px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: #171b17;
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.gear-toggle-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.gear-toggle-button[data-gear="R"] {
+  border-color: rgba(99, 190, 209, 0.6);
+  color: var(--cyan);
+}
+
 .motion-button {
   display: inline-flex;
   align-items: center;
@@ -735,9 +767,17 @@ h1 {
   grid-row: 2;
 }
 
-.motion-reverse {
+.motion-brake {
   grid-column: 2;
   grid-row: 3;
+  border-color: rgba(239, 109, 101, 0.4);
+  color: #ffaaa4;
+}
+
+.motion-brake[data-active="true"] {
+  border-color: rgba(239, 109, 101, 0.68);
+  background: #431f1d;
+  color: #ffaaa4;
 }
 
 .motion-command-state {
