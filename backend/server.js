@@ -41,6 +41,9 @@ const {
   readLidarRelocalizationAvailabilityState
 } = require('./lidar-relocalization-availability');
 const {
+  inferResidentRelocalization
+} = require('./lidar-relocalization-resident-client');
+const {
   effectiveYoloWebAuditVerdict,
   isYoloWebCrawlerSummary,
   normalizeYoloWebCrawlerStats,
@@ -269,6 +272,18 @@ const lidarRelocalizationLcrCheckpoint =
 const lidarRelocalizationLcrWebRunner =
   process.env.LIDAR_RELOCALIZATION_LCR_WEB_RUNNER ||
   `${lidarRelocalizationLcrA100Root}/web_runtime_20260720/run_web_relocalization6.sh`;
+const lidarRelocalizationResidentEnabled =
+  String(process.env.LIDAR_RELOCALIZATION_RESIDENT_ENABLED || 'true').toLowerCase() !== 'false';
+const lidarRelocalizationResidentBaseUrl = String(
+  process.env.LIDAR_RELOCALIZATION_RESIDENT_BASE_URL || 'http://127.0.0.1:18926'
+).replace(/\/+$/, '');
+const lidarRelocalizationResidentTimeoutMs = toFiniteInteger(
+  process.env.LIDAR_RELOCALIZATION_RESIDENT_TIMEOUT_MS,
+  90000,
+  { min: 5000, max: 300000 }
+);
+const lidarRelocalizationResidentGpu =
+  process.env.LIDAR_RELOCALIZATION_RESIDENT_GPU || '2';
 const lidarRelocalizationFallbackCheckpoint =
   process.env.LIDAR_RELOCALIZATION_FALLBACK_CHECKPOINT ||
   `${lidarRelocalizationA100Root}/runs/jgzj_bevplace_yaw3_kdtree_20260630_gpu3/model_best.pth.tar`;
@@ -9496,6 +9511,9 @@ async function writeLastLidarRelocCapture(vehicleId, capture) {
 }
 
 function hasLidarRelocServerInfer() {
+  if (lidarRelocalizationResidentEnabled && lidarRelocalizationResidentBaseUrl) {
+    return true;
+  }
   return Boolean(lidarRelocalizationLcrWebRunner) && fsSync.existsSync(lidarRelocalizationA100Key);
 }
 
@@ -10619,8 +10637,28 @@ async function copyLidarRelocCaptureToA100(vehicleId, capturePath, requestId = '
 
 async function runLidarRelocLcrnetInfer(vehicleId, mapPath, capturePath) {
   const requestId = `web-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
-  const remoteCapture = await copyLidarRelocCaptureToA100(vehicleId, capturePath, requestId);
   const mapStat = await fs.stat(mapPath);
+  if (lidarRelocalizationResidentEnabled) {
+    const startedAt = Date.now();
+    const payload = await inferResidentRelocalization({
+      baseUrl: lidarRelocalizationResidentBaseUrl,
+      timeoutMs: lidarRelocalizationResidentTimeoutMs,
+      requestId,
+      vehicleId,
+      capturePath,
+      expectedMapSizeBytes: mapStat.size
+    });
+    return {
+      ...payload,
+      a100_request_id: requestId,
+      a100_gpu: lidarRelocalizationResidentGpu,
+      resident_service: true,
+      resident_base_url: lidarRelocalizationResidentBaseUrl,
+      server_elapsed_ms: Date.now() - startedAt
+    };
+  }
+
+  const remoteCapture = await copyLidarRelocCaptureToA100(vehicleId, capturePath, requestId);
   const command = [
     shellQuote(lidarRelocalizationLcrWebRunner),
     shellQuote(requestId),
@@ -11004,14 +11042,31 @@ async function collectLidarRelocStatus(vehicleId, options = {}) {
       checkpoint: lidarRelocalizationLcrCheckpoint,
       bev_checkpoint: lidarRelocalizationModelCheckpoint,
       fallback_checkpoint: lidarRelocalizationFallbackCheckpoint,
-      infer_script: serverInference ? lidarRelocalizationLcrWebRunner : lidarRelocalizationInferScript,
+      infer_script: serverInference
+        ? lidarRelocalizationResidentEnabled
+          ? `${lidarRelocalizationResidentBaseUrl}/v1/infer`
+          : lidarRelocalizationLcrWebRunner
+        : lidarRelocalizationInferScript,
       bevplace_script: lidarRelocalizationBevplaceScript,
       bevplace_dataset_root: lidarRelocalizationBevplaceDatasetRoot,
       bevplace_manifest: lidarRelocalizationBevplaceManifest,
       bevplace_descriptors: lidarRelocalizationBevplaceDescriptors,
-      a100_gpu: lidarRelocalizationA100Gpu,
+      a100_gpu: lidarRelocalizationResidentEnabled
+        ? lidarRelocalizationResidentGpu
+        : lidarRelocalizationA100Gpu,
       a100_num_workers: lidarRelocalizationA100NumWorkers,
-      method: serverInference ? 'bevplace_global_lcrnet_fp32_top3_strict_ndt' : null,
+      method: serverInference
+        ? lidarRelocalizationResidentEnabled
+          ? 'bevplace_global_lcrnet_fp32_top3_strict_ndt_resident'
+          : 'bevplace_global_lcrnet_fp32_top3_strict_ndt'
+        : null,
+      resident_service: {
+        enabled: lidarRelocalizationResidentEnabled,
+        base_url: lidarRelocalizationResidentBaseUrl,
+        timeout_ms: lidarRelocalizationResidentTimeoutMs,
+        physical_gpu: lidarRelocalizationResidentGpu,
+        shadow_mode: true
+      },
       coverage,
       service_ready: inferTools.length > 0 || (serverInference && coverage.available),
       phase: inferTools.length
