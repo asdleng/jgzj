@@ -6598,6 +6598,28 @@ async function listCloudAgentVehicles() {
   return vehicles;
 }
 
+const cloudOpsStationaryObservations = new Map();
+
+function updateCloudOpsStationaryObservation(vehicleId, speedKph, observedAt) {
+  const normalizedVehicleId = String(vehicleId || '').trim();
+  const speed = readFiniteNumber(speedKph);
+  const observedAtMs = Number.isFinite(Number(observedAt)) ? Number(observedAt) : Date.now();
+  if (!normalizedVehicleId || !Number.isFinite(speed)) {
+    return cloudOpsStationaryObservations.get(normalizedVehicleId) || null;
+  }
+  if (Math.abs(speed) >= 0.2) {
+    cloudOpsStationaryObservations.delete(normalizedVehicleId);
+    return null;
+  }
+  const previous = cloudOpsStationaryObservations.get(normalizedVehicleId);
+  const observation = {
+    since_ms: previous?.since_ms ?? observedAtMs,
+    last_observed_ms: Math.max(previous?.last_observed_ms ?? observedAtMs, observedAtMs)
+  };
+  cloudOpsStationaryObservations.set(normalizedVehicleId, observation);
+  return observation;
+}
+
 function readFiniteNumber(value) {
   if (value === null || value === undefined || value === '') {
     return null;
@@ -16326,12 +16348,33 @@ app.get('/api/cloud-ops/vehicles-lite', authStore.requirePermission('vehicle:rea
       }
     });
 
+    const liteVehicles = Array.from(vehicleMap.values()).map((vehicle) => {
+      const observationTimestamp =
+        Date.parse(vehicle.telemetry_generated_at || '') ||
+        Date.parse(vehicle.last_seen || '') ||
+        Date.now();
+      const stationaryObservation = updateCloudOpsStationaryObservation(
+        vehicle.vehicle_id,
+        vehicle.speed_kph,
+        observationTimestamp
+      );
+      return {
+        ...vehicle,
+        stationary_since: stationaryObservation
+          ? new Date(stationaryObservation.since_ms).toISOString()
+          : null,
+        stationary_observed_seconds: stationaryObservation
+          ? Math.max(0, Math.floor((Date.now() - stationaryObservation.since_ms) / 1000))
+          : 0
+      };
+    });
+
     return res.json({
       ok: true,
       source: 'cloud_agent_registry',
       safe_auto_load: true,
       note: 'This endpoint only reads cloud-agent vehicle registry data and does not call vehicle tools.',
-      vehicles: Array.from(vehicleMap.values()).sort((left, right) =>
+      vehicles: liteVehicles.sort((left, right) =>
         String(left.vehicle_id).localeCompare(String(right.vehicle_id))
       )
     });

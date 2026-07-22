@@ -15,7 +15,7 @@ const readOnlyToolGroups = [
       { label: "自动驾驶健康", tool: "health.autodrive_check", desc: "定位、规划、底盘、阻断条件综合只读检查", timeout: 35, purpose: "回答：自动驾驶是否具备运行条件？" },
       { label: "云车通信链路", tool: "communication.cloud_vehicle", desc: "合并云端连通、主控链路、ROS 入口探测", action: "communication_check", timeout: 30, purpose: "回答：云端、media、主控、ROS 链路是否通？" },
       { label: "主控 / ROS 状态", tool: "ros.overview", desc: "检查 ROS master、topic、node 和服务概览", timeout: 30, purpose: "回答：主控 ROS 环境是否正常？" },
-      { label: "停车 / 不动诊断", tool: "task.navigation_context", desc: "合并 routing、planning、路线、定位和避障上下文", action: "task_context", timeout: 35, purpose: "回答：这台车为什么停着或不动？" }
+      { label: "停车 / 不动诊断", tool: "task.navigation_context", desc: "核验停车时长、安全停、任务、定位、控制、障碍物与激光链路", action: "task_context", timeout: 70, purpose: "回答：这台车为什么停着或不动？" }
     ]
   }
 ];
@@ -4281,6 +4281,283 @@ const agentRules = [
       };
     };
 
+    const combinedToolResult = (payload, toolName) => {
+      const item = (Array.isArray(payload?.results) ? payload.results : [])
+        .find((candidate) => candidate?.tool_name === toolName);
+      return item?.ok ? toolResultOfPayload(item.response) : null;
+    };
+    const wrappedData = (value) => value && typeof value === "object" && "data" in value ? value.data : value;
+    const firstKnownBool = (...values) => values.find((value) => typeof value === "boolean");
+    const firstFiniteNumber = (...values) => {
+      for (const value of values) {
+        const number = finiteNumber(value);
+        if (Number.isFinite(number)) return number;
+      }
+      return NaN;
+    };
+    const formatStopDuration = (seconds) => {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      if (total < 60) return `${total} 秒`;
+      const minutes = Math.floor(total / 60);
+      const remainSeconds = total % 60;
+      if (minutes < 60) return remainSeconds ? `${minutes} 分 ${remainSeconds} 秒` : `${minutes} 分钟`;
+      const hours = Math.floor(minutes / 60);
+      const remainMinutes = minutes % 60;
+      return remainMinutes ? `${hours} 小时 ${remainMinutes} 分` : `${hours} 小时`;
+    };
+    const buildDetailedStopDiagnosis = (payload, cachedVehicle, startedAt) => {
+      const health = combinedToolResult(payload, "health.autodrive_check") || {};
+      const planning = combinedToolResult(payload, "status.planning") || {};
+      const routing = combinedToolResult(payload, "status.routing") || {};
+      const localization = combinedToolResult(payload, "status.localization") || {};
+      const control = combinedToolResult(payload, "status.control") || {};
+      const can = combinedToolResult(payload, "status.can") || {};
+      const obstacle = combinedToolResult(payload, "status.obstacle_processor") || {};
+      const masterProbe = combinedToolResult(payload, "network.master_probe") || {};
+      const failedChecks = (Array.isArray(payload?.results) ? payload.results : []).filter((item) => !item?.ok);
+      const checks = health?.checks || {};
+      const canSummary = can?.summary || {};
+      const planningSummary = planning?.summary || {};
+      const planningSample = planning?.topics?.current_planning_status?.sample || {};
+      const routingSummary = routing?.summary || {};
+      const localizationSummary = localization?.summary || {};
+      const controlSummary = control?.summary || {};
+      const obstacleSummary = obstacle?.summary || {};
+      const cachedDiagnosis = stopDiagnosisOf(cachedVehicle || {});
+
+      const speedKph = firstFiniteNumber(canSummary.speed, cachedVehicle?.speed_kph);
+      const localizationSpeedMps = firstFiniteNumber(localizationSummary.speed_mps, cachedVehicle?.localization_speed_mps);
+      const targetSpeedMps = firstFiniteNumber(controlSummary.target_speed, cachedVehicle?.control_target_speed);
+      const stopped = Number.isFinite(speedKph)
+        ? Math.abs(speedKph) < 0.2
+        : Number.isFinite(localizationSpeedMps) && Math.abs(localizationSpeedMps) < 0.05;
+      const initialSpeed = finiteNumber(cachedVehicle?.speed_kph);
+      const observedDuringDiagnosis = stopped && Number.isFinite(initialSpeed) && Math.abs(initialSpeed) < 0.2
+        ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+        : 0;
+      const observedSeconds = Math.max(
+        Number(cachedVehicle?.stationary_observed_seconds || 0),
+        observedDuringDiagnosis
+      );
+
+      const emergencyStop = firstKnownBool(
+        canSummary.emergency_stop_pressed,
+        checks?.emergency_stop_clear?.observed,
+        cachedVehicle?.emergency_stop_pressed
+      );
+      const collisionStop = firstKnownBool(
+        canSummary.collision_stop,
+        checks?.collision_beam_clear?.observed,
+        cachedVehicle?.collision_stop
+      );
+      const ultrasonicStop = firstKnownBool(
+        canSummary.ultrasonic_stop,
+        checks?.ultrasonic_clear?.observed
+      );
+      const localizationReliable = firstKnownBool(
+        localizationSummary.reliable,
+        checks?.localization_ready?.observed,
+        cachedVehicle?.localization_reliable
+      );
+      const trajectoryEstop = firstKnownBool(
+        planningSummary.trajectory_estop,
+        wrappedData(planning?.topics?.trajectory?.sample?.estop),
+        checks?.planning_estop_clear?.observed,
+        cachedVehicle?.trajectory_estop
+      );
+      const longTimeStop = firstKnownBool(
+        planningSummary.long_time_stop,
+        wrappedData(planningSample.long_time_stop),
+        cachedVehicle?.long_time_stop
+      );
+      const vehicleReady = firstKnownBool(canSummary.vehicle_ready, cachedVehicle?.vehicle_ready);
+      const plannerRunning = firstFiniteNumber(planningSummary.planner_running, wrappedData(planningSample.planner_running));
+      const vehicleIdleStatus = firstFiniteNumber(planningSummary.vehicle_idle_status, wrappedData(planningSample.vehicle_idle_status));
+      const currentLoop = firstFiniteNumber(planningSummary.current_loop_index, wrappedData(planningSample.current_loop_index));
+      const totalLoop = firstFiniteNumber(planningSummary.total_loop_sum, wrappedData(planningSample.total_loop_sum));
+      const currentRefline = firstFiniteNumber(planningSummary.current_refline_index, wrappedData(planningSample.current_refline_index));
+      const totalRefline = firstFiniteNumber(planningSummary.total_refline_sum, wrappedData(planningSample.total_refline_sum));
+      const currentPaths = Array.isArray(routingSummary.current_path_string_ids)
+        ? routingSummary.current_path_string_ids
+        : [];
+      const taskProgressKnown = Number.isFinite(currentLoop) && Number.isFinite(totalLoop);
+      const taskComplete = vehicleIdleStatus === 1 || (
+        taskProgressKnown && totalLoop > 0 && currentLoop >= totalLoop && currentPaths.length === 0 && plannerRunning === 0
+      );
+      const taskActive = currentPaths.length > 0 || plannerRunning > 0 || vehicleIdleStatus === 0 || (
+        taskProgressKnown && totalLoop > 0 && currentLoop < totalLoop
+      );
+
+      const lidarDefinitions = [
+        ["前激光", "front_laser", "front_laser", "front_laser_topic_output"],
+        ["后激光", "back_laser", "rear_laser", "back_laser_topic_output"],
+        ["顶激光", "rslidar_points32", "top_lidar", "top_lidar_topic_output"]
+      ];
+      const lidarStates = lidarDefinitions.map(([label, topicKey, inputKey, checkKey]) => {
+        const topic = obstacle?.topics?.[topicKey] || {};
+        const healthCheck = checks?.[checkKey] || {};
+        const outputFlag = obstacleSummary?.lidar_topic_outputs?.[topicKey === "rslidar_points32" ? "top_lidar" : topicKey];
+        const inputFlag = obstacleSummary?.input_status?.[inputKey];
+        const ok = firstKnownBool(
+          healthCheck.ok,
+          outputFlag,
+          inputFlag === 1 ? true : inputFlag === 0 ? false : undefined
+        );
+        const age = finiteNumber(topic.message_age_s);
+        return {
+          label,
+          ok,
+          detail: ok === true
+            ? `${label}正常${Number.isFinite(age) ? `（${age.toFixed(2)} 秒前）` : ""}`
+            : ok === false
+              ? `${label}无有效数据${topic.sample_error ? `（${topic.sample_error}）` : ""}`
+              : `${label}未返回`
+        };
+      });
+      const failedLidar = lidarStates.filter((item) => item.ok === false);
+      const unknownLidar = lidarStates.filter((item) => item.ok === undefined);
+
+      const chassisSample = can?.topics?.chassis_can_status?.sample || {};
+      const ultrasonicSamples = [
+        chassisSample?.object_VCU_DCU_Ultrasonic_ECU1_0x5c8,
+        chassisSample?.object_VCU_DCU_Ultrasonic_ECU2_0x5c9
+      ].flatMap((sample) => sample && typeof sample === "object" ? Object.values(sample) : [])
+        .map(Number)
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const ultrasonicMin = ultrasonicSamples.length ? Math.min(...ultrasonicSamples) : NaN;
+      const fusionObjectCount = firstFiniteNumber(obstacleSummary.fusion_object_count);
+      const previewObjects = Array.isArray(obstacle?.topics?.fusion_objects?.sample?.preview)
+        ? obstacle.topics.fusion_objects.sample.preview
+        : [];
+      const validPreviewCount = previewObjects.filter((item) => item?.valid === true).length;
+      const motorFault = firstFiniteNumber(canSummary.motor_fault_code);
+      const faultLamps = Array.isArray(canSummary.fault_lamps_on) ? canSummary.fault_lamps_on : [];
+      const masterReachable = firstKnownBool(
+        masterProbe?.reachable,
+        masterProbe?.ping?.ok,
+        cachedVehicle?.master_ping_ok
+      );
+
+      let title = "停车原因待确认";
+      let tone = "warn";
+      let primaryReason = "车辆当前处于停止状态，但现有证据没有指向唯一阻断原因。";
+      if (masterReachable === false || cachedVehicle?.telemetry_master_ros_ok === false) {
+        title = "停车主因：主控或 ROS 链路异常";
+        tone = "danger";
+        primaryReason = "media 无法可靠读取主控/ROS，自动驾驶状态链路不完整。";
+      } else if (emergencyStop === true) {
+        title = "停车主因：急停触发";
+        tone = "danger";
+        primaryReason = "底盘急停输入为触发状态。";
+      } else if (collisionStop === true) {
+        title = "停车主因：防撞梁触发";
+        tone = "danger";
+        primaryReason = "底盘碰撞停/防撞梁输入为触发状态。";
+      } else if (ultrasonicStop === true) {
+        title = "停车主因：超声波停障触发";
+        tone = "danger";
+        primaryReason = `底盘超声波停障标志为触发${Number.isFinite(ultrasonicMin) ? `，最小原始距离值 ${ultrasonicMin}` : ""}。`;
+      } else if (localizationReliable === false) {
+        title = "停车主因：定位不可靠";
+        tone = "danger";
+        primaryReason = "定位 reliable=false，车辆不应继续自动驾驶。";
+      } else if (trajectoryEstop === true) {
+        title = "停车主因：Planning estop";
+        tone = "danger";
+        primaryReason = "规划轨迹 estop=true，控制链收到停车轨迹。";
+      } else if (failedLidar.length && stopped && (taskActive || cachedDiagnosis.tone === "danger" || cachedDiagnosis.tone === "warn")) {
+        title = "停车主因：激光雷达数据链路异常";
+        tone = "danger";
+        primaryReason = `${failedLidar.map((item) => item.label).join("、")}没有有效 ROS 数据；现有接口可确认数据链路异常，但没有返回雷达 IP ping 结果。`;
+      } else if ((Number.isFinite(motorFault) && motorFault !== 0) || faultLamps.length) {
+        title = "停车主因：底盘或电机故障";
+        tone = "danger";
+        primaryReason = `电机故障码 ${Number.isFinite(motorFault) ? motorFault : "--"}${faultLamps.length ? `，故障灯 ${faultLamps.join("、")}` : ""}。`;
+      } else if (!stopped) {
+        title = cachedDiagnosis.tone === "danger" || cachedDiagnosis.tone === "warn"
+          ? "历史告警已恢复：车辆当前运行中"
+          : "车辆当前运行中";
+        tone = "ok";
+        primaryReason = `实时速度 ${Number.isFinite(speedKph) ? `${numberText(speedKph)} km/h` : `${numberText(localizationSpeedMps)} m/s`}，当前不满足停车条件。`;
+      } else if (taskComplete) {
+        title = "正常停车：任务完成或车辆空闲";
+        tone = "ok";
+        primaryReason = `vehicle_idle_status=${displayValue(vehicleIdleStatus)}，planner_running=${displayValue(plannerRunning)}，当前无活动路线。`;
+      } else if (taskActive && Number.isFinite(targetSpeedMps) && targetSpeedMps > 0.2) {
+        title = "停车主因：有控制速度但车辆未动";
+        tone = "danger";
+        primaryReason = `控制目标速度 ${numberText(targetSpeedMps)} m/s，但实车速度接近 0；应继续检查底盘执行和制动状态。`;
+      } else if (taskActive && (longTimeStop === true || Number.isFinite(targetSpeedMps) && targetSpeedMps <= 0.2)) {
+        title = "停车主因：Planning 持续输出停车";
+        tone = "warn";
+        primaryReason = `任务仍有运行证据，但规划/控制目标速度为 ${numberText(targetSpeedMps)} m/s${longTimeStop === true ? "，且 long_time_stop=true" : ""}。`;
+      } else if (vehicleReady === false) {
+        title = "停车主因：底盘未就绪";
+        tone = "danger";
+        primaryReason = "底盘 vehicle_ready=false。";
+      } else if (!Object.keys(can).length || !Object.keys(planning).length) {
+        title = "诊断证据不完整，不能判定停车原因";
+        tone = "warn";
+        primaryReason = "CAN 或 Planning 实时检查没有返回，禁止据此判断车辆正常。";
+      }
+
+      const durationText = !stopped
+        ? "当前非停车"
+        : longTimeStop === true
+          ? `车端 long_time_stop=true；页面连续观测至少 ${formatStopDuration(observedSeconds)}`
+          : observedSeconds > 0
+            ? `页面连续观测至少 ${formatStopDuration(observedSeconds)}`
+            : "已停车；车端未上报起始时间";
+      const progressText = taskProgressKnown
+        ? `${currentLoop}/${totalLoop}${Number.isFinite(currentRefline) && Number.isFinite(totalRefline) ? ` 圈 · ${currentRefline}/${totalRefline} 段` : ""}`
+        : "未返回";
+      const lidarText = lidarStates.map((item) => item.detail).join("；");
+      const obstacleText = Number.isFinite(fusionObjectCount)
+        ? `${fusionObjectCount} 个融合目标${previewObjects.length ? `；预览有效 ${validPreviewCount}/${previewObjects.length}` : ""}`
+        : "未返回";
+      const safetyText = `急停${boolText(emergencyStop, "触发", "未触发")} / 防撞梁${boolText(collisionStop, "触发", "未触发")} / 超声停${boolText(ultrasonicStop, "触发", "未触发")}`;
+      const lines = [
+        `判定依据：${primaryReason}`,
+        `激光链路：${lidarText}`,
+        Number.isFinite(fusionObjectCount)
+          ? `障碍物证据：${obstacleText}；融合目标数量本身不等于阻塞原因。`
+          : "障碍物证据：未返回融合目标数量。",
+        Number.isFinite(ultrasonicMin)
+          ? `超声波距离：最小原始值 ${ultrasonicMin}；车端接口未声明该字段单位。`
+          : "超声波距离：未返回有效距离样本。",
+        failedChecks.length
+          ? `未完成检查：${failedChecks.map((item) => `${item.label || item.tool_name}（${item.error || "返回失败"}）`).join("；")}`
+          : "8 项实时只读检查均已返回。",
+        unknownLidar.length
+          ? `仍待确认：${unknownLidar.map((item) => item.label).join("、")}没有足够字段判定。`
+          : ""
+      ].filter(Boolean);
+      if ((cachedDiagnosis.tone === "danger" || cachedDiagnosis.tone === "warn") && tone === "ok") {
+        lines.unshift(`告警变化：列表缓存曾显示“${cachedDiagnosis.label}”，本次实时检查已不再满足该异常条件。`);
+      }
+
+      return {
+        title,
+        tone,
+        kv: [
+          ["停车时长", durationText],
+          ["实车 / 目标速度", `${Number.isFinite(speedKph) ? `${numberText(speedKph)} km/h` : "--"} / ${Number.isFinite(targetSpeedMps) ? `${numberText(targetSpeedMps)} m/s` : "--"}`],
+          ["任务进度", `${progressText} · ${taskComplete ? "已完成/空闲" : taskActive ? "任务活动中" : "未确认任务"}`],
+          ["安全停", safetyText],
+          ["定位 / Planning", `${boolText(localizationReliable, "可靠", "不可靠")} / estop ${boolText(trajectoryEstop, "触发", "未触发")} / long_stop ${boolText(longTimeStop, "是", "否")} / action ${displayValue(planningSummary.current_action, displayValue(wrappedData(planningSample.current_action)))}`],
+          ["激光雷达", failedLidar.length ? `${failedLidar.map((item) => item.label).join("、")}异常` : unknownLidar.length ? "部分未知" : "三路数据正常"],
+          ["融合障碍物", obstacleText],
+          ["检查完整度", `${payload.results.filter((item) => item.ok).length}/${payload.results.length}`]
+        ],
+        lines,
+        observed_seconds: observedSeconds,
+        stopped,
+        primary_reason: primaryReason
+      };
+    };
+
+    const summarizeDetailedStopDiagnosis = (payload) => payload?.diagnosis || summarizeCombinedResults(payload);
+
     const summarizeToolPayload = (
       toolName,
       payload,
@@ -4293,7 +4570,10 @@ const agentRules = [
       overlayError = ""
     ) => {
       const normalizedTool = String(toolName || "");
-      if (normalizedTool === "task.navigation_context" || normalizedTool === "communication.cloud_vehicle" || normalizedTool === "combined.snapshot") {
+      if (normalizedTool === "task.navigation_context") {
+        return summarizeDetailedStopDiagnosis(payload);
+      }
+      if (normalizedTool === "communication.cloud_vehicle" || normalizedTool === "combined.snapshot") {
         return summarizeCombinedResults(payload);
       }
       const ok = payload?.ok !== false;
@@ -5024,6 +5304,41 @@ const agentRules = [
       return renderSelectedMapRoute(state.selectedRouteId);
     };
 
+    const runConcurrentReadOnlyChecks = async (vehicleId, items, timeout_s, concurrency = 4) => {
+      const results = new Array(items.length);
+      let nextIndex = 0;
+      let completed = 0;
+      const worker = async () => {
+        while (nextIndex < items.length) {
+          const index = nextIndex++;
+          const item = items[index];
+          try {
+            const response = await requestReadOnlyToolPayload(
+              vehicleId,
+              item.tool_name,
+              item.args || {},
+              item.timeout_s || timeout_s,
+              "stop-diagnosis"
+            );
+            results[index] = { label: item.label, tool_name: item.tool_name, ok: true, response };
+          } catch (error) {
+            results[index] = {
+              label: item.label,
+              tool_name: item.tool_name,
+              ok: false,
+              error: error?.message || "检查失败",
+              response: null
+            };
+          } finally {
+            completed += 1;
+            setStatus(`停车诊断：已完成 ${completed}/${items.length} 项只读检查`, "loading");
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+      return results;
+    };
+
     const runReadOnlyTool = async (button) => {
       const toolName = String(button?.dataset?.tool || "").trim();
       const toolAction = String(button?.dataset?.toolAction || "tool_call").trim();
@@ -5050,26 +5365,27 @@ const agentRules = [
       try {
         let payload;
         if (toolAction === "task_context" || toolName === "task.navigation_context") {
+          const diagnosisStartedAt = Date.now();
           const contextTools = [
-            { tool_name: "status.routing", label: "Routing 状态", args: {} },
+            { tool_name: "health.autodrive_check", label: "自动驾驶阻断检查", args: {}, timeout_s: 60 },
             { tool_name: "status.planning", label: "Planning 状态", args: {} },
-            { tool_name: "route.list", label: "路线列表", args: {} },
+            { tool_name: "status.routing", label: "Routing 与任务状态", args: {} },
             { tool_name: "status.localization", label: "定位状态", args: {} },
-            { tool_name: "status.can", label: "CAN 状态", args: {} },
-            { tool_name: "status.obstacle_processor", label: "障碍物处理", args: {} }
+            { tool_name: "status.control", label: "控制目标与输入链", args: {} },
+            { tool_name: "status.can", label: "CAN、安全停与底盘", args: {} },
+            { tool_name: "status.obstacle_processor", label: "障碍物与三路激光", args: {} },
+            { tool_name: "network.master_probe", label: "主控与 ROS 链路", args: { include_ssh: false } }
           ];
-          const results = [];
-          for (const item of contextTools) {
-            const response = await fetch(EXECUTE_URL, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Accept: "application/json" },
-              credentials: "same-origin",
-              body: JSON.stringify({ action: "tool_call", vehicle_id: vehicleId, tool_name: item.tool_name, args: item.args, timeout_s, request_id: `cloud-ops-test-task-${item.tool_name}-${Date.now()}` })
-            });
-            const data = await response.json().catch(() => ({}));
-            results.push({ label: item.label, tool_name: item.tool_name, ok: response.ok && data?.ok !== false, response: data });
-          }
-          payload = { ok: results.every((item) => item.ok), vehicle_id: vehicleId, tool_name: "task.navigation_context", description: "Routing + Planning + 路线列表 + 定位/CAN/障碍物处理的停车/不动诊断上下文", results };
+          const results = await runConcurrentReadOnlyChecks(vehicleId, contextTools, timeout_s, 4);
+          payload = {
+            ok: results.every((item) => item.ok),
+            vehicle_id: vehicleId,
+            tool_name: "task.navigation_context",
+            description: "停车持续时间 + 安全停 + 任务 + 定位 + 控制 + 障碍物 + 激光数据链路综合诊断",
+            results,
+            diagnosis_started_at: new Date(diagnosisStartedAt).toISOString()
+          };
+          payload.diagnosis = buildDetailedStopDiagnosis(payload, vehicle, diagnosisStartedAt);
         } else if (toolAction === "communication_check" || toolName === "communication.cloud_vehicle") {
           const communicationTools = [
             { tool_name: "network.cloud_probe", label: "云端连通", args: {} },
@@ -5268,12 +5584,19 @@ const agentRules = [
           );
         }
         const obstacleOverlayProblem = toolName === "obstacle.preview" && Boolean(overlayError);
-        setStatus(
-          `只读检查完成：${toolName}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}${obstacleOverlayProblem ? ` · ${overlayError}` : ""}`,
-          toolName === "obstacle.preview" && (liveMediaError || obstacleOverlayProblem)
-            ? "error"
-            : (liveMediaError && !mediaCount ? "loading" : "ok")
-        );
+        if (toolName === "task.navigation_context" && payload?.diagnosis) {
+          setStatus(
+            `停车诊断完成：${payload.diagnosis.title}`,
+            payload.diagnosis.tone === "ok" ? "ok" : "error"
+          );
+        } else {
+          setStatus(
+            `只读检查完成：${toolName}${mediaCount ? ` · ${mediaCount} 项媒体` : ""}${obstacleOverlayProblem ? ` · ${overlayError}` : ""}`,
+            toolName === "obstacle.preview" && (liveMediaError || obstacleOverlayProblem)
+              ? "error"
+              : (liveMediaError && !mediaCount ? "loading" : "ok")
+          );
+        }
       } catch (error) {
         const primaryError = error?.message || "未知错误";
         let fallbackLiveMedia = null;
