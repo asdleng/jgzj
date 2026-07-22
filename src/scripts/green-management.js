@@ -372,6 +372,76 @@ if (root) {
     return status === "confirmed" ? "clear" : status === "rejected" ? "issue" : "attention";
   }
 
+  function groupPhysicalTreeAssets(assets) {
+    const groups = new Map();
+    (Array.isArray(assets) ? assets : []).forEach((asset) => {
+      const key = String(asset?.physical_tree_id || asset?.asset_id || "").trim();
+      if (!key) return;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(asset);
+    });
+    return [...groups.entries()].map(([physicalTreeId, members]) => {
+      members.sort((left, right) => (
+        Date.parse(left.created_at || "") - Date.parse(right.created_at || "")
+        || String(left.asset_id || "").localeCompare(String(right.asset_id || ""))
+      ));
+      const canonical = members.find((item) => item.asset_id === physicalTreeId) || members[0];
+      const observations = new Map();
+      const memberIds = new Set();
+      const sceneIds = new Set();
+      members.forEach((item) => {
+        (Array.isArray(item.physical_tree_member_ids) ? item.physical_tree_member_ids : [item.asset_id])
+          .filter(Boolean)
+          .forEach((identifier) => memberIds.add(identifier));
+        (Array.isArray(item.scene_ids) ? item.scene_ids : [item.scene_id])
+          .filter(Boolean)
+          .forEach((identifier) => sceneIds.add(identifier));
+        (Array.isArray(item.observations) ? item.observations : []).forEach((observation) => {
+          const key = observation.observation_id || `${observation.sample_id}|${observation.camera_id}|${observation.date}`;
+          observations.set(key, observation);
+        });
+      });
+      const observationRows = [...observations.values()].sort((left, right) => (
+        Date.parse(right.collected_at || "") - Date.parse(left.collected_at || "")
+      ));
+      const dates = [...new Set(observationRows.map((item) => item.date).filter(Boolean))].sort();
+      return {
+        ...canonical,
+        physical_tree_id: physicalTreeId,
+        physical_tree_member_ids: [...memberIds],
+        physical_tree_view_count: memberIds.size,
+        identity_scope: memberIds.size > 1 ? "cross_station_tree_entity_candidate_v1" : canonical.identity_scope,
+        scene_ids: [...sceneIds],
+        observations: observationRows,
+        observation_count: observationRows.length,
+        dates,
+        day_count: dates.length,
+        first_seen: observationRows.reduce((value, item) => !value || item.collected_at < value ? item.collected_at : value, null),
+        last_seen: observationRows.reduce((value, item) => !value || item.collected_at > value ? item.collected_at : value, null)
+      };
+    });
+  }
+
+  function summarizePhysicalTreeAssets(assets, source = {}) {
+    const rows = Array.isArray(assets) ? assets : [];
+    const sceneIds = rows.flatMap((item) => (
+      Array.isArray(item.scene_ids) && item.scene_ids.length ? item.scene_ids : [item.scene_id]
+    )).filter(Boolean);
+    return {
+      ...source,
+      asset_count: rows.length,
+      physical_tree_count: rows.length,
+      auto_matched_count: rows.filter((item) => ["auto_matched", "auto_confirmed"].includes(item.status)).length,
+      human_confirmed_count: rows.filter((item) => item.review_status === "confirmed").length,
+      needs_review_count: rows.filter((item) => item.review_status === "unreviewed").length,
+      rejected_count: rows.filter((item) => item.review_status === "rejected").length,
+      observation_count: rows.reduce((sum, item) => sum + Number(item.observation_count || 0), 0),
+      multi_day_count: rows.filter((item) => Number(item.day_count || 0) >= 2).length,
+      vehicle_count: new Set(rows.map((item) => item.vehicle_id).filter(Boolean)).size,
+      scene_count: new Set(sceneIds).size
+    };
+  }
+
   function setLedgerMode(mode) {
     state.ledgerMode = mode === "nodes" ? "nodes" : "assets";
     el.ledgerModes.forEach((button) => {
@@ -470,7 +540,8 @@ if (root) {
       const signature = document.createElement("small");
       signature.textContent = asset.signature || "独立乔木跨天匹配";
       const stats = document.createElement("em");
-      stats.textContent = `${asset.scene_label || "未分场景"} · ${asset.day_count || 0} 天 · ${asset.observation_count || 0} 张 · ${asset.camera_id || "相机"}`;
+      const viewLabel = Number(asset.physical_tree_view_count || 1) > 1 ? ` · ${asset.physical_tree_view_count} 个站位视角` : "";
+      stats.textContent = `${asset.scene_label || "未分场景"} · ${asset.day_count || 0} 天 · ${asset.observation_count || 0} 张${viewLabel} · ${asset.camera_id || "相机"}`;
       copy.append(id, signature, stats);
 
       const review = document.createElement("span");
@@ -697,9 +768,11 @@ if (root) {
     const query = new URLSearchParams({ vehicle_id: requestedVehicle, limit: "300" });
     const payload = await fetchJson(`${API.treeAssets}?${query.toString()}`).catch(() => ({ assets: [], summary: {} }));
     if (state.vehicleId !== requestedVehicle) return;
-    state.treeAssets = Array.isArray(payload.assets) ? payload.assets : [];
-    state.treeAssetSummary = payload.summary || {};
-    state.treeAssetScopeNotice = payload.scope_notice || "";
+    state.treeAssets = groupPhysicalTreeAssets(payload.assets);
+    state.treeAssetSummary = summarizePhysicalTreeAssets(state.treeAssets, payload.summary || {});
+    state.treeAssetScopeNotice = state.treeAssets.some((item) => Number(item.physical_tree_view_count || 1) > 1)
+      ? "树木实体先按同车、同相机逐日近点与相邻日期图像几何建链，再将 3 米内相邻站位经共同日期根点几何归并；地图点位仍是车辆观察站，不是树木实测坐标，尚未跨相机、跨车辆做全园区唯一化。"
+      : payload.scope_notice || "";
     if (!state.treeAssets.some((item) => item.asset_id === state.selectedAssetId)) state.selectedAssetId = "";
     renderTreeAssetCards();
     renderTreeAssetTable();

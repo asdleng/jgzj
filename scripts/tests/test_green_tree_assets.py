@@ -240,6 +240,36 @@ class GreenTreeAssetsTest(unittest.TestCase):
         self.assertEqual(trimmed_geometry["dropped_dates"], ["2026-07-21", "2026-07-17"])
         self.assertEqual(len(trimmed_geometry["pairs"]), 2)
 
+    def test_physical_pair_requires_three_good_dates_and_sixty_percent(self):
+        self.assertTrue(MODULE.physical_pair_passes({"comparisons": [
+            {"passed": True}, {"passed": True}, {"passed": False}, {"passed": True}, {"passed": False},
+        ]}))
+        self.assertFalse(MODULE.physical_pair_passes({"comparisons": [
+            {"passed": True}, {"passed": True}, {"passed": False},
+        ]}))
+
+    def test_physical_pair_skips_assets_without_observation_station(self):
+        args = SimpleNamespace(
+            entity_station_gate_m=3,
+            heading_gate_deg=10,
+            entity_min_pairs=3,
+        )
+        left = {"asset_id": "A", "vehicle_id": "BIT-0042", "camera_id": "camera4"}
+        right = {"asset_id": "B", "vehicle_id": "BIT-0042", "camera_id": "camera4"}
+        self.assertIsNone(MODULE.physical_pair_evidence(left, right, {}, args))
+
+    def test_physical_tree_clusters_keep_view_tracks_and_share_entity_id(self):
+        state = {"assets": {
+            "A": {"asset_id": "A", "created_at": "2026-07-20T00:00:00Z"},
+            "B": {"asset_id": "B", "created_at": "2026-07-21T00:00:00Z"},
+            "C": {"asset_id": "C", "created_at": "2026-07-21T00:00:00Z"},
+        }}
+        clusters = MODULE.apply_physical_tree_clusters(state, [{"left_asset_id": "A", "right_asset_id": "B"}])
+        self.assertEqual(len(clusters), 2)
+        self.assertEqual(state["assets"]["A"]["physical_tree_id"], "A")
+        self.assertEqual(state["assets"]["B"]["physical_tree_id"], "A")
+        self.assertEqual(state["assets"]["C"]["physical_tree_id"], "C")
+
     def test_model_json_failure_retries_with_larger_compact_response(self):
         class FakeResponse:
             def __init__(self, content):
@@ -332,7 +362,8 @@ class GreenTreeAssetsTest(unittest.TestCase):
             "C": {"vehicle_id": "BIT-9999", "vegetation_types": {"trees": False}},
         }}
         with patch.object(MODULE, "read_json", side_effect=[inspection_state, {"assets": {}}]), \
-                patch.object(MODULE, "run", side_effect=lambda item: {"vehicle_id": item.vehicle, "candidate_job_count": 1, "pending_job_count": 1, "selected_job_count": 1, "jobs": [{}]}) as runner:
+                patch.object(MODULE, "run", side_effect=lambda item: {"vehicle_id": item.vehicle, "candidate_job_count": 1, "pending_job_count": 1, "selected_job_count": 1, "jobs": [{}]}) as runner, \
+                patch.object(MODULE, "cluster_physical_tree_assets", return_value={"physical_tree_count": 0}):
             result = MODULE.run_requested(args)
         self.assertEqual([call.args[0].vehicle for call in runner.call_args_list], ["BIT-0011", "BIT-0042"])
         self.assertEqual(result["vehicle_count"], 2)

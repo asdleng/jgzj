@@ -592,6 +592,147 @@ def strongest_geometry_chain(track, geometry, min_days):
     return trimmed_track, trimmed_geometry
 
 
+def physical_pair_passes(evidence, min_pairs=3, min_pass_ratio=0.6):
+    comparisons = list(evidence.get("comparisons") or [])
+    passed = sum(item.get("passed") is True for item in comparisons)
+    return len(comparisons) >= min_pairs and passed >= min_pairs and passed / len(comparisons) >= min_pass_ratio
+
+
+def load_frame_index(sample_log):
+    frame_index = {}
+    with Path(sample_log).open("r", encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                sample = json.loads(line)
+            except Exception:
+                continue
+            sample_id = str(sample.get("sample_id") or "")
+            for frame in sample.get("frames") or []:
+                camera_id = str(frame.get("camera_id") or "")
+                if sample_id and camera_id:
+                    frame_index[(sample_id, camera_id)] = frame
+    return frame_index
+
+
+def physical_pair_evidence(left, right, frame_index, args):
+    if left.get("vehicle_id") != right.get("vehicle_id") or left.get("camera_id") != right.get("camera_id"):
+        return None
+    left_station = left.get("observation_station") or {}
+    right_station = right.get("observation_station") or {}
+    try:
+        station_distance = distance_m(left_station, right_station)
+    except (KeyError, TypeError, ValueError):
+        return None
+    heading_delta = angle_difference(left.get("observation_heading"), right.get("observation_heading"))
+    if station_distance > args.entity_station_gate_m or heading_delta > math.radians(args.heading_gate_deg):
+        return None
+    left_by_date = {item["date"]: item for item in left.get("observations") or []}
+    right_by_date = {item["date"]: item for item in right.get("observations") or []}
+    common_dates = sorted(set(left_by_date) & set(right_by_date), reverse=True)
+    if len(common_dates) < args.entity_min_pairs:
+        return None
+    comparisons = []
+    for date in common_dates:
+        left_observation = left_by_date[date]
+        right_observation = right_by_date[date]
+        left_frame = frame_index.get((str(left_observation.get("sample_id") or ""), left.get("camera_id")))
+        right_frame = frame_index.get((str(right_observation.get("sample_id") or ""), right.get("camera_id")))
+        if not left_frame or not right_frame or not frame_available(args.frames_root, left_frame) or not frame_available(args.frames_root, right_frame):
+            continue
+        left_image = cv2.imread(str(frame_path(args.frames_root, left_frame)), cv2.IMREAD_COLOR)
+        right_image = cv2.imread(str(frame_path(args.frames_root, right_frame)), cv2.IMREAD_COLOR)
+        metrics = homography_metrics(left_image, right_image) if left_image is not None and right_image is not None else None
+        if metrics is None:
+            comparisons.append({"date": date, "passed": False, "reason": "homography_unavailable"})
+            continue
+        source = pixel_point(left_observation["root_1000"], metrics["reference_shape"]).reshape(1, 1, 2)
+        projected = cv2.perspectiveTransform(source, metrics["matrix"]).reshape(2)
+        target = pixel_point(right_observation["root_1000"], metrics["candidate_shape"])
+        diagonal = float(np.linalg.norm([metrics["candidate_shape"][1], metrics["candidate_shape"][0]]))
+        root_error = float(np.linalg.norm(projected - target)) / max(1, diagonal) * 1000
+        passed = (
+            metrics["inliers"] >= args.min_inliers and
+            metrics["inlier_ratio"] >= args.min_inlier_ratio and
+            root_error <= args.max_root_error
+        )
+        comparisons.append({
+            "date": date,
+            "passed": passed,
+            "inliers": metrics["inliers"],
+            "inlier_ratio": round(metrics["inlier_ratio"], 4),
+            "root_error_normalized": round(root_error, 2),
+        })
+    return {
+        "left_asset_id": left["asset_id"],
+        "right_asset_id": right["asset_id"],
+        "station_distance_m": round(station_distance, 3),
+        "heading_delta_deg": round(math.degrees(heading_delta), 3),
+        "comparisons": comparisons,
+    }
+
+
+def apply_physical_tree_clusters(state, accepted_edges):
+    assets = state.get("assets") or {}
+    parents = {identifier: identifier for identifier in assets}
+
+    def find(identifier):
+        while parents[identifier] != identifier:
+            parents[identifier] = parents[parents[identifier]]
+            identifier = parents[identifier]
+        return identifier
+
+    def union(left, right):
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for edge in accepted_edges:
+        left = edge.get("left_asset_id")
+        right = edge.get("right_asset_id")
+        if left in assets and right in assets:
+            union(left, right)
+    groups = {}
+    for identifier in assets:
+        groups.setdefault(find(identifier), []).append(identifier)
+    clusters = {}
+    for member_ids in groups.values():
+        member_ids.sort()
+        canonical = min(member_ids, key=lambda identifier: (str(assets[identifier].get("created_at") or "9999"), identifier))
+        evidence = [edge for edge in accepted_edges if edge.get("left_asset_id") in member_ids and edge.get("right_asset_id") in member_ids]
+        clusters[canonical] = {"physical_tree_id": canonical, "member_asset_ids": member_ids, "match_evidence": evidence}
+        for identifier in member_ids:
+            assets[identifier]["physical_tree_id"] = canonical
+            assets[identifier]["physical_tree_member_ids"] = member_ids
+            assets[identifier]["physical_tree_view_count"] = len(member_ids)
+    state["physical_tree_clusters"] = clusters
+    return clusters
+
+
+def cluster_physical_tree_assets(state, args):
+    assets = list((state.get("assets") or {}).values())
+    frame_index = load_frame_index(args.sample_log)
+    evaluated = []
+    accepted = []
+    for index, left in enumerate(assets):
+        for right in assets[index + 1:]:
+            evidence = physical_pair_evidence(left, right, frame_index, args)
+            if evidence is None:
+                continue
+            evaluated.append(evidence)
+            if physical_pair_passes(evidence, args.entity_min_pairs, args.entity_min_pass_ratio):
+                accepted.append(evidence)
+    clusters = apply_physical_tree_clusters(state, accepted)
+    return {
+        "view_track_count": len(assets),
+        "physical_tree_count": len(clusters),
+        "merged_cluster_count": sum(len(item["member_asset_ids"]) > 1 for item in clusters.values()),
+        "merged_view_track_count": sum(len(item["member_asset_ids"]) - 1 for item in clusters.values()),
+        "evaluated_pair_count": len(evaluated),
+        "accepted_pair_count": len(accepted),
+    }
+
+
 def job_key(job):
     value = "|".join([str(job["anchor"].get("vehicle_id") or ""), job["camera_id"], *[str(row["sample"].get("sample_id") or "") for row in job["dates"]]])
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -774,6 +915,7 @@ def summarize(state):
         "multi_day_count": sum(int(item.get("day_count") or 0) >= 2 for item in assets),
         "vehicle_count": len({item.get("vehicle_id") for item in assets if item.get("vehicle_id")}),
         "scene_count": len({item.get("scene_id") for item in assets if item.get("scene_id")}),
+        "physical_tree_count": len({item.get("physical_tree_id") or item.get("asset_id") for item in assets}),
     }
 
 
@@ -900,6 +1042,10 @@ def run_requested(args):
         vehicle_args = argparse.Namespace(**{**vars(args), "vehicle": vehicle_id})
         builds.append(run(vehicle_args))
     state = read_json(args.state_path, empty_state())
+    physical_tree_summary = cluster_physical_tree_assets(state, args)
+    state["summary"] = summarize(state)
+    state["updated_at"] = now_iso()
+    write_json_atomic(args.state_path, state)
     return {
         "build_id": f"tree-assets-fleet-{int(time.time())}",
         "vehicle_id": "all",
@@ -912,6 +1058,7 @@ def run_requested(args):
         "selected_job_count": sum(int(item.get("selected_job_count") or 0) for item in builds),
         "processed_job_count": sum(len(item.get("jobs") or []) for item in builds),
         "vehicle_builds": builds,
+        "physical_tree_summary": physical_tree_summary,
         "summary": summarize(state),
     }
 
@@ -940,6 +1087,9 @@ def parse_args(argv=None):
     parser.add_argument("--min-inliers", type=int, default=50)
     parser.add_argument("--min-inlier-ratio", type=float, default=0.15)
     parser.add_argument("--max-root-error", type=float, default=20.0)
+    parser.add_argument("--entity-station-gate-m", type=float, default=3.0)
+    parser.add_argument("--entity-min-pairs", type=int, default=3)
+    parser.add_argument("--entity-min-pass-ratio", type=float, default=0.6)
     parser.add_argument("--image-max-side", type=int, default=960)
     parser.add_argument("--image-quality", type=int, default=84)
     parser.add_argument("--max-tokens", type=int, default=1800)

@@ -9,6 +9,7 @@ const {
   DEFAULT_FLEET_WORKER_MAX_JOBS,
   DEFAULT_WORKER_MAX_JOBS,
   createGreenTreeAssetStore,
+  groupPhysicalTreeAssets,
   nextShanghaiRunDelayMs,
   normalizeReviewStatus,
   shanghaiDayKey,
@@ -99,4 +100,31 @@ test('summary counts observations and multi-day tracks', () => {
     vehicle_count: 0,
     scene_count: 0
   });
+});
+
+test('physical tree grouping keeps all station views under one entity', () => {
+  const grouped = groupPhysicalTreeAssets([
+    {
+      asset_id: 'TREE-A', physical_tree_id: 'TREE-A', vehicle_id: 'BIT-0042', scene_id: 'S1', created_at: '2026-07-20T00:00:00Z',
+      observations: [{ observation_id: 'O1', date: '2026-07-20', collected_at: '2026-07-20T08:00:00Z' }]
+    },
+    {
+      asset_id: 'TREE-B', physical_tree_id: 'TREE-A', vehicle_id: 'BIT-0042', scene_id: 'S2', created_at: '2026-07-21T00:00:00Z',
+      observations: [{ observation_id: 'O2', date: '2026-07-21', collected_at: '2026-07-21T08:00:00Z' }]
+    }
+  ]);
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].physical_tree_view_count, 2);
+  assert.deepEqual(grouped[0].physical_tree_member_ids, ['TREE-A', 'TREE-B']);
+  assert.equal(grouped[0].observation_count, 2);
+  assert.equal(grouped[0].day_count, 2);
+  assert.deepEqual(grouped[0].scene_ids, ['S1', 'S2']);
+  assert.equal(grouped[0].identity_scope, 'cross_station_tree_entity_candidate_v1');
+});
+
+test('summary counts every scene represented by a grouped physical tree', () => {
+  assert.equal(summarizeAssets([
+    { asset_id: 'TREE-A', scene_id: 'S1', scene_ids: ['S1', 'S2'] },
+    { asset_id: 'TREE-C', scene_id: 'S3' }
+  ]).scene_count, 3);
 });

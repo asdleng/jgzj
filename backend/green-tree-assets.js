@@ -63,6 +63,11 @@ function normalizeReviewStatus(value) {
 
 function summarizeAssets(assets) {
   const rows = Array.isArray(assets) ? assets : [];
+  const sceneIds = rows.flatMap((item) => (
+    Array.isArray(item.scene_ids) && item.scene_ids.length
+      ? item.scene_ids
+      : [item.scene_id]
+  )).filter(Boolean);
   return {
     asset_count: rows.length,
     auto_matched_count: rows.filter((item) => item.status === 'auto_matched' || item.status === 'auto_confirmed').length,
@@ -72,7 +77,7 @@ function summarizeAssets(assets) {
     observation_count: rows.reduce((sum, item) => sum + Number(item.observation_count || 0), 0),
     multi_day_count: rows.filter((item) => Number(item.day_count || 0) >= 2).length,
     vehicle_count: new Set(rows.map((item) => item.vehicle_id).filter(Boolean)).size,
-    scene_count: new Set(rows.map((item) => item.scene_id).filter(Boolean)).size
+    scene_count: new Set(sceneIds).size
   };
 }
 
@@ -87,6 +92,49 @@ function mergeReview(asset, review) {
     reviewed_by: review?.reviewed_by || null,
     reviewed_at: review?.reviewed_at || null
   };
+}
+
+function groupPhysicalTreeAssets(assets) {
+  const groups = new Map();
+  (Array.isArray(assets) ? assets : []).forEach((asset) => {
+    const key = String(asset.physical_tree_id || asset.asset_id || '').trim();
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(asset);
+  });
+  return [...groups.entries()].map(([physicalTreeId, members]) => {
+    members.sort((left, right) => (
+      Date.parse(left.created_at || '') - Date.parse(right.created_at || '')
+      || String(left.asset_id).localeCompare(String(right.asset_id))
+    ));
+    const canonical = members.find((item) => item.asset_id === physicalTreeId) || members[0];
+    const observations = new Map();
+    members.forEach((item) => {
+      (item.observations || []).forEach((observation) => {
+        const key = observation.observation_id || `${observation.sample_id}|${observation.camera_id}|${observation.date}`;
+        observations.set(key, observation);
+      });
+    });
+    const observationRows = [...observations.values()].sort((left, right) => (
+      Date.parse(right.collected_at || '') - Date.parse(left.collected_at || '')
+    ));
+    const dates = [...new Set(observationRows.map((item) => item.date).filter(Boolean))].sort();
+    const sceneIds = [...new Set(members.map((item) => item.scene_id).filter(Boolean))];
+    return {
+      ...canonical,
+      physical_tree_id: physicalTreeId,
+      physical_tree_member_ids: members.map((item) => item.asset_id),
+      physical_tree_view_count: members.length,
+      identity_scope: members.length > 1 ? 'cross_station_tree_entity_candidate_v1' : canonical.identity_scope,
+      scene_ids: sceneIds,
+      observations: observationRows,
+      observation_count: observationRows.length,
+      dates,
+      day_count: dates.length,
+      first_seen: observationRows.reduce((value, item) => !value || item.collected_at < value ? item.collected_at : value, null),
+      last_seen: observationRows.reduce((value, item) => !value || item.collected_at > value ? item.collected_at : value, null)
+    };
+  });
 }
 
 function createGreenTreeAssetStore(options = {}) {
@@ -113,9 +161,10 @@ function createGreenTreeAssetStore(options = {}) {
     const vehicleId = String(options.vehicle_id || '').trim();
     const includeRejected = options.include_rejected === true;
     const limit = integerOption(options.limit, 200, 1, 1000);
-    const rows = merged.assets
+    const viewTracks = merged.assets
       .filter((item) => !vehicleId || String(item.vehicle_id || '') === vehicleId)
-      .filter((item) => includeRejected || item.review_status !== 'rejected')
+      .filter((item) => includeRejected || item.review_status !== 'rejected');
+    const rows = groupPhysicalTreeAssets(viewTracks)
       .sort((left, right) => {
         const reviewRank = { unreviewed: 0, confirmed: 1, rejected: 2 };
         return (reviewRank[left.review_status] ?? 3) - (reviewRank[right.review_status] ?? 3)
@@ -124,13 +173,13 @@ function createGreenTreeAssetStore(options = {}) {
       });
     return {
       schema: ASSET_SCHEMA,
-      identity_scope: 'same_camera_view_track_v1',
+      identity_scope: 'cross_station_tree_entity_candidate_v1',
       global_identity_confirmed: false,
       position_source: 'vehicle_observation_station',
-      scope_notice: '当前资产 ID 仅确认同车、同相机、同一路侧视角下的跨天同一棵树；地图点位是车辆观察站，不是树木实测坐标。',
+      scope_notice: '树木实体先按同车、同相机跨天匹配，再用相邻站位的共同日期根点几何进行候选归并；地图点位仍是车辆观察站，不是树木实测坐标。',
       updated_at: merged.state.updated_at || null,
       review_updated_at: merged.reviewState.updated_at || null,
-      summary: summarizeAssets(rows),
+      summary: { ...summarizeAssets(rows), view_track_count: viewTracks.length },
       worker: merged.worker,
       assets: rows.slice(0, limit)
     };
@@ -303,6 +352,7 @@ module.exports = {
   DEFAULT_FLEET_WORKER_MAX_JOBS,
   REVIEW_SCHEMA,
   createGreenTreeAssetStore,
+  groupPhysicalTreeAssets,
   mergeReview,
   nextShanghaiRunDelayMs,
   normalizeReviewStatus,
