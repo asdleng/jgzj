@@ -249,6 +249,11 @@ if (root) {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  function optionalNumber(value) {
+    if (value == null || value === "") return null;
+    return number(value);
+  }
+
   function formatNumber(value) {
     const parsed = number(value);
     return parsed == null ? "-" : new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(parsed);
@@ -318,14 +323,12 @@ if (root) {
 
   function healthGradeLabel(inspection) {
     if (!inspection) return "等待四路图像分析";
-    const grade = {
+    return {
       good: "长势良好",
       fair: "长势一般",
       poor: "健康欠佳",
       not_assessable: "可见植被不足"
     }[inspection.health_grade] || "需要人工复核";
-    const confidence = { high: "高", medium: "中", low: "低" }[inspection.confidence] || "低";
-    return `${grade} · ${confidence}置信度`;
   }
 
   function vegetationPresence(inspection, key) {
@@ -404,7 +407,7 @@ if (root) {
       identifier.textContent = vehicle.vehicle_id;
       const note = document.createElement("small");
       note.textContent = vehicle.vehicle_id === state.vehicleId && state.treeAssetSummary
-        ? `${Number(state.treeAssetSummary.asset_count || 0)} 棵实体树`
+        ? `${Number(state.treeAssetSummary.asset_count || 0)} 棵树`
         : "已有树木档案";
       button.append(identifier, note);
       fragment.appendChild(button);
@@ -502,27 +505,50 @@ if (root) {
     else renderVegetationTable();
   }
 
-  function geometrySummary(asset) {
-    const pairs = Array.isArray(asset?.geometry_validation?.pairs) ? asset.geometry_validation.pairs : [];
-    if (!pairs.length) return { label: "基准帧", inliers: null, rootError: null };
-    const inliers = pairs.map((item) => number(item.inliers)).filter((value) => value != null);
-    const rootErrors = pairs.map((item) => number(item.root_error_normalized)).filter((value) => value != null);
+  function assetPerformance(asset) {
+    const observations = Array.isArray(asset?.observations) ? asset.observations : [];
+    const scored = observations
+      .map((item) => ({ date: String(item.date || item.collected_at || ""), score: optionalNumber(item.context_health_score) }))
+      .filter((item) => item.score != null)
+      .sort((left, right) => left.date.localeCompare(right.date));
+    const earliest = scored.length ? scored[0].score : null;
+    const latest = scored.length ? scored[scored.length - 1].score : null;
     return {
-      label: inliers.length ? `${Math.min(...inliers)}+ 内点` : "已通过",
-      inliers: inliers.length ? Math.min(...inliers) : null,
-      rootError: rootErrors.length ? Math.max(...rootErrors) : null
+      earliest,
+      latest,
+      delta: earliest != null && latest != null ? latest - earliest : null
     };
+  }
+
+  function performanceLabel(score) {
+    if (score == null) return { label: "待观察", state: "unknown" };
+    if (score >= 80) return { label: "状态良好", state: "good" };
+    if (score >= 65) return { label: "建议关注", state: "fair" };
+    return { label: "需要复查", state: "poor" };
+  }
+
+  function trendLabel(delta) {
+    if (delta == null) return { label: "暂无对比", state: "unknown", detail: "需要更多历史记录" };
+    if (delta >= 5) return { label: "有所改善", state: "good", detail: `较最早记录 +${delta} 分` };
+    if (delta <= -5) return { label: "有所下降", state: "poor", detail: `较最早记录 ${delta} 分` };
+    return { label: "基本稳定", state: "good", detail: `较最早记录 ${delta > 0 ? "+" : ""}${delta} 分` };
   }
 
   function updateTreeAssetOverview() {
     const summary = state.treeAssetSummary || {};
     if (el.overview["tree-assets"]) el.overview["tree-assets"].textContent = String(summary.asset_count ?? 0);
     if (el.overview["tree-assets-note"]) {
-      el.overview["tree-assets-note"].textContent = `${summary.scene_count || 0} 个场景 · ${summary.multi_day_count || 0} 棵跨天`;
+      el.overview["tree-assets-note"].textContent = `${summary.scene_count || 0} 个巡检区域 · ${summary.multi_day_count || 0} 棵有多日记录`;
     }
-    if (el.treeStats.matched) el.treeStats.matched.textContent = String(summary.auto_matched_count || 0);
-    if (el.treeStats.confirmed) el.treeStats.confirmed.textContent = String(summary.human_confirmed_count || 0);
-    if (el.treeStats.pending) el.treeStats.pending.textContent = String(summary.needs_review_count || 0);
+    const attentionCount = state.treeAssets.filter((asset) => {
+      const performance = assetPerformance(asset);
+      return performance.latest != null && (performance.latest < 65 || (performance.delta != null && performance.delta <= -5));
+    }).length;
+    if (el.treeStats.matched) el.treeStats.matched.textContent = String(summary.asset_count ?? state.treeAssets.length);
+    if (el.treeStats.confirmed) {
+      el.treeStats.confirmed.textContent = String(summary.multi_day_count ?? state.treeAssets.filter((asset) => Number(asset.day_count || 0) > 1).length);
+    }
+    if (el.treeStats.pending) el.treeStats.pending.textContent = String(attentionCount);
   }
 
   function renderTreeAssetCards() {
@@ -543,14 +569,14 @@ if (root) {
       el.treeHeroSummary.textContent = `${assetCount} 棵资产 · ${summary.scene_count || 0} 个场景 · ${observationCount} 张历史图 · ${distinctDates.size} 个日期`;
     }
     if (el.treeHeroScope) {
-      el.treeHeroScope.textContent = state.treeAssetScopeNotice || "同车、同相机、同一路侧视角下匹配。";
+      el.treeHeroScope.textContent = state.treeAssetScopeNotice || "按巡检车辆整理树木的多日期记录。";
     }
     if (el.treeSelectionSummary) {
       el.treeSelectionSummary.textContent = state.treeAssetsLoading
         ? `正在读取 ${state.vehicleId || "车辆"} 的树木档案`
         : state.treeAssets.length
-          ? `${state.vehicleId} · ${state.treeAssets.length} 棵实体树 · 点击后展开历史图`
-          : `${state.vehicleId || "当前车辆"} 暂无合格树木资产`;
+          ? `${state.vehicleId} · ${state.treeAssets.length} 棵树 · 点击后查看历史表现`
+          : `${state.vehicleId || "当前车辆"} 暂无树木档案`;
     }
     if (!el.treeCardList) return;
     el.treeCardList.replaceChildren();
@@ -564,7 +590,7 @@ if (root) {
     if (!state.treeAssets.length) {
       const empty = document.createElement("p");
       empty.className = "gm-empty";
-      empty.textContent = "暂无满足位置、航向和图像几何门限的独立乔木。";
+      empty.textContent = "当前车辆暂未整理出可查看的树木记录。";
       el.treeCardList.appendChild(empty);
       return;
     }
@@ -576,13 +602,12 @@ if (root) {
       button.dataset.assetId = asset.asset_id;
       button.dataset.selected = String(asset.asset_id === state.selectedAssetId);
       button.setAttribute("aria-pressed", String(asset.asset_id === state.selectedAssetId));
-      button.title = `${asset.asset_id} · ${asset.signature || "独立乔木跨天匹配"}`;
+      button.title = `查看树木 ${index + 1} 的历史表现`;
       button.setAttribute("aria-label", `树木 ${index + 1}，${asset.day_count || 0} 天，${asset.observation_count || 0} 张历史图`);
       const name = document.createElement("strong");
       name.textContent = `树木 ${index + 1}`;
       const stats = document.createElement("small");
-      const viewLabel = Number(asset.physical_tree_view_count || 1) > 1 ? ` · ${asset.physical_tree_view_count} 视角` : "";
-      stats.textContent = `${asset.day_count || 0} 天 · ${asset.observation_count || 0} 图${viewLabel}`;
+      stats.textContent = `${asset.day_count || 0} 天 · ${asset.observation_count || 0} 张记录`;
       button.append(name, stats);
       fragment.appendChild(button);
     });
@@ -605,11 +630,11 @@ if (root) {
   function renderTreeAssetTable() {
     if (!el.treeAssetTableBody) return;
     updateTreeAssetOverview();
-    if (el.treeScope) el.treeScope.textContent = state.treeAssetScopeNotice || "资产 ID 当前限定为同车、同相机、同一路侧视角。";
+    if (el.treeScope) el.treeScope.textContent = state.treeAssetScopeNotice || "点击树木可查看不同日期的照片和状态变化。";
     if (state.ledgerMode === "assets" && el.ledgerSummary) {
       el.ledgerSummary.textContent = state.treeAssets.length
-        ? `${state.vehicleId} · ${state.treeAssets.length} 棵候选 · 点击查看多天证据`
-        : `${state.vehicleId || "当前车辆"} 暂无合格跨天树木资产`;
+        ? `${state.vehicleId} · ${state.treeAssets.length} 棵树 · 点击查看历史表现`
+        : `${state.vehicleId || "当前车辆"} 暂无树木档案`;
     }
     el.treeAssetTableBody.replaceChildren();
     if (!state.treeAssets.length) {
@@ -617,28 +642,24 @@ if (root) {
       const cell = document.createElement("td");
       cell.colSpan = 5;
       cell.className = "gm-table-empty";
-      cell.textContent = "暂未找到满足位置、航向和图像几何门限的独立乔木";
+      cell.textContent = "当前车辆暂未整理出可查看的树木记录";
       row.appendChild(cell);
       el.treeAssetTableBody.appendChild(row);
       return;
     }
     const fragment = document.createDocumentFragment();
-    state.treeAssets.forEach((asset) => {
-      const geometry = geometrySummary(asset);
+    state.treeAssets.forEach((asset, index) => {
+      const performance = assetPerformance(asset);
+      const current = performanceLabel(performance.latest);
+      const trend = trendLabel(performance.delta);
       const row = document.createElement("tr");
       row.dataset.assetId = asset.asset_id;
       row.dataset.selected = String(asset.asset_id === state.selectedAssetId);
-      appendAssetTextCell(row, asset.asset_id, `${asset.scene_label || asset.vehicle_id || "-"} · ${asset.camera_id || "相机"}`);
-      appendAssetTextCell(row, `${Number(asset.day_count || 0)} 天`, `${Number(asset.observation_count || 0)} 条观测`);
-      appendAssetTextCell(row, formatTime(asset.last_seen), asset.dates?.length ? asset.dates.slice().sort().join(" / ") : "-");
-      appendAssetTextCell(row, geometry.label, geometry.rootError == null ? "根点已校验" : `根点误差 ${geometry.rootError.toFixed(1)}/1000`);
-      const reviewCell = document.createElement("td");
-      const review = document.createElement("span");
-      review.className = "gm-tree-review-state";
-      review.dataset.state = asset.review_status || "unreviewed";
-      review.textContent = treeReviewLabel(asset.review_status);
-      reviewCell.appendChild(review);
-      row.appendChild(reviewCell);
+      appendAssetTextCell(row, `树木 ${index + 1}`, `${asset.vehicle_id || state.vehicleId || "当前车辆"} · 巡检区域`);
+      appendAssetTextCell(row, `${Number(asset.day_count || 0)} 天`, `${Number(asset.observation_count || 0)} 张历史照片`);
+      appendAssetTextCell(row, formatTime(asset.last_seen), `首次 ${formatTime(asset.first_seen)}`);
+      appendAssetTextCell(row, current.label, performance.latest == null ? "暂无评分" : `${performance.latest} 分`);
+      appendAssetTextCell(row, trend.label, trend.detail);
       fragment.appendChild(row);
     });
     el.treeAssetTableBody.appendChild(fragment);
@@ -664,7 +685,12 @@ if (root) {
     state.selectedAssetId = asset.asset_id;
     if (el.treeDetail) el.treeDetail.hidden = false;
     renderTreeAssetCards();
-    if (el.inspectorKicker) el.inspectorKicker.textContent = "TREE HISTORY · MULTI-DATE EVIDENCE";
+    const assetIndex = Math.max(0, state.treeAssets.findIndex((item) => item.asset_id === asset.asset_id));
+    const displayName = `树木 ${assetIndex + 1}`;
+    const performance = assetPerformance(asset);
+    const current = performanceLabel(performance.latest);
+    const trend = trendLabel(performance.delta);
+    if (el.inspectorKicker) el.inspectorKicker.textContent = "TREE CONDITION · HISTORY";
     if (el.treeHeroId) el.treeHeroId.textContent = asset.asset_id;
     if (el.treeHeroSignature) el.treeHeroSignature.textContent = asset.signature || "跨天树形与固定环境关系一致。";
     if (el.treeHeroMeta) {
@@ -674,21 +700,15 @@ if (root) {
       el.treeHeroReview.dataset.state = asset.review_status || "unreviewed";
       el.treeHeroReview.textContent = treeReviewLabel(asset.review_status);
     }
-    if (el.nodeTitle) el.nodeTitle.textContent = asset.asset_id;
+    if (el.nodeTitle) el.nodeTitle.textContent = displayName;
     if (el.nodeMeta) {
-      const station = asset.observation_station || {};
-      el.nodeMeta.textContent = `${asset.vehicle_id || "-"} · ${asset.camera_id || "相机"} · ${asset.day_count || 0} 天 ${asset.observation_count || 0} 次观测 · 车辆观察站 ${formatCoord(station.gaode_longitude)}, ${formatCoord(station.gaode_latitude)}`;
+      el.nodeMeta.textContent = `${asset.vehicle_id || "-"} · ${asset.day_count || 0} 天记录 · ${asset.observation_count || 0} 张历史照片 · 首次 ${formatTime(asset.first_seen)} · 最近 ${formatTime(asset.last_seen)}`;
     }
     if (el.nodeHealth) {
-      el.nodeHealth.dataset.state = treeReviewState(asset.review_status);
-      el.nodeHealth.textContent = treeReviewLabel(asset.review_status);
+      el.nodeHealth.dataset.state = current.state;
+      el.nodeHealth.textContent = current.label;
     }
-    if (el.treeReview) el.treeReview.hidden = false;
-    if (el.treeReviewMeta) {
-      el.treeReviewMeta.textContent = asset.review_status === "confirmed"
-        ? `已由 ${asset.reviewed_by || "人工"} 确认 · ${formatTime(asset.reviewed_at)}`
-        : "自动匹配已通过严格门限，仍建议人工确认后纳入正式盘点。";
-    }
+    if (el.treeReview) el.treeReview.hidden = true;
     el.treeReviewActions.forEach((button) => {
       button.disabled = state.treeReviewBusy || button.dataset.gmTreeReviewAction === asset.review_status;
     });
@@ -728,50 +748,61 @@ if (root) {
         const caption = document.createElement("figcaption");
         const date = document.createElement("span");
         date.textContent = observation.date || formatTime(observation.collected_at);
-        const match = document.createElement("strong");
-        const referenceDate = observation.geometry?.reference_date || observation.step_reference_date;
-        match.textContent = observation.geometry?.reference
-          ? "逐日位置链起点"
-          : `${observation.geometry?.inliers || 0} 个几何内点${referenceDate ? ` · 对比 ${referenceDate.slice(5)}` : ""}`;
+        const status = document.createElement("strong");
+        const observationScore = optionalNumber(observation.context_health_score);
+        const observationPerformance = performanceLabel(observationScore);
+        status.textContent = observationScore == null
+          ? observationPerformance.label
+          : `${observationPerformance.label} · ${observationScore} 分`;
         const evidence = document.createElement("small");
-        const stepDistance = number(observation.step_distance_m);
-        const stepLabel = referenceDate && stepDistance != null ? `距前一匹配日采集点 ${stepDistance.toFixed(1)} 米 · ` : "";
-        evidence.textContent = `${stepLabel}${observation.evidence || "树干根点与环境关系一致"}`;
-        caption.append(date, match, evidence);
+        evidence.textContent = "查看树冠、叶色和枝干的历史表现";
+        caption.append(date, status, evidence);
         figure.append(button, caption);
         el.frames.appendChild(figure);
       });
     }
-    const scored = observations.filter((item) => number(item.context_health_score) != null);
-    const latestScore = scored.length ? number(scored[0].context_health_score) : null;
-    const earliestScore = scored.length ? number(scored[scored.length - 1].context_health_score) : null;
-    const delta = latestScore != null && earliestScore != null ? latestScore - earliestScore : null;
-    if (el.scoreTitle) el.scoreTitle.textContent = "最近节点综合评分";
-    if (el.healthScore) el.healthScore.textContent = latestScore == null ? "-" : String(latestScore);
-    if (el.healthGrade) el.healthGrade.textContent = delta == null ? "暂无可比变化" : `跨期 ${delta > 0 ? "+" : ""}${delta} 分`;
-    if (el.scoreReason) el.scoreReason.textContent = "评分来自该树所在采集节点的四路绿化环境，不等同于单树健康诊断。";
+    if (el.scoreTitle) el.scoreTitle.textContent = "当前画面表现";
+    if (el.healthScore) el.healthScore.textContent = performance.latest == null ? "-" : String(performance.latest);
+    if (el.healthGrade) el.healthGrade.textContent = `${current.label} · ${trend.label}`;
+    if (el.scoreReason) el.scoreReason.textContent = "结合树冠、叶色、枝干及周边可见情况，仅作日常巡检参考。";
     if (el.healthPanel) el.healthPanel.dataset.state = "clear";
     if (el.indicators) {
       el.indicators.replaceChildren();
-      const geometry = geometrySummary(asset);
-      addAssetIndicator("跨天身份", `${asset.day_count || 0} 天`, "至少连续三天可确认的独立乔木");
-      addAssetIndicator("图像几何", geometry.inliers == null ? "基准" : `${geometry.inliers}+`, "SIFT 几何内点门限不少于 50");
-      addAssetIndicator("根点闭合", geometry.rootError == null ? "已校验" : `${geometry.rootError.toFixed(1)}/1000`, "自动确认门限不超过 20/1000");
-      addAssetIndicator("身份范围", "逐日同视角", "同车、同相机，每步位置 5 米内、航向差 10°内", "fair");
+      addAssetIndicator("记录跨度", `${asset.day_count || 0} 天`, `首次 ${formatTime(asset.first_seen)}，最近 ${formatTime(asset.last_seen)}`);
+      addAssetIndicator("历史照片", `${asset.observation_count || 0} 张`, "用于对比树冠、叶色和枝干变化");
+      addAssetIndicator("近期表现", current.label, performance.latest == null ? "当前暂无足够信息评分" : `最近一次巡检 ${performance.latest} 分`, current.state);
+      addAssetIndicator("变化趋势", trend.label, trend.detail, trend.state);
     }
-    if (el.inspectionSummary) el.inspectionSummary.textContent = asset.signature || "跨天树干、树冠与固定环境关系一致。";
-    replaceFindingList(el.observations, observations.map((item) => `${item.date}：${item.evidence || "同一实体匹配通过"}`), "暂无跨天观测");
+    if (el.inspectionSummary) {
+      el.inspectionSummary.textContent = performance.latest == null
+        ? "已收录多日期历史照片，当前信息不足，暂不判断长势变化。"
+        : performance.delta != null && performance.delta <= -5
+          ? "近期画面表现较早期下降，建议重点查看树冠、叶色和枝干是否出现变化。"
+          : performance.delta != null && performance.delta >= 5
+            ? "近期画面表现较早期有所改善，暂未见需要立即处理的明显趋势。"
+            : "近期画面表现基本稳定，暂未见需要立即处理的明显趋势。";
+    }
+    replaceFindingList(el.observations, observations.map((item) => {
+      const score = optionalNumber(item.context_health_score);
+      const label = performanceLabel(score).label;
+      return `${item.date || formatTime(item.collected_at)}：${label}${score == null ? "" : `（${score} 分）`}`;
+    }), "暂无历史巡检记录");
+    const needsAttention = performance.latest != null && (performance.latest < 65 || (performance.delta != null && performance.delta <= -5));
     replaceFindingList(
       el.issues,
-      ["当前地图坐标是车辆观察站位置，不是树木实测三维坐标；尚未进行跨相机全园区唯一合并。"],
-      "暂无身份边界说明",
-      true
+      needsAttention
+        ? [performance.latest < 65 ? "最近一次画面表现偏弱，需人工查看是否存在叶色异常、枯枝或冠层稀疏。" : "近期表现较早期有所下降，建议确认是否为季节、光照或真实长势变化。"]
+        : [performance.latest == null ? "当前信息不足，暂不判断问题。" : "未见需要立即处置的明显异常。"],
+      "未见需要立即处置的明显异常",
+      !needsAttention
     );
     replaceFindingList(
       el.recommendations,
-      asset.review_status === "confirmed" ? ["该资产已人工确认，可用于后续健康变化跟踪。"] : ["确认框内确为同一棵独立乔木后，再纳入正式树木盘点。"],
-      "暂无审核动作",
-      asset.review_status === "confirmed"
+      needsAttention
+        ? ["安排人工查看近期照片，重点确认叶色、枯枝、冠层稀疏及病虫害迹象。"]
+        : [performance.latest == null ? "继续积累清晰历史照片，暂不生成养护建议。" : "保持日常巡检即可，当前无需额外养护。"],
+      "保持日常巡检即可",
+      !needsAttention
     );
   }
 
@@ -811,9 +842,7 @@ if (root) {
     if (state.vehicleId !== requestedVehicle) return;
     state.treeAssets = groupPhysicalTreeAssets(payload.assets);
     state.treeAssetSummary = summarizePhysicalTreeAssets(state.treeAssets, payload.summary || {});
-    state.treeAssetScopeNotice = state.treeAssets.some((item) => Number(item.physical_tree_view_count || 1) > 1)
-      ? "树木实体先按同车、同相机逐日近点与相邻日期图像几何建链，再将 3 米内相邻站位经共同日期根点几何归并；地图点位仍是车辆观察站，不是树木实测坐标，尚未跨相机、跨车辆做全园区唯一化。"
-      : payload.scope_notice || "";
+    state.treeAssetScopeNotice = "按巡检车辆整理树木档案；点击树木可查看不同日期的照片、当前表现和变化趋势。";
     state.treeAssetsLoading = false;
     if (!state.treeAssets.some((item) => item.asset_id === state.selectedAssetId)) state.selectedAssetId = "";
     if (!state.selectedAssetId && el.treeDetail) el.treeDetail.hidden = true;
@@ -1223,7 +1252,7 @@ if (root) {
     if (observations.length) {
       return `${observationCategoryLabel(observations[0].category)}：${observations[0].evidence || "已完成图像分析"}`;
     }
-    if (inspection?.status === "not_assessable") return "画面证据不足，暂不生成健康判断。";
+    if (inspection?.status === "not_assessable") return "画面信息不足，暂不生成健康判断。";
     if (inspection) return inspection.summary || "已完成四路绿化影像分析。";
     return "等待进入图像分析队列。";
   }
@@ -1312,7 +1341,7 @@ if (root) {
       if (el.briefTitle) el.briefTitle.textContent = `${state.vehicleId || "当前车辆"} · 当日养护简报`;
       if (el.briefMeta) {
         el.briefMeta.textContent = state.dateKey
-          ? `${formatDateKey(state.dateKey)} · 已分析 ${analyzed.length}/${samples.length} 个节点 · ${rows.length} 条有证据建议`
+          ? `${formatDateKey(state.dateKey)} · 已分析 ${analyzed.length}/${samples.length} 个节点 · ${rows.length} 条有效建议`
           : "等待当前日期分析结果。";
       }
       el.brief.replaceChildren();
@@ -1347,7 +1376,7 @@ if (root) {
         const detail = document.createElement("p");
         detail.textContent = analyzed.length
           ? "继续按当前路线巡检；无明确问题时不生成工单。"
-          : "分析完成后只汇总有明确四路影像证据的观察。";
+          : "分析完成后只汇总能够从四路画面中明确看出的观察。";
         copy.append(title, detail);
         item.append(priority, copy);
         el.brief.appendChild(item);
@@ -1385,19 +1414,19 @@ if (root) {
     setProject(
       "trees",
       canopyLabel,
-      treeVisible ? `${leafLabel} · ${indicatorValueLabel("dead_or_broken_branches", indicators.dead_or_broken_branches)}` : "当前四路画面没有足够乔木证据",
+      treeVisible ? `${leafLabel} · ${indicatorValueLabel("dead_or_broken_branches", indicators.dead_or_broken_branches)}` : "当前四路画面没有足够乔木信息",
       treeVisible ? indicatorState("leaf_color", indicators.leaf_color) : "unknown"
     );
     setProject(
       "shrubs",
       shrubVisible ? indicatorValueLabel("shrub_condition", indicators.shrub_condition) : "画面未见灌木",
-      shrubVisible ? indicatorValueLabel("overgrowth_or_encroachment", indicators.overgrowth_or_encroachment) : "当前四路画面没有足够灌木证据",
+      shrubVisible ? indicatorValueLabel("overgrowth_or_encroachment", indicators.overgrowth_or_encroachment) : "当前四路画面没有足够灌木信息",
       shrubVisible ? indicatorState("shrub_condition", indicators.shrub_condition) : "unknown"
     );
     setProject(
       "groundcover",
       groundVisible ? indicatorValueLabel("groundcover_condition", indicators.groundcover_condition) : "画面未见地被",
-      groundVisible ? `${leafLabel} · ${indicatorValueLabel("drought_stress", indicators.drought_stress)}` : "当前四路画面没有足够草坪地被证据",
+      groundVisible ? `${leafLabel} · ${indicatorValueLabel("drought_stress", indicators.drought_stress)}` : "当前四路画面没有足够草坪地被信息",
       groundVisible ? indicatorState("groundcover_condition", indicators.groundcover_condition) : "unknown"
     );
     const issues = Array.isArray(inspection.issues) ? inspection.issues : [];
@@ -1428,7 +1457,7 @@ if (root) {
     if (el.previewTitle) el.previewTitle.textContent = `${sample?.vehicle_id || "-"} · ${frame?.camera_id || "camera"}`;
     if (el.previewMeta) {
       const inspection = inspectionFor(sample);
-      el.previewMeta.textContent = `${formatTime(sample?.collected_at)} · ${inspectionStatusLabel(inspection)} · 绿化巡检证据`;
+      el.previewMeta.textContent = `${formatTime(sample?.collected_at)} · ${inspectionStatusLabel(inspection)} · 绿化巡检记录`;
     }
     if (typeof el.preview.showModal === "function") el.preview.showModal();
     else el.preview.setAttribute("open", "");
@@ -1468,8 +1497,8 @@ if (root) {
     }
     if (el.scoreReason) {
       el.scoreReason.textContent = pending
-        ? "GPU4 正在计算五维评分与逐视角观察。"
-        : inspection?.score_reason || (inspection ? "综合当前可见植被的五维证据计算。" : "五维评分依据将在分析后显示。");
+        ? "正在分析当前巡检画面。"
+        : inspection?.score_reason || (inspection ? "根据当前画面中的植被状态综合判断。" : "树木表现将在分析后显示。");
     }
     if (el.indicators) {
       el.indicators.replaceChildren();
@@ -1501,7 +1530,7 @@ if (root) {
           fill.style.width = `${score == null ? 0 : Math.max(0, Math.min(100, score))}%`;
           track.appendChild(fill);
           const note = document.createElement("p");
-          note.textContent = dimension.observation || "当前画面没有提供更具体的维度证据。";
+          note.textContent = dimension.observation || "当前画面没有提供更具体的说明。";
           item.append(name, result, track, note);
           el.indicators.appendChild(item);
         });
@@ -1511,7 +1540,7 @@ if (root) {
       el.inspectionSummary.textContent = inspectionError
         ? `绿化分析暂不可用：${inspectionError}`
         : pending
-          ? "正在读取四路画面，仅保留有明确图像证据的结论。"
+          ? "正在读取四路画面，仅保留能够明确看出的结论。"
           : inspection?.summary || "选择节点后读取巡检结论。";
     }
     const observations = Array.isArray(inspection?.observations) ? inspection.observations : [];
@@ -1521,7 +1550,7 @@ if (root) {
         const cameras = Array.isArray(item.camera_ids) && item.camera_ids.length ? ` · ${item.camera_ids.join("/")}` : "";
         return `${observationCategoryLabel(item.category)}${cameras}：${item.evidence}`;
       }),
-      inspection ? inspection.status === "not_assessable" ? "当前画面没有足够清晰的植被证据" : "未返回具体观察，请重新分析该节点" : "暂无观察",
+      inspection ? inspection.status === "not_assessable" ? "当前画面中的植被不够清晰" : "未返回具体观察，请重新分析该节点" : "暂无观察",
       Boolean(inspection && observations.length)
     );
     const issues = Array.isArray(inspection?.issues) ? inspection.issues : [];
