@@ -399,6 +399,7 @@ if (root) {
       button.dataset.vehicleId = vehicle.vehicle_id;
       button.dataset.selected = String(vehicle.vehicle_id === state.vehicleId);
       button.setAttribute("aria-pressed", String(vehicle.vehicle_id === state.vehicleId));
+      button.disabled = state.busy;
       const identifier = document.createElement("strong");
       identifier.textContent = vehicle.vehicle_id;
       const note = document.createElement("small");
@@ -2174,9 +2175,10 @@ if (root) {
     if (focus) {
       state.selectedAssetId = "";
       setLedgerMode("nodes");
+      if (el.treeDetail) el.treeDetail.hidden = false;
     }
     syncVegetationTableSelection();
-    renderSampleDetail(sample);
+    if (focus || state.ledgerMode === "nodes") renderSampleDetail(sample);
     renderProjects(sample);
     void ensureInspection(sample);
     const nodePosition = state.nodePositions.get(state.selectedSampleId);
@@ -2394,6 +2396,7 @@ if (root) {
         selectTreeAsset(state.selectedAssetId, false);
       }
       if (mode === "nodes" && state.selectedSampleId) {
+        if (el.treeDetail) el.treeDetail.hidden = false;
         renderSampleDetail(state.visibleSampleById.get(state.selectedSampleId));
       }
     });
