@@ -172,7 +172,7 @@ def round_robin_jobs_by_scene(jobs):
             return ordered
 
 
-def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m, heading_gate_deg, history_days=8, scene_cell_size_m=25.0):
+def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m, heading_gate_deg, history_days=8, scene_cell_size_m=25.0, frames_root=None):
     by_id = {str(item.get("sample_id")): item for item in samples}
     tree_inspections = [
         item for item in inspections
@@ -261,7 +261,7 @@ def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m
             dated_frames = []
             for row in candidate["dates"]:
                 frame = next((frame for frame in row["sample"].get("frames") or [] if str(frame.get("camera_id")) == camera_id), None)
-                if frame:
+                if frame and (frames_root is None or frame_available(frames_root, frame)):
                     dated_frames.append({**row, "frame": frame})
             if len(dated_frames) >= 3:
                 jobs.append({
@@ -283,6 +283,14 @@ def frame_path(frames_root, frame):
     if not target.is_file():
         raise RuntimeError(f"tree_asset_frame_missing:{target}")
     return target
+
+
+def frame_available(frames_root, frame):
+    try:
+        frame_path(frames_root, frame)
+        return True
+    except RuntimeError:
+        return False
 
 
 def encode_image(path, max_side, quality):
@@ -736,6 +744,7 @@ def run(args):
         args.heading_gate_deg,
         args.history_days,
         args.scene_cell_size_m,
+        args.frames_root,
     )
     state = read_json(args.state_path, empty_state())
     if state.get("schema") != SCHEMA:
@@ -905,14 +914,16 @@ def main():
             })
             print(json.dumps({"ok": True, "build": build}, ensure_ascii=False, indent=2))
             return 0
-        except Exception as error:
+        except BaseException as error:
             write_json_atomic(args.worker_state_path, {
                 "schema": WORKER_SCHEMA,
                 "running": False,
                 "vehicle_id": args.vehicle,
-                "failed_at": now_iso(),
+                "aborted_at" if isinstance(error, KeyboardInterrupt) else "failed_at": now_iso(),
                 "error": f"{type(error).__name__}:{error}"[:500],
             })
+            if isinstance(error, KeyboardInterrupt):
+                return 130
             raise
 
 

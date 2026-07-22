@@ -96,6 +96,24 @@ class GreenTreeAssetsTest(unittest.TestCase):
             ["today", "day20-good", "day18-good", "day17-good"],
         )
 
+    def test_select_jobs_skips_archived_frames_that_are_no_longer_on_disk(self):
+        rows = [
+            sample("today", "2026-07-21", 22.5, 114.2, 0.1),
+            sample("day20", "2026-07-20", 22.500001, 114.2, 0.1),
+            sample("day19", "2026-07-19", 22.500002, 114.2, 0.1),
+            sample("archived", "2026-07-18", 22.500003, 114.2, 0.1),
+        ]
+        inspections = [{
+            "sample_id": "today",
+            "vehicle_id": "BIT-0042",
+            "collected_at": "2026-07-21T08:00:00.000Z",
+            "vegetation_types": {"trees": True},
+            "view_assessments": [{"camera_id": "camera4", "vegetation_visible": True, "vegetation_types": {"trees": True}}],
+        }]
+        with patch.object(MODULE, "frame_available", side_effect=lambda _, frame: "archived" not in frame["image_path"]):
+            jobs, _ = MODULE.select_jobs(rows, inspections, 4, 2, 5, 10, frames_root=Path("/frames"))
+        self.assertEqual([item["date"] for item in jobs[0]["dates"]], ["2026-07-21", "2026-07-20", "2026-07-19"])
+
     def test_select_jobs_follows_each_previous_position_instead_of_latest_anchor(self):
         rows = [
             sample("today", "2026-07-21", 22.5, 114.2, 0.1),
