@@ -30,6 +30,7 @@ PROMPT = """你是园区树木资产建档员。下面按日期给出同一车�
 只输出紧凑 JSON，不要 Markdown：
 {"tracks":[{"track_id":"T001","asset_kind":"individual_tree|tree_cluster|uncertain","confidence":"high|medium|low","signature":"稳定特征中文描述","observations":[{"date":"YYYY-MM-DD","bbox":[0,0,0,0],"root":[0,0],"visibility":"full|partial","evidence":"该日匹配证据"}]}],"unmatched_notes":["不建档原因"]}
 """
+RETRY_PROMPT = "上一次返回的 JSON 不完整。请只保留最多 3 棵证据最稳定的独立乔木，压缩 evidence 和 signature，确保 JSON 完整闭合。"
 
 
 def now_iso():
@@ -303,20 +304,12 @@ def encode_image(path, max_side, quality):
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def call_model(job, args):
-    content = [{"type": "text", "text": PROMPT}]
-    for row in job["dates"]:
-        image_path = frame_path(args.frames_root, row["frame"])
-        content.append({"type": "text", "text": f"日期 {row['date']}，相机 {job['camera_id']}"})
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{encode_image(image_path, args.image_max_side, args.image_quality)}"},
-        })
+def call_model_request(content, args, max_tokens):
     payload = {
         "model": args.model,
         "messages": [{"role": "user", "content": content}],
         "temperature": 0,
-        "max_tokens": args.max_tokens,
+        "max_tokens": max_tokens,
         "stream": False,
         "response_format": {"type": "json_object"},
         "chat_template_kwargs": {"enable_thinking": False},
@@ -335,6 +328,22 @@ def call_model(job, args):
     if not match:
         raise RuntimeError("tree_asset_model_json_missing")
     return json.loads(match.group(0)), raw
+
+
+def call_model(job, args):
+    content = [{"type": "text", "text": PROMPT}]
+    for row in job["dates"]:
+        image_path = frame_path(args.frames_root, row["frame"])
+        content.append({"type": "text", "text": f"日期 {row['date']}，相机 {job['camera_id']}"})
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{encode_image(image_path, args.image_max_side, args.image_quality)}"},
+        })
+    try:
+        return call_model_request(content, args, args.max_tokens)
+    except (json.JSONDecodeError, RuntimeError):
+        retry_content = [{"type": "text", "text": f"{PROMPT}\n{RETRY_PROMPT}"}, *content[1:]]
+        return call_model_request(retry_content, args, max(args.max_tokens, 3200))
 
 
 def normalize_point(value):
@@ -543,6 +552,44 @@ def validate_track_geometry(track, job, args):
         "dates": len(observations),
         "pairs": pairs,
     }
+
+
+def strongest_geometry_chain(track, geometry, min_days):
+    observations = sorted(track.get("observations") or [], key=lambda item: item["date"], reverse=True)
+    pairs = list(geometry.get("pairs") or [])
+    if len(observations) < min_days or len(pairs) != len(observations) - 1:
+        return track, {**geometry, "passed": False, "reason": "geometry_chain_unavailable"}
+    best_start = 0
+    best_end = 0
+    current_start = 0
+    for index, pair in enumerate(pairs):
+        if pair.get("passed"):
+            current_end = index + 1
+            if current_end - current_start > best_end - best_start:
+                best_start = current_start
+                best_end = current_end
+        else:
+            current_start = index + 1
+    selected = observations[best_start:best_end + 1]
+    if len(selected) < min_days:
+        return track, {
+            **geometry,
+            "passed": False,
+            "reason": "no_contiguous_geometry_chain",
+            "strongest_chain_days": len(selected),
+        }
+    selected_dates = {item["date"] for item in selected}
+    trimmed_track = {**track, "observations": selected}
+    trimmed_geometry = {
+        **geometry,
+        "passed": True,
+        "reason": "contiguous_geometry_chain_passed",
+        "dates": len(selected),
+        "pairs": pairs[best_start:best_end],
+        "original_dates": len(observations),
+        "dropped_dates": [item["date"] for item in observations if item["date"] not in selected_dates],
+    }
+    return trimmed_track, trimmed_geometry
 
 
 def job_key(job):
@@ -777,6 +824,7 @@ def run(args):
             rejected = 0
             for track in tracks:
                 geometry = validate_track_geometry(track, job, args)
+                track, geometry = strongest_geometry_chain(track, geometry, args.min_days)
                 eligible = (
                     track["asset_kind"] == "individual_tree" and
                     track["confidence"] == "high" and
@@ -789,6 +837,17 @@ def run(args):
                     state["assets"][asset["asset_id"]] = asset
                     accepted += 1
                 else:
+                    rejection_reasons = []
+                    if track["asset_kind"] != "individual_tree":
+                        rejection_reasons.append("not_individual_tree")
+                    if track["confidence"] != "high":
+                        rejection_reasons.append("confidence_not_high")
+                    if len(track["observations"]) < args.min_days:
+                        rejection_reasons.append("insufficient_days")
+                    if not has_visible_tree_roots(track["observations"]):
+                        rejection_reasons.append("tree_root_not_visible_inside_bbox")
+                    if geometry.get("passed") is not True:
+                        rejection_reasons.append(str(geometry.get("reason") or "geometry_failed"))
                     state["rejected_tracks"].append({
                         "job_key": key,
                         "track_id": track["track_id"],
@@ -796,6 +855,7 @@ def run(args):
                         "confidence": track["confidence"],
                         "signature": track["signature"],
                         "geometry": geometry,
+                        "rejection_reasons": rejection_reasons,
                         "rejected_at": now_iso(),
                     })
                     rejected += 1
@@ -808,7 +868,8 @@ def run(args):
         if record["status"] == "done":
             state["processed_jobs"][key] = record
         build["jobs"].append(record)
-        print(f"[{index}/{len(pending)}] {record['camera_id']} {record['status']} accepted={record.get('accepted_assets', 0)}", flush=True)
+        error_note = f" error={record.get('error')}" if record["status"] == "error" else ""
+        print(f"[{index}/{len(pending)}] {record['camera_id']} {record['status']} accepted={record.get('accepted_assets', 0)}{error_note}", flush=True)
     build["completed_at"] = now_iso()
     build["summary"] = summarize(state)
     state["updated_at"] = now_iso()

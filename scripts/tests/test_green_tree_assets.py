@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -223,6 +224,50 @@ class GreenTreeAssetsTest(unittest.TestCase):
             [call.args for call in homography.call_args_list],
             [("2026-07-21.jpg", "2026-07-20.jpg"), ("2026-07-20.jpg", "2026-07-19.jpg")],
         )
+
+    def test_strongest_geometry_chain_keeps_reliable_consecutive_history(self):
+        observations = [{"date": date} for date in ("2026-07-21", "2026-07-20", "2026-07-19", "2026-07-18", "2026-07-17")]
+        track = {"track_id": "T001", "observations": observations}
+        geometry = {"passed": False, "pairs": [
+            {"reference_date": "2026-07-21", "date": "2026-07-20", "passed": False},
+            {"reference_date": "2026-07-20", "date": "2026-07-19", "passed": True},
+            {"reference_date": "2026-07-19", "date": "2026-07-18", "passed": True},
+            {"reference_date": "2026-07-18", "date": "2026-07-17", "passed": False},
+        ]}
+        trimmed_track, trimmed_geometry = MODULE.strongest_geometry_chain(track, geometry, 3)
+        self.assertTrue(trimmed_geometry["passed"])
+        self.assertEqual([item["date"] for item in trimmed_track["observations"]], ["2026-07-20", "2026-07-19", "2026-07-18"])
+        self.assertEqual(trimmed_geometry["dropped_dates"], ["2026-07-21", "2026-07-17"])
+        self.assertEqual(len(trimmed_geometry["pairs"]), 2)
+
+    def test_model_json_failure_retries_with_larger_compact_response(self):
+        class FakeResponse:
+            def __init__(self, content):
+                self.payload = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return self.payload
+
+        job = {"camera_id": "camera4", "dates": [{"date": "2026-07-21", "frame": {"image_path": "today.jpg"}}]}
+        args = SimpleNamespace(
+            frames_root=Path("/frames"), image_max_side=960, image_quality=84,
+            model="Qwen3.6-27B-MM", service_url="http://model", timeout_s=240, max_tokens=1800,
+        )
+        with patch.object(MODULE, "frame_path", return_value=Path("today.jpg")), \
+                patch.object(MODULE, "encode_image", return_value="image"), \
+                patch.object(MODULE.urllib.request, "urlopen", side_effect=[FakeResponse('{"tracks": ['), FakeResponse('{"tracks": []}')]) as request:
+            parsed, _ = MODULE.call_model(job, args)
+        self.assertEqual(parsed, {"tracks": []})
+        self.assertEqual(request.call_count, 2)
+        retry_payload = json.loads(request.call_args_list[1].args[0].data.decode())
+        self.assertEqual(retry_payload["max_tokens"], 3200)
+        self.assertIn("最多 3 棵", retry_payload["messages"][0]["content"][0]["text"])
 
     def test_normalize_tracks_keeps_only_valid_unique_dates(self):
         payload = {"tracks": [{
