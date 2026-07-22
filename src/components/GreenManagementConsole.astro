@@ -28,6 +28,43 @@
     <i></i>
   </div>
 
+  <section class="gm-fleet-tree-overview" aria-label="全园区树木统计">
+    <header>
+      <div>
+        <p class="gm-kicker">PARK TREE OVERVIEW</p>
+        <h2>全园区树木概况</h2>
+      </div>
+      <p data-gm-fleet-tree-updated>正在统计树木档案</p>
+    </header>
+    <div class="gm-fleet-tree-stats">
+      <article class="gm-fleet-tree-stat gm-fleet-tree-stat--primary">
+        <span>树木总数</span>
+        <strong data-gm-fleet-tree-stat="trees">-</strong>
+        <em>按树木档案统计</em>
+      </article>
+      <article class="gm-fleet-tree-stat">
+        <span>历史照片</span>
+        <strong data-gm-fleet-tree-stat="photos">-</strong>
+        <em>用于查看长期变化</em>
+      </article>
+      <article class="gm-fleet-tree-stat">
+        <span>覆盖车辆</span>
+        <strong data-gm-fleet-tree-stat="vehicles">-</strong>
+        <em>已有树木巡检记录</em>
+      </article>
+      <article class="gm-fleet-tree-stat">
+        <span>巡检区域</span>
+        <strong data-gm-fleet-tree-stat="areas">-</strong>
+        <em>已建立历史档案</em>
+      </article>
+      <article class="gm-fleet-tree-stat">
+        <span>持续跟踪</span>
+        <strong data-gm-fleet-tree-stat="tracked">-</strong>
+        <em>拥有多日期记录</em>
+      </article>
+    </div>
+  </section>
+
   <section class="gm-asset-selector" aria-label="车辆与树木选择">
     <div class="gm-selector-row gm-selector-row--vehicle">
       <header>
@@ -2142,6 +2179,106 @@
     background: #3a503e;
   }
 
+  .gm-fleet-tree-overview {
+    margin-bottom: 14px;
+    overflow: hidden;
+    border: 1px solid #344c3b;
+    border-radius: 3px;
+    background: #0f2018;
+  }
+
+  .gm-fleet-tree-overview > header {
+    display: flex;
+    min-height: 58px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 11px 16px;
+    border-bottom: 1px solid #344c3b;
+    background: #12241a;
+  }
+
+  .gm-fleet-tree-overview h2 {
+    margin: 3px 0 0;
+    color: #e8e3d5;
+    font-size: 1rem;
+    font-weight: 700;
+  }
+
+  .gm-fleet-tree-overview > header > p {
+    margin: 0;
+    color: #829184;
+    font-size: 0.68rem;
+    text-align: right;
+  }
+
+  .gm-fleet-tree-stats {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .gm-fleet-tree-stat {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    min-height: 104px;
+    flex-direction: column;
+    justify-content: center;
+    padding: 14px 17px;
+    border-right: 1px solid #304839;
+    background: #102219;
+  }
+
+  .gm-fleet-tree-stat:last-child {
+    border-right: 0;
+  }
+
+  .gm-fleet-tree-stat::before {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 2px;
+    background: #6f9068;
+    content: "";
+  }
+
+  .gm-fleet-tree-stat--primary {
+    background: linear-gradient(135deg, rgba(197, 153, 56, 0.14), rgba(16, 34, 25, 0.94) 58%);
+  }
+
+  .gm-fleet-tree-stat--primary::before {
+    background: #c99b39;
+  }
+
+  .gm-fleet-tree-stat > span {
+    color: #aeb5a7;
+    font-size: 0.68rem;
+    font-weight: 750;
+  }
+
+  .gm-fleet-tree-stat > strong {
+    margin-top: 4px;
+    overflow: hidden;
+    color: #d7ad4c;
+    font-size: clamp(1.8rem, 2.25vw, 2.65rem);
+    font-weight: 700;
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .gm-fleet-tree-stat > em {
+    margin-top: 7px;
+    overflow: hidden;
+    color: #75867a;
+    font-size: 0.62rem;
+    font-style: normal;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .gm-overview {
     gap: 0;
     margin-bottom: 14px;
@@ -2933,6 +3070,10 @@
   }
 
   @media (max-width: 1500px) {
+    .gm-fleet-tree-stats {
+      grid-template-columns: repeat(5, minmax(112px, 1fr));
+    }
+
     .gm-overview {
       grid-template-columns: minmax(240px, 1.2fr) repeat(3, minmax(120px, 0.7fr));
     }
@@ -2943,6 +3084,36 @@
   }
 
   @media (max-width: 700px) {
+    .gm-fleet-tree-overview > header {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .gm-fleet-tree-overview > header > p {
+      text-align: left;
+    }
+
+    .gm-fleet-tree-stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .gm-fleet-tree-stat {
+      min-height: 92px;
+      padding: 12px 13px;
+      border-right: 1px solid #304839;
+      border-bottom: 1px solid #304839;
+    }
+
+    .gm-fleet-tree-stat:nth-child(2n) {
+      border-right: 0;
+    }
+
+    .gm-fleet-tree-stat:last-child {
+      grid-column: 1 / -1;
+      border-bottom: 0;
+    }
+
     .gm-overview {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }

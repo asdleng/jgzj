@@ -37,6 +37,7 @@ if (root) {
     status: root.querySelector("[data-gm-status]"),
     auth: root.querySelector("[data-gm-auth]"),
     recordDate: root.querySelector("[data-gm-record-date]"),
+    fleetTreeUpdated: root.querySelector("[data-gm-fleet-tree-updated]"),
     vehicle: root.querySelector("[data-gm-vehicle]"),
     vehicleTabs: root.querySelector("[data-gm-vehicle-tabs]"),
     date: root.querySelector("[data-gm-date]"),
@@ -130,6 +131,9 @@ if (root) {
   el.treeStats = Object.fromEntries(
     [...root.querySelectorAll("[data-gm-tree-stat]")].map((node) => [node.dataset.gmTreeStat, node])
   );
+  el.fleetTreeStats = Object.fromEntries(
+    [...root.querySelectorAll("[data-gm-fleet-tree-stat]")].map((node) => [node.dataset.gmFleetTreeStat, node])
+  );
   el.progressBar = root.querySelector("[data-gm-progress-bar]");
   const state = {
     busy: false,
@@ -150,6 +154,7 @@ if (root) {
     treeAssets: [],
     treeAssetsLoading: false,
     treeAssetSummary: null,
+    fleetTreeSummary: null,
     treeAssetScopeNotice: "",
     selectedAssetId: "",
     treeReviewBusy: false,
@@ -532,6 +537,36 @@ if (root) {
     if (delta >= 5) return { label: "有所改善", state: "good", detail: `较最早记录 +${delta} 分` };
     if (delta <= -5) return { label: "有所下降", state: "poor", detail: `较最早记录 ${delta} 分` };
     return { label: "基本稳定", state: "good", detail: `较最早记录 ${delta > 0 ? "+" : ""}${delta} 分` };
+  }
+
+  function renderFleetTreeOverview(payload) {
+    const summary = payload?.summary || {};
+    state.fleetTreeSummary = summary;
+    const values = {
+      trees: summary.asset_count,
+      photos: summary.observation_count,
+      vehicles: summary.vehicle_count,
+      areas: summary.scene_count,
+      tracked: summary.multi_day_count
+    };
+    Object.entries(values).forEach(([key, value]) => {
+      if (el.fleetTreeStats[key]) el.fleetTreeStats[key].textContent = formatNumber(value);
+    });
+    if (el.fleetTreeUpdated) {
+      el.fleetTreeUpdated.textContent = payload?.updated_at
+        ? `树木档案更新于 ${formatTime(payload.updated_at)}`
+        : "树木档案已读取";
+    }
+  }
+
+  async function loadFleetTreeOverview() {
+    try {
+      const payload = await fetchJson(`${API.treeAssets}?limit=1`);
+      renderFleetTreeOverview(payload);
+    } catch (error) {
+      console.warn("green-management fleet tree overview load failed", error);
+      if (el.fleetTreeUpdated) el.fleetTreeUpdated.textContent = "树木统计暂不可用";
+    }
   }
 
   function updateTreeAssetOverview() {
@@ -2363,13 +2398,17 @@ if (root) {
       }
       if (el.auth) el.auth.hidden = true;
       setLoadProgress(12, "正在读取车辆列表");
-      const vehiclePayload = await fetchJson(API.vehicles);
+      const [vehiclePayload] = await Promise.all([
+        fetchJson(API.vehicles),
+        loadFleetTreeOverview()
+      ]);
       const preferred = renderVehicleOptions(vehiclePayload.vehicles);
       if (!preferred) throw new Error("暂无可用巡逻车辆");
       setLoadProgress(24, `已找到 ${formatNumber(vehiclePayload.vehicles?.length || 0)} 台采集车辆`);
       await refreshGreenQueueStatus();
       await selectVehicle(preferred);
       window.setInterval(() => void refreshGreenQueueStatus(), 20 * 1000);
+      window.setInterval(() => void loadFleetTreeOverview(), 5 * 60 * 1000);
     } catch (error) {
       setStatus("初始化失败", "error");
       if (el.auth) {
