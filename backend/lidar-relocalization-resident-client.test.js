@@ -69,6 +69,32 @@ test('propagates TTS priority rejection without a cold fallback', async () => {
   );
 });
 
+test('accepts an in-memory vehicle capture without a temporary file', async () => {
+  let request = null;
+  await inferResidentRelocalization({
+    baseUrl: 'http://127.0.0.1:18926',
+    vehicleId: 'BIT-0046',
+    requestId: 'vehicle-test-1',
+    capture: { capture_id: 'vehicle-cap-1', pointcloud: { encoding: 'float32_xyz_zlib_base64' } },
+    expectedMapSizeBytes: 117544304,
+    readFile: async () => {
+      throw new Error('readFile must not be called for an in-memory capture');
+    },
+    fetchImpl: async (_url, options) => {
+      request = JSON.parse(options.body);
+      return response(200, {
+        ok: true,
+        method: EXPECTED_METHOD,
+        shadow_mode: true,
+        publication_enabled: false,
+        publication_count: 0,
+        map_contract: { matched: true, resident_size_bytes: 117544304 }
+      });
+    }
+  });
+  assert.equal(request.capture.capture_id, 'vehicle-cap-1');
+});
+
 test('rejects any response that could publish a vehicle pose', async () => {
   await assert.rejects(
     inferResidentRelocalization({

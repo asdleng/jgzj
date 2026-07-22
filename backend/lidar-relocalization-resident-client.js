@@ -14,8 +14,9 @@ async function inferResidentRelocalization(options = {}) {
   const vehicleId = String(options.vehicleId || '').trim();
   const requestId = String(options.requestId || '').trim();
   const capturePath = String(options.capturePath || '').trim();
+  const captureObject = options.capture;
   const expectedMapSizeBytes = Number(options.expectedMapSizeBytes);
-  if (!vehicleId || !requestId || !capturePath) {
+  if (!vehicleId || !requestId || (!capturePath && (!captureObject || typeof captureObject !== 'object'))) {
     throw new Error('resident_relocalization_request_incomplete');
   }
   if (!Number.isSafeInteger(expectedMapSizeBytes) || expectedMapSizeBytes <= 0) {
@@ -27,7 +28,9 @@ async function inferResidentRelocalization(options = {}) {
   if (typeof fetchImpl !== 'function') {
     throw new Error('resident_relocalization_fetch_unavailable');
   }
-  const capture = JSON.parse(await readFile(capturePath, 'utf8'));
+  const capture = captureObject && typeof captureObject === 'object'
+    ? captureObject
+    : JSON.parse(await readFile(capturePath, 'utf8'));
   const body = JSON.stringify({
     request_id: requestId,
     vehicle_id: vehicleId,

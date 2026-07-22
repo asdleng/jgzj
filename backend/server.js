@@ -37,6 +37,9 @@ const {
   registerLidarRelocalizationDatasetRoutes
 } = require('./lidar-relocalization-dataset');
 const {
+  registerLidarRelocalizationVehicleApi
+} = require('./lidar-relocalization-vehicle-api');
+const {
   buildLidarRelocalizationVehicleAvailability,
   readLidarRelocalizationAvailabilityState
 } = require('./lidar-relocalization-availability');
@@ -200,6 +203,11 @@ const patrolFlowUploadToken = readSecretFromEnvOrFile(
   ['PARK_CROWD_PATROL_FLOW_UPLOAD_TOKEN', 'PARK_PCM_PATROL_FLOW_UPLOAD_TOKEN'],
   'PARK_CROWD_PATROL_FLOW_UPLOAD_TOKEN_FILE',
   '/home/admin1/.config/cloud-agent/patrol_flow_token'
+);
+const lidarRelocalizationVehicleToken = readSecretFromEnvOrFile(
+  ['LIDAR_RELOCALIZATION_VEHICLE_TOKEN'],
+  'LIDAR_RELOCALIZATION_VEHICLE_TOKEN_FILE',
+  '/home/admin1/.config/cloud-agent/relocalization_token'
 );
 const cloudAgentPlanSessionSuffix = process.env.CLOUD_AGENT_PLAN_SESSION_SUFFIX || 'ops-plan';
 const cloudAgentAnswerSessionSuffix =
@@ -1262,6 +1270,48 @@ registerOneApiProxyRoutes(app, {
 });
 registerLidarMapUploadProxyRoutes(app);
 app.use(express.json({ limit: '16mb' }));
+registerLidarRelocalizationVehicleApi(app, {
+  authToken: lidarRelocalizationVehicleToken,
+  infer: async (request) => {
+    const coverage = await getLidarRelocBevplaceCoverage(request.vehicleId);
+    if (!coverage.available) {
+      const error = new Error(describeLidarRelocCoverageFailure(request.vehicleId, coverage));
+      error.statusCode = 409;
+      error.phase = 'vehicle_not_indexed';
+      throw error;
+    }
+    const map = await statLidarRelocMap(request.vehicleId);
+    if (!map.available) {
+      const error = new Error('server_global_map_unavailable');
+      error.statusCode = 409;
+      error.phase = 'map_not_ready';
+      throw error;
+    }
+    if (request.mapHintSize !== null && request.mapHintSize !== map.size_bytes) {
+      const error = new Error(
+        `vehicle_map_size_mismatch:vehicle=${request.mapHintSize}:server=${map.size_bytes}`
+      );
+      error.statusCode = 409;
+      error.phase = 'map_contract_mismatch';
+      throw error;
+    }
+    const startedAt = Date.now();
+    const result = await inferResidentRelocalization({
+      baseUrl: lidarRelocalizationResidentBaseUrl,
+      timeoutMs: lidarRelocalizationResidentTimeoutMs,
+      requestId: request.requestId,
+      vehicleId: request.vehicleId,
+      capture: request.capture,
+      expectedMapSizeBytes: map.size_bytes
+    });
+    return {
+      ...result,
+      resident_service: true,
+      a100_gpu: lidarRelocalizationResidentGpu,
+      server_elapsed_ms: Date.now() - startedAt
+    };
+  }
+});
 
 function normalizeReply(text) {
   return String(text || '')
