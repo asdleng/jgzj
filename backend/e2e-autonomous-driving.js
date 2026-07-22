@@ -3,9 +3,9 @@
 const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
 const DEFAULT_RESERVE_BYTES = 10 * GIB;
-const DEFAULT_NOMINAL_RATE_MIB_S = 18;
-const DEFAULT_LOW_RATE_MIB_S = 12;
-const DEFAULT_HIGH_RATE_MIB_S = 24;
+const DEFAULT_NOMINAL_RATE_MIB_S = 15;
+const DEFAULT_LOW_RATE_MIB_S = 14;
+const DEFAULT_HIGH_RATE_MIB_S = 16;
 const DEFAULT_FRESHNESS_MS = 3 * 60 * 1000;
 
 function finiteNumber(value) {

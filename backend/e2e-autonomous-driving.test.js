@@ -2,10 +2,19 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  DEFAULT_HIGH_RATE_MIB_S,
+  DEFAULT_LOW_RATE_MIB_S,
+  DEFAULT_NOMINAL_RATE_MIB_S,
   DEFAULT_RESERVE_BYTES,
   buildFleetStorageSnapshot,
   selectMediaDisk
 } = require('./e2e-autonomous-driving');
+
+test('no-video capacity uses the measured point-cloud-dominated write rate', () => {
+  assert.equal(DEFAULT_NOMINAL_RATE_MIB_S, 15);
+  assert.equal(DEFAULT_LOW_RATE_MIB_S, 14);
+  assert.equal(DEFAULT_HIGH_RATE_MIB_S, 16);
+});
 
 test('selectMediaDisk prefers /home capture storage over root', () => {
   const disk = selectMediaDisk({
