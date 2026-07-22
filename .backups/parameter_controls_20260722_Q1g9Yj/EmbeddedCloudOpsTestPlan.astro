@@ -486,102 +486,31 @@ const agentRules = [
             <strong role="columnheader">含义</strong>
             <strong role="columnheader">设置值</strong>
           </div>
-
-          <div class="cloud-ops-param-node" role="row"><strong>控制节点</strong><span>即时控制</span><em>4 项已接入 · 3 项待车端接入</em></div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>超声波开启关闭</strong><span>车端未接入</span></div>
-            <p role="cell">控制底盘控制指令中的超声波功能开关</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" disabled>开启</button><button type="button" disabled>关闭</button></div><small>缺少安全写入与回读工具</small></div>
-          </div>
           <div class="cloud-ops-param-row" role="row" data-param-row="body.ad_screen">
-            <div role="cell"><strong>广告机上下电</strong><span data-param-current="body.ad_screen">当前：--</span></div>
+            <div role="cell"><strong>广告屏</strong><span data-param-current="body.ad_screen">当前：--</span></div>
             <p role="cell">控制车载广告屏供电状态</p>
-            <div role="cell" class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="body" data-param-key="body.ad_screen" data-param-label="广告机上下电" data-original="" data-param-value="">
-              <button type="button" data-action="param-choice" data-param-value="true" disabled>上电</button><button type="button" data-action="param-choice" data-param-value="false" disabled>下电</button>
+            <div role="cell" class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="body" data-param-key="body.ad_screen" data-param-label="广告屏" data-original="" data-param-value="">
+              <button type="button" data-action="param-choice" data-param-value="true" disabled>开启</button><button type="button" data-action="param-choice" data-param-value="false" disabled>关闭</button>
             </div>
           </div>
-          <div class="cloud-ops-param-row" role="row" data-param-row="body.steer_lamp">
-            <div role="cell"><strong>转向灯控制</strong><span data-param-current="body.steer_lamp">当前：--</span></div>
-            <p role="cell">设置关闭、左转、右转或双闪</p>
-            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="转向灯设置值" data-param-input data-param-kind="steer" data-param-group="body" data-param-key="body.steer_lamp" data-param-label="转向灯控制" data-original="" disabled><option value="0">关闭</option><option value="1">左转</option><option value="2">右转</option><option value="3">双闪</option></select></div>
-          </div>
           <div class="cloud-ops-param-row" role="row" data-param-row="body.front_lamp">
-            <div role="cell"><strong>前照灯控制</strong><span data-param-current="body.front_lamp">当前：--</span></div>
+            <div role="cell"><strong>前照灯</strong><span data-param-current="body.front_lamp">当前：--</span></div>
             <p role="cell">控制车辆前照灯开关</p>
-            <div role="cell" class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="body" data-param-key="body.front_lamp" data-param-label="前照灯控制" data-original="" data-param-value="">
+            <div role="cell" class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="body" data-param-key="body.front_lamp" data-param-label="前照灯" data-original="" data-param-value="">
               <button type="button" data-action="param-choice" data-param-value="true" disabled>开启</button><button type="button" data-action="param-choice" data-param-value="false" disabled>关闭</button>
             </div>
           </div>
           <div class="cloud-ops-param-row" role="row" data-param-row="body.mood_lamp">
-            <div role="cell"><strong>氛围灯控制</strong><span data-param-current="body.mood_lamp">当前：--</span></div>
+            <div role="cell"><strong>氛围灯</strong><span data-param-current="body.mood_lamp">当前：--</span></div>
             <p role="cell">控制车内氛围灯开关</p>
-            <div role="cell" class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="body" data-param-key="body.mood_lamp" data-param-label="氛围灯控制" data-original="" data-param-value="">
+            <div role="cell" class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="body" data-param-key="body.mood_lamp" data-param-label="氛围灯" data-original="" data-param-value="">
               <button type="button" data-action="param-choice" data-param-value="true" disabled>开启</button><button type="button" data-action="param-choice" data-param-value="false" disabled>关闭</button>
             </div>
           </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>电机上下电控制</strong><span>车端未接入</span></div>
-            <p role="cell">控制车辆动力电机上电或下电</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" disabled>电机上电</button><button type="button" disabled>电机下电</button></div><small>需静止校验、现场安全确认和写后回读</small></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable is-critical" role="row">
-            <div role="cell"><strong>一键系统下电</strong><span>关键动作 · 未接入</span></div>
-            <p role="cell">关闭车辆系统电源，必须使用独立高风险控制流程</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><button class="cloud-ops-param-danger-control" type="button" disabled>系统下电</button><small>车端尚未提供带确认和回读的安全工具</small></div>
-          </div>
-
-          <div class="cloud-ops-param-node" role="row"><strong>Planning 节点</strong><span>策略与阈值</span><em>车端参数写入工具待接入</em></div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>绕障总开关</strong><span>车端未接入</span></div>
-            <p role="cell">控制 Planning 是否启用绕障动作</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" disabled>开启</button><button type="button" disabled>关闭</button></div><small>对应 enable_avoid_action，缺少运行时写入工具</small></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>定时强制绕障</strong><span>车端未接入</span></div>
-            <p role="cell">指定时段强制开启绕障；非绕障区域规则仍优先</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-time-control"><label><input type="checkbox" disabled><span>启用</span></label><label><span>开始</span><input type="time" value="08:00" disabled></label><label><span>结束</span><input type="time" value="20:00" disabled></label></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>定时强制关闭广告机</strong><span>车端未接入</span></div>
-            <p role="cell">指定时段强制关闭广告机，支持跨午夜</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-time-control"><label><input type="checkbox" disabled><span>启用</span></label><label><span>开始</span><input type="time" value="22:00" disabled></label><label><span>结束</span><input type="time" value="07:00" disabled></label></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>前照灯氛围灯时间</strong><span>车端未接入</span></div>
-            <p role="cell">分别设置前照灯和氛围灯的启用时间范围</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-schedule-control"><div><span>前照灯</span><input type="time" value="18:00" disabled><b>至</b><input type="time" value="06:30" disabled></div><div><span>氛围灯</span><input type="time" value="18:00" disabled><b>至</b><input type="time" value="22:00" disabled></div></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>回充标定值</strong><span>参数定义待确认</span></div>
-            <p role="cell">设置车辆回充过程使用的标定值</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><input type="number" inputmode="decimal" placeholder="标定项、单位和范围待确认" disabled><small>需明确具体标定字段及安全范围</small></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>AI 功能阈值</strong><span>暂不开放</span></div>
-            <p role="cell">Planning 中 AI 相关功能阈值，当前语义不明确</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><input type="number" inputmode="decimal" placeholder="参数定义确认后开放" disabled><small>避免把多个算法阈值合并为一项</small></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>定点播报经纬度</strong><span>车端未接入</span></div>
-            <p role="cell">启用定点播报并设置触发点经度、纬度</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-coordinate-control"><label><input type="checkbox" disabled><span>启用</span></label><input type="number" min="-180" max="180" step="0.000001" placeholder="经度" disabled><input type="number" min="-90" max="90" step="0.000001" placeholder="纬度" disabled></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>车身膨胀距离</strong><span>车端未接入</span></div>
-            <p role="cell">设置 Planning 规划安全边界的车身膨胀距离</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><label class="cloud-ops-param-number"><input type="number" min="0" step="0.01" inputmode="decimal" placeholder="上下限待车端 Schema" disabled><span>m</span></label><small>单位已确定为米；最大值尚未确认</small></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>绕障车辆 Z 轴阈值</strong><span>车端未接入</span></div>
-            <p role="cell">过滤参与绕障判断的车辆目标高度</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><label class="cloud-ops-param-number"><input type="number" step="0.01" inputmode="decimal" placeholder="范围待确认" disabled><span>m</span></label><small>对应 avoidance_z_corrdinate_threshold</small></div>
-          </div>
-
-          <div class="cloud-ops-param-node" role="row"><strong>语音节点</strong><span>播报与静音</span><em>音量 2 项已接入 · 策略待接入</em></div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>AI 语音与循环次数</strong><span>车端未接入</span></div>
-            <p role="cell">开启或关闭 AI 语音并设置单次循环次数</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-inline-control"><div class="cloud-ops-param-choice"><button type="button" disabled>开启</button><button type="button" disabled>关闭</button></div><label><input type="number" min="1" max="20" step="1" value="1" disabled><span>次</span></label></div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="body.steer_lamp">
+            <div role="cell"><strong>转向灯</strong><span data-param-current="body.steer_lamp">当前：--</span></div>
+            <p role="cell">设置关闭、左转、右转或双闪</p>
+            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="转向灯设置值" data-param-input data-param-kind="steer" data-param-group="body" data-param-key="body.steer_lamp" data-param-label="转向灯" data-original="" disabled><option value="0">关闭</option><option value="1">左转</option><option value="2">右转</option><option value="3">双闪</option></select></div>
           </div>
           <div class="cloud-ops-param-row" role="row" data-param-row="audio.system_volume">
             <div role="cell"><strong>系统音量</strong><span data-param-current="audio.system_volume">当前：--</span></div>
@@ -592,40 +521,6 @@ const agentRules = [
             <div role="cell"><strong>麦克风收音</strong><span data-param-current="audio.microphone_gain">当前：--</span></div>
             <p role="cell">USB 麦克风输入增益</p>
             <label role="cell" class="cloud-ops-param-number"><input type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="麦克风收音设置值" data-param-input data-param-kind="percent" data-param-group="audio" data-param-key="audio.microphone_gain" data-param-label="麦克风收音" data-original="" disabled><span>%</span></label>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>待机静音</strong><span>车端未接入</span></div>
-            <p role="cell">车辆进入待机状态后保持静音</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" disabled>开启</button><button type="button" disabled>关闭</button></div><small>缺少语音策略读写工具</small></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>夜间静音时间</strong><span>车端未接入</span></div>
-            <p role="cell">设置夜间自动静音的开始和结束时间</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-time-control"><label><input type="checkbox" disabled><span>启用</span></label><label><span>开始</span><input type="time" value="22:00" disabled></label><label><span>结束</span><input type="time" value="07:00" disabled></label></div>
-          </div>
-
-          <div class="cloud-ops-param-node" role="row"><strong>定位节点</strong><span>NDT 参数</span><em>车端参数写入工具待接入</em></div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>NDT 阈值</strong><span>车端未接入</span></div>
-            <p role="cell">设置定位模块接受 NDT 结果的分数阈值</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><input type="number" min="0" step="0.01" inputmode="decimal" placeholder="范围待定位 Schema" disabled><small>需确认分数方向、上下限和重载方式</small></div>
-          </div>
-
-          <div class="cloud-ops-param-node" role="row"><strong>AI 节点</strong><span>事件策略</span><em>车端参数写入工具待接入</em></div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>夜间逗留启用时间</strong><span>车端未接入</span></div>
-            <p role="cell">设置夜间逗留检测每天开启和关闭的时间</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-time-control"><label><input type="checkbox" disabled><span>启用</span></label><label><span>开始</span><input type="time" value="22:00" disabled></label><label><span>结束</span><input type="time" value="06:00" disabled></label></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>人员聚集人数</strong><span>车端未接入</span></div>
-            <p role="cell">设置触发人员聚集事件的人数阈值</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><label class="cloud-ops-param-number"><input type="number" min="2" max="100" step="1" inputmode="numeric" placeholder="2–100" disabled><span>人</span></label><small>最终范围以后端 Schema 为准</small></div>
-          </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>AI 地点文字</strong><span>车端未接入</span></div>
-            <p role="cell">修改 AI 事件中展示和播报的地点名称</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><input type="text" maxlength="60" placeholder="输入地点名称" disabled><small>最多 60 个字符，等待配置写入工具</small></div>
           </div>
         </div>
 
