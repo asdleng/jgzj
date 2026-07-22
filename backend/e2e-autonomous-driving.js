@@ -7,6 +7,37 @@ const DEFAULT_NOMINAL_RATE_MIB_S = 15;
 const DEFAULT_LOW_RATE_MIB_S = 14;
 const DEFAULT_HIGH_RATE_MIB_S = 16;
 const DEFAULT_FRESHNESS_MS = 3 * 60 * 1000;
+const DEFAULT_FLEET_VEHICLE_IDS = Object.freeze([
+  'BIT-0001',
+  'BIT-0011',
+  'BIT-0013',
+  'BIT-0014',
+  'BIT-0015',
+  'BIT-0016',
+  'BIT-0019',
+  'BIT-0020',
+  'BIT-0022',
+  'BIT-0023',
+  'BIT-0026',
+  'BIT-0030',
+  'BIT-0031',
+  'BIT-0032',
+  'BIT-0033',
+  'BIT-0034',
+  'BIT-0035',
+  'BIT-0036',
+  'BIT-0037',
+  'BIT-0038',
+  'BIT-0039',
+  'BIT-0040',
+  'BIT-0041',
+  'BIT-0042',
+  'BIT-0043',
+  'BIT-0044',
+  'BIT-0045',
+  'BIT-0046',
+  'BIT-0047'
+]);
 
 function finiteNumber(value) {
   const number = Number(value);
@@ -133,6 +164,36 @@ function estimateDuration(collectableBytes, rateMibS) {
   return collectableBytes / (rate * MIB);
 }
 
+function mergeFleetInventory(vehicles, fleetVehicleIds = DEFAULT_FLEET_VEHICLE_IDS) {
+  const liveVehicles = Array.isArray(vehicles) ? vehicles : [];
+  const byId = new Map();
+  liveVehicles.forEach((vehicle) => {
+    const vehicleId = String(vehicle?.vehicle_id || vehicle?.plate_number || '').trim().toUpperCase();
+    if (!/^BIT-\d{4}$/.test(vehicleId)) return;
+    const previous = byId.get(vehicleId);
+    const previousTime = Date.parse(String(previous?.last_seen || '')) || 0;
+    const nextTime = Date.parse(String(vehicle?.last_seen || '')) || 0;
+    if (!previous || nextTime >= previousTime) {
+      byId.set(vehicleId, { ...vehicle, vehicle_id: vehicleId, _e2e_inventory_only: false });
+    }
+  });
+
+  const orderedIds = [];
+  const seen = new Set();
+  [...(Array.isArray(fleetVehicleIds) ? fleetVehicleIds : []), ...byId.keys()].forEach((value) => {
+    const vehicleId = String(value || '').trim().toUpperCase();
+    if (!/^BIT-\d{4}$/.test(vehicleId) || seen.has(vehicleId)) return;
+    seen.add(vehicleId);
+    orderedIds.push(vehicleId);
+  });
+
+  return orderedIds.map((vehicleId) => byId.get(vehicleId) || {
+    vehicle_id: vehicleId,
+    plate_number: vehicleId,
+    _e2e_inventory_only: true
+  });
+}
+
 function buildFleetStorageSnapshot(vehicles, options = {}) {
   const nowMs = finiteNumber(options.nowMs) ?? Date.now();
   const reserveBytes = finiteNumber(options.reserveBytes) ?? DEFAULT_RESERVE_BYTES;
@@ -149,6 +210,7 @@ function buildFleetStorageSnapshot(vehicles, options = {}) {
     return {
       vehicle_id: vehicleId,
       plate_number: String(vehicle?.plate_number || vehicleId),
+      agent_registered: vehicle?._e2e_inventory_only !== true,
       online,
       last_seen: vehicle?.last_seen || null,
       snapshot_at: vehicle?.snapshot?.generated_at || vehicle?.snapshot?.system?.generated_at || null,
@@ -216,7 +278,10 @@ function registerE2eAutonomousDrivingRoutes(app, options = {}) {
     async (_req, res) => {
       res.setHeader('Cache-Control', 'private, no-store');
       try {
-        const vehicles = await options.listVehicles();
+        const vehicles = mergeFleetInventory(
+          await options.listVehicles(),
+          options.fleetVehicleIds || DEFAULT_FLEET_VEHICLE_IDS
+        );
         return res.json({
           ok: true,
           ...buildFleetStorageSnapshot(vehicles, options)
@@ -233,11 +298,13 @@ function registerE2eAutonomousDrivingRoutes(app, options = {}) {
 }
 
 module.exports = {
+  DEFAULT_FLEET_VEHICLE_IDS,
   DEFAULT_HIGH_RATE_MIB_S,
   DEFAULT_LOW_RATE_MIB_S,
   DEFAULT_NOMINAL_RATE_MIB_S,
   DEFAULT_RESERVE_BYTES,
   buildFleetStorageSnapshot,
+  mergeFleetInventory,
   normalizeMount,
   registerE2eAutonomousDrivingRoutes,
   selectMediaDisk

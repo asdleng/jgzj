@@ -75,7 +75,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
         <div class="e2e-table-head">
           <div>
             <h3>每辆车 Media 剩余空间</h3>
-            <p>橙色“根分区回退”不是采集盘容量，待车端上报 /home 后自动替换。</p>
+            <p>所有已知 BIT 车辆都会列出；未接入 Agent 或离线的车辆明确显示容量未知。</p>
           </div>
           <label class="e2e-filter">
             <span>筛选车辆</span>
@@ -200,9 +200,10 @@ import SiteLayout from "../../components/SiteLayout.astro";
       free_bytes?: number;
       preferred_capture_mount?: boolean;
     }
-    interface E2eVehicle {
-      vehicle_id?: string;
-      online?: boolean;
+      interface E2eVehicle {
+        vehicle_id?: string;
+        agent_registered?: boolean;
+        online?: boolean;
       snapshot_at?: string | null;
       last_seen?: string | null;
       storage?: E2eStorage | null;
@@ -217,6 +218,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
       summary?: {
         online_count?: number;
         vehicle_count?: number;
+        measurable_count?: number;
         capture_mount_count?: number;
         root_fallback_count?: number;
         total_collectable_bytes?: number;
@@ -280,9 +282,14 @@ import SiteLayout from "../../components/SiteLayout.astro";
             : storage
               ? `${storage.mountpoint || "/"} · 根分区回退`
               : "等待上报";
+          const statusLabel = vehicle.agent_registered === false
+            ? "未接入 Agent"
+            : vehicle.online
+              ? "在线"
+              : "离线/过期";
           return `<tr>
             <td><span class="e2e-vehicle">${escapeHtml(vehicle.vehicle_id)}</span></td>
-            <td><span class="e2e-status ${vehicle.online ? "is-online" : ""}">${vehicle.online ? "在线" : "离线/过期"}</span></td>
+            <td><span class="e2e-status ${vehicle.online ? "is-online" : ""}">${statusLabel}</span></td>
             <td><span class="e2e-source ${trusted ? "" : "is-fallback"}">${escapeHtml(mountLabel)}</span></td>
             <td>${formatGiB(storage?.total_bytes)}</td>
             <td>${formatGiB(storage?.used_bytes)}</td>
@@ -308,10 +315,12 @@ import SiteLayout from "../../components/SiteLayout.astro";
         setText("[data-e2e-updated]", `更新时间 ${formatTime(payload.generated_at)} · 每车硬保留 ${formatGiB(payload.reserve_bytes)}`);
         if (alertNode) {
           const fallbackCount = Number(summary.root_fallback_count || 0);
-          alertNode.hidden = fallbackCount === 0;
-          alertNode.textContent = fallbackCount
-            ? `${fallbackCount} 辆车当前只上报了根分区，不能当成 Media 采集盘真实容量；它们不会计入车队可采总量。`
-            : "";
+          const unknownCount = Math.max(0, Number(summary.vehicle_count || 0) - Number(summary.measurable_count || 0));
+          const warnings = [];
+          if (fallbackCount) warnings.push(`${fallbackCount} 辆车当前只上报根分区，不计入可信可采总量`);
+          if (unknownCount) warnings.push(`${unknownCount} 辆车未接入 Agent、离线或尚无磁盘快照，容量保持未知`);
+          alertNode.hidden = warnings.length === 0;
+          alertNode.textContent = warnings.length ? `${warnings.join("；")}。` : "";
         }
         renderRows();
       }

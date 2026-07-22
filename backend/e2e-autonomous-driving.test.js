@@ -7,6 +7,7 @@ const {
   DEFAULT_NOMINAL_RATE_MIB_S,
   DEFAULT_RESERVE_BYTES,
   buildFleetStorageSnapshot,
+  mergeFleetInventory,
   selectMediaDisk
 } = require('./e2e-autonomous-driving');
 
@@ -14,6 +15,20 @@ test('no-video capacity uses the measured point-cloud-dominated write rate', () 
   assert.equal(DEFAULT_NOMINAL_RATE_MIB_S, 15);
   assert.equal(DEFAULT_LOW_RATE_MIB_S, 14);
   assert.equal(DEFAULT_HIGH_RATE_MIB_S, 16);
+});
+
+test('fleet inventory keeps every known BIT vehicle and excludes other platforms', () => {
+  const vehicles = mergeFleetInventory(
+    [
+      { vehicle_id: 'BIT-0046', last_seen: '2026-07-22T18:00:00Z' },
+      { vehicle_id: 'FTUGV-002', last_seen: '2026-07-22T18:00:00Z' }
+    ],
+    ['BIT-0014', 'BIT-0046']
+  );
+
+  assert.deepEqual(vehicles.map((vehicle) => vehicle.vehicle_id), ['BIT-0014', 'BIT-0046']);
+  assert.equal(vehicles[0]._e2e_inventory_only, true);
+  assert.equal(vehicles[1]._e2e_inventory_only, false);
 });
 
 test('selectMediaDisk prefers /home capture storage over root', () => {
