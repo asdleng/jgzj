@@ -1,7 +1,10 @@
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 
 const PROTOCOL_VERSION = 'auto-ad-ai.relocalization.v1';
 const EXPECTED_METHOD = 'bevplace_trt_global_top10_lcrnet_fp32_top3_pcl_ndt';
+const DEFAULT_TOKEN_REGISTRY_PATH =
+  '/home/admin1/.config/cloud-agent/relocalization_vehicle_tokens.json';
 const REQUEST_RE = /^[A-Za-z0-9_.:-]{8,128}$/;
 const EPOCH_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 const VEHICLE_RE = /^(?:BIT-\d{4}|FTUGV-\d{3})$/;
@@ -16,6 +19,65 @@ function timingSafeEqualText(left, right) {
 
 function bearerToken(req) {
   return String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || '';
+}
+
+function tokenSha256(token) {
+  return crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
+}
+
+function loadVehicleTokenRegistry(registryPath = DEFAULT_TOKEN_REGISTRY_PATH) {
+  const resolvedPath = String(registryPath || '').trim();
+  if (!resolvedPath) return { configured: false, tokenVehicles: new Map() };
+
+  let stat;
+  try {
+    stat = fs.statSync(resolvedPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { configured: false, tokenVehicles: new Map() };
+    throw error;
+  }
+  if (!stat.isFile()) throw new Error('vehicle_token_registry_not_file');
+  if ((stat.mode & 0o077) !== 0) throw new Error('vehicle_token_registry_permissions_too_open');
+
+  const payload = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
+  if (payload?.version !== 1 || !Array.isArray(payload.tokens) || payload.tokens.length === 0) {
+    throw new Error('vehicle_token_registry_invalid');
+  }
+
+  const tokenVehicles = new Map();
+  const vehicleIds = new Set();
+  for (const entry of payload.tokens) {
+    const vehicleId = String(entry?.vehicle_id || '').trim();
+    const digest = String(entry?.token_sha256 || '').trim().toLowerCase();
+    if (!VEHICLE_RE.test(vehicleId) || !/^[a-f0-9]{64}$/.test(digest)) {
+      throw new Error('vehicle_token_registry_entry_invalid');
+    }
+    if (tokenVehicles.has(digest) || vehicleIds.has(vehicleId)) {
+      throw new Error('vehicle_token_registry_duplicate_entry');
+    }
+    tokenVehicles.set(digest, vehicleId);
+    vehicleIds.add(vehicleId);
+  }
+  return { configured: true, tokenVehicles };
+}
+
+function authenticateVehicleToken(token, options = {}) {
+  const registry = loadVehicleTokenRegistry(
+    options.tokenRegistryPath === undefined
+      ? DEFAULT_TOKEN_REGISTRY_PATH
+      : options.tokenRegistryPath
+  );
+  if (registry.configured) {
+    const vehicleId = registry.tokenVehicles.get(tokenSha256(token));
+    return vehicleId
+      ? { authenticated: true, vehicleId, mode: 'vehicle_registry' }
+      : { authenticated: false, vehicleId: null, mode: 'vehicle_registry' };
+  }
+
+  const legacyToken = String(options.authToken || '').trim();
+  return legacyToken && timingSafeEqualText(token, legacyToken)
+    ? { authenticated: true, vehicleId: null, mode: 'legacy_unbound' }
+    : { authenticated: false, vehicleId: null, mode: 'legacy_unbound' };
 }
 
 function baseResponse(payload = {}) {
@@ -94,15 +156,25 @@ function validateRequest(body, nowMs = Date.now()) {
 
 function registerLidarRelocalizationVehicleApi(app, options = {}) {
   const authToken = String(options.authToken || '').trim();
+  const tokenRegistryPath = options.tokenRegistryPath;
   const infer = options.infer;
   const activeVehicles = new Set();
   if (typeof infer !== 'function') throw new Error('vehicle_relocalization_infer_callback_required');
 
   app.post('/api/auto_ad/relocalization/infer', async (req, res) => {
-    if (!authToken) {
-      return res.status(503).json({ ok: false, detail: 'vehicle_relocalization_auth_not_configured' });
+    let authentication;
+    try {
+      authentication = authenticateVehicleToken(bearerToken(req), {
+        authToken,
+        tokenRegistryPath
+      });
+    } catch (error) {
+      return res.status(503).json({
+        ok: false,
+        detail: error.message || 'vehicle_relocalization_auth_registry_invalid'
+      });
     }
-    if (!timingSafeEqualText(bearerToken(req), authToken)) {
+    if (!authentication.authenticated) {
       return res.status(401).json({ ok: false, detail: 'unauthorized' });
     }
 
@@ -117,6 +189,17 @@ function registerLidarRelocalizationVehicleApi(app, options = {}) {
         vehicle_id: req.body?.vehicle_id || null,
         recovery_epoch: req.body?.recovery_epoch || null,
         detail: error.message
+      }));
+    }
+
+    if (authentication.vehicleId && authentication.vehicleId !== request.vehicleId) {
+      return res.status(403).json(baseResponse({
+        ok: false,
+        phase: 'request_rejected',
+        request_id: request.requestId,
+        vehicle_id: request.vehicleId,
+        recovery_epoch: request.recoveryEpoch,
+        detail: 'token_vehicle_mismatch'
       }));
     }
 
@@ -180,8 +263,12 @@ function registerLidarRelocalizationVehicleApi(app, options = {}) {
 }
 
 module.exports = {
+  DEFAULT_TOKEN_REGISTRY_PATH,
   EXPECTED_METHOD,
   PROTOCOL_VERSION,
+  authenticateVehicleToken,
+  loadVehicleTokenRegistry,
   registerLidarRelocalizationVehicleApi,
+  tokenSha256,
   validateRequest
 };
