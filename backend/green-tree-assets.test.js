@@ -6,6 +6,7 @@ const test = require('node:test');
 
 const {
   ASSET_SCHEMA,
+  DEFAULT_FLEET_WORKER_MAX_JOBS,
   DEFAULT_WORKER_MAX_JOBS,
   createGreenTreeAssetStore,
   nextShanghaiRunDelayMs,
@@ -16,6 +17,7 @@ const {
 
 test('daily worker capacity covers dense two-meter patrol anchors', () => {
   assert.equal(DEFAULT_WORKER_MAX_JOBS, 40);
+  assert.equal(DEFAULT_FLEET_WORKER_MAX_JOBS, 8);
 });
 
 async function fixture() {
@@ -27,11 +29,11 @@ async function fixture() {
     assets: {
       'TREE-0042-A': {
         asset_id: 'TREE-0042-A', vehicle_id: 'BIT-0042', status: 'auto_confirmed', review_status: 'unreviewed',
-        last_seen: '2026-07-21T09:00:00Z', observation_count: 4, day_count: 4, observations: []
+        last_seen: '2026-07-21T09:00:00Z', observation_count: 4, day_count: 4, scene_id: 'BIT-0042-S1', observations: []
       },
       'TREE-0042-B': {
         asset_id: 'TREE-0042-B', vehicle_id: 'BIT-0042', status: 'auto_matched', review_status: 'unreviewed',
-        last_seen: '2026-07-21T08:00:00Z', observation_count: 3, day_count: 3, observations: []
+        last_seen: '2026-07-21T08:00:00Z', observation_count: 3, day_count: 3, scene_id: 'BIT-0042-S2', observations: []
       }
     }
   }), 'utf8');
@@ -93,6 +95,8 @@ test('summary counts observations and multi-day tracks', () => {
     needs_review_count: 1,
     rejected_count: 0,
     observation_count: 7,
-    multi_day_count: 1
+    multi_day_count: 1,
+    vehicle_count: 0,
+    scene_count: 0
   });
 });

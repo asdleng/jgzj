@@ -33,9 +33,25 @@ class GreenTreeAssetsTest(unittest.TestCase):
         self.assertEqual(args.max_anchors, 32)
         self.assertEqual(args.max_jobs, 40)
         self.assertEqual(args.anchor_separation_m, 2.0)
+        self.assertEqual(args.scene_cell_size_m, 25.0)
 
     def test_angle_difference_wraps(self):
         self.assertLess(MODULE.angle_difference(3.13, -3.13), 0.03)
+
+    def test_null_island_is_not_a_valid_capture_position(self):
+        self.assertFalse(MODULE.valid_position({"position": {"gaode_latitude": 0, "gaode_longitude": 0}}))
+        self.assertTrue(MODULE.valid_position({"position": {"gaode_latitude": 22.5, "gaode_longitude": 114.2}}))
+
+    def test_jobs_are_round_robin_across_scenes(self):
+        jobs = [
+            {"camera_id": "camera1", "scene": {"scene_id": "A"}},
+            {"camera_id": "camera2", "scene": {"scene_id": "A"}},
+            {"camera_id": "camera1", "scene": {"scene_id": "B"}},
+            {"camera_id": "camera2", "scene": {"scene_id": "B"}},
+            {"camera_id": "camera1", "scene": {"scene_id": "C"}},
+        ]
+        ordered = MODULE.round_robin_jobs_by_scene(jobs)
+        self.assertEqual([job["scene"]["scene_id"] for job in ordered], ["A", "B", "C", "A", "B"])
 
     def test_select_jobs_requires_position_and_heading_agreement(self):
         rows = [
@@ -117,6 +133,39 @@ class GreenTreeAssetsTest(unittest.TestCase):
         }]
         jobs, _ = MODULE.select_jobs(rows, inspections, 4, 2, 5, 10)
         self.assertEqual(jobs[0]["dates"][1]["sample"]["sample_id"], "day20-nearest")
+
+    def test_select_jobs_balances_anchors_across_spatial_scenes(self):
+        latitude = 22.5
+        longitude = 114.2
+        base_position = {"gaode_latitude": latitude, "gaode_longitude": longitude}
+        base_scene = MODULE.scene_grid(base_position, 25)
+        same_scene_latitude = next(
+            latitude + offset
+            for offset in (0.000018, -0.000018, 0.000027, -0.000027)
+            if MODULE.scene_grid({"gaode_latitude": latitude + offset, "gaode_longitude": longitude}, 25)["grid_y"] == base_scene["grid_y"]
+        )
+        far_latitude = latitude + 0.00045
+        rows = []
+        inspections = []
+        for name, anchor_latitude in (("near-a", latitude), ("near-b", same_scene_latitude), ("far", far_latitude)):
+            rows.extend([
+                sample(f"{name}-21", "2026-07-21", anchor_latitude, longitude, 0.1),
+                sample(f"{name}-20", "2026-07-20", anchor_latitude, longitude, 0.1),
+                sample(f"{name}-19", "2026-07-19", anchor_latitude, longitude, 0.1),
+            ])
+            inspections.append({
+                "sample_id": f"{name}-21",
+                "vehicle_id": "BIT-0042",
+                "collected_at": "2026-07-21T08:00:00.000Z",
+                "vegetation_types": {"trees": True},
+                "view_assessments": [{"camera_id": "camera4", "vegetation_visible": True, "vegetation_types": {"trees": True}}],
+            })
+        jobs, _ = MODULE.select_jobs(rows, inspections, 2, 1, 5, 10, scene_cell_size_m=25)
+        selected = {job["anchor"]["sample_id"] for job in jobs}
+        self.assertEqual(len(selected), 2)
+        self.assertTrue(any(identifier.startswith("near-") for identifier in selected))
+        self.assertIn("far-21", selected)
+        self.assertEqual(len({job["scene"]["scene_id"] for job in jobs}), 2)
 
     def test_geometry_validation_compares_adjacent_dates(self):
         track = {"observations": [
@@ -202,15 +251,41 @@ class GreenTreeAssetsTest(unittest.TestCase):
         self.assertEqual(MODULE.asset_id(job, [450, 800]), MODULE.asset_id(job, [450, 800]))
         self.assertTrue(MODULE.asset_id(job, [450, 800]).startswith("TREE-0042-"))
 
+    def test_backfill_scene_metadata_upgrades_existing_assets(self):
+        state = {"assets": {"A": {
+            "asset_id": "A",
+            "vehicle_id": "BIT-0042",
+            "observation_station": {"gaode_latitude": 22.5, "gaode_longitude": 114.2},
+        }}}
+        self.assertEqual(MODULE.backfill_scene_metadata(state), ["A"])
+        self.assertTrue(state["assets"]["A"]["scene_id"].startswith("BIT-0042-G"))
+        self.assertEqual(MODULE.backfill_scene_metadata(state), [])
+
+    def test_all_vehicle_request_runs_each_tree_positive_vehicle(self):
+        args = SimpleNamespace(vehicle="all", inspection_state=Path("inspection.json"), state_path=Path("assets.json"))
+        inspection_state = {"samples": {
+            "A": {"vehicle_id": "BIT-0042", "vegetation_types": {"trees": True}},
+            "B": {"vehicle_id": "BIT-0011", "vegetation_types": {"trees": True}},
+            "C": {"vehicle_id": "BIT-9999", "vegetation_types": {"trees": False}},
+        }}
+        with patch.object(MODULE, "read_json", side_effect=[inspection_state, {"assets": {}}]), \
+                patch.object(MODULE, "run", side_effect=lambda item: {"vehicle_id": item.vehicle, "candidate_job_count": 1, "pending_job_count": 1, "selected_job_count": 1, "jobs": [{}]}) as runner:
+            result = MODULE.run_requested(args)
+        self.assertEqual([call.args[0].vehicle for call in runner.call_args_list], ["BIT-0011", "BIT-0042"])
+        self.assertEqual(result["vehicle_count"], 2)
+        self.assertEqual(result["processed_job_count"], 2)
+
     def test_summary_counts_multi_day_assets(self):
         state = {"assets": {
-            "A": {"status": "auto_matched", "review_status": "unreviewed", "observation_count": 4, "day_count": 4},
-            "B": {"status": "auto_matched", "review_status": "confirmed", "observation_count": 3, "day_count": 1},
+            "A": {"status": "auto_matched", "review_status": "unreviewed", "observation_count": 4, "day_count": 4, "vehicle_id": "BIT-0042", "scene_id": "S1"},
+            "B": {"status": "auto_matched", "review_status": "confirmed", "observation_count": 3, "day_count": 1, "vehicle_id": "BIT-0046", "scene_id": "S2"},
         }}
         summary = MODULE.summarize(state)
         self.assertEqual(summary["asset_count"], 2)
         self.assertEqual(summary["observation_count"], 7)
         self.assertEqual(summary["multi_day_count"], 1)
+        self.assertEqual(summary["vehicle_count"], 2)
+        self.assertEqual(summary["scene_count"], 2)
 
 
 if __name__ == "__main__":

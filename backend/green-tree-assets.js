@@ -8,6 +8,7 @@ const REVIEW_SCHEMA = 'park_green_tree_asset_reviews.v1';
 const REVIEW_STATUSES = new Set(['unreviewed', 'confirmed', 'rejected']);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_WORKER_MAX_JOBS = 40;
+const DEFAULT_FLEET_WORKER_MAX_JOBS = 8;
 
 function nowIso() {
   return new Date().toISOString();
@@ -69,7 +70,9 @@ function summarizeAssets(assets) {
     needs_review_count: rows.filter((item) => item.review_status === 'unreviewed').length,
     rejected_count: rows.filter((item) => item.review_status === 'rejected').length,
     observation_count: rows.reduce((sum, item) => sum + Number(item.observation_count || 0), 0),
-    multi_day_count: rows.filter((item) => Number(item.day_count || 0) >= 2).length
+    multi_day_count: rows.filter((item) => Number(item.day_count || 0) >= 2).length,
+    vehicle_count: new Set(rows.map((item) => item.vehicle_id).filter(Boolean)).size,
+    scene_count: new Set(rows.map((item) => item.scene_id).filter(Boolean)).size
   };
 }
 
@@ -185,12 +188,12 @@ function registerGreenTreeAssetRoutes(app, options = {}) {
   const scriptPath = path.resolve(options.scriptPath || path.join(rootDir, 'scripts/build_green_tree_assets.py'));
   const logPath = path.join(runtimeRoot, 'green-tree-assets-worker.log');
   const pythonPath = String(options.pythonPath || process.env.GREEN_TREE_ASSET_PYTHON || '/usr/bin/python3');
-  const maxJobs = integerOption(process.env.GREEN_TREE_ASSET_MAX_JOBS, DEFAULT_WORKER_MAX_JOBS, 1, 64);
+  const maxJobs = integerOption(process.env.GREEN_TREE_ASSET_MAX_JOBS, DEFAULT_FLEET_WORKER_MAX_JOBS, 1, 64);
   const autoEnabled = String(process.env.GREEN_TREE_ASSET_AUTO_ENABLED || 'true').toLowerCase() !== 'false';
   const autoHour = integerOption(process.env.GREEN_TREE_ASSET_AUTO_HOUR, 2, 0, 23);
   const autoMinute = integerOption(process.env.GREEN_TREE_ASSET_AUTO_MINUTE, 30, 0, 59);
 
-  async function startWorker(vehicleId = 'BIT-0042', runOptions = {}) {
+  async function startWorker(vehicleId = 'all', runOptions = {}) {
     const worker = await readJson(store.workerStatePath, { running: false });
     const lastCompletedAt = worker?.last_result?.completed_at || worker?.completed_at || '';
     if (runOptions.automatic === true && shanghaiDayKey(lastCompletedAt) === shanghaiDayKey()) {
@@ -210,7 +213,7 @@ function registerGreenTreeAssetRoutes(app, options = {}) {
     try {
       child = spawn(pythonPath, [
         scriptPath,
-        '--vehicle', String(vehicleId || 'BIT-0042'),
+        '--vehicle', String(vehicleId || 'all'),
         '--max-jobs', String(maxJobs)
       ], {
         cwd: rootDir,
@@ -249,7 +252,7 @@ function registerGreenTreeAssetRoutes(app, options = {}) {
 
   app.post('/api/park-pcm/green/tree-assets/worker/run', requirePermission('vehicle:read'), async (req, res) => {
     try {
-      return res.status(202).json({ ok: true, ...(await startWorker(req.body?.vehicle_id || 'BIT-0042')) });
+      return res.status(202).json({ ok: true, ...(await startWorker(req.body?.vehicle_id || 'all')) });
     } catch (error) {
       return res.status(error.status || 500).json({ ok: false, error: error.message || 'green_tree_asset_worker_failed' });
     }
@@ -282,7 +285,7 @@ function registerGreenTreeAssetRoutes(app, options = {}) {
     const scheduleNext = () => {
       const delay = nextShanghaiRunDelayMs(Date.now(), autoHour, autoMinute);
       const timer = setTimeout(async () => {
-        await startWorker('BIT-0042', { automatic: true })
+        await startWorker('all', { automatic: true })
           .catch((error) => console.warn('green_tree_asset_auto_tick_failed', error.message));
         scheduleNext();
       }, delay);
@@ -297,6 +300,7 @@ function registerGreenTreeAssetRoutes(app, options = {}) {
 module.exports = {
   ASSET_SCHEMA,
   DEFAULT_WORKER_MAX_JOBS,
+  DEFAULT_FLEET_WORKER_MAX_JOBS,
   REVIEW_SCHEMA,
   createGreenTreeAssetStore,
   mergeReview,

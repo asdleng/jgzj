@@ -402,7 +402,7 @@ if (root) {
     const summary = state.treeAssetSummary || {};
     if (el.overview["tree-assets"]) el.overview["tree-assets"].textContent = String(summary.asset_count ?? 0);
     if (el.overview["tree-assets-note"]) {
-      el.overview["tree-assets-note"].textContent = `${summary.multi_day_count || 0} 棵跨天 · ${summary.human_confirmed_count || 0} 棵已确认`;
+      el.overview["tree-assets-note"].textContent = `${summary.scene_count || 0} 个场景 · ${summary.multi_day_count || 0} 棵跨天`;
     }
     if (el.treeStats.matched) el.treeStats.matched.textContent = String(summary.auto_matched_count || 0);
     if (el.treeStats.confirmed) el.treeStats.confirmed.textContent = String(summary.human_confirmed_count || 0);
@@ -424,7 +424,7 @@ if (root) {
     if (el.treeHeroDays) el.treeHeroDays.textContent = String(distinctDates.size);
     if (el.treeHeroPending) el.treeHeroPending.textContent = String(pendingCount);
     if (el.treeHeroSummary) {
-      el.treeHeroSummary.textContent = `${assetCount} 棵资产 · ${observationCount} 张历史图 · ${distinctDates.size} 个日期`;
+      el.treeHeroSummary.textContent = `${assetCount} 棵资产 · ${summary.scene_count || 0} 个场景 · ${observationCount} 张历史图 · ${distinctDates.size} 个日期`;
     }
     if (el.treeHeroScope) {
       el.treeHeroScope.textContent = state.treeAssetScopeNotice || "同车、同相机、同一路侧视角下匹配。";
@@ -470,7 +470,7 @@ if (root) {
       const signature = document.createElement("small");
       signature.textContent = asset.signature || "独立乔木跨天匹配";
       const stats = document.createElement("em");
-      stats.textContent = `${asset.day_count || 0} 天 · ${asset.observation_count || 0} 张 · ${asset.camera_id || "相机"}`;
+      stats.textContent = `${asset.scene_label || "未分场景"} · ${asset.day_count || 0} 天 · ${asset.observation_count || 0} 张 · ${asset.camera_id || "相机"}`;
       copy.append(id, signature, stats);
 
       const review = document.createElement("span");
@@ -522,7 +522,7 @@ if (root) {
       const row = document.createElement("tr");
       row.dataset.assetId = asset.asset_id;
       row.dataset.selected = String(asset.asset_id === state.selectedAssetId);
-      appendAssetTextCell(row, asset.asset_id, `${asset.vehicle_id || "-"} · ${asset.camera_id || "相机"}`);
+      appendAssetTextCell(row, asset.asset_id, `${asset.scene_label || asset.vehicle_id || "-"} · ${asset.camera_id || "相机"}`);
       appendAssetTextCell(row, `${Number(asset.day_count || 0)} 天`, `${Number(asset.observation_count || 0)} 条观测`);
       appendAssetTextCell(row, formatTime(asset.last_seen), asset.dates?.length ? asset.dates.slice().sort().join(" / ") : "-");
       appendAssetTextCell(row, geometry.label, geometry.rootError == null ? "根点已校验" : `根点误差 ${geometry.rootError.toFixed(1)}/1000`);

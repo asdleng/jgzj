@@ -81,12 +81,46 @@ def distance_m(left, right):
     return 2 * radius * math.asin(math.sqrt(value))
 
 
+def scene_grid(position, cell_size_m=25.0):
+    radius = 6378137.0
+    latitude = max(-85.0, min(85.0, float(position["gaode_latitude"])))
+    longitude = float(position["gaode_longitude"])
+    x = radius * math.radians(longitude)
+    y = radius * math.log(math.tan(math.pi / 4 + math.radians(latitude) / 2))
+    grid_x = math.floor(x / cell_size_m)
+    grid_y = math.floor(y / cell_size_m)
+    center_x = (grid_x + 0.5) * cell_size_m
+    center_y = (grid_y + 0.5) * cell_size_m
+    center_longitude = math.degrees(center_x / radius)
+    center_latitude = math.degrees(2 * math.atan(math.exp(center_y / radius)) - math.pi / 2)
+    return {
+        "grid_x": grid_x,
+        "grid_y": grid_y,
+        "cell_size_m": float(cell_size_m),
+        "center": {
+            "gaode_latitude": center_latitude,
+            "gaode_longitude": center_longitude,
+        },
+    }
+
+
+def scene_metadata(vehicle_id, position, cell_size_m=25.0):
+    grid = scene_grid(position, cell_size_m)
+    return {
+        **grid,
+        "scene_id": f"{vehicle_id}-G{grid['grid_x']}-{grid['grid_y']}",
+        "scene_label": f"巡逻场景 {grid['grid_x'] % 1000:03d}-{grid['grid_y'] % 1000:03d}",
+    }
+
+
 def valid_position(sample):
     position = sample.get("position") or {}
     try:
         latitude = float(position.get("gaode_latitude"))
         longitude = float(position.get("gaode_longitude"))
     except (TypeError, ValueError):
+        return False
+    if abs(latitude) < 1e-6 and abs(longitude) < 1e-6:
         return False
     return -85 <= latitude <= 85 and -180 <= longitude <= 180
 
@@ -118,7 +152,27 @@ def tree_camera_ids(inspection):
     return rows
 
 
-def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m, heading_gate_deg, history_days=8):
+def round_robin_jobs_by_scene(jobs):
+    by_scene = {}
+    scene_order = []
+    for job in jobs:
+        scene_id = job["scene"]["scene_id"]
+        if scene_id not in by_scene:
+            by_scene[scene_id] = []
+            scene_order.append(scene_id)
+        by_scene[scene_id].append(job)
+    ordered = []
+    while True:
+        added = False
+        for scene_id in scene_order:
+            if by_scene[scene_id]:
+                ordered.append(by_scene[scene_id].pop(0))
+                added = True
+        if not added:
+            return ordered
+
+
+def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m, heading_gate_deg, history_days=8, scene_cell_size_m=25.0):
     by_id = {str(item.get("sample_id")): item for item in samples}
     tree_inspections = [
         item for item in inspections
@@ -165,6 +219,7 @@ def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m
         candidates.append({
             "anchor": anchor,
             "inspection": inspection,
+            "scene": scene_metadata(anchor.get("vehicle_id"), anchor["position"], scene_cell_size_m),
             "dates": [{
                 "date": latest_date,
                 "sample": anchor,
@@ -177,14 +232,28 @@ def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m
             "cameras": tree_camera_ids(inspection),
             "max_step_distance_m": max(item["step_distance_m"] for item in matches),
         })
-    candidates.sort(key=lambda item: (item["max_step_distance_m"], str(item["anchor"].get("collected_at") or "")), reverse=False)
-    selected = []
+    candidate_key = lambda item: (item["max_step_distance_m"], str(item["anchor"].get("collected_at") or ""))
+    candidates.sort(key=candidate_key)
+    candidates_by_scene = {}
     for candidate in candidates:
-        if not candidate["cameras"]:
-            continue
-        if all(distance_m(candidate["anchor"]["position"], existing["anchor"]["position"]) >= separation_m for existing in selected):
-            selected.append(candidate)
-        if len(selected) >= max_anchors:
+        candidates_by_scene.setdefault(candidate["scene"]["scene_id"], []).append(candidate)
+    scene_order = sorted(candidates_by_scene, key=lambda scene_id: candidate_key(candidates_by_scene[scene_id][0]))
+    selected = []
+    while len(selected) < max_anchors:
+        added = False
+        for scene_id in scene_order:
+            scene_candidates = candidates_by_scene[scene_id]
+            while scene_candidates:
+                candidate = scene_candidates.pop(0)
+                if not candidate["cameras"]:
+                    continue
+                if all(distance_m(candidate["anchor"]["position"], existing["anchor"]["position"]) >= separation_m for existing in selected):
+                    selected.append(candidate)
+                    added = True
+                    break
+            if len(selected) >= max_anchors:
+                break
+        if not added:
             break
     jobs = []
     for anchor_index, candidate in enumerate(selected, 1):
@@ -199,10 +268,11 @@ def select_jobs(samples, inspections, max_anchors, separation_m, position_gate_m
                     "anchor_index": anchor_index,
                     "anchor": candidate["anchor"],
                     "inspection": candidate["inspection"],
+                    "scene": candidate["scene"],
                     "camera_id": camera_id,
                     "dates": dated_frames,
                 })
-    return jobs, latest_date
+    return round_robin_jobs_by_scene(jobs), latest_date
 
 
 def frame_path(frames_root, frame):
@@ -580,6 +650,9 @@ def build_asset(track, geometry, job, state, inspections_by_sample, model, build
         },
         "observation_heading": position.get("heading"),
         "position_source": "vehicle_observation_station",
+        "scene_id": job["scene"]["scene_id"],
+        "scene_label": job["scene"]["scene_label"],
+        "scene_grid": job["scene"],
         "position_chain": [{
             "date": row["date"],
             "sample_id": row["sample"].get("sample_id"),
@@ -619,6 +692,22 @@ def empty_state():
     }
 
 
+def backfill_scene_metadata(state, cell_size_m=25.0):
+    updated = []
+    for asset in (state.get("assets") or {}).values():
+        if asset.get("scene_id"):
+            continue
+        position = asset.get("observation_station") or {}
+        if not asset.get("vehicle_id") or not position.get("gaode_latitude") or not position.get("gaode_longitude"):
+            continue
+        scene = scene_metadata(asset["vehicle_id"], position, cell_size_m)
+        asset["scene_id"] = scene["scene_id"]
+        asset["scene_label"] = scene["scene_label"]
+        asset["scene_grid"] = scene
+        updated.append(asset.get("asset_id"))
+    return updated
+
+
 def summarize(state):
     assets = list(state.get("assets", {}).values())
     return {
@@ -628,6 +717,8 @@ def summarize(state):
         "needs_review_count": sum(item.get("review_status") == "unreviewed" for item in assets),
         "observation_count": sum(int(item.get("observation_count") or 0) for item in assets),
         "multi_day_count": sum(int(item.get("day_count") or 0) >= 2 for item in assets),
+        "vehicle_count": len({item.get("vehicle_id") for item in assets if item.get("vehicle_id")}),
+        "scene_count": len({item.get("scene_id") for item in assets if item.get("scene_id")}),
     }
 
 
@@ -644,10 +735,12 @@ def run(args):
         args.position_gate_m,
         args.heading_gate_deg,
         args.history_days,
+        args.scene_cell_size_m,
     )
     state = read_json(args.state_path, empty_state())
     if state.get("schema") != SCHEMA:
         state = empty_state()
+    backfilled_scene_ids = backfill_scene_metadata(state, args.scene_cell_size_m)
     pruned_asset_ids = prune_invalid_unreviewed_assets(state)
     pending_jobs = [job for job in jobs if args.force or job_key(job) not in state.get("processed_jobs", {})]
     pending = pending_jobs[:args.max_jobs]
@@ -661,6 +754,7 @@ def run(args):
         "selected_job_count": len(pending),
         "pruned_asset_count": len(pruned_asset_ids),
         "pruned_asset_ids": pruned_asset_ids,
+        "backfilled_scene_count": len(backfilled_scene_ids),
         "jobs": [],
     }
     for index, job in enumerate(pending, 1):
@@ -716,6 +810,42 @@ def run(args):
     return build
 
 
+def eligible_vehicle_ids(inspection_state):
+    return sorted({
+        str(item.get("vehicle_id") or "").strip()
+        for item in (inspection_state.get("samples") or {}).values()
+        if item.get("vegetation_types", {}).get("trees") is True and str(item.get("vehicle_id") or "").strip()
+    })
+
+
+def run_requested(args):
+    if str(args.vehicle).lower() != "all":
+        return run(args)
+    inspection_state = read_json(args.inspection_state, {"samples": {}})
+    vehicles = eligible_vehicle_ids(inspection_state)
+    started_at = now_iso()
+    builds = []
+    for index, vehicle_id in enumerate(vehicles, 1):
+        print(f"[fleet {index}/{len(vehicles)}] {vehicle_id}", flush=True)
+        vehicle_args = argparse.Namespace(**{**vars(args), "vehicle": vehicle_id})
+        builds.append(run(vehicle_args))
+    state = read_json(args.state_path, empty_state())
+    return {
+        "build_id": f"tree-assets-fleet-{int(time.time())}",
+        "vehicle_id": "all",
+        "started_at": started_at,
+        "completed_at": now_iso(),
+        "vehicle_count": len(vehicles),
+        "vehicles": vehicles,
+        "candidate_job_count": sum(int(item.get("candidate_job_count") or 0) for item in builds),
+        "pending_job_count": sum(int(item.get("pending_job_count") or 0) for item in builds),
+        "selected_job_count": sum(int(item.get("selected_job_count") or 0) for item in builds),
+        "processed_job_count": sum(len(item.get("jobs") or []) for item in builds),
+        "vehicle_builds": builds,
+        "summary": summarize(state),
+    }
+
+
 def parse_args(argv=None):
     root = Path("/home/admin1/jgzj")
     runtime = root / ".runtime/park-pcm"
@@ -732,6 +862,7 @@ def parse_args(argv=None):
     parser.add_argument("--max-anchors", type=int, default=32)
     parser.add_argument("--max-jobs", type=int, default=40)
     parser.add_argument("--anchor-separation-m", type=float, default=2.0)
+    parser.add_argument("--scene-cell-size-m", type=float, default=25.0)
     parser.add_argument("--position-gate-m", type=float, default=5.0)
     parser.add_argument("--heading-gate-deg", type=float, default=10.0)
     parser.add_argument("--history-days", type=int, default=8)
@@ -764,7 +895,7 @@ def main():
             "pid": os.getpid(),
         })
         try:
-            build = run(args)
+            build = run_requested(args)
             write_json_atomic(args.worker_state_path, {
                 "schema": WORKER_SCHEMA,
                 "running": False,
