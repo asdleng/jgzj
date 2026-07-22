@@ -9445,6 +9445,142 @@ body.yolo-review-is-panning {
   opacity: 0.62;
 }
 
+.cloud-ops-test-danger-alert {
+  width: min(640px, calc(100vw - 28px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(248, 113, 113, 0.76);
+  border-radius: 8px;
+  color: #e2e8f0;
+  background: #0b1220;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(127, 29, 29, 0.36);
+}
+
+.cloud-ops-test-danger-alert::backdrop { background: rgba(2, 6, 23, 0.82); backdrop-filter: blur(3px); }
+.cloud-ops-test-danger-alert-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+  max-height: calc(100vh - 32px);
+  padding: 18px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.cloud-ops-test-danger-alert-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.cloud-ops-test-danger-alert-head > div { min-width: 0; }
+.cloud-ops-test-danger-alert-head p,
+.cloud-ops-test-danger-alert-head h3 { margin: 0; }
+.cloud-ops-test-danger-alert-head p { color: #fca5a5; font-size: 0.65rem; font-weight: 900; letter-spacing: 0.08em; }
+.cloud-ops-test-danger-alert-head h3 { margin-top: 4px; color: #fef2f2; font-size: 1.08rem; line-height: 1.25; }
+.cloud-ops-test-danger-alert-head > button {
+  flex: 0 0 34px;
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid rgba(248, 113, 113, 0.52);
+  border-radius: 6px;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.34);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.cloud-ops-test-danger-alert-summary {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid #ef4444;
+  color: #fee2e2;
+  background: rgba(127, 29, 29, 0.25);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-danger-alert-list {
+  display: grid;
+  min-height: 0;
+  gap: 8px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.cloud-ops-test-danger-alert-list article {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(248, 113, 113, 0.38);
+  border-radius: 6px;
+  background: rgba(69, 10, 10, 0.2);
+}
+
+.cloud-ops-test-danger-alert-list article > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 11px;
+  border-bottom: 1px solid rgba(248, 113, 113, 0.24);
+  background: rgba(127, 29, 29, 0.22);
+}
+
+.cloud-ops-test-danger-alert-list article > div > strong {
+  min-width: 0;
+  color: #fef2f2;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.cloud-ops-test-danger-alert-list article button,
+.cloud-ops-test-danger-alert-actions button {
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid rgba(100, 116, 139, 0.58);
+  border-radius: 6px;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.92);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cloud-ops-test-danger-alert-list article button {
+  flex: 0 0 auto;
+  border-color: rgba(248, 113, 113, 0.52);
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.42);
+}
+
+.cloud-ops-test-danger-alert-list ul {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cloud-ops-test-danger-alert-list li {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px 11px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.42);
+}
+
+.cloud-ops-test-danger-alert-list li:last-child { border-bottom: 0; }
+.cloud-ops-test-danger-alert-list li strong { color: #fca5a5; font-size: 0.74rem; line-height: 1.45; overflow-wrap: anywhere; }
+.cloud-ops-test-danger-alert-list li span { min-width: 0; color: #cbd5e1; font-size: 0.74rem; line-height: 1.45; overflow-wrap: anywhere; }
+.cloud-ops-test-danger-alert-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.cloud-ops-test-danger-alert-actions button.is-danger { border-color: #dc2626; color: #fff; background: #b91c1c; }
+
 @media (max-width: 560px) {
   .cloud-ops-test-control-dialog {
     width: calc(100vw - 16px);
@@ -9468,6 +9604,19 @@ body.yolo-review-is-panning {
     flex: 1 1 0;
     min-width: 0;
   }
+
+  .cloud-ops-test-danger-alert {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .cloud-ops-test-danger-alert-shell {
+    max-height: calc(100vh - 16px);
+    padding: 14px;
+  }
+
+  .cloud-ops-test-danger-alert-list li { grid-template-columns: 1fr; gap: 3px; }
+  .cloud-ops-test-danger-alert-actions button { flex: 1 1 0; min-width: 0; }
 }
 
 .cloud-ops-test-sticky-result {

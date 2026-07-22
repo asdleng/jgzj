@@ -465,6 +465,24 @@ const agentRules = [
         </div>
       </dialog>
 
+      <dialog class="cloud-ops-test-danger-alert" data-role="vehicle-danger-alert" role="alertdialog" aria-modal="true" aria-labelledby="cloud-ops-test-danger-alert-title" aria-describedby="cloud-ops-test-danger-alert-summary">
+        <div class="cloud-ops-test-danger-alert-shell">
+          <div class="cloud-ops-test-danger-alert-head">
+            <div>
+              <p>FLEET DANGER ALERT</p>
+              <h3 id="cloud-ops-test-danger-alert-title">车辆严重异常</h3>
+            </div>
+            <button type="button" data-action="vehicle-danger-close" aria-label="关闭严重异常报警" title="关闭">&times;</button>
+          </div>
+          <p id="cloud-ops-test-danger-alert-summary" class="cloud-ops-test-danger-alert-summary" data-role="vehicle-danger-alert-summary"></p>
+          <div class="cloud-ops-test-danger-alert-list" data-role="vehicle-danger-alert-list"></div>
+          <div class="cloud-ops-test-danger-alert-actions">
+            <button type="button" data-action="vehicle-danger-close">关闭</button>
+            <button type="button" class="is-danger" data-action="vehicle-danger-ack">知道了</button>
+          </div>
+        </div>
+      </dialog>
+
       <section id="cloud-ops-test-params" class="cloud-ops-test-page" data-active="false">
         <div class="cloud-ops-test-page-head cloud-ops-param-page-head">
           <div>
@@ -925,6 +943,7 @@ const agentRules = [
     if (!shell) return;
 
     const VEHICLES_URL = "/api/cloud-ops/vehicles-lite";
+    const VEHICLE_DANGER_ALERT_POLL_MS = 15000;
     const EXECUTE_URL = "/api/cloud-ops/execute";
     const AGENT_STATUS_URL = "/api/cloud-ops-agent/status";
     const AGENT_HISTORY_URL = "/api/cloud-ops-agent/history";
@@ -1057,6 +1076,9 @@ const agentRules = [
     const controlConfirmInput = shell.querySelector('[data-role="control-confirm-input"]');
     const controlWarning = shell.querySelector('[data-role="control-warning"]');
     const controlSubmit = shell.querySelector('[data-role="control-submit"]');
+    const vehicleDangerAlert = shell.querySelector('[data-role="vehicle-danger-alert"]');
+    const vehicleDangerAlertSummary = shell.querySelector('[data-role="vehicle-danger-alert-summary"]');
+    const vehicleDangerAlertList = shell.querySelector('[data-role="vehicle-danger-alert-list"]');
     const vehicleCount = shell.querySelector('[data-role="vehicle-count"]');
     const vehicleTableBody = shell.querySelector('[data-role="vehicle-table-body"]');
     const stopFaultCount = shell.querySelector('[data-role="stop-fault-count"]');
@@ -1124,6 +1146,12 @@ const agentRules = [
     let paramLoadInFlight = false;
     let paramApplyInFlight = false;
     let vehicles = [];
+    let vehicleLoadInFlight = false;
+    let vehicleDangerAlertPollTimer = 0;
+    let vehicleDangerFaultSignatures = new Map();
+    let dangerAlertAudioContext = null;
+    let dangerAlertAudioUnlocked = false;
+    let pendingDangerAlertTone = false;
     let currentVehicleId = "";
     let vehicleSortMode = "status";
     let liveMonitorRunning = false;
@@ -1648,6 +1676,117 @@ const agentRules = [
       return faults;
     };
     const faultToneOf = (faults) => faults.some((item) => item.tone === "danger") ? "danger" : "warn";
+
+    const dangerAlertsOf = (items = vehicles) => (Array.isArray(items) ? items : []).map((vehicle, index) => {
+      const faults = vehicleFaultsOf(vehicle).filter((fault) => fault.tone === "danger");
+      const labels = [...new Set(faults.map((fault) => String(fault.label || "").trim()).filter(Boolean))].sort();
+      if (!labels.length) return null;
+      const vehicleId = vehicleIdOf(vehicle) || "未知车辆";
+      return {
+        vehicle,
+        vehicleId,
+        key: vehicleIdOf(vehicle) || `unknown-${index}`,
+        faults,
+        signature: labels.join("\u001f")
+      };
+    }).filter(Boolean);
+
+    const hasNewDangerFault = (previousSignature, nextSignature) => {
+      if (!previousSignature) return true;
+      const previousLabels = new Set(String(previousSignature).split("\u001f").filter(Boolean));
+      return String(nextSignature).split("\u001f").some((label) => label && !previousLabels.has(label));
+    };
+
+    const renderDangerAlert = (alerts) => {
+      if (vehicleDangerAlertSummary) {
+        vehicleDangerAlertSummary.textContent = alerts.length
+          ? `检测到 ${alerts.length} 台车辆存在红色严重异常，请优先处置。`
+          : "当前红色严重异常已全部解除。";
+      }
+      if (!vehicleDangerAlertList) return;
+      vehicleDangerAlertList.innerHTML = alerts.length
+        ? alerts.map((alert) => {
+            const faults = alert.faults.map((fault) => `<li><strong>${escapeHtml(fault.label)}</strong><span>${escapeHtml(fault.reason)}</span></li>`).join("");
+            return `<article><div><strong>${escapeHtml(alert.vehicleId)}</strong><button type="button" data-action="vehicle-danger-view" data-danger-vehicle-id="${escapeHtml(alert.vehicleId)}">查看车辆</button></div><ul>${faults}</ul></article>`;
+          }).join("")
+        : '<p class="cloud-ops-test-empty">没有需要显示的红色严重异常。</p>';
+    };
+
+    const playDangerAlertTone = () => {
+      const context = dangerAlertAudioContext;
+      if (!context || !dangerAlertAudioUnlocked || context.state !== "running") {
+        pendingDangerAlertTone = true;
+        return;
+      }
+      pendingDangerAlertTone = false;
+      const start = context.currentTime + 0.02;
+      [0, 0.18, 0.36].forEach((offset) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = "square";
+        oscillator.frequency.setValueAtTime(880, start + offset);
+        gain.gain.setValueAtTime(0.0001, start + offset);
+        gain.gain.exponentialRampToValueAtTime(0.12, start + offset + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.12);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(start + offset);
+        oscillator.stop(start + offset + 0.13);
+      });
+    };
+
+    const unlockDangerAlertAudio = () => {
+      const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextConstructor) return;
+      if (!dangerAlertAudioContext || dangerAlertAudioContext.state === "closed") {
+        dangerAlertAudioContext = new AudioContextConstructor();
+      }
+      const resume = dangerAlertAudioContext.state === "running"
+        ? Promise.resolve()
+        : dangerAlertAudioContext.resume();
+      resume.then(() => {
+        dangerAlertAudioUnlocked = dangerAlertAudioContext?.state === "running";
+        if (dangerAlertAudioUnlocked && pendingDangerAlertTone && dangerAlertsOf().length) playDangerAlertTone();
+      }).catch(() => {
+        dangerAlertAudioUnlocked = false;
+      });
+    };
+
+    const closeDangerAlert = () => {
+      if (vehicleDangerAlert?.open) vehicleDangerAlert.close();
+    };
+
+    const focusDangerVehicle = (vehicleId) => {
+      closeDangerAlert();
+      setSelectedVehicle(vehicleId);
+      setActive("cloud-ops-test-overview");
+      window.setTimeout(() => {
+        const row = [...shell.querySelectorAll('.cloud-ops-test-vehicle-row[data-vehicle-id]')]
+          .find((node) => node.dataset.vehicleId === vehicleId);
+        row?.scrollIntoView({ behavior: "smooth", block: "center" });
+        row?.focus({ preventScroll: true });
+      }, 0);
+    };
+
+    const updateDangerAlerts = () => {
+      const alerts = dangerAlertsOf();
+      const nextSignatures = new Map(alerts.map((alert) => [alert.key, alert.signature]));
+      const hasNewAlert = alerts.some((alert) => hasNewDangerFault(vehicleDangerFaultSignatures.get(alert.key), alert.signature));
+      vehicleDangerFaultSignatures = nextSignatures;
+      if (vehicleDangerAlert?.open) {
+        renderDangerAlert(alerts);
+        if (!alerts.length) closeDangerAlert();
+        return;
+      }
+      if (!hasNewAlert) return;
+      renderDangerAlert(alerts);
+      try {
+        vehicleDangerAlert?.showModal();
+      } catch (_error) {
+        return;
+      }
+      playDangerAlertTone();
+    };
 
     const renderPill = (label, tone = "neutral") => (
       `<span class="cloud-ops-test-pill is-${escapeHtml(tone)}">${escapeHtml(label)}</span>`
@@ -4206,8 +4345,11 @@ const agentRules = [
       }
     };
 
-    const loadVehicles = async () => {
-      setStatus("读取真实车辆列表...", "loading");
+    const loadVehicles = async (options = {}) => {
+      const silent = options.silent === true;
+      if (vehicleLoadInFlight) return false;
+      vehicleLoadInFlight = true;
+      if (!silent) setStatus("读取真实车辆列表...", "loading");
       try {
         const response = await fetch(VEHICLES_URL, { headers: { Accept: "application/json" }, cache: "no-store", credentials: "same-origin" });
         const payload = await response.json().catch(() => ({}));
@@ -4223,16 +4365,14 @@ const agentRules = [
         renderVehicleTable();
         syncSelectedVehicleUi();
         updateStats();
-        setStatus(`已更新 ${vehicles.length} 台车辆。`, "ok");
+        updateDangerAlerts();
+        if (!silent) setStatus(`已更新 ${vehicles.length} 台车辆。`, "ok");
+        return true;
       } catch (error) {
-        vehicles = [];
-        currentVehicleId = "";
-        renderVehicleOptions();
-        renderVehicles();
-        renderStopFaultMonitor();
-        renderVehicleTable();
-        updateStats();
-        setStatus(`车辆列表读取失败：${error?.message || "未知错误"}`, "error");
+        if (!silent) setStatus(`车辆列表读取失败：${error?.message || "未知错误"}`, "error");
+        return false;
+      } finally {
+        vehicleLoadInFlight = false;
       }
     };
 
@@ -5670,6 +5810,10 @@ const agentRules = [
       const action = actionButton.dataset.action;
       if (action === "refresh-vehicles") {
         loadVehicles();
+      } else if (action === "vehicle-danger-close" || action === "vehicle-danger-ack") {
+        closeDangerAlert();
+      } else if (action === "vehicle-danger-view") {
+        focusDangerVehicle(actionButton.dataset.dangerVehicleId || "");
       } else if (action === "readonly-tool") {
         runReadOnlyTool(actionButton);
       } else if (action === "control-open") {
@@ -5836,12 +5980,22 @@ const agentRules = [
 
     alignAgentRailToHero();
     window.addEventListener("resize", alignAgentRailToHero);
+    document.addEventListener("pointerdown", unlockDangerAlertAudio, { passive: true });
+    document.addEventListener("keydown", unlockDangerAlertAudio);
+    window.addEventListener("pagehide", () => {
+      if (vehicleDangerAlertPollTimer) window.clearInterval(vehicleDangerAlertPollTimer);
+      vehicleDangerAlertPollTimer = 0;
+      if (dangerAlertAudioContext && dangerAlertAudioContext.state !== "closed") {
+        dangerAlertAudioContext.close().catch(() => {});
+      }
+    }, { once: true });
     restoreAgentPinned();
     resizeAgentInput(agentInput);
     resizeAgentInput(agentPageInput);
     renderParamDraft();
     syncAgentMessageViews();
     loadVehicles();
+    vehicleDangerAlertPollTimer = window.setInterval(() => loadVehicles({ silent: true }), VEHICLE_DANGER_ALERT_POLL_MS);
     loadAgentStatus();
     loadAgentHistory();
     loadAgentConversations();
