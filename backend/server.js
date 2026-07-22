@@ -47,6 +47,9 @@ const {
   inferResidentRelocalization
 } = require('./lidar-relocalization-resident-client');
 const {
+  registerE2eAutonomousDrivingRoutes
+} = require('./e2e-autonomous-driving');
+const {
   effectiveYoloWebAuditVerdict,
   isYoloWebCrawlerSummary,
   normalizeYoloWebCrawlerStats,
@@ -17017,6 +17020,11 @@ app.post('/api/cloud-ops-agent/chat', authStore.requirePermission('vehicle:read'
       allowed_models: error?.allowed_models || cloudOpsAgentAllowedModels
     });
   }
+});
+
+registerE2eAutonomousDrivingRoutes(app, {
+  requirePermission: (permission) => authStore.requirePermission(permission),
+  listVehicles: listCloudAgentVehicles
 });
 
 app.get('/api/cloud-ops/vehicles', authStore.requirePermission('vehicle:read'), async (_req, res) => {

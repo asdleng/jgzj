@@ -1,0 +1,343 @@
+---
+import "../../styles/app.css";
+import OptimizedImage from "../../components/OptimizedImage.astro";
+import SiteLayout from "../../components/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="端到端自动驾驶"
+  description="端到端自动驾驶数据采集车队控制台：统计每辆车 Media 采集盘容量、10G 安全保留线和无视频数据可采时长。"
+  currentPath="/app/end-to-end-autonomous-driving"
+  noindex={true}
+>
+  <header class="page-hero e2e-hero">
+    <OptimizedImage
+      src="/assets/fallback/hero-cloud-ops-1600.jpg"
+      webp="/assets/optimized/hero-cloud-ops-1600.webp"
+      alt="端到端自动驾驶数据采集"
+      class="hero-media"
+      data-parallax
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-grid"></div>
+    <div class="page-hero-shell">
+      <div class="page-hero-copy reveal" data-reveal>
+        <p class="page-kicker">FLEET DATA · E2E AUTONOMOUS DRIVING</p>
+        <h1 class="page-title">端到端自动驾驶</h1>
+        <p class="page-subtitle">
+          面向全车队的无视频训练数据采集视图。统一核对原始点云、定位、边界线、参考线与
+          adc_trajectory，严格执行“车辆运动才采集”和“Media 至少保留 10G”两条硬门槛。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main grid-bg e2e-main" data-e2e-dashboard>
+    <section class="page-section e2e-overview">
+      <div class="e2e-command-bar glass-card">
+        <div>
+          <p class="section-kicker">FLEET CAPACITY</p>
+          <h2 class="section-title">Media 采集盘总览</h2>
+          <p class="e2e-muted" data-e2e-updated>等待读取车队快照…</p>
+        </div>
+        <div class="e2e-command-actions">
+          <span class="e2e-live-pill"><i></i> 60 秒自动刷新</span>
+          <button class="e2e-refresh" type="button" data-e2e-refresh>立即刷新</button>
+        </div>
+      </div>
+
+      <div class="e2e-alert" data-e2e-alert hidden></div>
+
+      <div class="e2e-summary-grid" aria-live="polite">
+        <article class="e2e-summary-card">
+          <span>车队连接</span>
+          <strong data-e2e-online>-- / --</strong>
+          <small>3 分钟内有心跳视为在线</small>
+        </article>
+        <article class="e2e-summary-card">
+          <span>真实采集盘</span>
+          <strong data-e2e-mounts>-- / --</strong>
+          <small>优先统计 /home 或显式 capture disk</small>
+        </article>
+        <article class="e2e-summary-card">
+          <span>10G 后可用</span>
+          <strong data-e2e-collectable>--</strong>
+          <small>仅汇总已确认的采集分区</small>
+        </article>
+        <article class="e2e-summary-card">
+          <span>无视频预计</span>
+          <strong data-e2e-hours>--</strong>
+          <small>当前按 18 MiB/s 标称速率估算</small>
+        </article>
+      </div>
+
+      <div class="glass-card e2e-table-card">
+        <div class="e2e-table-head">
+          <div>
+            <h3>每辆车 Media 剩余空间</h3>
+            <p>橙色“根分区回退”不是采集盘容量，待车端上报 /home 后自动替换。</p>
+          </div>
+          <label class="e2e-filter">
+            <span>筛选车辆</span>
+            <input type="search" placeholder="例如 BIT-0046" data-e2e-filter />
+          </label>
+        </div>
+        <div class="e2e-table-scroll">
+          <table class="e2e-table">
+            <thead>
+              <tr>
+                <th>车辆</th>
+                <th>状态</th>
+                <th>采集分区</th>
+                <th>总容量</th>
+                <th>已使用</th>
+                <th>剩余</th>
+                <th>10G 后可采</th>
+                <th>预计可采</th>
+                <th>快照</th>
+              </tr>
+            </thead>
+            <tbody data-e2e-rows>
+              <tr><td colspan="9" class="e2e-empty">正在读取车辆快照…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-section e2e-contract-section">
+      <div class="e2e-contract-grid">
+        <article class="glass-card e2e-contract-card">
+          <p class="section-kicker">DATA CONTRACT</p>
+          <h2>训练数据契约</h2>
+          <div class="e2e-topic-list">
+            <div><b>原始点云</b><span>/rslidar_points32 · PointCloud2 · 不体素化、不降采样</span></div>
+            <div><b>融合定位</b><span>/location_topic_ · 经纬度、姿态、速度、可靠性</span></div>
+            <div><b>道路结构</b><span>参考线、左右边界线及其有效状态</span></div>
+            <div><b>规划输出</b><span>adc_trajectory · 轨迹点、速度、加速度、档位与 estop</span></div>
+            <div><b>时间系统</b><span>保留 ROS header 时间戳、TF 与必要底盘状态</span></div>
+          </div>
+        </article>
+
+        <article class="glass-card e2e-contract-card e2e-safety-card">
+          <p class="section-kicker">HARD GUARDS</p>
+          <h2>采集硬门槛</h2>
+          <ol class="e2e-guard-list">
+            <li><span>01</span><div><b>运动触发</b><p>只有车速持续超过阈值后才开始落盘。</p></div></li>
+            <li><span>02</span><div><b>停车停录</b><p>持续静止后立即关闭当前 bag，不记录长时间停车空段。</p></div></li>
+            <li><span>03</span><div><b>10G 保留</b><p>采集器与 rosbag 双重检查，任何车都不得写满 Media。</p></div></li>
+            <li><span>04</span><div><b>无视频模式</b><p>本数据集不录四路相机，空间集中用于未降采样点云与规划监督信号。</p></div></li>
+          </ol>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <style>
+    .e2e-hero { min-height: 460px; }
+    .e2e-main { --e2e-cyan: #55e7ff; --e2e-blue: #6d8dff; --e2e-green: #58f0a7; --e2e-orange: #ffb35c; }
+    .e2e-overview { padding-top: 36px; }
+    .e2e-command-bar { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding:26px 28px; }
+    .e2e-command-bar .section-title { margin-bottom:6px; }
+    .e2e-muted { margin:0; color:rgba(219,234,255,.66); font-size:.88rem; }
+    .e2e-command-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .e2e-live-pill { display:inline-flex; align-items:center; gap:8px; color:#cce8ff; font-size:.82rem; }
+    .e2e-live-pill i { width:8px; height:8px; border-radius:50%; background:var(--e2e-green); box-shadow:0 0 16px rgba(88,240,167,.75); }
+    .e2e-refresh { border:1px solid rgba(85,231,255,.45); background:rgba(12,35,67,.76); color:#eafcff; border-radius:10px; padding:10px 16px; cursor:pointer; transition:.2s ease; }
+    .e2e-refresh:hover { border-color:var(--e2e-cyan); transform:translateY(-1px); }
+    .e2e-refresh:disabled { opacity:.55; cursor:wait; transform:none; }
+    .e2e-alert { margin-top:16px; border:1px solid rgba(255,179,92,.42); background:rgba(88,48,12,.38); color:#ffe0b9; border-radius:12px; padding:13px 16px; }
+    .e2e-summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; margin-top:18px; }
+    .e2e-summary-card { position:relative; overflow:hidden; min-height:142px; border:1px solid rgba(111,165,216,.2); background:linear-gradient(145deg,rgba(14,33,61,.9),rgba(8,20,39,.82)); border-radius:16px; padding:21px 22px; box-shadow:inset 0 1px rgba(255,255,255,.035); }
+    .e2e-summary-card::after { content:""; position:absolute; width:120px; height:120px; right:-54px; top:-60px; border-radius:50%; background:radial-gradient(circle,rgba(85,231,255,.18),transparent 68%); }
+    .e2e-summary-card span { display:block; color:#9db4cc; font-size:.8rem; letter-spacing:.08em; }
+    .e2e-summary-card strong { display:block; margin:13px 0 8px; font-size:1.85rem; color:#f2fbff; letter-spacing:-.03em; }
+    .e2e-summary-card small { color:rgba(203,220,238,.58); }
+    .e2e-table-card { margin-top:18px; padding:0; overflow:hidden; }
+    .e2e-table-head { display:flex; align-items:end; justify-content:space-between; gap:20px; padding:24px 26px 18px; border-bottom:1px solid rgba(130,174,214,.14); }
+    .e2e-table-head h3 { margin:0 0 6px; color:#f0f8ff; font-size:1.15rem; }
+    .e2e-table-head p { margin:0; color:rgba(214,231,248,.56); font-size:.82rem; }
+    .e2e-filter { display:grid; gap:6px; min-width:190px; color:#8fa9c4; font-size:.72rem; }
+    .e2e-filter input { border:1px solid rgba(116,167,211,.22); background:rgba(5,18,35,.62); color:#ecf8ff; border-radius:9px; padding:9px 11px; outline:none; }
+    .e2e-filter input:focus { border-color:rgba(85,231,255,.58); }
+    .e2e-table-scroll { overflow:auto; }
+    .e2e-table { width:100%; min-width:1040px; border-collapse:collapse; font-size:.84rem; }
+    .e2e-table th { position:sticky; top:0; z-index:1; padding:13px 16px; text-align:left; color:#8fa9c4; background:rgba(7,20,38,.97); font-size:.72rem; letter-spacing:.07em; font-weight:600; }
+    .e2e-table td { padding:15px 16px; border-top:1px solid rgba(125,167,205,.1); color:#dcecff; white-space:nowrap; }
+    .e2e-table tbody tr:hover { background:rgba(67,133,188,.08); }
+    .e2e-vehicle { display:flex; align-items:center; gap:10px; font-weight:700; }
+    .e2e-vehicle::before { content:""; width:4px; height:28px; border-radius:5px; background:linear-gradient(var(--e2e-cyan),var(--e2e-blue)); }
+    .e2e-status { display:inline-flex; align-items:center; gap:7px; }
+    .e2e-status::before { content:""; width:7px; height:7px; border-radius:50%; background:#697b8e; }
+    .e2e-status.is-online::before { background:var(--e2e-green); box-shadow:0 0 10px rgba(88,240,167,.6); }
+    .e2e-source { display:inline-flex; border-radius:999px; padding:5px 9px; font-size:.72rem; border:1px solid rgba(88,240,167,.3); color:#aef8cf; background:rgba(28,91,61,.22); }
+    .e2e-source.is-fallback { border-color:rgba(255,179,92,.32); color:#ffd39e; background:rgba(107,65,18,.22); }
+    .e2e-free { color:#aef8cf; font-weight:700; }
+    .e2e-unsafe { color:#ffba8b; font-weight:700; }
+    .e2e-empty { text-align:center; padding:42px!important; color:#8398ae!important; }
+    .e2e-contract-section { padding-top:0; }
+    .e2e-contract-grid { display:grid; grid-template-columns:1.08fr .92fr; gap:18px; }
+    .e2e-contract-card { padding:28px; }
+    .e2e-contract-card h2 { margin:4px 0 20px; color:#f3faff; }
+    .e2e-topic-list { display:grid; gap:10px; }
+    .e2e-topic-list div { display:grid; grid-template-columns:110px 1fr; gap:14px; padding:13px 15px; border:1px solid rgba(108,158,205,.13); border-radius:11px; background:rgba(5,17,33,.34); }
+    .e2e-topic-list b { color:#a7ebff; }
+    .e2e-topic-list span { color:rgba(213,229,244,.67); }
+    .e2e-guard-list { display:grid; gap:12px; list-style:none; padding:0; margin:0; }
+    .e2e-guard-list li { display:grid; grid-template-columns:46px 1fr; gap:13px; align-items:start; }
+    .e2e-guard-list li>span { display:grid; place-items:center; width:42px; height:42px; border-radius:12px; color:#9ff5ff; background:linear-gradient(145deg,rgba(44,141,178,.34),rgba(40,61,131,.25)); border:1px solid rgba(85,231,255,.22); font-size:.78rem; font-weight:800; }
+    .e2e-guard-list b { color:#eef9ff; }
+    .e2e-guard-list p { margin:4px 0 0; color:rgba(211,228,243,.62); font-size:.86rem; line-height:1.55; }
+    @media (max-width:980px) { .e2e-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.e2e-contract-grid{grid-template-columns:1fr;} }
+    @media (max-width:640px) { .e2e-command-bar,.e2e-table-head{align-items:stretch;flex-direction:column;}.e2e-summary-grid{grid-template-columns:1fr;}.e2e-filter{width:100%;}.e2e-topic-list div{grid-template-columns:1fr;gap:4px;} }
+  </style>
+
+  <script>
+    interface E2eStorage {
+      mountpoint?: string;
+      total_bytes?: number;
+      used_bytes?: number;
+      free_bytes?: number;
+      preferred_capture_mount?: boolean;
+    }
+    interface E2eVehicle {
+      vehicle_id?: string;
+      online?: boolean;
+      snapshot_at?: string | null;
+      last_seen?: string | null;
+      storage?: E2eStorage | null;
+      collectable_bytes?: number | null;
+      estimated_seconds?: { nominal?: number | null };
+    }
+    interface E2ePayload {
+      ok?: boolean;
+      generated_at?: string;
+      reserve_bytes?: number;
+      detail?: string;
+      summary?: {
+        online_count?: number;
+        vehicle_count?: number;
+        capture_mount_count?: number;
+        root_fallback_count?: number;
+        total_collectable_bytes?: number;
+        estimated_nominal_seconds?: number | null;
+      };
+      vehicles?: E2eVehicle[];
+    }
+
+    const dashboard = document.querySelector<HTMLElement>("[data-e2e-dashboard]");
+    if (dashboard) {
+      const root = dashboard;
+      const endpoint = "/api/e2e-autonomous-driving/fleet-storage";
+      const rowsNode = root.querySelector<HTMLTableSectionElement>("[data-e2e-rows]");
+      const refreshButton = root.querySelector<HTMLButtonElement>("[data-e2e-refresh]");
+      const filterInput = root.querySelector<HTMLInputElement>("[data-e2e-filter]");
+      const alertNode = root.querySelector<HTMLElement>("[data-e2e-alert]");
+      let payload: E2ePayload | null = null;
+
+      const escapeHtml = (value: unknown) => String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+      const formatGiB = (bytes: unknown) => Number.isFinite(Number(bytes))
+        ? `${(Number(bytes) / 1073741824).toFixed(1)} G`
+        : "--";
+      const formatHours = (seconds: unknown) => {
+        if (!Number.isFinite(Number(seconds))) return "--";
+        const hours = Number(seconds) / 3600;
+        if (hours >= 24) return `${(hours / 24).toFixed(1)} 天`;
+        if (hours >= 1) return `${hours.toFixed(1)} 小时`;
+        return `${Math.max(0, Math.round(Number(seconds) / 60))} 分钟`;
+      };
+      const formatTime = (value: unknown) => {
+        const date = new Date(String(value || ""));
+        if (Number.isNaN(date.getTime())) return "--";
+        return new Intl.DateTimeFormat("zh-CN", {
+          month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+          hour12: false
+        }).format(date);
+      };
+
+      function renderRows() {
+        if (!rowsNode || !payload) return;
+        const keyword = String(filterInput?.value || "").trim().toLowerCase();
+        const vehicles = (payload.vehicles || []).filter((vehicle: E2eVehicle) =>
+          !keyword || String(vehicle.vehicle_id || "").toLowerCase().includes(keyword)
+        );
+        if (!vehicles.length) {
+          rowsNode.innerHTML = '<tr><td colspan="9" class="e2e-empty">没有匹配的车辆</td></tr>';
+          return;
+        }
+        rowsNode.innerHTML = vehicles.map((vehicle: E2eVehicle) => {
+          const storage = vehicle.storage;
+          const trusted = storage?.preferred_capture_mount;
+          const collectable = vehicle.collectable_bytes;
+          const reserveSafe = Number.isFinite(Number(collectable)) && Number(collectable) > 0;
+          const mountLabel = trusted
+            ? `${storage.mountpoint || "/home"} · 采集盘`
+            : storage
+              ? `${storage.mountpoint || "/"} · 根分区回退`
+              : "等待上报";
+          return `<tr>
+            <td><span class="e2e-vehicle">${escapeHtml(vehicle.vehicle_id)}</span></td>
+            <td><span class="e2e-status ${vehicle.online ? "is-online" : ""}">${vehicle.online ? "在线" : "离线/过期"}</span></td>
+            <td><span class="e2e-source ${trusted ? "" : "is-fallback"}">${escapeHtml(mountLabel)}</span></td>
+            <td>${formatGiB(storage?.total_bytes)}</td>
+            <td>${formatGiB(storage?.used_bytes)}</td>
+            <td class="${storage ? "e2e-free" : ""}">${formatGiB(storage?.free_bytes)}</td>
+            <td class="${reserveSafe ? "e2e-free" : "e2e-unsafe"}">${formatGiB(collectable)}</td>
+            <td>${formatHours(vehicle.estimated_seconds?.nominal)}</td>
+            <td>${formatTime(vehicle.snapshot_at || vehicle.last_seen)}</td>
+          </tr>`;
+        }).join("");
+      }
+
+      function render(nextPayload: E2ePayload) {
+        payload = nextPayload;
+        const summary = payload.summary || {};
+        const setText = (selector: string, value: string) => {
+          const node = root.querySelector<HTMLElement>(selector);
+          if (node) node.textContent = value;
+        };
+        setText("[data-e2e-online]", `${summary.online_count ?? 0} / ${summary.vehicle_count ?? 0}`);
+        setText("[data-e2e-mounts]", `${summary.capture_mount_count ?? 0} / ${summary.vehicle_count ?? 0}`);
+        setText("[data-e2e-collectable]", formatGiB(summary.total_collectable_bytes));
+        setText("[data-e2e-hours]", formatHours(summary.estimated_nominal_seconds));
+        setText("[data-e2e-updated]", `更新时间 ${formatTime(payload.generated_at)} · 每车硬保留 ${formatGiB(payload.reserve_bytes)}`);
+        if (alertNode) {
+          const fallbackCount = Number(summary.root_fallback_count || 0);
+          alertNode.hidden = fallbackCount === 0;
+          alertNode.textContent = fallbackCount
+            ? `${fallbackCount} 辆车当前只上报了根分区，不能当成 Media 采集盘真实容量；它们不会计入车队可采总量。`
+            : "";
+        }
+        renderRows();
+      }
+
+      async function load() {
+        if (refreshButton) refreshButton.disabled = true;
+        try {
+          const response = await fetch(endpoint, { credentials: "same-origin", cache: "no-store" });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+          render(data);
+        } catch (error) {
+          if (alertNode) {
+            alertNode.hidden = false;
+            alertNode.textContent = `容量读取失败：${error instanceof Error ? error.message : String(error)}`;
+          }
+          if (rowsNode && !payload) rowsNode.innerHTML = '<tr><td colspan="9" class="e2e-empty">暂时无法读取车辆容量</td></tr>';
+        } finally {
+          if (refreshButton) refreshButton.disabled = false;
+        }
+      }
+
+      refreshButton?.addEventListener("click", load);
+      filterInput?.addEventListener("input", renderRows);
+      load();
+      window.setInterval(load, 60000);
+    }
+  </script>
+</SiteLayout>

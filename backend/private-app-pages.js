@@ -65,6 +65,13 @@ const PRIVATE_APP_PAGES = [
     legacyPermissions: ['vehicle:code:read', 'vehicle:code:write']
   },
   {
+    href: '/app/end-to-end-autonomous-driving',
+    label: '端到端自动驾驶',
+    file: 'app/end-to-end-autonomous-driving/index.html',
+    permission: 'page:end-to-end-autonomous-driving:view',
+    legacyPermissions: []
+  },
+  {
     href: '/app/cloud-mapping',
     label: '云端建图',
     file: 'app/cloud-mapping/index.html',

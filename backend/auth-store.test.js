@@ -59,8 +59,14 @@ test('auth store migrates legacy capability access without regranting revoked pa
 
 test('permission catalog exposes all page buttons and preserves audit isolation', () => {
   const pagePermissions = PERMISSIONS.filter((permission) => permission.group === '子页面');
-  assert.equal(pagePermissions.length, 13);
+  assert.equal(pagePermissions.length, 14);
   assert.ok(pagePermissions.some((permission) => permission.id === 'page:green-management:view'));
+  assert.ok(
+    pagePermissions.some(
+      (permission) => permission.id === 'page:end-to-end-autonomous-driving:view'
+    )
+  );
   assert.ok(!OPERATOR_ALL_PERMISSIONS.includes('audit:read'));
   assert.ok(!OPERATOR_ALL_PERMISSIONS.includes('page:operation-history:view'));
+  assert.ok(!OPERATOR_ALL_PERMISSIONS.includes('page:end-to-end-autonomous-driving:view'));
 });

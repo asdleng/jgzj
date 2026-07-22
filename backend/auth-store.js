@@ -29,7 +29,11 @@ const PERMISSIONS = [
 
 const ALL_PERMISSION_IDS = PERMISSIONS.map((item) => item.id);
 const REGISTERED_DEFAULT_PERMISSIONS = ['site:private:view'];
-const OPERATOR_EXCLUDED_PERMISSIONS = new Set(['audit:read', 'page:operation-history:view']);
+const OPERATOR_EXCLUDED_PERMISSIONS = new Set([
+  'audit:read',
+  'page:operation-history:view',
+  'page:end-to-end-autonomous-driving:view'
+]);
 const OPERATOR_ALL_PERMISSIONS = ALL_PERMISSION_IDS.filter(
   (permission) => !OPERATOR_EXCLUDED_PERMISSIONS.has(permission)
 );
