@@ -17855,7 +17855,12 @@ app.post('/vehicles/:vehicleId/map-editor/api/route-smooth', authStore.requirePe
     }
 
     const saveQuery = new URLSearchParams({ file: fileName });
-    const routeEditControls = buildMapEditorRouteEditControlsFromPreview(originalPoints || [], smoothed.points || []);
+    const routeEditControls = Array.isArray(smoothed.controls) ? smoothed.controls : [];
+    if (routeEditControls.length < 2) {
+      const error = new Error('route_smooth_controls_insufficient');
+      error.status = 500;
+      throw error;
+    }
     const compactedRouteEdit = compactMapEditorRouteEditControlsForBody(
       fileName,
       routeEditControls,
