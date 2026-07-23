@@ -3151,9 +3151,6 @@ function yoloReviewSourceLabel(sourceType) {
   if (sourceType === 'finetune_dataset') {
     return 'Finetune训练集';
   }
-  if (sourceType === 'public_dataset') {
-    return '公开数据集';
-  }
   if (sourceType === 'checker_archive') {
     return '车端校核数据';
   }
@@ -3167,22 +3164,12 @@ function isYoloFinetuneReviewSummary(summary) {
   return String(summary.schema || '') === 'jgzj_yolo_finetune_review_dataset.v1' || Boolean(summary.finetune);
 }
 
-function isYoloPublicDatasetSummary(summary) {
-  if (!summary || typeof summary !== 'object') {
-    return false;
-  }
-  return summary.source_type === 'public_dataset' || summary.public_dataset === true;
-}
-
 function yoloDatasetSourceTypeForSummary(summary, stats = {}) {
   if (stats.web_crawler) {
     return 'web_crawler';
   }
   if (isYoloFinetuneReviewSummary(summary)) {
     return 'finetune_dataset';
-  }
-  if (isYoloPublicDatasetSummary(summary)) {
-    return 'public_dataset';
   }
   return 'checker_archive';
 }
@@ -5167,31 +5154,24 @@ function buildYoloBaseItem(dataset, rel, manifestItem = null, webReview = null) 
   const metadata = parseYoloFilenameMetadata(rel);
   const task = Array.isArray(manifestItem?.tasks) && manifestItem.tasks.length ? manifestItem.tasks[0] : null;
   const split = manifestItem?.split || yoloSplitFromRelPath(dataset.kind, rel);
-  const manifestLabelClasses = Array.isArray(manifestItem?.label_classes)
-    ? manifestItem.label_classes.map((item) => String(item || '').trim()).filter(Boolean)
-    : [];
-  const manifestPrimaryClass = manifestLabelClasses[0] || '';
   const itemClass = yoloClassFromRelPath(dataset.kind, rel, {
-    event_name: metadata.event_name || task?.event_name || manifestPrimaryClass || ''
+    event_name: metadata.event_name || task?.event_name || ''
   });
   const taskRowId = Number(task?.task_row_id || metadata.task_row_id || 0);
-  const manifestLabelCount = Number(manifestItem?.label_count);
 
   const normalizedWebReview = normalizeYoloWebReview(webReview, manifestItem);
   return {
     item_key: rel,
     image_rel_path: rel,
     split,
-    ai_class: itemClass || manifestPrimaryClass,
-    event_name: task?.event_name || metadata.event_name || itemClass || manifestPrimaryClass,
+    ai_class: itemClass,
+    event_name: task?.event_name || metadata.event_name || itemClass,
     day: metadata.day || (Array.isArray(manifestItem?.days) ? manifestItem.days[0] : ''),
     request_id: task?.request_id || metadata.request_id || '',
     task_id: task?.task_id || metadata.task_id || '',
     task_row_id: Number.isFinite(taskRowId) && taskRowId > 0 ? taskRowId : null,
     device_id: task?.device_id || (Array.isArray(manifestItem?.device_ids) ? manifestItem.device_ids.join(' / ') : ''),
     camera_id: task?.camera_id || (Array.isArray(manifestItem?.camera_ids) ? manifestItem.camera_ids.join(' / ') : ''),
-    label_classes: manifestLabelClasses,
-    label_count: Number.isFinite(manifestLabelCount) ? manifestLabelCount : undefined,
     manifest: manifestItem || null,
     web_review: normalizedWebReview,
     web_title: normalizedWebReview?.title || '',
@@ -5423,15 +5403,6 @@ function yoloLabelMatchesClasses(label, classNames) {
   return classNames.includes(normalizeClassToken(label?.class_name || label?.label || label?.name || ''));
 }
 
-function yoloItemHasManifestClass(item, classNames) {
-  if (!classNames.length) {
-    return false;
-  }
-  return Array.isArray(item?.label_classes) && item.label_classes.some((value) => (
-    classNames.includes(normalizeClassToken(value))
-  ));
-}
-
 async function listYoloReviewItems(datasetId, query = {}) {
   const dataset = await resolveYoloDataset(datasetId);
   const page = toFiniteInteger(query.page, 1, { min: 1, max: 9999 });
@@ -5450,18 +5421,9 @@ async function listYoloReviewItems(datasetId, query = {}) {
   const aiAnswer = String(query.ai_answer || '').trim().toUpperCase();
   const q = String(query.q || '').trim();
   const hasBoxOnly = ['1', 'true', 'yes', 'on'].includes(String(query.has_box || query.hasBox || '').trim().toLowerCase());
+  const needsLabelBeforePagination = ['YES', 'NO'].includes(aiAnswer) || classNames.length > 0 || hasBoxOnly;
 
   const allItems = await yoloBaseItems(dataset);
-  const canUseManifestLabelClassFilter = dataset.kind === 'detect' &&
-    classNames.length > 0 &&
-    hasBoxOnly &&
-    !['YES', 'NO'].includes(aiAnswer) &&
-    allItems.some((item) => Array.isArray(item.label_classes));
-  const needsLabelBeforePagination = (
-    ['YES', 'NO'].includes(aiAnswer) ||
-    classNames.length > 0 ||
-    hasBoxOnly
-  ) && !canUseManifestLabelClassFilter;
   let items = qwenAudit
     ? allItems.filter((item) => yoloItemMatchesQwenAudit(dataset, item, qwenAudit))
     : allItems;
@@ -5485,11 +5447,6 @@ async function listYoloReviewItems(datasetId, query = {}) {
     if (eventNames.length) {
       const itemEventNames = yoloItemEventNameTokens(item);
       if (!itemEventNames.some((value) => eventNames.includes(value))) {
-        return false;
-      }
-    }
-    if (classNames.length && canUseManifestLabelClassFilter && Array.isArray(item.label_classes)) {
-      if (!yoloItemHasManifestClass(item, classNames)) {
         return false;
       }
     }

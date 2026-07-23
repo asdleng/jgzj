@@ -815,7 +815,6 @@
     if (dataset?.source_type === "vehicle_collection") return "vehicle_collection";
     if (dataset?.source_type === "web_crawler" || dataset?.web_crawler || dataset?.summary?.web_crawler) return "web_crawler";
     if (dataset?.source_type === "finetune_dataset" || dataset?.finetune || dataset?.summary?.finetune) return "finetune_dataset";
-    if (dataset?.source_type === "public_dataset" || dataset?.summary?.public_dataset === true) return "public_dataset";
     const text = datasetSearchText(dataset);
     if (text.includes("finetune")) {
       return "finetune_dataset";
