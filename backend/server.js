@@ -49,6 +49,7 @@ const {
 const {
   registerE2eAutonomousDrivingRoutes
 } = require('./e2e-autonomous-driving');
+const { registerE2eDataReplayRoutes } = require('./e2e-data-replay');
 const {
   effectiveYoloWebAuditVerdict,
   isYoloWebCrawlerSummary,
@@ -212,6 +213,11 @@ const lidarRelocalizationVehicleToken = readSecretFromEnvOrFile(
   'LIDAR_RELOCALIZATION_VEHICLE_TOKEN_FILE',
   '/home/admin1/.config/cloud-agent/relocalization_token'
 );
+const e2eUploadTokenSecret = readSecretFromEnvOrFile(
+  ['E2E_UPLOAD_TOKEN_SECRET'],
+  'E2E_UPLOAD_TOKEN_SECRET_FILE',
+  '/home/admin1/.config/cloud-agent/e2e_upload_token_secret'
+);
 const cloudAgentPlanSessionSuffix = process.env.CLOUD_AGENT_PLAN_SESSION_SUFFIX || 'ops-plan';
 const cloudAgentAnswerSessionSuffix =
   process.env.CLOUD_AGENT_ANSWER_SESSION_SUFFIX || 'ops-answer';
@@ -262,6 +268,9 @@ const lidarRelocalizationVehicleMapRoot = path.resolve(
 const mapPackageUploadRoot = path.resolve(
   process.env.MAP_PACKAGE_UPLOAD_ROOT ||
     path.join(lidarRelocalizationRoot, 'map_uploads')
+);
+const e2eDataReplayRoot = path.resolve(
+  process.env.E2E_DATA_REPLAY_ROOT || path.join(projectRoot, '.runtime/e2e-autonomous-driving')
 );
 const lidarRelocalizationCaptureRoot = path.resolve(
   process.env.LIDAR_RELOCALIZATION_CAPTURE_ROOT ||
@@ -17025,6 +17034,12 @@ app.post('/api/cloud-ops-agent/chat', authStore.requirePermission('vehicle:read'
 registerE2eAutonomousDrivingRoutes(app, {
   requirePermission: (permission) => authStore.requirePermission(permission),
   listVehicles: listCloudAgentVehicles
+});
+registerE2eDataReplayRoutes(app, {
+  requirePermission: (permission) => authStore.requirePermission(permission),
+  rootDir: e2eDataReplayRoot,
+  tokenSecret: e2eUploadTokenSecret,
+  minFreeBytes: Number(process.env.E2E_DATA_REPLAY_MIN_FREE_BYTES || 2 * 1024 ** 4)
 });
 
 app.get('/api/cloud-ops/vehicles', authStore.requirePermission('vehicle:read'), async (_req, res) => {

@@ -105,6 +105,102 @@ import SiteLayout from "../../components/SiteLayout.astro";
       </div>
     </section>
 
+    <section class="page-section e2e-replay-section" data-e2e-replay>
+      <div class="e2e-replay-heading">
+        <div>
+          <p class="section-kicker">CHARGING UPLOAD · SYNCHRONIZED REPLAY</p>
+          <h2 class="section-title">端到端数据回放</h2>
+          <p class="e2e-muted">
+            车辆稳定充电后经公网 HTTPS 断点上传。左侧选择 30 秒片段，右侧同步查看点云、规划、参考线、边界和融合定位。
+          </p>
+        </div>
+        <button class="e2e-refresh" type="button" data-replay-refresh>刷新片段</button>
+      </div>
+
+      <div class="e2e-replay-summary" aria-live="polite">
+        <article><span>已上传片段</span><strong data-replay-count>--</strong><small data-replay-vehicles>-- 辆车</small></article>
+        <article><span>有效时长</span><strong data-replay-duration>--</strong><small>原始训练 bag</small></article>
+        <article><span>原始数据</span><strong data-replay-size>--</strong><small>支持 Range 下载</small></article>
+        <article><span>上传方式</span><strong>HTTPS</strong><small>充电门控 · 分块续传</small></article>
+      </div>
+
+      <div class="e2e-replay-shell glass-card">
+        <aside class="e2e-clip-panel">
+          <div class="e2e-clip-filters">
+            <label>
+              <span>车辆</span>
+              <select data-replay-vehicle><option value="">全部车辆</option></select>
+            </label>
+            <label>
+              <span>搜索片段</span>
+              <input type="search" placeholder="车辆或片段 ID" data-replay-search />
+            </label>
+          </div>
+          <p class="e2e-clip-status" data-replay-status>正在读取已上传片段…</p>
+          <div class="e2e-clip-list" data-replay-list></div>
+        </aside>
+
+        <div class="e2e-player-panel">
+          <div class="e2e-player-head">
+            <div>
+              <p class="section-kicker" data-replay-kicker>NO CLIP SELECTED</p>
+              <h3 data-replay-title>等待充电上传的数据片段</h3>
+              <p data-replay-meta>原始 bag 不抽帧；下面的点云抽样只用于浏览器可视化。</p>
+            </div>
+            <a class="e2e-download is-disabled" data-replay-download aria-disabled="true">下载原始 BAG</a>
+          </div>
+
+          <div class="e2e-stage-wrap" data-replay-stage>
+            <div class="e2e-stage-grid">
+              <figure class="e2e-canvas-card">
+                <figcaption><span>LiDAR BEV</span><small>车体坐标 · 前向朝上</small></figcaption>
+                <canvas data-replay-lidar aria-label="激光雷达鸟瞰回放"></canvas>
+              </figure>
+              <figure class="e2e-canvas-card">
+                <figcaption><span>Planning Scene</span><small>参考线 · 边界 · ADC trajectory</small></figcaption>
+                <canvas data-replay-planning aria-label="规划与定位回放"></canvas>
+              </figure>
+            </div>
+            <div class="e2e-stage-empty" data-replay-empty>
+              <strong>暂无可回放片段</strong>
+              <span>车辆稳定充电并完成首个片段上传后，会自动出现在这里。</span>
+            </div>
+          </div>
+
+          <div class="e2e-telemetry-grid">
+            <article><span>回放时间</span><strong data-replay-clock>-- / --</strong><small data-replay-frame>Frame --</small></article>
+            <article><span>融合定位</span><strong data-replay-position>--</strong><small data-replay-latlon>经纬度 --</small></article>
+            <article><span>车辆状态</span><strong data-replay-motion>--</strong><small data-replay-gear>档位 --</small></article>
+            <article><span>规划状态</span><strong data-replay-planning-state>--</strong><small data-replay-estop>ESTOP --</small></article>
+            <article><span>点云</span><strong data-replay-points>--</strong><small>原始点数 / 预览点数</small></article>
+          </div>
+
+          <div class="e2e-player-controls">
+            <button type="button" class="e2e-play" data-replay-play disabled aria-label="播放或暂停">▶</button>
+            <input type="range" min="0" max="0" value="0" step="1" data-replay-timeline aria-label="回放时间轴" disabled />
+            <label class="e2e-speed">
+              <span>速度</span>
+              <select data-replay-speed>
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="2">2×</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="e2e-replay-note">
+            <div class="e2e-scene-legend" aria-label="规划图例">
+              <span><i class="is-reference"></i>参考线</span>
+              <span><i class="is-boundary"></i>道路边界</span>
+              <span><i class="is-trajectory"></i>规划轨迹</span>
+              <span><i class="is-vehicle"></i>车辆定位</span>
+            </div>
+            <p>网页预览为 2 Hz 可视化索引；服务器保存的原始 rosbag 保持完整 topic、时间戳与原始点云。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="page-section e2e-contract-section">
       <div class="e2e-contract-grid">
         <article class="glass-card e2e-contract-card">
@@ -175,6 +271,66 @@ import SiteLayout from "../../components/SiteLayout.astro";
     .e2e-free { color:#aef8cf; font-weight:700; }
     .e2e-unsafe { color:#ffba8b; font-weight:700; }
     .e2e-empty { text-align:center; padding:42px!important; color:#8398ae!important; }
+    .e2e-replay-section { padding-top:0; }
+    .e2e-replay-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:18px; }
+    .e2e-replay-heading .section-title { margin-bottom:7px; }
+    .e2e-replay-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+    .e2e-replay-summary article { display:grid; gap:6px; padding:16px 18px; border:1px solid rgba(111,165,216,.18); border-radius:13px; background:linear-gradient(145deg,rgba(13,31,57,.88),rgba(7,20,38,.78)); }
+    .e2e-replay-summary span { color:#8fa9c4; font-size:.72rem; letter-spacing:.07em; text-transform:uppercase; }
+    .e2e-replay-summary strong { color:#f2fbff; font-size:1.3rem; }
+    .e2e-replay-summary small { color:rgba(203,220,238,.55); }
+    .e2e-replay-shell { display:grid; grid-template-columns:300px minmax(0,1fr); min-height:690px; padding:0; overflow:hidden; }
+    .e2e-clip-panel { min-width:0; border-right:1px solid rgba(128,173,215,.14); background:rgba(4,15,30,.38); }
+    .e2e-clip-filters { display:grid; gap:11px; padding:19px; border-bottom:1px solid rgba(128,173,215,.12); }
+    .e2e-clip-filters label { display:grid; gap:5px; color:#8fa9c4; font-size:.7rem; letter-spacing:.05em; }
+    .e2e-clip-filters input,.e2e-clip-filters select,.e2e-speed select { width:100%; border:1px solid rgba(116,167,211,.22); background:#08182b; color:#eaf7ff; border-radius:9px; padding:9px 10px; outline:none; }
+    .e2e-clip-filters input:focus,.e2e-clip-filters select:focus,.e2e-speed select:focus { border-color:rgba(85,231,255,.58); }
+    .e2e-clip-status { margin:0; padding:12px 18px; color:#7892ab; font-size:.74rem; border-bottom:1px solid rgba(128,173,215,.1); }
+    .e2e-clip-status.is-error { color:#ffb58b; }
+    .e2e-clip-list { max-height:612px; overflow:auto; padding:8px; }
+    .e2e-clip-item { display:grid; width:100%; min-width:0; overflow:hidden; border:1px solid transparent; border-radius:11px; padding:13px 12px; margin:0 0 6px; text-align:left; background:transparent; color:inherit; font:inherit; cursor:pointer; transition:.18s ease; }
+    .e2e-clip-item:hover { background:rgba(45,101,153,.13); border-color:rgba(97,173,224,.15); }
+    .e2e-clip-item.is-active { background:linear-gradient(135deg,rgba(26,105,139,.28),rgba(47,69,147,.22)); border-color:rgba(85,231,255,.38); box-shadow:inset 3px 0 var(--e2e-cyan); }
+    .e2e-clip-item-head,.e2e-clip-item-meta { display:flex; width:100%; min-width:0; justify-content:space-between; align-items:center; gap:8px; }
+    .e2e-clip-item-head b { color:#effaff; font-size:.86rem; white-space:nowrap; }
+    .e2e-clip-item-head span { color:#8ef3c0; font-size:.7rem; }
+    .e2e-clip-item code { display:block; width:100%; margin:7px 0; overflow:hidden; color:#8ba7c1; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.67rem; text-align:left; text-overflow:ellipsis; white-space:nowrap; }
+    .e2e-clip-item-meta { color:rgba(201,220,238,.56); font-size:.68rem; }
+    .e2e-clip-list-empty { display:grid; place-items:center; min-height:180px; padding:24px; color:#7890a8; text-align:center; line-height:1.6; }
+    .e2e-player-panel { min-width:0; padding:20px; }
+    .e2e-player-head { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:14px; }
+    .e2e-player-head h3 { margin:4px 0 5px; color:#f4fbff; font-size:1.12rem; }
+    .e2e-player-head p:last-child { margin:0; color:rgba(208,226,242,.58); font-size:.78rem; }
+    .e2e-download { flex:0 0 auto; border:1px solid rgba(88,240,167,.32); border-radius:10px; padding:9px 13px; color:#b8fbd7; background:rgba(27,92,62,.2); font-size:.76rem; text-decoration:none; }
+    .e2e-download:hover { border-color:rgba(88,240,167,.7); }
+    .e2e-download.is-disabled { opacity:.42; pointer-events:none; }
+    .e2e-stage-wrap { position:relative; min-height:360px; }
+    .e2e-stage-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .e2e-canvas-card { margin:0; overflow:hidden; border:1px solid rgba(107,164,207,.18); border-radius:13px; background:#040e1a; }
+    .e2e-canvas-card figcaption { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; border-bottom:1px solid rgba(107,164,207,.14); background:rgba(12,29,50,.88); }
+    .e2e-canvas-card figcaption span { color:#dff7ff; font-size:.78rem; font-weight:700; letter-spacing:.05em; }
+    .e2e-canvas-card figcaption small { color:#6f8ba5; font-size:.66rem; }
+    .e2e-canvas-card canvas { display:block; width:100%; height:330px; }
+    .e2e-stage-empty { position:absolute; inset:0; display:grid; place-content:center; gap:7px; padding:30px; border:1px dashed rgba(113,167,211,.24); border-radius:13px; text-align:center; background:rgba(4,14,26,.86); color:#7891aa; }
+    .e2e-stage-empty strong { color:#b8cce0; }
+    .e2e-stage-empty[hidden] { display:none; }
+    .e2e-telemetry-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:9px; margin-top:11px; }
+    .e2e-telemetry-grid article { min-width:0; padding:11px 12px; border:1px solid rgba(107,164,207,.14); border-radius:10px; background:rgba(7,20,36,.58); }
+    .e2e-telemetry-grid span { display:block; color:#708aa3; font-size:.64rem; letter-spacing:.07em; }
+    .e2e-telemetry-grid strong { display:block; overflow:hidden; margin:5px 0 3px; color:#ecf9ff; font-size:.8rem; text-overflow:ellipsis; white-space:nowrap; }
+    .e2e-telemetry-grid small { display:block; overflow:hidden; color:#7690a8; font-size:.65rem; text-overflow:ellipsis; white-space:nowrap; }
+    .e2e-player-controls { display:grid; grid-template-columns:42px minmax(0,1fr) 90px; gap:12px; align-items:center; margin-top:13px; }
+    .e2e-play { width:42px; height:38px; border:1px solid rgba(85,231,255,.38); border-radius:10px; color:#dffaff; background:rgba(24,89,122,.35); cursor:pointer; }
+    .e2e-play:disabled { opacity:.4; cursor:not-allowed; }
+    .e2e-player-controls input[type="range"] { width:100%; accent-color:var(--e2e-cyan); }
+    .e2e-speed { display:grid; grid-template-columns:auto 1fr; gap:7px; align-items:center; color:#7690a8; font-size:.66rem; }
+    .e2e-speed select { padding:7px; }
+    .e2e-replay-note { display:flex; justify-content:space-between; align-items:center; gap:18px; margin-top:12px; color:#718ba3; font-size:.67rem; }
+    .e2e-replay-note p { margin:0; text-align:right; }
+    .e2e-scene-legend { display:flex; flex-wrap:wrap; gap:10px; }
+    .e2e-scene-legend span { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+    .e2e-scene-legend i { width:14px; height:3px; border-radius:2px; background:#fff; }
+    .e2e-scene-legend .is-reference { background:#57d9ff; }.e2e-scene-legend .is-boundary { background:#ffb45d; }.e2e-scene-legend .is-trajectory { background:#75f0a8; }.e2e-scene-legend .is-vehicle { background:#ff6f91; }
     .e2e-contract-section { padding-top:0; }
     .e2e-contract-grid { display:grid; grid-template-columns:1.08fr .92fr; gap:18px; }
     .e2e-contract-card { padding:28px; }
@@ -188,8 +344,9 @@ import SiteLayout from "../../components/SiteLayout.astro";
     .e2e-guard-list li>span { display:grid; place-items:center; width:42px; height:42px; border-radius:12px; color:#9ff5ff; background:linear-gradient(145deg,rgba(44,141,178,.34),rgba(40,61,131,.25)); border:1px solid rgba(85,231,255,.22); font-size:.78rem; font-weight:800; }
     .e2e-guard-list b { color:#eef9ff; }
     .e2e-guard-list p { margin:4px 0 0; color:rgba(211,228,243,.62); font-size:.86rem; line-height:1.55; }
-    @media (max-width:980px) { .e2e-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.e2e-contract-grid{grid-template-columns:1fr;} }
-    @media (max-width:640px) { .e2e-command-bar,.e2e-table-head{align-items:stretch;flex-direction:column;}.e2e-summary-grid{grid-template-columns:1fr;}.e2e-filter{width:100%;}.e2e-topic-list div{grid-template-columns:1fr;gap:4px;} }
+    @media (max-width:1100px) { .e2e-replay-shell{grid-template-columns:250px minmax(0,1fr);}.e2e-stage-grid{grid-template-columns:1fr;}.e2e-canvas-card canvas{height:300px;}.e2e-telemetry-grid{grid-template-columns:repeat(3,minmax(0,1fr));} }
+    @media (max-width:980px) { .e2e-summary-grid,.e2e-replay-summary{grid-template-columns:repeat(2,minmax(0,1fr));}.e2e-contract-grid{grid-template-columns:1fr;}.e2e-replay-shell{grid-template-columns:1fr;}.e2e-clip-panel{border-right:0;border-bottom:1px solid rgba(128,173,215,.14);}.e2e-clip-list{display:flex;max-height:none;overflow:auto;padding:8px;}.e2e-clip-item{min-width:240px;margin:0 6px 0 0;}.e2e-clip-filters{grid-template-columns:1fr 1fr;} }
+    @media (max-width:640px) { .e2e-command-bar,.e2e-table-head,.e2e-replay-heading,.e2e-player-head,.e2e-replay-note{align-items:stretch;flex-direction:column;}.e2e-summary-grid,.e2e-replay-summary{grid-template-columns:1fr;}.e2e-filter{width:100%;}.e2e-topic-list div{grid-template-columns:1fr;gap:4px;}.e2e-clip-filters{grid-template-columns:1fr;}.e2e-player-panel{padding:14px;}.e2e-telemetry-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.e2e-player-controls{grid-template-columns:42px minmax(0,1fr);}.e2e-speed{grid-column:1/-1;justify-self:end}.e2e-replay-note p{text-align:left;}.e2e-canvas-card canvas{height:270px;} }
   </style>
 
   <script>
@@ -348,5 +505,8 @@ import SiteLayout from "../../components/SiteLayout.astro";
       load();
       window.setInterval(load, 60000);
     }
+  </script>
+  <script>
+    import "../../scripts/e2e-replay.js";
   </script>
 </SiteLayout>
