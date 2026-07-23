@@ -65,6 +65,7 @@ const {
 const execFileAsync = promisify(execFile);
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const projectRoot = path.resolve(__dirname, '..');
 const webRoot = path.resolve(__dirname, '../dist');
 const superSplatViewerRoot = path.resolve(
   process.env.THREE_DGS_SUPERSPLAT_VIEWER_ROOT ||
@@ -427,7 +428,6 @@ const lidarRelocalizationVisualizationCropRadiusM = Number(
 );
 const cloudOpsRouteCatalogCache = new Map();
 const cloudOpsAudioAlsaCache = new Map();
-const projectRoot = path.resolve(__dirname, '..');
 const cloudOpsAgentBaseUrl = normalizeCloudOpsAgentBaseUrl(
   process.env.CLOUD_OPS_AGENT_BASE_URL || process.env.ONE_API_BASE_URL || 'http://127.0.0.1:8080'
 );
