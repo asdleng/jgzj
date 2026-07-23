@@ -146,7 +146,7 @@
       tokens: ["fire_smoke", "fire", "smoke", "flame", "烟", "火"],
       qwenLabel: "fire_smoke_candidate",
       className: "",
-      classNames: ["fire", "smoke", "flame", "fire_smoke", "smoke_fire", "烟", "火"],
+      classNames: ["fire", "smoke"],
       answer: "",
       query: "",
       hasBox: true,
@@ -159,7 +159,7 @@
       tokens: ["trash", "garbage", "litter", "垃圾"],
       qwenLabel: "trash",
       className: "trash",
-      classNames: ["trash", "garbage", "litter", "rubbish", "waste", "bottle", "box", "paper", "bag"],
+      classNames: ["trash", "bottle", "box", "paper", "bag"],
       answer: "YES",
       query: "",
       hasBox: true,
@@ -978,13 +978,6 @@
 
   function eventPositiveImageCount(dataset, classTokens, preset) {
     if (!dataset || !classTokens.length) return 0;
-    const feedback = datasetFeedback(dataset);
-    const feedbackLabeledImages = sumMatchingCounts(feedback?.independent_class_images, classTokens);
-    if (feedbackLabeledImages > 0) return feedbackLabeledImages;
-    const feedbackExpectedImages = sumMatchingCounts(feedback?.expected_class_counts, classTokens);
-    if (feedbackExpectedImages > 0) return feedbackExpectedImages;
-    const feedbackEventImages = sumMatchingCounts(feedback?.event_counts, classTokens);
-    if (feedbackEventImages > 0) return feedbackEventImages;
     const webTargetImages = sumMatchingCounts(
       dataset.web_crawler?.positive_images_by_target || dataset.summary?.web_crawler?.positive_images_by_target,
       classTokens
@@ -1060,39 +1053,6 @@
     if (datasetSourceGroup(dataset) === "vehicle_collection") return 0;
     if (datasetHasEventClass(dataset, preset) && countObjectLooksSplitBased(dataset.boxes)) return datasetTotalBoxes(dataset);
     return datasetHasEventClass(dataset, preset) ? datasetTotalBoxes(dataset) : 0;
-  }
-
-  function eventClassFilterTokensForDataset(dataset, preset) {
-    if (!dataset || state.activeEvent === "all" || isReviewQueueEvent()) return [];
-    if (dataset.kind !== "detect") return [];
-    const eventTokens = datasetEventClassTokens(preset);
-    if (!eventTokens.length) return [];
-    const matchedTokens = matchingDatasetEventClassTokens(dataset, preset);
-    return matchedTokens.length ? matchedTokens : eventTokens;
-  }
-
-  function eventRequiresBoxFilter(dataset, preset) {
-    return eventClassFilterTokensForDataset(dataset, preset).length > 0;
-  }
-
-  function itemMatchedEventClassNames(item, dataset = selectedDataset()) {
-    const preset = eventPresets[state.activeEvent] || eventPresets.all;
-    const tokens = eventClassFilterTokensForDataset(dataset, preset);
-    if (!tokens.length || !Array.isArray(item?.labels)) return [];
-    const seen = new Set();
-    return item.labels.map((label) => {
-      const className = String(label?.class_name || label?.label || label?.name || "").trim();
-      const token = normalizeClassToken(className);
-      if (!token || !tokens.includes(token) || seen.has(token)) return "";
-      seen.add(token);
-      return className || token;
-    }).filter(Boolean);
-  }
-
-  function itemMatchedEventClassSummary(item, dataset = selectedDataset()) {
-    const names = itemMatchedEventClassNames(item, dataset);
-    if (!names.length) return "";
-    return `命中事件框：${names.map((name) => qwenLabelText(normalizeClassToken(name)) || name).join(" / ")}`;
   }
 
   function datasetEventMetrics(dataset, eventKey = state.activeEvent) {
@@ -2026,18 +1986,16 @@
     params.set("page_size", String(state.pageSize));
     if (refs.split.value) params.set("split", refs.split.value);
     if (refs.eventName?.value && isEventFeedbackDataset(dataset)) params.set("event_name", refs.eventName.value);
-    const eventClassTokens = eventClassFilterTokensForDataset(dataset, preset);
-    const selectedClass = normalizeClassToken(refs.className?.value || "");
-    const eventClassFilter = eventClassTokens.length
-      ? (selectedClass && eventClassTokens.includes(selectedClass) ? selectedClass : eventClassTokens.join(","))
+    const eventClassFilter = ["vehicle_collection", "web_crawler"].includes(datasetSourceGroup(dataset)) && reviewTaskKind(dataset) === "detect"
+      ? matchingDatasetEventClassTokens(dataset, preset).join(",")
       : "";
-    const classFilter = eventClassFilter || selectedClass;
+    const classFilter = eventClassFilter || refs.className.value;
     if (classFilter) params.set("class_name", classFilter);
     if (refs.answer.value) params.set("ai_answer", refs.answer.value);
     if (refs.qwenLabel?.value) params.set("qwen_label", refs.qwenLabel.value);
     const auditFilter = isReviewQueueEvent() ? "suspect" : refs.qwenAudit?.value;
     if (auditFilter) params.set("qwen_audit", auditFilter);
-    if (eventRequiresBoxFilter(dataset, preset) || refs.hasBox?.checked) params.set("has_box", "1");
+    if (refs.hasBox?.checked) params.set("has_box", "1");
     if (refs.query.value.trim()) params.set("q", refs.query.value.trim());
     return `${endpoints.items}?${params.toString()}`;
   }
@@ -2137,7 +2095,7 @@
         ? item.web_review?.title || item.web_title || item.item_key
         : isClassify
         ? `${answerDisplay(item.ai_answer)} · ${item.ai_class || item.event_name || "分类样本"}`
-        : itemMatchedEventClassSummary(item, dataset) || qwenCountSummary(item) || item.ai_class || item.event_name || item.source_label || "-";
+        : qwenCountSummary(item) || item.ai_class || item.event_name || item.source_label || "-";
       top.appendChild(createNode("p", "yolo-review-item-title", titleText));
       top.appendChild(createNode("span", `ai-history-chip ${answerTone(item.ai_answer)}`, answerDisplay(item.ai_answer)));
       body.appendChild(top);
@@ -2151,10 +2109,6 @@
       const chips = createNode("div", "yolo-review-item-chips");
       chips.appendChild(createNode("span", "ai-history-chip tone-idle", datasetSourceText(dataset || item)));
       chips.appendChild(createNode("span", "ai-history-chip tone-idle", `${item.label_count || 0} 框`));
-      const matchedEventClassText = itemMatchedEventClassSummary(item, dataset);
-      if (matchedEventClassText) {
-        chips.appendChild(createNode("span", "ai-history-chip tone-yes", matchedEventClassText));
-      }
       if (isWebCrawler && item.web_review) {
         chips.appendChild(createNode("span", `ai-history-chip ${webSceneTone(item.web_review.scene)}`, webSceneText(item.web_review.scene)));
         chips.appendChild(createNode("span", `ai-history-chip ${item.web_review.training_eligible ? "tone-yes" : "tone-error"}`, item.web_review.training_eligible ? "训练已放行" : "训练未放行"));
@@ -3131,7 +3085,6 @@
     const isWebCrawler = datasetSourceGroup(dataset || item) === "web_crawler";
     meta.appendChild(metaItem("样本", item.item_key));
     meta.appendChild(metaItem("来源", datasetSourceText(selectedDataset() || dataset || item)));
-    meta.appendChild(metaItem("命中事件框", itemMatchedEventClassSummary(item, dataset)));
     meta.appendChild(metaItem("AI标类别", item.ai_class || item.event_name));
     meta.appendChild(metaItem("AI答案", answerDisplay(item.ai_answer)));
     meta.appendChild(metaItem("YOLO框数", item.label_count));

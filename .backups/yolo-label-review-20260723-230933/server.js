@@ -5396,13 +5396,6 @@ function yoloItemMatchesQwenAudit(dataset, item, qwenAudit) {
   return auditTokens.includes(qwenAudit);
 }
 
-function yoloLabelMatchesClasses(label, classNames) {
-  if (!classNames.length) {
-    return false;
-  }
-  return classNames.includes(normalizeClassToken(label?.class_name || label?.label || label?.name || ''));
-}
-
 async function listYoloReviewItems(datasetId, query = {}) {
   const dataset = await resolveYoloDataset(datasetId);
   const page = toFiniteInteger(query.page, 1, { min: 1, max: 9999 });
@@ -5489,15 +5482,11 @@ async function listYoloReviewItems(datasetId, query = {}) {
 
   if (needsLabelBeforePagination) {
     items = await filterYoloItemsWithLabels(dataset, items, (enriched) => {
-      const labels = Array.isArray(enriched.labels) ? enriched.labels : [];
-      const hasMatchingClassBox = labels.some((label) => yoloLabelMatchesClasses(label, classNames));
       const classMatched = !classNames.length ||
-        ((hasBoxOnly && dataset.kind === 'detect') ? hasMatchingClassBox : (
-          classNames.includes(normalizeClassToken(enriched.ai_class)) ||
-          hasMatchingClassBox
-        ));
+        classNames.includes(normalizeClassToken(enriched.ai_class)) ||
+        (enriched.labels || []).some((label) => classNames.includes(normalizeClassToken(label.class_name)));
       const answerMatched = !['YES', 'NO'].includes(aiAnswer) || enriched.ai_answer === aiAnswer;
-      const boxMatched = !hasBoxOnly || (classNames.length && dataset.kind === 'detect' ? hasMatchingClassBox : labels.length > 0);
+      const boxMatched = !hasBoxOnly || (Array.isArray(enriched.labels) && enriched.labels.length > 0);
       return classMatched && answerMatched && boxMatched;
     });
   }
