@@ -471,19 +471,16 @@ function cancelGearShift() {
   gearShiftTimer = null;
 }
 
-function resetMotionState(commandEnabled = false, initialCommand = null) {
+function resetMotionState(commandEnabled = false) {
   cancelGearShift();
   activeMotionControls.clear();
   criticalControlCommands.length = 0;
   controlState.commandEnabled = commandEnabled;
   controlState.motionPaused = false;
-  const initialGear = ["P", "R", "N", "D"].includes(initialCommand?.gear)
-    ? initialCommand.gear : "P";
-  controlState.driveGear = ["D", "R"].includes(initialGear) ? initialGear : "D";
-  controlState.gear = initialGear;
+  controlState.driveGear = "D";
+  controlState.gear = "P";
   controlState.steering = 0;
-  controlState.brake = Number.isFinite(Number(initialCommand?.brake))
-    ? Number(initialCommand.brake) : 100;
+  controlState.brake = 100;
   controlState.accelerator = 0;
 }
 
@@ -662,10 +659,7 @@ async function pollControlStatus() {
       cancelGearShift();
       activeMotionControls.clear();
       criticalControlCommands.length = 0;
-      const holdGear = ["P", "R", "N", "D"].includes(status.last_command?.gear)
-        ? status.last_command.gear : controlState.gear;
-      controlState.gear = holdGear;
-      if (["D", "R"].includes(holdGear)) controlState.driveGear = holdGear;
+      controlState.gear = "P";
       controlState.steering = 0;
       controlState.accelerator = 0;
       controlState.brake = 100;
@@ -810,7 +804,7 @@ async function acquireControl() {
     controlState.emergency = false;
     controlState.lastError = "";
     controlState.sequence = 0;
-    resetMotionState(true, result.applied);
+    resetMotionState(true);
     applyControlConstraints(result.constraints);
     startControlHeartbeat();
     showToast("BIT-0041 已接管，可直接控制");
@@ -1117,9 +1111,7 @@ function renderControlState() {
     elements.controlStatusText.textContent = "可接管";
     elements.controlGate.dataset.state = "ready";
     elements.controlGateLabel.textContent = "安全预检通过";
-    const speed = Number(controlState.vehicle?.speed_kph);
-    const speedText = Number.isFinite(speed) ? `${speed.toFixed(1)} km/h` : "车速未知";
-    elements.controlGateDetail.textContent = `BIT-0041 ${speedText}，当前 ${[...players.values()].filter((player) => player.state === "live").length}/4 路画面`;
+    elements.controlGateDetail.textContent = `BIT-0041 静止，当前 ${[...players.values()].filter((player) => player.state === "live").length}/4 路画面`;
   } else {
     elements.controlStatusText.textContent = "未接管";
     elements.controlGateLabel.textContent = selectedControlVehicle ? "控制暂不可用" : "当前车辆仅监看";
@@ -1172,7 +1164,7 @@ function renderControlState() {
       : !controlState.backendOnline ? "服务器安全网关离线"
         : occupied ? "实车控制会话已占用"
           : !vehicleReady ? (controlState.vehicle?.issues || ["车辆安全预检未通过"])[0]
-            : videoReady ? "车辆在线，可接管" : "车辆在线，无画面也可接管";
+            : videoReady ? "车辆静止，可接管" : "车辆静止，无画面也可接管";
   }
   elements.controlAvailability.textContent = availability;
 

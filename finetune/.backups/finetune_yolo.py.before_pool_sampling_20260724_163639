@@ -45,7 +45,6 @@ TRAIN_SCRIPT = RUNTIME_ROOT / "reliable_vehicle_yolo_20260704" / "train_reliable
 POLICY_SCRIPT = PROJECT_ROOT / "scripts" / "yolo_closed_loop_policy.py"
 FINETUNE_ROOT = PROJECT_ROOT / "finetune"
 FINETUNE_RUNTIME = RUNTIME_ROOT / "finetune"
-YOLO_LOOP_DATASETS_ROOT = RUNTIME_ROOT / "yolo_loop" / "datasets"
 EVENT_FEEDBACK_ROOT = RUNTIME_ROOT / "yolo_loop" / "datasets" / "yolo_event_feedback_v1"
 QWEN_NO_ROOT = Path(os.environ.get(
     "YOLO_FINETUNE_QWEN_NO_ROOT",
@@ -56,8 +55,6 @@ WEB_FIRE_SMOKE_DATASET = Path(os.environ.get(
     str(RUNTIME_ROOT / "yolo_loop" / "datasets" / "fire_smoke_web_candidates_v3"),
 ))
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-YOLO_REVIEW_FINETUNE_SCHEMA = "jgzj_yolo_finetune_review_dataset.v1"
-CATEGORY_ORDER = ("normal_positive", "hard_positive", "normal_negative", "hard_negative")
 
 A100_HOST = os.environ.get("YOLO_A100_HOST", "192.168.80.49")
 A100_USER = os.environ.get("YOLO_A100_USER", "sari")
@@ -141,15 +138,6 @@ class ModelInfo:
     data_source: str
 
 
-@dataclass
-class DatasetPoolSource:
-    role: str
-    label: str
-    data: Path
-    positives: list[dict[str, Any]]
-    negatives: list[dict[str, Any]]
-
-
 def log(message: str) -> None:
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
@@ -162,11 +150,6 @@ def normalize_name(value: str) -> str:
     return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
 
 
-def safe_path_token(value: str, fallback: str = "dataset") -> str:
-    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "").strip()).strip("._-")
-    return token or fallback
-
-
 def qwen_class_for(name: str) -> str:
     normalized = normalize_name(name)
     return QWEN_COARSE_CLASS.get(normalized, normalized)
@@ -174,13 +157,6 @@ def qwen_class_for(name: str) -> str:
 
 def parse_csv_tokens(value: str) -> list[str]:
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
-
-
-def flatten_csv_values(values: list[str] | tuple[str, ...] | None) -> list[str]:
-    out: list[str] = []
-    for value in values or []:
-        out.extend(parse_csv_tokens(value))
-    return out
 
 
 def resolve_target_class_ids(args: argparse.Namespace, names: list[str]) -> list[int]:
@@ -335,17 +311,6 @@ def read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def normalize_yolo_names(names: Any) -> list[str]:
-    if isinstance(names, dict):
-        pairs = []
-        for key, value in names.items():
-            pairs.append((int(key), str(value)))
-        return [value for _, value in sorted(pairs)]
-    if isinstance(names, list):
-        return [str(item) for item in names]
-    return []
-
-
 def parse_args_yaml(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     if not path.exists():
@@ -372,94 +337,6 @@ def map_external_dataset(path: Path) -> Path:
         if candidate.exists():
             return candidate
     return path
-
-
-def yolo_review_dataset_root_for_alias(alias: str) -> Path | None:
-    if alias == "loop":
-        return YOLO_LOOP_DATASETS_ROOT
-    if alias == "legacy":
-        return RUNTIME_ROOT / "yolo_datasets"
-    return None
-
-
-def find_data_yaml_in_dir(dataset_dir: Path) -> Path:
-    direct = [dataset_dir / "data.yaml", dataset_dir / "data.yml"]
-    for candidate in direct:
-        if candidate.exists():
-            return candidate.resolve()
-    nested = sorted(dataset_dir.glob("*/data.yaml")) + sorted(dataset_dir.glob("*/data.yml"))
-    if len(nested) == 1:
-        return nested[0].resolve()
-    if len(nested) > 1:
-        names = ", ".join(str(path) for path in nested[:8])
-        raise SystemExit(f"ambiguous_dataset_data_yaml:{dataset_dir}; candidates={names}")
-    raise SystemExit(f"data_yaml_not_found:{dataset_dir}")
-
-
-def resolve_dataset_input(value: str, default_data: Path | None = None) -> Path:
-    raw = str(value or "").strip()
-    if not raw:
-        if default_data is None:
-            raise SystemExit("empty_dataset_input")
-        return default_data.resolve()
-    if ":" in raw and not raw.startswith("/") and not re.match(r"^[A-Za-z]:[\\/]", raw):
-        alias, rel = raw.split(":", 1)
-        root = yolo_review_dataset_root_for_alias(alias)
-        if root is not None:
-            safe_parts = [part for part in Path(rel).parts if part not in ("", ".", "..")]
-            root_resolved = root.resolve()
-            candidate = (root / Path(*safe_parts)).resolve()
-            if candidate != root_resolved and root_resolved not in candidate.parents:
-                raise SystemExit(f"dataset_id_out_of_root:{raw}")
-            return find_data_yaml_in_dir(candidate) if candidate.is_dir() else candidate
-    candidate = map_external_dataset(Path(raw).expanduser()).resolve()
-    if candidate.is_dir():
-        return find_data_yaml_in_dir(candidate)
-    if not candidate.exists():
-        raise SystemExit(f"dataset_not_found:{raw}")
-    return candidate
-
-
-def dataset_label_for_data(data_yaml: Path) -> str:
-    parent = data_yaml.parent
-    if data_yaml.name in {"data.yaml", "data.yml"}:
-        return parent.name
-    return data_yaml.stem
-
-
-def sample_ratio_base_counts(args: argparse.Namespace) -> dict[str, int]:
-    return {
-        "normal_positive": max(0, int(args.original_normal_pos)),
-        "hard_positive": max(0, int(args.original_hard_pos) + int(args.feedback_hard_pos)),
-        "normal_negative": max(0, int(args.original_normal_neg)),
-        "hard_negative": max(0, int(args.original_hard_neg) + int(args.external_hard_neg)),
-    }
-
-
-def allocate_category_targets(base_counts: dict[str, int], target_total: int) -> dict[str, int]:
-    if target_total <= 0:
-        return {key: int(base_counts.get(key, 0) or 0) for key in CATEGORY_ORDER}
-    base_total = sum(max(0, int(base_counts.get(key, 0) or 0)) for key in CATEGORY_ORDER)
-    if base_total <= 0:
-        raise SystemExit("sample_ratio_base_total_is_zero")
-    exact = {
-        key: (target_total * max(0, int(base_counts.get(key, 0) or 0)) / base_total)
-        for key in CATEGORY_ORDER
-    }
-    allocated = {key: int(exact[key]) for key in CATEGORY_ORDER}
-    remaining = target_total - sum(allocated.values())
-    order = sorted(CATEGORY_ORDER, key=lambda key: (exact[key] - allocated[key], base_counts.get(key, 0)), reverse=True)
-    for key in order[:remaining]:
-        allocated[key] += 1
-    return allocated
-
-
-def dataset_pool_mode(args: argparse.Namespace) -> bool:
-    return bool(
-        int(getattr(args, "target_total", 0) or 0) > 0
-        or str(getattr(args, "preferred_dataset", "") or "").strip()
-        or flatten_csv_values(getattr(args, "supplemental_dataset", []) or [])
-    )
 
 
 def find_dataset_by_weight_hash(weight: Path) -> tuple[Path | None, str]:
@@ -570,9 +447,14 @@ def resolve_model(model_name: str) -> ModelInfo:
 
 def names_from_data(data_yaml: Path) -> list[str]:
     data = read_yaml(data_yaml)
-    names = normalize_yolo_names(data.get("names"))
-    if names:
-        return names
+    names = data.get("names")
+    if isinstance(names, dict):
+        pairs = []
+        for key, value in names.items():
+            pairs.append((int(key), str(value)))
+        return [value for _, value in sorted(pairs)]
+    if isinstance(names, list):
+        return [str(item) for item in names]
     raise SystemExit(f"missing_names:{data_yaml}")
 
 
@@ -660,11 +542,7 @@ def coerce_class_ids(class_ids: int | list[int] | tuple[int, ...] | set[int]) ->
     return [int(item) for item in class_ids]
 
 
-def collect_dataset_records(
-    data_yaml: Path,
-    class_ids: list[int],
-    source: str = "original_dataset",
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def collect_dataset_records(data_yaml: Path, class_ids: list[int]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     positives: list[dict[str, Any]] = []
     negatives: list[dict[str, Any]] = []
     target_ids = set(class_ids)
@@ -679,8 +557,7 @@ def collect_dataset_records(
                 "split": split,
                 "labels": labels,
                 "target_labels": target_labels,
-                "source": source,
-                "source_data_yaml": str(data_yaml),
+                "source": "original_dataset",
             }
             if target_labels:
                 positives.append(row)
@@ -888,7 +765,111 @@ def select_original_samples(
         "original_normal_positive": args.original_normal_pos,
         "original_hard_positive": args.original_hard_pos,
         "original_normal_negative": args.original_normal_neg,
-        "original_hard_n  image.parent / f"{image.name}.json",
+        "original_hard_negative": args.original_hard_neg,
+    }
+    counts = {key: 0 for key in need}
+
+    pos_scan = min(len(positives), max(args.min_positive_scan, (args.original_normal_pos + args.original_hard_pos) * args.scan_multiplier))
+    neg_scan = min(len(negatives), max(args.min_negative_scan, (args.original_normal_neg + args.original_hard_neg) * args.scan_multiplier))
+
+    pos_rows = positives[:pos_scan]
+    neg_rows = negatives[:neg_scan]
+    log(f"original_scan positives={len(pos_rows)}/{len(positives)} negatives={len(neg_rows)}/{len(negatives)}")
+
+    pos_preds = predict_batch(model, [row["image"] for row in pos_rows], args)
+    for row in pos_rows:
+        score = score_positive(row, pos_preds.get(Path(row["image"]).resolve(), []), class_ids, args)
+        if score["bucket"] == "normal_positive" and counts["original_normal_positive"] < need["original_normal_positive"]:
+            if add_selected(selected, used, row, "normal_positive", "original_normal_positive", score):
+                counts["original_normal_positive"] += 1
+        elif score["bucket"] == "hard_positive" and counts["original_hard_positive"] < need["original_hard_positive"]:
+            if add_selected(selected, used, row, "hard_positive", "original_hard_positive", score):
+                counts["original_hard_positive"] += 1
+        if all(counts[key] >= need[key] for key in ("original_normal_positive", "original_hard_positive")):
+            break
+
+    neg_preds = predict_batch(model, [row["image"] for row in neg_rows], args)
+    for row in neg_rows:
+        score = score_negative(neg_preds.get(Path(row["image"]).resolve(), []), class_ids, args)
+        if score["bucket"] == "normal_negative" and counts["original_normal_negative"] < need["original_normal_negative"]:
+            if add_selected(selected, used, row, "normal_negative", "original_normal_negative", score):
+                counts["original_normal_negative"] += 1
+        elif score["bucket"] == "hard_negative" and counts["original_hard_negative"] < need["original_hard_negative"]:
+            if add_selected(selected, used, row, "hard_negative", "original_hard_negative", score):
+                counts["original_hard_negative"] += 1
+        if all(counts[key] >= need[key] for key in ("original_normal_negative", "original_hard_negative")):
+            break
+
+    fallback_fill_from_original(
+        selected=selected,
+        used=used,
+        positives=positives,
+        negatives=negatives,
+        counts=counts,
+        needs=need,
+        rng=rng,
+    )
+    return {"requested": need, "selected": counts, "scanned_positive": len(pos_rows), "scanned_negative": len(neg_rows)}
+
+
+def fallback_fill_from_original(
+    *,
+    selected: list[dict[str, Any]],
+    used: set[str],
+    positives: list[dict[str, Any]],
+    negatives: list[dict[str, Any]],
+    counts: dict[str, int],
+    needs: dict[str, int],
+    rng: random.Random,
+) -> None:
+    for key in ("original_normal_positive", "original_hard_positive"):
+        if counts.get(key, 0) >= needs.get(key, 0):
+            continue
+        category = "normal_positive" if key == "original_normal_positive" else "hard_positive"
+        rows = positives[:]
+        rng.shuffle(rows)
+        for row in rows:
+            if counts[key] >= needs[key]:
+                break
+            score = {"reason": "fallback_original", "target_conf": None, "max_iou": None}
+            if add_selected(selected, used, row, category, key, score):
+                counts[key] += 1
+    for key in ("original_normal_negative", "original_hard_negative"):
+        if counts.get(key, 0) >= needs.get(key, 0):
+            continue
+        category = "normal_negative" if key == "original_normal_negative" else "hard_negative"
+        rows = negatives[:]
+        rng.shuffle(rows)
+        for row in rows:
+            if counts[key] >= needs[key]:
+                break
+            score = {"reason": "fallback_original", "target_conf": None, "max_iou": None}
+            if add_selected(selected, used, row, category, key, score):
+                counts[key] += 1
+
+
+def cache_path(root: Path, image_sha: str | None) -> Path | None:
+    safe = "".join(ch for ch in str(image_sha or "").lower() if ch in "0123456789abcdef")
+    if not safe:
+        return None
+    return root / safe[:2] / f"{safe}.json"
+
+
+def hardlink_or_copy(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        dst.unlink()
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def sidecar_json_paths(image: Path) -> list[Path]:
+    return [
+        image.with_suffix(image.suffix + ".json"),
+        image.with_suffix(".json"),
+        image.parent / f"{image.name}.json",
     ]
 
 

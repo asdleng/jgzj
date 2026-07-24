@@ -38,8 +38,7 @@ CONTROL_VIN = "a001I3829202711775712260"
 CONTROL_SSH_TARGET = os.environ.get("VEHICLE_CONTROL_SSH_TARGET", "nvidia@100.98.77.65")
 COMMAND_TIMEOUT_S = 5.00
 MOTION_COMMAND_TIMEOUT_S = 0.60
-VEHICLE_COMMAND_TIMEOUT_S = 5.00
-ACQUIRE_BRAKE_PERCENT = 3.0
+VEHICLE_COMMAND_TIMEOUT_S = 1.50
 MAX_CLOUD_AGE_S = 45.0
 MAX_STEERING_DEG = 250.0
 MAX_ACCELERATOR_PERCENT = 30.0
@@ -108,6 +107,8 @@ class CloudStatusClient:
             if vehicle_state.get("collision_stop"):
                 active_issues.append("碰撞停已触发")
         issues = list(active_issues)
+        if cloud_telemetry_fresh and abs(float(vehicle_state.get("speed_kph") or 0.0)) > 0.1:
+            issues.append("车辆未静止")
         raw_gear = vehicle_state.get("gear")
         return {
             "vehicle_id": CONTROL_VEHICLE_ID,
@@ -407,26 +408,11 @@ class ControlGateway:
             "horn": 0,
         }
 
-    def _safe_hold_command(self) -> Dict[str, Any]:
-        command = self._safe_command()
+    @classmethod
+    def _safe_hold_command(cls) -> Dict[str, Any]:
+        command = cls._safe_command()
         command["deadman"] = True
-        command["gear"] = int(self.last_command.get("gear", 0))
         return command
-
-    @staticmethod
-    def _takeover_command(gear: int) -> Dict[str, Any]:
-        return {
-            "type": "command",
-            "deadman": True,
-            "gear": gear if gear in {0, 1, 2, 3} else 0,
-            "accelerator": 0.0,
-            "brake": ACQUIRE_BRAKE_PERCENT,
-            "steering": 0.0,
-            "steer_lamp": 0,
-            "front_lamp": 0,
-            "ad_screen": 1,
-            "horn": 0,
-        }
 
     @staticmethod
     def _is_motion_command(command: Dict[str, Any]) -> bool:
@@ -479,10 +465,7 @@ class ControlGateway:
         transport = self.transport_factory()
         try:
             transport.start()
-            current_gear = getattr(transport, "current_gear", None)
-            if current_gear not in {0, 1, 2, 3}:
-                current_gear = GEAR_TO_CAN.get(str(preflight.get("gear") or "P").upper(), 0)
-            safe_command = self._takeover_command(current_gear)
+            safe_command = self._safe_hold_command()
             transport.send(safe_command)
             wait_for_echo = getattr(transport, "wait_for_command_echo", None)
             if callable(wait_for_echo) and not wait_for_echo(1.0):
@@ -505,7 +488,6 @@ class ControlGateway:
                     "vehicle_id": CONTROL_VEHICLE_ID,
                     "constraints": self.constraints(),
                     "preflight": preflight,
-                    "applied": self._public_command(safe_command),
                 }
         except Exception as error:
             transport.close("estop")
@@ -600,11 +582,7 @@ class ControlGateway:
             transport_alive = bool(self.transport and self.transport.is_alive())
             transport_event = self.transport.last_event if self.transport else self.last_transport_event
             transport_telemetry = self.transport.telemetry if self.transport else None
-            if (
-                transport_telemetry
-                and time.time() - float(transport_telemetry.get("at") or 0.0)
-                <= VEHICLE_COMMAND_TIMEOUT_S
-            ):
+            if transport_telemetry and time.time() - float(transport_telemetry.get("at") or 0.0) <= 1.5:
                 vehicle = dict(vehicle)
                 vehicle["speed_kph"] = float(transport_telemetry.get("speed_kph") or 0.0)
                 vehicle["gear"] = VEHICLE_GEAR.get(int(transport_telemetry.get("gear", -1)), "--")
@@ -750,11 +728,11 @@ class ControlGateway:
             elif remote_fault:
                 reason = (transport_event or {}).get("reason")
                 if reason == "heartbeat_timeout":
-                    self.last_error = "车端 MQTT 输入超过 5 秒未更新，已制动并退出"
+                    self.last_error = "车端 MQTT 输入超过 1.5 秒未更新，已制动并退出"
                 elif reason == "downstream_timeout":
-                    self.last_error = "车端远控下游超过 5 秒未更新，已制动并退出"
+                    self.last_error = "车端远控下游超过 1.5 秒未更新，已制动并退出"
                 elif reason == "vehicle_state_timeout":
-                    self.last_error = "车辆 MQTT 上行状态超过 5 秒未更新，已制动并退出"
+                    self.last_error = "车辆 MQTT 上行状态超过 1.5 秒未更新，已制动并退出"
                 elif reason == "external_remote_command":
                     self.last_error = "检测到其他远控指令，已制动并退出"
                 else:

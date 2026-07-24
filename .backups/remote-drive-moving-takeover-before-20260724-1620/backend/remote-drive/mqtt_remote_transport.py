@@ -39,7 +39,7 @@ MQTT_KEEPALIVE_S = 10
 MQTT_PING_IDLE_S = 4.0
 MQTT_PING_TIMEOUT_S = 6.0
 MQTT_KEEPALIVE_POLL_S = 0.5
-VEHICLE_STATE_TIMEOUT_S = 5.00
+VEHICLE_STATE_TIMEOUT_S = 1.50
 REMOTE_STEERING_LIMIT_DEG = 250
 REMOTE_ACCELERATOR_LIMIT_PERCENT = 30
 CONTROL_SSH_TARGET = os.environ.get("VEHICLE_CONTROL_SSH_TARGET", "nvidia@100.98.77.65")
@@ -797,6 +797,8 @@ class GuardedMqttTransport:
             raise TransportError("未收到车辆 MQTT 上行状态")
         if not state.get("ready"):
             raise TransportError("车辆未就绪")
+        if abs(float(state.get("speed_kph") or 0.0)) > 0.1:
+            raise TransportError("车辆未静止，拒绝接管", HTTPStatus.CONFLICT)
         if state.get("brake_fault") or state.get("steer_fault"):
             raise TransportError("车辆制动或转向故障，拒绝接管", HTTPStatus.CONFLICT)
 
@@ -908,14 +910,6 @@ class GuardedMqttTransport:
         client = self.client
         return bool(client and client.wait_for_own_echo(timeout))
 
-    @property
-    def current_gear(self) -> Optional[int]:
-        with self._lock:
-            if not self._mqtt_telemetry:
-                return None
-            gear = int(self._mqtt_telemetry.get("gear", -1))
-            return gear if gear in {0, 1, 2, 3} else None
-
     def close(self, reason: str = "release") -> None:
         with self._lock:
             if self._closed:
@@ -982,7 +976,7 @@ class GuardedMqttTransport:
                     {
                         "event": "closed",
                         "reason": "vehicle_state_timeout",
-                        "detail": "车辆 MQTT 上行状态超过 5 秒未更新",
+                        "detail": "车辆 MQTT 上行状态超过 1.5 秒未更新",
                     }
                 )
             return bool(
