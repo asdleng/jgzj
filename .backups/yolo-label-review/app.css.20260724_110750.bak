@@ -7055,7 +7055,6 @@
 .yolo-review-pan-content {
   position: relative;
   width: 100%;
-  display: block;
   transform-origin: center center;
   transition: transform 0.08s ease-out;
 }
@@ -7135,10 +7134,7 @@ body.yolo-review-is-panning {
 
 .yolo-review-overlay {
   position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   pointer-events: none;
 }
 

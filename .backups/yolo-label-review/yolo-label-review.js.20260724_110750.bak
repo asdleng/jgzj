@@ -52,7 +52,6 @@
     dailyStats: null,
     trainingMetrics: null,
     selectedTrainingTaskId: "",
-    detailCleanup: null,
     detailRequestSeq: 0
   };
 
@@ -1277,10 +1276,6 @@
   }
 
   function resetDetail(message = "选择一条训练样本。") {
-    if (typeof state.detailCleanup === "function") {
-      state.detailCleanup();
-      state.detailCleanup = null;
-    }
     state.detailRequestSeq += 1;
     state.selectedItemKey = "";
     if (!refs.detail) return;
@@ -2345,30 +2340,6 @@
     return Math.max(0, Math.min(100, num));
   }
 
-  function syncOverlayToImage(img, overlay) {
-    if (!img || !overlay) return;
-    const boxWidth = img.clientWidth || img.offsetWidth || 0;
-    const boxHeight = img.clientHeight || img.offsetHeight || 0;
-    const naturalWidth = img.naturalWidth || 0;
-    const naturalHeight = img.naturalHeight || 0;
-    if (!boxWidth || !boxHeight || !naturalWidth || !naturalHeight) {
-      overlay.style.left = "0";
-      overlay.style.top = "0";
-      overlay.style.width = "100%";
-      overlay.style.height = "100%";
-      return;
-    }
-    const scale = Math.min(boxWidth / naturalWidth, boxHeight / naturalHeight);
-    const renderedWidth = naturalWidth * scale;
-    const renderedHeight = naturalHeight * scale;
-    const left = (boxWidth - renderedWidth) / 2;
-    const top = (boxHeight - renderedHeight) / 2;
-    overlay.style.left = `${left}px`;
-    overlay.style.top = `${top}px`;
-    overlay.style.width = `${renderedWidth}px`;
-    overlay.style.height = `${renderedHeight}px`;
-  }
-
   function renderBoxes(overlay, labels) {
     overlay.innerHTML = "";
     (Array.isArray(labels) ? labels : []).forEach((label) => {
@@ -3119,10 +3090,6 @@
   }
 
   function renderDetail(dataset, item) {
-    if (typeof state.detailCleanup === "function") {
-      state.detailCleanup();
-      state.detailCleanup = null;
-    }
     refs.detail.innerHTML = "";
 
     const detailGrid = createNode("div", "yolo-review-detail-grid");
@@ -3145,21 +3112,6 @@
     img.decoding = "async";
     img.draggable = false;
     const overlay = createNode("div", "yolo-review-overlay");
-    const syncOverlay = () => syncOverlayToImage(img, overlay);
-    let overlayResizeObserver = null;
-    img.addEventListener("load", syncOverlay);
-    if (img.complete) requestAnimationFrame(syncOverlay);
-    window.addEventListener("resize", syncOverlay, { passive: true });
-    if ("ResizeObserver" in window) {
-      overlayResizeObserver = new ResizeObserver(syncOverlay);
-      overlayResizeObserver.observe(img);
-      overlayResizeObserver.observe(panContent);
-    }
-    state.detailCleanup = () => {
-      img.removeEventListener("load", syncOverlay);
-      window.removeEventListener("resize", syncOverlay);
-      overlayResizeObserver?.disconnect();
-    };
     panContent.appendChild(img);
     panContent.appendChild(overlay);
     stage.appendChild(panContent);
@@ -3174,7 +3126,6 @@
       });
     }
     renderBoxes(overlay, item.labels || []);
-    requestAnimationFrame(syncOverlay);
     imageBlock.appendChild(stage);
 
     const meta = createNode("div", "yolo-review-meta-grid");
