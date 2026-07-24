@@ -799,10 +799,6 @@ class GuardedMqttTransport:
             raise TransportError("车辆未就绪")
         if abs(float(state.get("speed_kph") or 0.0)) > 0.1:
             raise TransportError("车辆未静止，拒绝接管", HTTPStatus.CONFLICT)
-        if int(state.get("gear", -1)) != 0:
-            raise TransportError("车辆不在 P 挡，拒绝接管", HTTPStatus.CONFLICT)
-        if not (state.get("epb") or state.get("motor_brake")):
-            raise TransportError("车辆驻车保持未生效，拒绝接管", HTTPStatus.CONFLICT)
         if state.get("brake_fault") or state.get("steer_fault"):
             raise TransportError("车辆制动或转向故障，拒绝接管", HTTPStatus.CONFLICT)
 

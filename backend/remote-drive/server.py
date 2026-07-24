@@ -465,7 +465,7 @@ class ControlGateway:
         transport = self.transport_factory()
         try:
             transport.start()
-            safe_command = self._safe_command()
+            safe_command = self._safe_hold_command()
             transport.send(safe_command)
             wait_for_echo = getattr(transport, "wait_for_command_echo", None)
             if callable(wait_for_echo) and not wait_for_echo(1.0):

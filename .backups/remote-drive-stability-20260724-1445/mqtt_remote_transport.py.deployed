@@ -35,6 +35,10 @@ CONTROL_TOPIC = f"/auto-rd/rdu/{CONTROL_VIN}"
 VEHICLE_STATE_TOPIC = f"/auto-rd/cloud/{CONTROL_VIN}"
 TRANSPORT_HEARTBEAT_S = 0.10
 MQTT_SEND_TIMEOUT_S = 0.50
+MQTT_KEEPALIVE_S = 10
+MQTT_PING_IDLE_S = 4.0
+MQTT_PING_TIMEOUT_S = 6.0
+MQTT_KEEPALIVE_POLL_S = 0.5
 VEHICLE_STATE_TIMEOUT_S = 1.50
 REMOTE_STEERING_LIMIT_DEG = 250
 REMOTE_ACCELERATOR_LIMIT_PERCENT = 30
@@ -349,11 +353,19 @@ class MqttWireClient:
         self.sock: Optional[socket.socket] = None
         self._write_lock = threading.Lock()
         self._pending_lock = threading.Lock()
+        self._activity_lock = threading.Lock()
+        self._fault_lock = threading.Lock()
         self._pending: Deque[Tuple[bytes, float]] = collections.deque(maxlen=256)
         self._closed = threading.Event()
+        self._keepalive_stop = threading.Event()
         self._subscribed = threading.Event()
         self._own_echo = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._keepalive_thread: Optional[threading.Thread] = None
+        self._last_tx_at = 0.0
+        self._last_rx_at = 0.0
+        self._ping_sent_at = 0.0
+        self._ping_response_at = 0.0
         self.last_message_at = 0.0
         self.last_fault = ""
 
@@ -363,6 +375,18 @@ class MqttWireClient:
             if not self.sock:
                 raise TransportError("MQTT 控制连接未建立")
             self.sock.sendall(packet)
+        now = time.monotonic()
+        with self._activity_lock:
+            self._last_tx_at = now
+            if header >> 4 == 12:
+                self._ping_sent_at = now
+
+    def _report_fault(self, reason: str) -> None:
+        with self._fault_lock:
+            if self._closed.is_set() or self.last_fault:
+                return
+            self.last_fault = str(reason)
+        self.on_fault(self.last_fault)
 
     def connect(self) -> None:
         try:
@@ -387,7 +411,7 @@ class MqttWireClient:
             variable = (
                 _mqtt_string("MQTT")
                 + bytes([5, 0xC2])
-                + struct.pack("!H", 10)
+                + struct.pack("!H", MQTT_KEEPALIVE_S)
                 + _remaining_length(len(connect_properties))
                 + connect_properties
             )
@@ -412,6 +436,13 @@ class MqttWireClient:
             self._thread.start()
             if not self._subscribed.wait(3.0):
                 raise TransportError("MQTT 控制主题订阅超时")
+            self._keepalive_stop.clear()
+            self._keepalive_thread = threading.Thread(
+                target=self._keepalive_loop,
+                name="mqtt-control-keepalive",
+                daemon=True,
+            )
+            self._keepalive_thread.start()
         except Exception:
             self.close()
             raise
@@ -435,7 +466,10 @@ class MqttWireClient:
             byte = self._recv_exact(1)[0]
             remaining += (byte & 0x7F) * multiplier
             if not byte & 0x80:
-                return header, self._recv_exact(remaining)
+                packet = self._recv_exact(remaining)
+                with self._activity_lock:
+                    self._last_rx_at = time.monotonic()
+                return header, packet
             multiplier *= 128
         raise ConnectionError("invalid MQTT remaining length")
 
@@ -457,10 +491,31 @@ class MqttWireClient:
                     self._subscribed.set()
                 elif packet_type == 3:
                     self._handle_publish(header, packet)
+                elif packet_type == 13:
+                    with self._activity_lock:
+                        self._ping_response_at = time.monotonic()
+                        self._ping_sent_at = 0.0
         except Exception as error:
-            if not self._closed.is_set():
-                self.last_fault = str(error)
-                self.on_fault(self.last_fault)
+            self._report_fault(str(error))
+
+    def _keepalive_loop(self) -> None:
+        while not self._keepalive_stop.wait(MQTT_KEEPALIVE_POLL_S):
+            now = time.monotonic()
+            with self._activity_lock:
+                last_tx_at = self._last_tx_at
+                ping_sent_at = self._ping_sent_at
+            if ping_sent_at:
+                if now - ping_sent_at > MQTT_PING_TIMEOUT_S:
+                    self._report_fault("MQTT PINGRESP timeout")
+                    return
+                continue
+            if last_tx_at and now - last_tx_at < MQTT_PING_IDLE_S:
+                continue
+            try:
+                self._send_packet(0xC0, b"")
+            except Exception as error:
+                self._report_fault(f"MQTT PINGREQ failed: {error}")
+                return
 
     def _handle_publish(self, header: int, packet: bytes) -> None:
         if len(packet) < 2:
@@ -537,6 +592,7 @@ class MqttWireClient:
         if self._closed.is_set():
             return
         self._closed.set()
+        self._keepalive_stop.set()
         sock = self.sock
         self.sock = None
         if sock:
@@ -550,6 +606,10 @@ class MqttWireClient:
             except OSError:
                 pass
             sock.close()
+        current_thread = threading.current_thread()
+        for thread in (self._thread, self._keepalive_thread):
+            if thread and thread is not current_thread:
+                thread.join(timeout=1.0)
 
 
 class RosGuardProcess:
@@ -683,7 +743,9 @@ class GuardedMqttTransport:
         self.guard: Optional[RosGuardProcess] = RosGuardProcess() if REQUIRE_ROS_GUARD else None
         self.client: Optional[MqttWireClient] = None
         self._lock = threading.RLock()
+        self._publish_lock = threading.Lock()
         self._sequence = 0
+        self._command_version = 0
         self._last_command: Dict[str, Any] = {}
         self._was_enabled = False
         self._event: Optional[Dict[str, Any]] = None
@@ -693,6 +755,8 @@ class GuardedMqttTransport:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._vehicle_state_ready = threading.Event()
         self._vehicle_state_at = 0.0
+        self._vehicle_state_count = 0
+        self._vehicle_state_gap_max_s = 0.0
         self._mqtt_telemetry: Optional[Dict[str, Any]] = None
         self._broker_command_at = 0.0
         self._broker_command: Optional[Dict[str, Any]] = None
@@ -710,8 +774,15 @@ class GuardedMqttTransport:
         self._set_fault({"event": "external_conflict", "reason": "external_remote_command", "detail": reason})
 
     def _vehicle_state(self, state: Dict[str, Any]) -> None:
+        now = time.monotonic()
         with self._lock:
-            self._vehicle_state_at = time.monotonic()
+            if self._vehicle_state_at:
+                self._vehicle_state_gap_max_s = max(
+                    self._vehicle_state_gap_max_s,
+                    now - self._vehicle_state_at,
+                )
+            self._vehicle_state_at = now
+            self._vehicle_state_count += 1
             self._mqtt_telemetry = dict(state)
             self._vehicle_state_ready.set()
 
@@ -773,11 +844,24 @@ class GuardedMqttTransport:
             raise
 
     def _publish(self, command: Dict[str, Any]) -> None:
-        if not self.client or not self.client.is_alive():
+        with self._publish_lock:
+            self._publish_locked(command)
+
+    def _publish_if_current(self, command: Dict[str, Any], command_version: int) -> bool:
+        with self._publish_lock:
+            with self._lock:
+                if self._closed or command_version != self._command_version:
+                    return False
+            self._publish_locked(command)
+            return True
+
+    def _publish_locked(self, command: Dict[str, Any]) -> None:
+        client = self.client
+        if not client or not client.is_alive():
             raise TransportError("MQTT 实车控制链路已断开")
         self._sequence = (self._sequence + 1) & 0x7FFFFFFF
         payload = encode_remote_command(command, self._sequence)
-        self.client.publish(payload)
+        client.publish(payload)
 
     def _heartbeat_loop(self) -> None:
         while not self._heartbeat_stop.wait(TRANSPORT_HEARTBEAT_S):
@@ -785,29 +869,46 @@ class GuardedMqttTransport:
                 if self._closed:
                     return
                 command = dict(self._last_command)
-                if not command:
-                    continue
-                try:
-                    self._publish(command)
-                except Exception as error:
-                    self._set_fault(
-                        {
-                            "event": "closed",
-                            "reason": "mqtt_heartbeat_failed",
-                            "detail": str(error),
-                        }
-                    )
-                    return
+                command_version = self._command_version
+            if not command:
+                continue
+            try:
+                self._publish_if_current(command, command_version)
+            except Exception as error:
+                self._set_fault(
+                    {
+                        "event": "closed",
+                        "reason": "mqtt_heartbeat_failed",
+                        "detail": str(error),
+                    }
+                )
+                return
 
     def send(self, payload: Dict[str, Any]) -> None:
+        command = dict(payload)
         with self._lock:
             if self._closed:
                 raise TransportError("MQTT 实车控制链路已关闭")
-            command = dict(payload)
-            self._publish(command)
+            publish_immediately = not self._last_command
             self._last_command = command
+            self._command_version += 1
+            command_version = self._command_version
             if command.get("deadman"):
                 self._was_enabled = True
+        if publish_immediately:
+            self._publish_if_current(command, command_version)
+
+    def send_immediate(self, payload: Dict[str, Any]) -> None:
+        command = dict(payload)
+        with self._publish_lock:
+            with self._lock:
+                if self._closed:
+                    raise TransportError("MQTT 实车控制链路已关闭")
+                self._last_command = command
+                self._command_version += 1
+                if command.get("deadman"):
+                    self._was_enabled = True
+            self._publish_locked(command)
 
     def wait_for_command_echo(self, timeout: float = 1.0) -> bool:
         client = self.client
@@ -820,10 +921,15 @@ class GuardedMqttTransport:
             self._closed = True
             self._heartbeat_stop.set()
             client = self.client
-            if client and client.is_alive():
-                try:
-                    last_gear = int(self._last_command.get("gear", 0))
-                    if self._was_enabled:
+            last_gear = int(self._last_command.get("gear", 0))
+            was_enabled = self._was_enabled
+        heartbeat_thread = self._heartbeat_thread
+        if heartbeat_thread and heartbeat_thread is not threading.current_thread():
+            heartbeat_thread.join(timeout=1.0)
+        if client and client.is_alive():
+            try:
+                with self._publish_lock:
+                    if was_enabled:
                         brake = {
                             "deadman": True,
                             "gear": last_gear,
@@ -836,7 +942,7 @@ class GuardedMqttTransport:
                             "horn": 0,
                         }
                         for _ in range(8):
-                            self._publish(brake)
+                            self._publish_locked(brake)
                             time.sleep(0.05)
                     disabled = {
                         "deadman": False,
@@ -850,18 +956,17 @@ class GuardedMqttTransport:
                         "horn": 0,
                     }
                     for _ in range(4):
-                        self._publish(disabled)
+                        self._publish_locked(disabled)
                         time.sleep(0.05)
-                except Exception as error:
-                    self._set_fault({"event": "closed", "reason": "mqtt_release_failed", "detail": str(error)})
-            if client:
-                client.close()
-            self.client = None
+            except Exception as error:
+                self._set_fault({"event": "closed", "reason": "mqtt_release_failed", "detail": str(error)})
+        if client:
+            client.close()
+        with self._lock:
+            if self.client is client:
+                self.client = None
         if self.guard:
             self.guard.close(reason)
-        heartbeat_thread = self._heartbeat_thread
-        if heartbeat_thread and heartbeat_thread is not threading.current_thread():
-            heartbeat_thread.join(timeout=1.0)
         self._heartbeat_thread = None
 
     def is_alive(self) -> bool:
@@ -904,6 +1009,8 @@ class GuardedMqttTransport:
                 return None
             telemetry = dict(self._mqtt_telemetry)
             telemetry["state_age_s"] = max(0.0, time.monotonic() - self._vehicle_state_at)
+            telemetry["state_count"] = self._vehicle_state_count
+            telemetry["state_gap_max_s"] = self._vehicle_state_gap_max_s
             if self._broker_command:
                 telemetry["broker_command"] = dict(self._broker_command)
                 telemetry["broker_command_age_s"] = max(
