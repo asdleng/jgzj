@@ -1199,8 +1199,8 @@ const vehicleUploadQwenSensitiveBboxLabelSchema = 'jgzj_vehicle_upload_qwen_sens
 const yoloReviewManualAnnotationSchema = 'jgzj_yolo_manual_annotation.v1';
 const vehicleUploadQwenSensitiveBboxClasses = new Set(['smoke', 'trash', 'stall', 'phone', 'smoking']);
 const yoloReviewPatrolIndexSchema = 'jgzj_yolo_patrol_dataset_index.v4';
-const yoloReviewPatrolCacheTtlMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_CACHE_TTL_MS || 6 * 60 * 60 * 1000);
-const yoloReviewPatrolIndexFreshMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_INDEX_FRESH_MS || 6 * 60 * 60 * 1000);
+const yoloReviewPatrolCacheTtlMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_CACHE_TTL_MS || 10 * 60 * 1000);
+const yoloReviewPatrolIndexFreshMs = Number(process.env.YOLO_LABEL_REVIEW_PATROL_INDEX_FRESH_MS || 5 * 60 * 1000);
 const yoloReviewDatasetListCacheTtlMs = Number(process.env.YOLO_LABEL_REVIEW_DATASET_LIST_CACHE_TTL_MS || 5 * 60 * 1000);
 const yoloReviewManualAnnotationIndexTtlMs = Number(process.env.YOLO_LABEL_REVIEW_MANUAL_INDEX_TTL_MS || 30 * 1000);
 let yoloReviewPatrolCache = {
@@ -4017,39 +4017,13 @@ async function writeYoloPatrolDatasetIndex(dataset) {
     profile: dataset.profile,
     kind: dataset.kind,
     classes: dataset.classes,
-    summary: dataset.summary
+    summary: dataset.summary,
+    rows: dataset.rows.map((row) => compactYoloPatrolIndexRow(row))
   };
   await fs.mkdir(path.dirname(yoloReviewPatrolIndexPath), { recursive: true });
   const tmpPath = `${yoloReviewPatrolIndexPath}.${process.pid}.${Date.now()}.tmp`;
-  const indexedRows = [];
-  let handle = null;
-  try {
-    handle = await fs.open(tmpPath, 'w');
-    const prefix = JSON.stringify(payload);
-    await handle.write(`${prefix.slice(0, -1)},"rows":[`);
-    const batchSize = 256;
-    for (let offset = 0; offset < dataset.rows.length; offset += batchSize) {
-      const batch = dataset.rows
-        .slice(offset, offset + batchSize)
-        .map((row) => compactYoloPatrolIndexRow(row));
-      indexedRows.push(...batch);
-      await handle.write(
-        `${offset ? ',' : ''}${batch.map((row) => JSON.stringify(row)).join(',')}`
-      );
-    }
-    await handle.write(']}');
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await fs.rename(tmpPath, yoloReviewPatrolIndexPath);
-  } catch (error) {
-    if (handle) {
-      await handle.close().catch(() => {});
-    }
-    await fs.unlink(tmpPath).catch(() => {});
-    throw error;
-  }
-  return hydrateYoloPatrolDatasetFromIndex({ ...payload, rows: indexedRows });
+  await fs.writeFile(tmpPath, JSON.stringify(payload), 'utf8');
+  await fs.rename(tmpPath, yoloReviewPatrolIndexPath);
 }
 
 function yoloPatrolDatasetAgeMs(dataset) {
@@ -4254,34 +4228,26 @@ async function buildYoloReviewDailyStats(options = {}) {
 
 async function rebuildYoloPatrolDatasetIndex(reason = 'manual') {
   const startedAt = Date.now();
-  yoloReviewPatrolCache.dataset = null;
-  yoloReviewPatrolCache.loaded_at_ms = 0;
-  yoloReviewDatasetListCache.datasets = null;
-  yoloReviewDatasetListCache.loaded_at_ms = 0;
   const dataset = await buildYoloPatrolDataset();
   dataset.index_built_at_ms = Date.now();
   dataset.index_built_at = new Date(dataset.index_built_at_ms).toISOString();
-  const indexedDataset = await writeYoloPatrolDatasetIndex(dataset);
-  if (!indexedDataset) {
-    throw new Error('failed to hydrate rebuilt patrol dataset index');
-  }
-  yoloReviewPatrolCache.dataset = indexedDataset;
+  await writeYoloPatrolDatasetIndex(dataset);
+  yoloReviewPatrolCache.dataset = dataset;
   yoloReviewPatrolCache.loaded_at_ms = Date.now();
   yoloReviewDatasetListCache.datasets = null;
   yoloReviewDatasetListCache.loaded_at_ms = 0;
   console.info('yolo_patrol_index_rebuilt', JSON.stringify({
     reason,
-    rows: indexedDataset.rows.length,
+    rows: dataset.rows.length,
     duration_ms: Date.now() - startedAt,
     index_path: yoloReviewPatrolIndexPath
   }));
-  return indexedDataset;
+  return dataset;
 }
 
 function scheduleYoloPatrolIndexRefresh(reason = 'stale') {
-  const activeRebuild = yoloReviewPatrolCache.promise || yoloReviewPatrolCache.refresh_promise;
-  if (activeRebuild) {
-    return activeRebuild;
+  if (yoloReviewPatrolCache.refresh_promise) {
+    return yoloReviewPatrolCache.refresh_promise;
   }
   yoloReviewPatrolCache.refresh_promise = rebuildYoloPatrolDatasetIndex(reason)
     .catch((error) => {
@@ -4298,14 +4264,12 @@ async function resolveYoloPatrolDataset(options = {}) {
   const now = Date.now();
   const force = Boolean(options.force);
   if (force) {
-    const activeRebuild = yoloReviewPatrolCache.promise || yoloReviewPatrolCache.refresh_promise;
-    if (activeRebuild) {
-      return activeRebuild;
+    if (!yoloReviewPatrolCache.promise) {
+      yoloReviewPatrolCache.promise = rebuildYoloPatrolDatasetIndex('force')
+        .finally(() => {
+          yoloReviewPatrolCache.promise = null;
+        });
     }
-    yoloReviewPatrolCache.promise = rebuildYoloPatrolDatasetIndex('force')
-      .finally(() => {
-        yoloReviewPatrolCache.promise = null;
-      });
     return yoloReviewPatrolCache.promise;
   }
   if (yoloReviewPatrolCache.dataset) {
@@ -4318,11 +4282,6 @@ async function resolveYoloPatrolDataset(options = {}) {
     return yoloReviewPatrolCache.dataset;
   }
 
-  const activeRebuild = yoloReviewPatrolCache.promise || yoloReviewPatrolCache.refresh_promise;
-  if (activeRebuild) {
-    return activeRebuild;
-  }
-
   const indexed = await readYoloPatrolDatasetIndex();
   if (indexed) {
     yoloReviewPatrolCache.dataset = indexed;
@@ -4333,6 +4292,9 @@ async function resolveYoloPatrolDataset(options = {}) {
     return indexed;
   }
 
+  if (yoloReviewPatrolCache.promise) {
+    return yoloReviewPatrolCache.promise;
+  }
   const promise = rebuildYoloPatrolDatasetIndex('missing_index')
     .finally(() => {
       if (yoloReviewPatrolCache.promise === promise) {

@@ -98,22 +98,17 @@ def plan_daily_state(
         try:
             baseline_count = int(existing["baseline_count"])
             target_count = int(existing["target_count"])
-            existing_daily_limit = int(existing.get("daily_limit", daily_limit))
             attempts = int(existing.get("attempts") or 0) + 1
         except (KeyError, TypeError, ValueError) as exc:
             raise DailyValidationError("same_day_state_is_incomplete") from exc
-        if baseline_count < 0 or existing_daily_limit <= 0 or target_count != baseline_count + existing_daily_limit:
+        if baseline_count < 0 or target_count != baseline_count + daily_limit:
             raise DailyValidationError("same_day_state_target_is_invalid")
         state = dict(existing)
-        baseline_changed = bool(baseline_count_floor and baseline_count < baseline_count_floor)
-        limit_changed = existing_daily_limit != daily_limit
-        if baseline_changed:
+        if baseline_count_floor and baseline_count < baseline_count_floor:
             baseline_count = baseline_count_floor
-        if baseline_changed or limit_changed:
             target_count = baseline_count + daily_limit
             state["baseline_count"] = baseline_count
             state["target_count"] = target_count
-            state["daily_limit"] = daily_limit
     else:
         baseline_count = max(current_count, baseline_count_floor)
         target_count = baseline_count + daily_limit

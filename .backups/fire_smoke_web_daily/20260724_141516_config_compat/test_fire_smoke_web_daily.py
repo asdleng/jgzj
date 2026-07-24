@@ -94,28 +94,6 @@ class FireSmokeWebDailyTest(unittest.TestCase):
         self.assertEqual(state["target_count"], 3050)
         self.assertEqual(state["attempts"], 2)
 
-    def test_same_day_config_increase_raises_existing_target(self):
-        existing = plan_daily_state(
-            {},
-            "2026-07-24",
-            921,
-            50,
-            "2026-07-24T02:20:00+08:00",
-            baseline_count_floor=3000,
-        )
-        state = plan_daily_state(
-            existing,
-            "2026-07-24",
-            1010,
-            500,
-            "2026-07-24T14:20:00+08:00",
-            baseline_count_floor=8000,
-        )
-        self.assertEqual(state["baseline_count"], 8000)
-        self.assertEqual(state["target_count"], 8500)
-        self.assertEqual(state["daily_limit"], 500)
-        self.assertEqual(state["attempts"], 2)
-
     def test_corrupt_same_day_target_is_rejected(self):
         state = {
             "schema": SCHEMA,

@@ -678,11 +678,7 @@ class ControlGateway:
                 safe_hold = self._safe_hold_command()
                 try:
                     if self.transport and self.transport.is_alive():
-                        send_immediate = getattr(self.transport, "send_immediate", None)
-                        if callable(send_immediate):
-                            send_immediate(safe_hold)
-                        else:
-                            self.transport.send(safe_hold)
+                        self.transport.send(safe_hold)
                         self.last_command = safe_hold
                         self.motion_paused = True
                         self.last_transport_event = {
