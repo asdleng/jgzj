@@ -5,26 +5,12 @@ import argparse
 import collections
 import errno
 import json
-import math
 import os
 import re
 import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-try:
-    import numpy as np
-    from PIL import Image, ImageOps
-except Exception:
-    np = None
-    Image = None
-    ImageOps = None
-
-try:
-    import cv2
-except Exception:
-    cv2 = None
 
 
 SCHEMA = "jgzj_yolo_event_feedback_dataset.v1"
@@ -46,14 +32,6 @@ CLASSES = (
 CLASS_IDS = {name: idx for idx, name in enumerate(CLASSES)}
 BLOCKED_QUALITIES = {"bad", "blocked"}
 BAD_AUDIT_VERDICTS = {"suspect", "needs_human", "error"}
-DEDUPE_CACHE_SCHEMA = "jgzj_yolo_event_feedback_fingerprint_cache.v1"
-STATUS_PRIORITY = {
-    "needs_human": 500,
-    "agreement": 400,
-    "review_only": 300,
-    "pending_label": 200,
-    "quality_blocked": 100,
-}
 
 EVENT_CLASS_MAP = {
     "person": "person",
@@ -283,37 +261,6 @@ def shanghai_day(meta: dict, image_path: Path) -> str:
         return "unknown"
 
 
-def parse_timestamp_ms(meta: dict, day: str = "") -> int:
-    for key in ("edge_ts", "received_at_ms"):
-        value = meta.get(key)
-        try:
-            if value is not None and str(value).strip():
-                return int(float(value))
-        except (TypeError, ValueError):
-            pass
-    for key in ("collected_at", "archived_at"):
-        value = str(meta.get(key) or "").strip()
-        if not value:
-            continue
-        try:
-            if re.fullmatch(r"\d+", value):
-                return int(value)
-            normalized = value.replace("Z", "+00:00")
-            parsed = datetime.fromisoformat(normalized)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone(timedelta(hours=8)))
-            return int(parsed.timestamp() * 1000)
-        except (TypeError, ValueError, OSError):
-            pass
-    if re.fullmatch(r"\d{8}", str(day or "")):
-        try:
-            parsed = datetime.strptime(day, "%Y%m%d").replace(tzinfo=timezone(timedelta(hours=8)))
-            return int(parsed.timestamp() * 1000)
-        except ValueError:
-            return 0
-    return 0
-
-
 def feedback_status(
     label_payload: dict | None,
     labels: list[dict],
@@ -384,7 +331,6 @@ def iter_candidate_rows(
             "image_path": image_path,
             "image_sha256": image_sha,
             "day": day,
-            "timestamp_ms": parse_timestamp_ms(meta, day),
             "source": source,
             "tasks": tasks,
             "labels": labels,
@@ -399,282 +345,6 @@ def iter_candidate_rows(
         }
 
 
-def dct2_ortho(matrix):
-    size = matrix.shape[0]
-    xs = np.arange(size, dtype=np.float32)
-    basis = np.empty((size, size), dtype=np.float32)
-    scale0 = math.sqrt(1.0 / size)
-    scale = math.sqrt(2.0 / size)
-    for k in range(size):
-        basis[k, :] = (scale0 if k == 0 else scale) * np.cos((math.pi * (2 * xs + 1) * k) / (2 * size))
-    return basis @ matrix @ basis.T
-
-
-def phash(image_path: Path) -> int:
-    if Image is None or ImageOps is None or np is None:
-        raise RuntimeError("image_fingerprint_dependency_missing")
-    with Image.open(image_path) as img:
-        img = ImageOps.exif_transpose(img).convert("L").resize((32, 32), Image.Resampling.LANCZOS)
-        matrix = np.asarray(img, dtype=np.float32)
-    coeff = cv2.dct(matrix) if cv2 is not None else dct2_ortho(matrix)
-    block = coeff[:8, :8].flatten()
-    median = float(np.median(block[1:]))
-    value = 0
-    for bit in block > median:
-        value = (value << 1) | int(bool(bit))
-    return value
-
-
-def dhash(image_path: Path) -> int:
-    if Image is None or ImageOps is None or np is None:
-        raise RuntimeError("image_fingerprint_dependency_missing")
-    with Image.open(image_path) as img:
-        img = ImageOps.exif_transpose(img).convert("L").resize((9, 8), Image.Resampling.LANCZOS)
-        matrix = np.asarray(img, dtype=np.int16)
-    value = 0
-    for bit in (matrix[:, 1:] > matrix[:, :-1]).flatten():
-        value = (value << 1) | int(bool(bit))
-    return value
-
-
-def hamming(left: int, right: int) -> int:
-    return bin(int(left) ^ int(right)).count("1")
-
-
-class UnionFind:
-    def __init__(self, size: int):
-        self.parent = list(range(size))
-        self.rank = [0] * size
-
-    def find(self, value: int) -> int:
-        while self.parent[value] != value:
-            self.parent[value] = self.parent[self.parent[value]]
-            value = self.parent[value]
-        return value
-
-    def union(self, left: int, right: int) -> None:
-        root_left = self.find(left)
-        root_right = self.find(right)
-        if root_left == root_right:
-            return
-        if self.rank[root_left] < self.rank[root_right]:
-            root_left, root_right = root_right, root_left
-        self.parent[root_right] = root_left
-        if self.rank[root_left] == self.rank[root_right]:
-            self.rank[root_left] += 1
-
-
-def row_keep_key(row: dict) -> tuple:
-    return (
-        int(bool(row.get("labels"))),
-        len(row.get("labels") or []),
-        STATUS_PRIORITY.get(str(row.get("feedback_status") or ""), 0),
-        len(row.get("expected_classes") or []),
-        int(row.get("timestamp_ms") or 0),
-        str(row.get("image_sha256") or ""),
-    )
-
-
-def choose_dedupe_keeper(rows: list[dict]) -> dict:
-    return max(rows, key=row_keep_key)
-
-
-def row_event_group_key(row: dict) -> str:
-    meta = row.get("meta") or {}
-    tasks = row.get("tasks") or []
-    event_tokens = sorted({
-        normalized_event_key(task.get("event_name"))
-        for task in tasks
-        if isinstance(task, dict) and normalized_event_key(task.get("event_name"))
-    })
-    return "|".join((
-        str(row.get("source") or "unknown"),
-        str(meta.get("vehicle_id") or meta.get("device_id") or "unknown"),
-        str(meta.get("camera_id") or "unknown"),
-        str(row.get("day") or "unknown"),
-        ",".join(event_tokens) or "event",
-    ))
-
-
-def default_fingerprint_cache_path(output_root: Path) -> Path:
-    return output_root / "dedupe_fingerprint_cache.json"
-
-
-def load_fingerprint_cache(cache_path: Path) -> dict:
-    payload = load_json(cache_path)
-    if not isinstance(payload, dict) or payload.get("schema") != DEDUPE_CACHE_SCHEMA:
-        return {}
-    entries = payload.get("entries")
-    return entries if isinstance(entries, dict) else {}
-
-
-def write_fingerprint_cache(cache_path: Path, entries: dict) -> None:
-    write_json_atomic(cache_path, {
-        "schema": DEDUPE_CACHE_SCHEMA,
-        "updated_at": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds"),
-        "entries": entries,
-    })
-
-
-def fingerprint_for_row(row: dict, cache: dict, stats: dict) -> dict | None:
-    image_sha = str(row.get("image_sha256") or "").strip().lower()
-    if not image_sha:
-        stats["near_fingerprint_errors"] += 1
-        return None
-    cached = cache.get(image_sha)
-    if isinstance(cached, dict) and "phash" in cached and "dhash" in cached:
-        stats["near_fingerprint_cache_hits"] += 1
-        return cached
-    try:
-        payload = {
-            "phash": phash(row["image_path"]),
-            "dhash": dhash(row["image_path"]),
-        }
-    except Exception:
-        stats["near_fingerprint_errors"] += 1
-        return None
-    cache[image_sha] = payload
-    stats["near_fingerprint_cache_misses"] += 1
-    return payload
-
-
-def dedupe_exact_rows(rows: list[dict]) -> tuple[list[dict], dict]:
-    by_sha: dict[tuple[str, str], list[dict]] = collections.defaultdict(list)
-    for row in rows:
-        image_sha = str(row.get("image_sha256") or "").strip().lower()
-        if image_sha:
-            by_sha[(row_event_group_key(row), image_sha)].append(row)
-    keep_ids = set()
-    duplicate_groups = 0
-    duplicate_rows = 0
-    for group in by_sha.values():
-        if len(group) == 1:
-            keep_ids.add(id(group[0]))
-            continue
-        duplicate_groups += 1
-        duplicate_rows += len(group) - 1
-        keep_ids.add(id(choose_dedupe_keeper(group)))
-    for row in rows:
-        if not str(row.get("image_sha256") or "").strip().lower():
-            keep_ids.add(id(row))
-    return [row for row in rows if id(row) in keep_ids], {
-        "exact_duplicate_groups": duplicate_groups,
-        "exact_duplicate_rows": duplicate_rows,
-    }
-
-
-def dedupe_near_rows(rows: list[dict], args, output_root: Path) -> tuple[list[dict], dict]:
-    stats = {
-        "near_duplicate_groups": 0,
-        "near_duplicate_rows": 0,
-        "near_fingerprint_cache_hits": 0,
-        "near_fingerprint_cache_misses": 0,
-        "near_fingerprint_errors": 0,
-        "near_compared_pairs": 0,
-    }
-    if Image is None or ImageOps is None or np is None:
-        stats["near_skipped_reason"] = "image_fingerprint_dependency_missing"
-        return rows, stats
-
-    window_ms = max(0, int(getattr(args, "dedupe_window_seconds", 60) or 0)) * 1000
-    phash_threshold = max(0, int(getattr(args, "dedupe_phash_threshold", 6) or 0))
-    dhash_threshold = max(0, int(getattr(args, "dedupe_dhash_threshold", 10) or 0))
-    if window_ms <= 0:
-        stats["near_skipped_reason"] = "window_disabled"
-        return rows, stats
-
-    cache_arg = str(getattr(args, "fingerprint_cache", "") or "").strip()
-    cache_path = Path(cache_arg) if cache_arg else default_fingerprint_cache_path(output_root)
-    cache = load_fingerprint_cache(cache_path)
-
-    by_group: dict[str, list[dict]] = collections.defaultdict(list)
-    for row in rows:
-        by_group[row_event_group_key(row)].append(row)
-
-    drop_ids = set()
-    for group_rows in by_group.values():
-        if len(group_rows) < 2:
-            continue
-        records = []
-        for row in group_rows:
-            timestamp_ms = int(row.get("timestamp_ms") or 0)
-            if timestamp_ms <= 0:
-                continue
-            fingerprint = fingerprint_for_row(row, cache, stats)
-            if not fingerprint:
-                continue
-            records.append({
-                "row": row,
-                "timestamp_ms": timestamp_ms,
-                "phash": int(fingerprint["phash"]),
-                "dhash": int(fingerprint["dhash"]),
-            })
-        if len(records) < 2:
-            continue
-        records.sort(key=lambda item: item["timestamp_ms"])
-        uf = UnionFind(len(records))
-        for left in range(len(records)):
-            left_record = records[left]
-            for right in range(left + 1, len(records)):
-                right_record = records[right]
-                if right_record["timestamp_ms"] - left_record["timestamp_ms"] > window_ms:
-                    break
-                stats["near_compared_pairs"] += 1
-                if hamming(left_record["phash"], right_record["phash"]) > phash_threshold:
-                    continue
-                if hamming(left_record["dhash"], right_record["dhash"]) <= dhash_threshold:
-                    uf.union(left, right)
-        clusters: dict[int, list[dict]] = collections.defaultdict(list)
-        for pos, record in enumerate(records):
-            clusters[uf.find(pos)].append(record["row"])
-        for cluster in clusters.values():
-            if len(cluster) < 2:
-                continue
-            stats["near_duplicate_groups"] += 1
-            keeper = choose_dedupe_keeper(cluster)
-            for row in cluster:
-                if row is not keeper:
-                    drop_ids.add(id(row))
-
-    stats["near_duplicate_rows"] = len(drop_ids)
-    if stats["near_fingerprint_cache_misses"]:
-        write_fingerprint_cache(cache_path, cache)
-    return [row for row in rows if id(row) not in drop_ids], stats
-
-
-def dedupe_rows(rows: list[dict], args, output_root: Path) -> tuple[list[dict], dict]:
-    stats = {
-        "input_images": len(rows),
-        "exact_enabled": bool(getattr(args, "dedupe_exact", True)),
-        "near_enabled": bool(getattr(args, "dedupe_near", True)),
-        "dedupe_window_seconds": int(getattr(args, "dedupe_window_seconds", 60) or 0),
-        "dedupe_phash_threshold": int(getattr(args, "dedupe_phash_threshold", 6) or 0),
-        "dedupe_dhash_threshold": int(getattr(args, "dedupe_dhash_threshold", 10) or 0),
-    }
-    deduped = rows
-    if stats["exact_enabled"]:
-        deduped, exact_stats = dedupe_exact_rows(deduped)
-        stats.update(exact_stats)
-    else:
-        stats.update({"exact_duplicate_groups": 0, "exact_duplicate_rows": 0})
-    if stats["near_enabled"]:
-        deduped, near_stats = dedupe_near_rows(deduped, args, output_root)
-        stats.update(near_stats)
-    else:
-        stats.update({
-            "near_duplicate_groups": 0,
-            "near_duplicate_rows": 0,
-            "near_fingerprint_cache_hits": 0,
-            "near_fingerprint_cache_misses": 0,
-            "near_fingerprint_errors": 0,
-            "near_compared_pairs": 0,
-            "near_skipped_reason": "disabled",
-        })
-    stats["output_images"] = len(deduped)
-    stats["removed_images"] = len(rows) - len(deduped)
-    return deduped, stats
-
-
 def build_dataset(args) -> dict:
     permanent_root = args.permanent_root.resolve()
     output_root = args.output_root.resolve()
@@ -683,16 +353,15 @@ def build_dataset(args) -> dict:
     if args.days > 0:
         min_day = (datetime.now(timezone(timedelta(hours=8))) - timedelta(days=args.days - 1)).strftime("%Y%m%d")
 
-    raw_rows = list(iter_candidate_rows(
+    rows = list(iter_candidate_rows(
         permanent_root,
         args.label_root.resolve(),
         args.audit_root.resolve(),
         min_day,
     ))
-    rows, dedupe_stats = dedupe_rows(raw_rows, args, output_root)
     rows.sort(
         key=lambda row: (
-            int(row.get("timestamp_ms") or 0),
+            str(row["meta"].get("collected_at") or row["meta"].get("received_at_ms") or ""),
             row["image_sha256"],
         ),
         reverse=True,
@@ -839,7 +508,6 @@ def build_dataset(args) -> dict:
             "training_eligible_images": 0,
             "pruned_files": pruned_files,
             "min_day": min_day or None,
-            "dedupe": dedupe_stats,
         },
     }
     write_json_atomic(output_root / "dataset_summary.json", summary)
@@ -875,15 +543,6 @@ def main() -> int:
         default=Path("/home/admin1/jgzj/.runtime/yolo_loop/datasets/yolo_event_feedback_v1"),
     )
     parser.add_argument("--days", type=int, default=30, help="Keep the latest N Shanghai calendar days; 0 keeps all history.")
-    parser.set_defaults(dedupe_exact=True, dedupe_near=True)
-    parser.add_argument("--dedupe-exact", dest="dedupe_exact", action="store_true", help="Remove exact duplicate image_sha256 rows.")
-    parser.add_argument("--no-dedupe-exact", dest="dedupe_exact", action="store_false", help="Keep exact duplicate image_sha256 rows.")
-    parser.add_argument("--dedupe-near", dest="dedupe_near", action="store_true", help="Remove near duplicate frames within the same source/device/camera/day/event window.")
-    parser.add_argument("--no-dedupe-near", dest="dedupe_near", action="store_false", help="Skip perceptual near-duplicate filtering.")
-    parser.add_argument("--dedupe-window-seconds", type=int, default=60, help="Near-duplicate time window per source/device/camera/day/event group.")
-    parser.add_argument("--dedupe-phash-threshold", type=int, default=6, help="Max pHash Hamming distance for near duplicate frames.")
-    parser.add_argument("--dedupe-dhash-threshold", type=int, default=10, help="Max dHash Hamming distance for near duplicate frames.")
-    parser.add_argument("--fingerprint-cache", type=Path, default=None, help="Persistent image fingerprint cache path.")
     args = parser.parse_args()
 
     if not args.permanent_root.is_dir():
@@ -897,7 +556,6 @@ def main() -> int:
         "status_counts": feedback["status_counts"],
         "event_counts": feedback["event_counts"],
         "training_eligible_images": feedback["training_eligible_images"],
-        "dedupe": feedback["dedupe"],
     }, ensure_ascii=False))
     return 0
 

@@ -8,12 +8,6 @@ from pathlib import Path
 
 from build_yolo_event_feedback_dataset import build_dataset
 
-try:
-    from PIL import Image, ImageDraw
-except Exception:
-    Image = None
-    ImageDraw = None
-
 
 class EventFeedbackDatasetTest(unittest.TestCase):
     def setUp(self):
@@ -36,22 +30,18 @@ class EventFeedbackDatasetTest(unittest.TestCase):
         quality="good",
         with_cache=True,
         source="qwen_permanent_yes_frame",
-        image_bytes=b"sample-jpeg",
-        collected_at="2026-07-13T19:00:00Z",
-        edge_ts=1783969200000,
     ):
         day = self.permanent / "20260714"
         day.mkdir(parents=True, exist_ok=True)
         image = day / f"{request_id}_{sha[:16]}.jpg"
-        image.write_bytes(image_bytes)
+        image.write_bytes(b"sample-jpeg")
         meta = {
             "source": source,
             "request_id": request_id,
             "image_sha256": sha,
             "device_id": "BIT-TEST",
             "camera_id": "1",
-            "collected_at": collected_at,
-            "edge_ts": edge_ts,
+            "collected_at": "2026-07-13T19:00:00Z",
             "yes_tasks": [{
                 "task_id": "task_1",
                 "event_name": event_name,
@@ -97,12 +87,6 @@ class EventFeedbackDatasetTest(unittest.TestCase):
             audit_root=self.audits,
             output_root=self.output,
             days=0,
-            dedupe_exact=True,
-            dedupe_near=False,
-            dedupe_window_seconds=60,
-            dedupe_phash_threshold=6,
-            dedupe_dhash_threshold=10,
-            fingerprint_cache=None,
         )
         summary = build_dataset(args)
         self.assertEqual(summary["feedback"]["total_images"], 3)
@@ -159,12 +143,6 @@ class EventFeedbackDatasetTest(unittest.TestCase):
             audit_root=self.audits,
             output_root=self.output,
             days=0,
-            dedupe_exact=True,
-            dedupe_near=False,
-            dedupe_window_seconds=60,
-            dedupe_phash_threshold=6,
-            dedupe_dhash_threshold=10,
-            fingerprint_cache=None,
         )
 
         summary = build_dataset(args)
@@ -179,111 +157,6 @@ class EventFeedbackDatasetTest(unittest.TestCase):
         )
         self.assertEqual(manifest["feedback_reason"], "binary_negative_cross_class_positive")
         self.assertEqual(manifest["missing_expected_classes"], [])
-
-    def test_exact_duplicate_rows_are_collapsed_per_event_group(self):
-        sha = "5" * 64
-        self.add_frame(sha, "req_trash_1", "paper", labels=[{
-            "class_name": "trash",
-            "x": 0.5,
-            "y": 0.5,
-            "w": 0.2,
-            "h": 0.2,
-        }], edge_ts=1783969200000)
-        self.add_frame(sha, "req_trash_2", "paper", labels=[{
-            "class_name": "trash",
-            "x": 0.5,
-            "y": 0.5,
-            "w": 0.2,
-            "h": 0.2,
-        }], edge_ts=1783969201000)
-        self.add_frame(sha, "req_smoke_1", "smoke", labels=[{
-            "class_name": "smoke",
-            "x": 0.5,
-            "y": 0.5,
-            "w": 0.2,
-            "h": 0.2,
-        }], edge_ts=1783969202000)
-        args = argparse.Namespace(
-            permanent_root=self.permanent,
-            label_root=self.labels,
-            audit_root=self.audits,
-            output_root=self.output,
-            days=0,
-            dedupe_exact=True,
-            dedupe_near=False,
-            dedupe_window_seconds=60,
-            dedupe_phash_threshold=6,
-            dedupe_dhash_threshold=10,
-            fingerprint_cache=None,
-        )
-
-        summary = build_dataset(args)
-
-        self.assertEqual(summary["feedback"]["total_images"], 2)
-        self.assertEqual(summary["feedback"]["dedupe"]["exact_duplicate_rows"], 1)
-        manifests = [
-            json.loads(line)
-            for line in (self.output / "manifest_selected_images.jsonl").read_text(encoding="utf-8").splitlines()
-        ]
-        self.assertEqual(sorted(row["tasks"][0]["event_name"] for row in manifests), ["paper", "smoke"])
-
-    @unittest.skipIf(Image is None or ImageDraw is None, "Pillow is required for near duplicate test")
-    def test_near_duplicate_rows_are_collapsed_inside_time_window(self):
-        def make_image(offset):
-            path = self.output / f"source_{offset}.jpg"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            image = Image.new("RGB", (96, 96), color=(180, 180, 180))
-            draw = ImageDraw.Draw(image)
-            draw.rectangle((20 + offset, 20, 70 + offset, 70), fill=(90, 90, 90))
-            image.save(path, format="JPEG", quality=95)
-            data = path.read_bytes()
-            path.unlink()
-            return data
-
-        base_labels = [{
-            "class_name": "vehicle",
-            "x": 0.5,
-            "y": 0.5,
-            "w": 0.2,
-            "h": 0.2,
-        }]
-        self.add_frame("6" * 64, "req_car_1", "car", labels=base_labels, image_bytes=make_image(0), edge_ts=1783969200000)
-        self.add_frame("7" * 64, "req_car_2", "car", labels=base_labels, image_bytes=make_image(1), edge_ts=1783969201000)
-        self.add_frame("8" * 64, "req_car_3", "car", labels=base_labels, image_bytes=make_image(1), edge_ts=1783969210000)
-        self.add_frame("9" * 64, "req_paper_1", "paper", labels=[{
-            "class_name": "trash",
-            "x": 0.5,
-            "y": 0.5,
-            "w": 0.2,
-            "h": 0.2,
-        }], image_bytes=make_image(1), edge_ts=1783969201000)
-        args = argparse.Namespace(
-            permanent_root=self.permanent,
-            label_root=self.labels,
-            audit_root=self.audits,
-            output_root=self.output,
-            days=0,
-            dedupe_exact=True,
-            dedupe_near=True,
-            dedupe_window_seconds=2,
-            dedupe_phash_threshold=8,
-            dedupe_dhash_threshold=12,
-            fingerprint_cache=None,
-        )
-
-        summary = build_dataset(args)
-
-        self.assertEqual(summary["feedback"]["total_images"], 3)
-        self.assertEqual(summary["feedback"]["dedupe"]["near_duplicate_rows"], 1)
-        manifests = [
-            json.loads(line)
-            for line in (self.output / "manifest_selected_images.jsonl").read_text(encoding="utf-8").splitlines()
-        ]
-        by_request = {row["tasks"][0]["request_id"]: row for row in manifests}
-        self.assertNotIn("req_car_1", by_request)
-        self.assertIn("req_car_2", by_request)
-        self.assertIn("req_car_3", by_request)
-        self.assertIn("req_paper_1", by_request)
 
 
 if __name__ == "__main__":
