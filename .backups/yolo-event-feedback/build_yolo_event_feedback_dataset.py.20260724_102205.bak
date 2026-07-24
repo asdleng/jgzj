@@ -579,7 +579,6 @@ def dedupe_near_rows(rows: list[dict], args, output_root: Path) -> tuple[list[di
     window_ms = max(0, int(getattr(args, "dedupe_window_seconds", 60) or 0)) * 1000
     phash_threshold = max(0, int(getattr(args, "dedupe_phash_threshold", 6) or 0))
     dhash_threshold = max(0, int(getattr(args, "dedupe_dhash_threshold", 10) or 0))
-    max_neighbors = max(1, int(getattr(args, "dedupe_max_neighbors", 12) or 12))
     if window_ms <= 0:
         stats["near_skipped_reason"] = "window_disabled"
         return rows, stats
@@ -616,14 +615,10 @@ def dedupe_near_rows(rows: list[dict], args, output_root: Path) -> tuple[list[di
         uf = UnionFind(len(records))
         for left in range(len(records)):
             left_record = records[left]
-            compared_neighbors = 0
             for right in range(left + 1, len(records)):
                 right_record = records[right]
                 if right_record["timestamp_ms"] - left_record["timestamp_ms"] > window_ms:
                     break
-                if compared_neighbors >= max_neighbors:
-                    break
-                compared_neighbors += 1
                 stats["near_compared_pairs"] += 1
                 if hamming(left_record["phash"], right_record["phash"]) > phash_threshold:
                     continue
@@ -655,7 +650,6 @@ def dedupe_rows(rows: list[dict], args, output_root: Path) -> tuple[list[dict], 
         "dedupe_window_seconds": int(getattr(args, "dedupe_window_seconds", 60) or 0),
         "dedupe_phash_threshold": int(getattr(args, "dedupe_phash_threshold", 6) or 0),
         "dedupe_dhash_threshold": int(getattr(args, "dedupe_dhash_threshold", 10) or 0),
-        "dedupe_max_neighbors": int(getattr(args, "dedupe_max_neighbors", 12) or 12),
     }
     deduped = rows
     if stats["exact_enabled"]:
@@ -889,7 +883,6 @@ def main() -> int:
     parser.add_argument("--dedupe-window-seconds", type=int, default=60, help="Near-duplicate time window per source/device/camera/day/event group.")
     parser.add_argument("--dedupe-phash-threshold", type=int, default=6, help="Max pHash Hamming distance for near duplicate frames.")
     parser.add_argument("--dedupe-dhash-threshold", type=int, default=10, help="Max dHash Hamming distance for near duplicate frames.")
-    parser.add_argument("--dedupe-max-neighbors", type=int, default=12, help="Max subsequent frames to compare per row inside the near-duplicate time window.")
     parser.add_argument("--fingerprint-cache", type=Path, default=None, help="Persistent image fingerprint cache path.")
     args = parser.parse_args()
 

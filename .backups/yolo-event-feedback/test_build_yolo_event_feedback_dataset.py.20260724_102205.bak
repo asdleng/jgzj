@@ -102,7 +102,6 @@ class EventFeedbackDatasetTest(unittest.TestCase):
             dedupe_window_seconds=60,
             dedupe_phash_threshold=6,
             dedupe_dhash_threshold=10,
-            dedupe_max_neighbors=12,
             fingerprint_cache=None,
         )
         summary = build_dataset(args)
@@ -165,7 +164,6 @@ class EventFeedbackDatasetTest(unittest.TestCase):
             dedupe_window_seconds=60,
             dedupe_phash_threshold=6,
             dedupe_dhash_threshold=10,
-            dedupe_max_neighbors=12,
             fingerprint_cache=None,
         )
 
@@ -216,7 +214,6 @@ class EventFeedbackDatasetTest(unittest.TestCase):
             dedupe_window_seconds=60,
             dedupe_phash_threshold=6,
             dedupe_dhash_threshold=10,
-            dedupe_max_neighbors=12,
             fingerprint_cache=None,
         )
 
@@ -271,7 +268,6 @@ class EventFeedbackDatasetTest(unittest.TestCase):
             dedupe_window_seconds=2,
             dedupe_phash_threshold=8,
             dedupe_dhash_threshold=12,
-            dedupe_max_neighbors=12,
             fingerprint_cache=None,
         )
 

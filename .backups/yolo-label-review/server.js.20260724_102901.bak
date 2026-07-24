@@ -3068,21 +3068,6 @@ async function loadYoloManualAnnotationIndex(options = {}) {
   return promise;
 }
 
-async function hasYoloManualAnnotationOverrides(datasetId) {
-  const id = String(datasetId || '').trim();
-  if (!id) {
-    return false;
-  }
-  const index = await loadYoloManualAnnotationIndex();
-  const prefix = `${id}\n`;
-  for (const key of index.keys()) {
-    if (String(key || '').startsWith(prefix)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function updateYoloManualAnnotationIndex(annotation) {
   if (!yoloReviewManualAnnotationIndexCache.items) {
     return;
@@ -5496,17 +5481,10 @@ async function listYoloReviewItems(datasetId, query = {}) {
   const hasBoxOnly = ['1', 'true', 'yes', 'on'].includes(String(query.has_box || query.hasBox || '').trim().toLowerCase());
 
   const allItems = await yoloBaseItems(dataset);
-  const hasManualAnnotationOverrides = await hasYoloManualAnnotationOverrides(dataset.id);
   const canUseManifestLabelClassFilter = dataset.kind === 'detect' &&
     classNames.length > 0 &&
     hasBoxOnly &&
-    !hasManualAnnotationOverrides &&
     !['YES', 'NO'].includes(aiAnswer) &&
-    allItems.length > 0 &&
-    allItems.every((item) => item.label_classes_indexed === true);
-  const canPrefilterManifestLabelClass = dataset.kind === 'detect' &&
-    classNames.length > 0 &&
-    hasBoxOnly &&
     allItems.length > 0 &&
     allItems.every((item) => item.label_classes_indexed === true);
   const needsLabelBeforePagination = (
@@ -5541,11 +5519,6 @@ async function listYoloReviewItems(datasetId, query = {}) {
       }
     }
     if (classNames.length && canUseManifestLabelClassFilter && Array.isArray(item.label_classes)) {
-      if (!yoloItemHasManifestClass(item, classNames)) {
-        return false;
-      }
-    }
-    if (classNames.length && !canUseManifestLabelClassFilter && canPrefilterManifestLabelClass && Array.isArray(item.label_classes)) {
       if (!yoloItemHasManifestClass(item, classNames)) {
         return false;
       }

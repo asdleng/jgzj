@@ -18,11 +18,10 @@ SITE_INTERNAL_URL="${SITE_INTERNAL_URL:-http://127.0.0.1:8888}"
 TOKEN_FILE="$ROOT/.runtime/yolo_label_review/internal_rebuild_token"
 REFRESH_PATROL_INDEX="${YOLO_EVENT_FEEDBACK_REFRESH_PATROL_INDEX:-0}"
 DEDUPE_EXACT="${YOLO_EVENT_FEEDBACK_DEDUPE_EXACT:-1}"
-DEDUPE_NEAR="${YOLO_EVENT_FEEDBACK_DEDUPE_NEAR:-0}"
+DEDUPE_NEAR="${YOLO_EVENT_FEEDBACK_DEDUPE_NEAR:-1}"
 DEDUPE_WINDOW_SECONDS="${YOLO_EVENT_FEEDBACK_DEDUPE_WINDOW_SECONDS:-60}"
 DEDUPE_PHASH_THRESHOLD="${YOLO_EVENT_FEEDBACK_DEDUPE_PHASH_THRESHOLD:-6}"
 DEDUPE_DHASH_THRESHOLD="${YOLO_EVENT_FEEDBACK_DEDUPE_DHASH_THRESHOLD:-10}"
-DEDUPE_MAX_NEIGHBORS="${YOLO_EVENT_FEEDBACK_DEDUPE_MAX_NEIGHBORS:-12}"
 
 DEDUPE_EXACT_ARG="--dedupe-exact"
 if [ "$DEDUPE_EXACT" = "0" ]; then
@@ -43,7 +42,7 @@ timestamp() {
     exit 0
   }
 
-  echo "[$(timestamp)] start yolo_event_feedback_sync days=$DAYS dedupe_exact=$DEDUPE_EXACT dedupe_near=$DEDUPE_NEAR window=${DEDUPE_WINDOW_SECONDS}s phash=$DEDUPE_PHASH_THRESHOLD dhash=$DEDUPE_DHASH_THRESHOLD max_neighbors=$DEDUPE_MAX_NEIGHBORS"
+  echo "[$(timestamp)] start yolo_event_feedback_sync days=$DAYS dedupe_exact=$DEDUPE_EXACT dedupe_near=$DEDUPE_NEAR window=${DEDUPE_WINDOW_SECONDS}s phash=$DEDUPE_PHASH_THRESHOLD dhash=$DEDUPE_DHASH_THRESHOLD"
   ionice -c2 -n7 nice -n 10 python3 scripts/build_yolo_event_feedback_dataset.py \
     --permanent-root "$PERMANENT_ROOT" \
     --label-root "$LABEL_ROOT" \
@@ -54,8 +53,7 @@ timestamp() {
     "$DEDUPE_NEAR_ARG" \
     --dedupe-window-seconds "$DEDUPE_WINDOW_SECONDS" \
     --dedupe-phash-threshold "$DEDUPE_PHASH_THRESHOLD" \
-    --dedupe-dhash-threshold "$DEDUPE_DHASH_THRESHOLD" \
-    --dedupe-max-neighbors "$DEDUPE_MAX_NEIGHBORS"
+    --dedupe-dhash-threshold "$DEDUPE_DHASH_THRESHOLD"
 
   if [ "$REFRESH_PATROL_INDEX" = "1" ]; then
     TOKEN=""
