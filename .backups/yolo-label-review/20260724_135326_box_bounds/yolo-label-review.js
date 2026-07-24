@@ -2369,36 +2369,19 @@
     overlay.style.height = `${renderedHeight}px`;
   }
 
-  function labelToClippedBoxStyle(label) {
-    const x = Number(label?.x);
-    const y = Number(label?.y);
-    const w = Number(label?.w);
-    const h = Number(label?.h);
-    if (![x, y, w, h].every((value) => Number.isFinite(value)) || w <= 0 || h <= 0) {
-      return null;
-    }
-    const left = Math.max(0, Math.min(1, x - w / 2));
-    const right = Math.max(0, Math.min(1, x + w / 2));
-    const top = Math.max(0, Math.min(1, y - h / 2));
-    const bottom = Math.max(0, Math.min(1, y + h / 2));
-    if (right <= left || bottom <= top) {
-      return null;
-    }
-    return {
-      left: `${left * 100}%`,
-      top: `${top * 100}%`,
-      width: `${(right - left) * 100}%`,
-      height: `${(bottom - top) * 100}%`
-    };
-  }
-
   function renderBoxes(overlay, labels) {
     overlay.innerHTML = "";
     (Array.isArray(labels) ? labels : []).forEach((label) => {
-      const style = labelToClippedBoxStyle(label);
-      if (!style) return;
+      if (![label.x, label.y, label.w, label.h].every((value) => Number.isFinite(Number(value)))) return;
+      const left = clampPercent((Number(label.x) - Number(label.w) / 2) * 100);
+      const top = clampPercent((Number(label.y) - Number(label.h) / 2) * 100);
+      const width = clampPercent(Number(label.w) * 100);
+      const height = clampPercent(Number(label.h) * 100);
       const box = createNode("div", "yolo-review-box");
-      Object.assign(box.style, style);
+      box.style.left = `${left}%`;
+      box.style.top = `${top}%`;
+      box.style.width = `${width}%`;
+      box.style.height = `${height}%`;
       const confidence = Number(label.confidence);
       const suffix = Number.isFinite(confidence) ? ` ${(confidence * 100).toFixed(0)}%` : "";
       box.appendChild(createNode("span", "", `${label.class_name || String(label.class_id ?? "")}${suffix}`));
@@ -2433,11 +2416,15 @@
   }
 
   function labelToBoxStyle(label) {
-    return labelToClippedBoxStyle(label) || {
-      left: "0%",
-      top: "0%",
-      width: "0%",
-      height: "0%"
+    const w = clampUnit(label.w, 0.1);
+    const h = clampUnit(label.h, 0.1);
+    const x = clampUnit(label.x, 0.5);
+    const y = clampUnit(label.y, 0.5);
+    return {
+      left: `${Math.max(0, (x - w / 2) * 100)}%`,
+      top: `${Math.max(0, (y - h / 2) * 100)}%`,
+      width: `${Math.max(0.2, Math.min(100, w * 100))}%`,
+      height: `${Math.max(0.2, Math.min(100, h * 100))}%`
     };
   }
 
@@ -2633,8 +2620,8 @@
         Object.assign(draft.style, {
           left: `${left * 100}%`,
           top: `${top * 100}%`,
-          width: `${w * 100}%`,
-          height: `${h * 100}%`
+          width: `${Math.max(0.2, w * 100)}%`,
+          height: `${Math.max(0.2, h * 100)}%`
         });
       }
       function end(endEvent) {
