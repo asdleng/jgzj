@@ -16,14 +16,14 @@ const PLAY_TARGETS = {
     label: "边缘",
     host: "120.25.209.170",
     apiBase: `${CONTROL_API_BASE}/webrtc/edge`,
-    timeoutMs: 20000,
+    timeoutMs: 10000,
   },
   origin: {
     id: "origin",
     label: "源站",
     host: "47.112.103.12",
     apiBase: `${CONTROL_API_BASE}/webrtc/origin`,
-    timeoutMs: 20000,
+    timeoutMs: 10000,
   },
 };
 
@@ -42,8 +42,6 @@ let controlSocketPromise = null;
 let controlSocketRequestId = 0;
 let controlStatusTimer = null;
 let controlStatusInFlight = false;
-let taskPlanTimer = null;
-let taskPlanGeneration = 0;
 let unloadReleaseSent = false;
 let gearShiftTimer = null;
 const activeMotionControls = new Set();
@@ -76,13 +74,6 @@ const controlState = {
     max_steering_deg: 250,
     max_accelerator_percent: 30,
   },
-};
-
-const taskPlanState = {
-  vehicleId: "",
-  routes: [],
-  plans: [],
-  loading: false,
 };
 
 const elements = {
@@ -122,19 +113,6 @@ const elements = {
   telemetrySoc: document.getElementById("telemetrySoc"),
   transportStatus: document.getElementById("transportStatus"),
   transportStatusRow: document.querySelector(".transport-status"),
-  taskPlanForm: document.getElementById("taskPlanForm"),
-  taskPlannerStatus: document.getElementById("taskPlannerStatus"),
-  refreshTaskPlansButton: document.getElementById("refreshTaskPlansButton"),
-  taskMainRoute: document.getElementById("taskMainRoute"),
-  taskAuxiliaryRoute: document.getElementById("taskAuxiliaryRoute"),
-  taskStartAt: document.getElementById("taskStartAt"),
-  taskEndAt: document.getElementById("taskEndAt"),
-  taskSpeed: document.getElementById("taskSpeed"),
-  taskRunCount: document.getElementById("taskRunCount"),
-  taskRechargePower: document.getElementById("taskRechargePower"),
-  taskPlanSubmit: document.getElementById("taskPlanSubmit"),
-  taskPlanRows: document.getElementById("taskPlanRows"),
-  taskPlanEmpty: document.getElementById("taskPlanEmpty"),
 };
 
 class StreamPlayer {
@@ -415,11 +393,6 @@ function connectAll() {
   players.forEach((player, index) => {
     window.setTimeout(() => player.connect(activeDeviceId, activeRouteMode, generation), index * 180);
   });
-  if (taskPlanState.vehicleId !== activeVehicleId) {
-    void loadTaskPlanner();
-  } else {
-    void loadTaskPlans({ silent: true });
-  }
   showToast(`正在连接 ${activeVehicleId}`);
 }
 
@@ -493,317 +466,21 @@ async function copyCurrentLink() {
   }
 }
 
-function setTaskPlannerStatus(label, state = "ready") {
-  elements.taskPlannerStatus.textContent = label;
-  elements.taskPlannerStatus.dataset.state = state;
-}
-
-function toDateTimeLocalValue(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 19);
-}
-
-function resetTaskPlanTimes(force = false) {
-  if (!force && elements.taskStartAt.value && elements.taskEndAt.value) return;
-  const start = new Date(Date.now() + 5 * 60 * 1000);
-  start.setSeconds(0, 0);
-  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
-  elements.taskStartAt.value = toDateTimeLocalValue(start);
-  elements.taskEndAt.value = toDateTimeLocalValue(end);
-  elements.taskStartAt.min = toDateTimeLocalValue(new Date());
-  elements.taskEndAt.min = elements.taskStartAt.value;
-}
-
-function keepTaskPlanEndAfterStart() {
-  const start = new Date(elements.taskStartAt.value);
-  const end = new Date(elements.taskEndAt.value);
-  if (!Number.isFinite(start.getTime())) return;
-  elements.taskEndAt.min = elements.taskStartAt.value;
-  if (!Number.isFinite(end.getTime()) || end <= start) {
-    elements.taskEndAt.value = toDateTimeLocalValue(new Date(start.getTime() + 2 * 60 * 60 * 1000));
-  }
-}
-
-async function taskPlanApi(path, options = {}) {
-  const response = await fetch(`${CONTROL_API_BASE}${path}`, {
-    method: options.method || "GET",
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  let payload = {};
-  try {
-    payload = await response.json();
-  } catch {
-    payload = {};
-  }
-  if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error || `请求失败 (${response.status})`);
-  }
-  return payload;
-}
-
-function renderTaskRouteOptions() {
-  const previousMain = elements.taskMainRoute.value;
-  const previousAuxiliary = elements.taskAuxiliaryRoute.value;
-  const routeSelects = [elements.taskMainRoute, elements.taskAuxiliaryRoute];
-  routeSelects.forEach((select) => {
-    select.replaceChildren();
-    taskPlanState.routes.forEach((route) => {
-      const option = document.createElement("option");
-      option.value = route.route_id;
-      option.textContent = route.name === route.route_id ? route.route_id : `${route.name} · ${route.route_id}`;
-      select.appendChild(option);
-    });
-    select.disabled = !taskPlanState.routes.length;
-  });
-  if (taskPlanState.routes.some((route) => route.route_id === previousMain)) {
-    elements.taskMainRoute.value = previousMain;
-  } else {
-    const mainRoute = taskPlanState.routes.find((route) => !/(充电|回充|接驳|charge|aux)/i.test(route.name));
-    elements.taskMainRoute.value = mainRoute?.route_id || taskPlanState.routes[0]?.route_id || "";
-  }
-  if (taskPlanState.routes.some((route) => route.route_id === previousAuxiliary)) {
-    elements.taskAuxiliaryRoute.value = previousAuxiliary;
-  } else {
-    const auxiliaryRoute = taskPlanState.routes.find((route) => /(充电|回充|接驳|charge|aux)/i.test(route.name));
-    elements.taskAuxiliaryRoute.value = auxiliaryRoute?.route_id || taskPlanState.routes[1]?.route_id || taskPlanState.routes[0]?.route_id || "";
-  }
-  elements.taskPlanSubmit.disabled = !taskPlanState.routes.length || taskPlanState.loading;
-}
-
-function taskPlanStatus(plan) {
-  return {
-    scheduled: ["待发布", "scheduled"],
-    dispatching: ["投递中", "dispatching"],
-    delivered: ["已投递", "delivered"],
-    delivery_unknown: ["投递异常", "error"],
-    cancelled: ["已取消", "muted"],
-    expired: ["已过期", "muted"],
-  }[plan.status] || [plan.status || "未知", "muted"];
-}
-
-function formatTaskDateTime(value) {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "--";
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(date);
-}
-
-function appendTaskCell(row, className, ...lines) {
-  const cell = document.createElement("div");
-  cell.className = className;
-  lines.filter(Boolean).forEach((line, index) => {
-    const element = document.createElement(index === 0 ? "strong" : "span");
-    element.textContent = line;
-    cell.appendChild(element);
-  });
-  row.appendChild(cell);
-  return cell;
-}
-
-function renderTaskPlans() {
-  elements.taskPlanRows.replaceChildren();
-  elements.taskPlanEmpty.hidden = taskPlanState.plans.length > 0;
-  taskPlanState.plans.slice(0, 30).forEach((plan) => {
-    const row = document.createElement("div");
-    row.className = "task-plan-row";
-    row.dataset.state = plan.status || "unknown";
-
-    const [statusLabel, statusState] = taskPlanStatus(plan);
-    const statusCell = document.createElement("div");
-    statusCell.className = "task-plan-state-cell";
-    const status = document.createElement("span");
-    status.className = "task-plan-state";
-    status.dataset.state = statusState;
-    status.textContent = statusLabel;
-    statusCell.appendChild(status);
-    if (plan.error) {
-      const error = document.createElement("small");
-      error.className = "task-plan-error";
-      error.textContent = plan.error;
-      error.title = plan.error;
-      statusCell.appendChild(error);
-    }
-    row.appendChild(statusCell);
-
-    appendTaskCell(
-      row,
-      "task-plan-time",
-      formatTaskDateTime(plan.start_at),
-      `至 ${formatTaskDateTime(plan.end_at)}`,
-    );
-    appendTaskCell(
-      row,
-      "task-plan-routes",
-      plan.main_route_name || plan.main_route_id,
-      plan.auxiliary_route_name || plan.auxiliary_route_id,
-    );
-    appendTaskCell(
-      row,
-      "task-plan-parameters",
-      `${Number(plan.speed_kph).toFixed(1)} km/h · ${plan.run_count} 圈`,
-      `SOC ${plan.recharge_power}%`,
-    );
-
-    const actions = document.createElement("div");
-    actions.className = "task-plan-actions";
-    if (plan.status === "scheduled") {
-      const cancel = document.createElement("button");
-      cancel.className = "tile-icon-button";
-      cancel.type = "button";
-      cancel.title = "取消任务计划";
-      cancel.setAttribute("aria-label", "取消任务计划");
-      const icon = document.createElement("i");
-      icon.setAttribute("data-lucide", "circle-x");
-      cancel.appendChild(icon);
-      cancel.addEventListener("click", () => void cancelTaskPlan(plan));
-      actions.appendChild(cancel);
-    } else {
-      actions.textContent = "-";
-    }
-    row.appendChild(actions);
-    elements.taskPlanRows.appendChild(row);
-  });
-  window.lucide?.createIcons();
-}
-
-async function loadTaskPlanner() {
-  const generation = ++taskPlanGeneration;
-  const vehicleId = activeVehicleId;
-  taskPlanState.vehicleId = vehicleId;
-  taskPlanState.loading = true;
-  elements.taskPlanSubmit.disabled = true;
-  setTaskPlannerStatus("读取中", "loading");
-  const query = `?vehicle_id=${encodeURIComponent(vehicleId)}`;
-  const [routesResult, plansResult] = await Promise.allSettled([
-    taskPlanApi(`/task-routes${query}`),
-    taskPlanApi(`/task-plans${query}`),
-  ]);
-  if (generation !== taskPlanGeneration || vehicleId !== activeVehicleId) return;
-  taskPlanState.loading = false;
-  if (routesResult.status === "fulfilled") {
-    taskPlanState.routes = Array.isArray(routesResult.value.routes) ? routesResult.value.routes : [];
-  } else {
-    taskPlanState.routes = [];
-  }
-  if (plansResult.status === "fulfilled") {
-    taskPlanState.plans = Array.isArray(plansResult.value.plans) ? plansResult.value.plans : [];
-  } else {
-    taskPlanState.plans = [];
-  }
-  renderTaskRouteOptions();
-  renderTaskPlans();
-  if (routesResult.status === "rejected") {
-    setTaskPlannerStatus("路线读取失败", "error");
-  } else {
-    setTaskPlannerStatus(`${taskPlanState.routes.length} 条路线`, "ready");
-  }
-}
-
-async function loadTaskPlans(options = {}) {
-  const vehicleId = activeVehicleId;
-  try {
-    const payload = await taskPlanApi(`/task-plans?vehicle_id=${encodeURIComponent(vehicleId)}`);
-    if (vehicleId !== activeVehicleId) return;
-    taskPlanState.plans = Array.isArray(payload.plans) ? payload.plans : [];
-    renderTaskPlans();
-  } catch (error) {
-    if (!options.silent) showToast(error.message, true);
-  }
-}
-
-async function cancelTaskPlan(plan) {
-  if (!window.confirm(`取消 ${plan.vehicle_id} 的待发布巡逻任务？`)) return;
-  try {
-    await taskPlanApi(`/task-plans/${encodeURIComponent(plan.id)}/cancel`, {
-      method: "POST",
-      body: { vehicle_id: plan.vehicle_id },
-    });
-    showToast("任务计划已取消");
-    await loadTaskPlans();
-  } catch (error) {
-    showToast(error.message, true);
-  }
-}
-
-async function submitTaskPlan(event) {
-  event.preventDefault();
-  if (!elements.taskPlanForm.reportValidity()) return;
-  const mainRoute = taskPlanState.routes.find((route) => route.route_id === elements.taskMainRoute.value);
-  const auxiliaryRoute = taskPlanState.routes.find((route) => route.route_id === elements.taskAuxiliaryRoute.value);
-  const start = new Date(elements.taskStartAt.value);
-  const end = new Date(elements.taskEndAt.value);
-  if (!mainRoute || !auxiliaryRoute || !Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
-    showToast("任务计划参数不完整", true);
-    return;
-  }
-  if (!window.confirm(`发布 ${activeVehicleId} 巡逻任务\n${formatTaskDateTime(start)} - ${formatTaskDateTime(end)}\n${mainRoute.name}`)) return;
-  elements.taskPlanSubmit.disabled = true;
-  setTaskPlannerStatus("正在发布", "loading");
-  try {
-    await taskPlanApi("/task-plans", {
-      method: "POST",
-      body: {
-        vehicle_id: activeVehicleId,
-        main_route_id: mainRoute.route_id,
-        auxiliary_route_id: auxiliaryRoute.route_id,
-        start_at: start.toISOString(),
-        end_at: end.toISOString(),
-        speed_kph: Number(elements.taskSpeed.value),
-        run_count: Number(elements.taskRunCount.value),
-        recharge_power: Number(elements.taskRechargePower.value),
-      },
-    });
-    showToast("任务计划已创建");
-    setTaskPlannerStatus(`${taskPlanState.routes.length} 条路线`, "ready");
-    resetTaskPlanTimes(true);
-    await loadTaskPlans();
-  } catch (error) {
-    setTaskPlannerStatus("发布失败", "error");
-    showToast(error.message, true);
-  } finally {
-    elements.taskPlanSubmit.disabled = !taskPlanState.routes.length;
-  }
-}
-
-function bindTaskPlanner() {
-  resetTaskPlanTimes();
-  elements.taskPlanForm.addEventListener("submit", submitTaskPlan);
-  elements.taskStartAt.addEventListener("change", keepTaskPlanEndAfterStart);
-  elements.refreshTaskPlansButton.addEventListener("click", () => void loadTaskPlanner());
-  taskPlanTimer = window.setInterval(() => void loadTaskPlans({ silent: true }), 10000);
-}
-
 function cancelGearShift() {
   window.clearTimeout(gearShiftTimer);
   gearShiftTimer = null;
 }
 
-function resetMotionState(commandEnabled = false, initialCommand = null) {
+function resetMotionState(commandEnabled = false) {
   cancelGearShift();
   activeMotionControls.clear();
   criticalControlCommands.length = 0;
   controlState.commandEnabled = commandEnabled;
   controlState.motionPaused = false;
-  const initialGear = ["P", "R", "N", "D"].includes(initialCommand?.gear)
-    ? initialCommand.gear : "P";
-  controlState.driveGear = ["D", "R"].includes(initialGear) ? initialGear : "D";
-  controlState.gear = initialGear;
+  controlState.driveGear = "D";
+  controlState.gear = "P";
   controlState.steering = 0;
-  controlState.brake = Number.isFinite(Number(initialCommand?.brake))
-    ? Number(initialCommand.brake) : 100;
+  controlState.brake = 100;
   controlState.accelerator = 0;
 }
 
@@ -982,10 +659,7 @@ async function pollControlStatus() {
       cancelGearShift();
       activeMotionControls.clear();
       criticalControlCommands.length = 0;
-      const holdGear = ["P", "R", "N", "D"].includes(status.last_command?.gear)
-        ? status.last_command.gear : controlState.gear;
-      controlState.gear = holdGear;
-      if (["D", "R"].includes(holdGear)) controlState.driveGear = holdGear;
+      controlState.gear = "P";
       controlState.steering = 0;
       controlState.accelerator = 0;
       controlState.brake = 100;
@@ -1130,7 +804,7 @@ async function acquireControl() {
     controlState.emergency = false;
     controlState.lastError = "";
     controlState.sequence = 0;
-    resetMotionState(true, result.applied);
+    resetMotionState(true);
     applyControlConstraints(result.constraints);
     startControlHeartbeat();
     showToast("BIT-0041 已接管，可直接控制");
@@ -1437,9 +1111,7 @@ function renderControlState() {
     elements.controlStatusText.textContent = "可接管";
     elements.controlGate.dataset.state = "ready";
     elements.controlGateLabel.textContent = "安全预检通过";
-    const speed = Number(controlState.vehicle?.speed_kph);
-    const speedText = Number.isFinite(speed) ? `${speed.toFixed(1)} km/h` : "车速未知";
-    elements.controlGateDetail.textContent = `BIT-0041 ${speedText}，当前 ${[...players.values()].filter((player) => player.state === "live").length}/4 路画面`;
+    elements.controlGateDetail.textContent = `BIT-0041 静止，当前 ${[...players.values()].filter((player) => player.state === "live").length}/4 路画面`;
   } else {
     elements.controlStatusText.textContent = "未接管";
     elements.controlGateLabel.textContent = selectedControlVehicle ? "控制暂不可用" : "当前车辆仅监看";
@@ -1492,7 +1164,7 @@ function renderControlState() {
       : !controlState.backendOnline ? "服务器安全网关离线"
         : occupied ? "实车控制会话已占用"
           : !vehicleReady ? (controlState.vehicle?.issues || ["车辆安全预检未通过"])[0]
-            : videoReady ? "车辆在线，可接管" : "车辆在线，无画面也可接管";
+            : videoReady ? "车辆静止，可接管" : "车辆静止，无画面也可接管";
   }
   elements.controlAvailability.textContent = availability;
 
@@ -1613,7 +1285,6 @@ function loadInitialState() {
 function initialize() {
   loadInitialState();
   bindControlConsole();
-  bindTaskPlanner();
   document.querySelectorAll(".stream-tile").forEach((tile) => {
     const player = new StreamPlayer(tile);
     players.set(player.channel, player);
@@ -1637,7 +1308,6 @@ function initialize() {
     }
   });
   window.addEventListener("beforeunload", () => {
-    window.clearInterval(taskPlanTimer);
     releaseControlOnUnload();
     players.forEach((player) => player.close(true));
   });

@@ -1,20 +1,13 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const http = require('node:http');
-const os = require('node:os');
-const path = require('node:path');
 const test = require('node:test');
 const { WebSocket } = require('ws');
 
 const {
   CONTROL_ENDPOINTS,
-  TASK_PLAN_VINS,
   WEBRTC_TARGETS,
-  TaskPlanScheduler,
-  cstTimeOfDay,
   createRemoteDriveWebSocketGateway,
   normalizeWebRtcHttpStatus,
-  normalizeRouteCatalog,
   requestRemoteDriveSidecar,
   registerRemoteDriveRoutes,
   startRemoteDriveSidecar
@@ -35,7 +28,6 @@ test('remote drive registers only authenticated control and WebRTC routes', () =
   const sidecar = registerRemoteDriveRoutes(app, {
     rootDir: process.cwd(),
     sidecar: { disabled: true },
-    taskPlans: { disabled: true },
     requirePermission(permission) {
       requiredPermissions.push(permission);
       return permissionMiddleware;
@@ -47,13 +39,10 @@ test('remote drive registers only authenticated control and WebRTC routes', () =
   assert.deepEqual(CONTROL_ENDPOINTS, new Set([
     'bootstrap', 'status', 'acquire', 'command', 'heartbeat', 'release', 'estop'
   ]));
-  assert.equal(routes.length, 12);
+  assert.equal(routes.length, 8);
   routes.forEach((route) => assert.equal(route.handlers[0], permissionMiddleware));
   assert.ok(routes.some((route) => route.method === 'GET' && route.path.endsWith('/bootstrap')));
   assert.ok(routes.some((route) => route.method === 'POST' && route.path.endsWith('/heartbeat')));
-  assert.ok(routes.some((route) => route.method === 'GET' && route.path.endsWith('/task-routes')));
-  assert.ok(routes.some((route) => route.method === 'POST' && route.path.endsWith('/task-plans')));
-  assert.ok(routes.some((route) => route.method === 'POST' && route.path.includes('/task-plans/:planId/cancel')));
   assert.ok(routes.some((route) => route.method === 'POST' && route.path.includes('/webrtc/:route/play')));
   assert.match(WEBRTC_TARGETS.edge, /^http:\/\//);
   assert.match(WEBRTC_TARGETS.origin, /^http:\/\//);
@@ -178,87 +167,4 @@ test('inactive SRS streams remain a business response instead of a browser HTTP 
   );
   assert.equal(normalizeWebRtcHttpStatus(404, JSON.stringify({ code: 404, msg: 'route missing' })), 404);
   assert.equal(normalizeWebRtcHttpStatus(502, JSON.stringify({ code: 502, msg: 'upstream failed' })), 502);
-});
-
-test('task plan scheduler persists and dispatches a due 0x0A08 plan only once', async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jgzj-task-plan-'));
-  const storePath = path.join(directory, 'task-plans.json');
-  let now = Date.parse('2026-07-25T08:00:00.000Z');
-  const published = [];
-  const scheduler = new TaskPlanScheduler({
-    start: false,
-    now: () => now,
-    storePath,
-    publishPlan: async (plan) => {
-      published.push(plan.id);
-      return { ok: true, message_id: '0x0A08', broker_echo: true };
-    }
-  });
-  try {
-    const plan = scheduler.create({
-      vehicle_id: 'BIT-0041',
-      main_route_id: 'route_main',
-      auxiliary_route_id: 'route_charge',
-      start_at: '2026-07-25T08:05:00.000Z',
-      end_at: '2026-07-25T10:00:00.000Z',
-      speed_kph: 2,
-      run_count: 55,
-      recharge_power: 30
-    }, { username: 'tester' });
-    assert.equal(plan.vin, TASK_PLAN_VINS['BIT-0041']);
-    await scheduler.tick();
-    assert.deepEqual(published, []);
-    now = Date.parse('2026-07-25T08:05:01.000Z');
-    await scheduler.tick();
-    await scheduler.tick();
-    assert.deepEqual(published, [plan.id]);
-    assert.equal(scheduler.list('BIT-0041')[0].status, 'delivered');
-    assert.equal(scheduler.list('BIT-0041')[0].delivery.broker_echo, true);
-    const reloaded = new TaskPlanScheduler({ start: false, now: () => now, storePath });
-    assert.equal(reloaded.list('BIT-0041')[0].status, 'delivered');
-    reloaded.close();
-  } finally {
-    scheduler.close();
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('task plan scheduler does not auto-repeat an uncertain dispatch', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jgzj-task-plan-'));
-  const storePath = path.join(directory, 'task-plans.json');
-  fs.writeFileSync(storePath, JSON.stringify({
-    version: 1,
-    plans: [{
-      id: 'uncertain-plan',
-      vehicle_id: 'BIT-0041',
-      status: 'dispatching',
-      start_at: '2026-07-25T08:00:00.000Z',
-      end_at: '2026-07-25T10:00:00.000Z',
-      created_at: '2026-07-25T07:00:00.000Z'
-    }]
-  }));
-  try {
-    const scheduler = new TaskPlanScheduler({
-      start: false,
-      now: () => Date.parse('2026-07-25T08:01:00.000Z'),
-      storePath
-    });
-    assert.equal(scheduler.list()[0].status, 'delivery_unknown');
-    assert.match(scheduler.list()[0].error, /未自动重发/);
-    scheduler.close();
-  } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('task route helpers normalize names and use Asia/Shanghai time', () => {
-  assert.equal(cstTimeOfDay('2026-07-25T08:05:06.000Z'), '16:05:06');
-  assert.deepEqual(normalizeRouteCatalog([
-    { route_id: 'route_a', names: ['A 线'] },
-    { route_id: 'route_a', names: ['重复'] },
-    { route_id: 'route_b', name: 'B 线' }
-  ]), [
-    { route_id: 'route_a', name: 'A 线' },
-    { route_id: 'route_b', name: 'B 线' }
-  ]);
 });

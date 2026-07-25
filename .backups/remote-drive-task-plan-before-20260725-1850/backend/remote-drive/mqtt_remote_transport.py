@@ -327,56 +327,6 @@ def decode_remote_command(payload: bytes) -> Optional[Dict[str, Any]]:
     }
 
 
-def _protobuf_key(field_number: int, wire_type: int) -> bytes:
-    return _varint((int(field_number) << 3) | int(wire_type), 32)
-
-
-def _protobuf_string(field_number: int, value: str) -> bytes:
-    raw = str(value).encode("utf-8")
-    return _protobuf_key(field_number, 2) + _varint(len(raw), 32) + raw
-
-
-def _protobuf_int32(field_number: int, value: int) -> bytes:
-    return _protobuf_key(field_number, 0) + _varint(int(value), 32)
-
-
-def _protobuf_float(field_number: int, value: float) -> bytes:
-    return _protobuf_key(field_number, 5) + struct.pack("<f", float(value))
-
-
-def encode_route_task_plan(
-    main_route_id: str,
-    auxiliary_route_id: str,
-    start_time: str,
-    end_time: str,
-    recharge_power: int,
-    speed_kph: float,
-    run_count: int,
-    sequence: int,
-    timestamp_ms: Optional[int] = None,
-) -> bytes:
-    """Encode the current 0x0A08 route command consumed by ``mqtt_cam``."""
-
-    body = b"".join(
-        [
-            _protobuf_string(2, main_route_id),
-            _protobuf_string(3, start_time),
-            _protobuf_string(4, end_time),
-            _protobuf_int32(5, recharge_power),
-            _protobuf_float(6, speed_kph),
-            # The vehicle applies conv_ntoh() to this protobuf int32.
-            _protobuf_int32(7, _byte_swap(run_count, 4)),
-            _protobuf_string(10, auxiliary_route_id),
-        ]
-    )
-    return encode_base_message(
-        body,
-        sequence=sequence,
-        timestamp_ms=timestamp_ms,
-        message_id=0x0A08,
-    )
-
-
 class MqttWireClient:
     """Small MQTT v5 client sufficient for a guarded QoS-0 command stream."""
 
@@ -590,11 +540,12 @@ class MqttWireClient:
             return
         if topic != self.topic:
             return
-        message_id = decode_base_message_id(payload)
-        command = decode_remote_command(payload) if message_id == 0x0A04 else None
+        command = decode_remote_command(payload)
         if command and self.on_control_message:
             self.on_control_message(command)
         self.last_message_at = time.monotonic()
+        if decode_base_message_id(payload) != 0x0A04:
+            return
         digest = hashlib.sha256(payload).digest()
         matched = False
         now = time.monotonic()
@@ -607,8 +558,7 @@ class MqttWireClient:
                     matched = True
                     break
         if not matched:
-            if message_id == 0x0A04:
-                self.on_foreign_message("检测到其他 MQTT 远控指令")
+            self.on_foreign_message("检测到其他 MQTT 远控指令")
         else:
             self._own_echo.set()
 
@@ -660,65 +610,6 @@ class MqttWireClient:
         for thread in (self._thread, self._keepalive_thread):
             if thread and thread is not current_thread:
                 thread.join(timeout=1.0)
-
-
-def publish_route_task_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
-    """Publish one route plan after proving that the target vehicle is online."""
-
-    vin = str(plan["vin"])
-    topic = f"/auto-rd/rdu/{vin}"
-    state_topic = f"/auto-rd/cloud/{vin}"
-    state_ready = threading.Event()
-    latest_state: Dict[str, Any] = {}
-
-    def on_vehicle_state(state: Dict[str, Any]) -> None:
-        latest_state.clear()
-        latest_state.update(state)
-        state_ready.set()
-
-    username, password = _read_mqtt_credentials()
-    client = MqttWireClient(
-        username,
-        password,
-        topic,
-        on_foreign_message=lambda _reason: None,
-        on_fault=lambda _reason: None,
-        state_topic=state_topic,
-        on_vehicle_state=on_vehicle_state,
-    )
-    try:
-        client.connect()
-        if not state_ready.wait(3.0):
-            raise TransportError("目标车辆没有实时 MQTT 上行，任务计划未投递")
-        sequence = int(time.time_ns() & 0x7FFFFFFF)
-        payload = encode_route_task_plan(
-            main_route_id=plan["main_route_id"],
-            auxiliary_route_id=plan["auxiliary_route_id"],
-            start_time=plan["start_time"],
-            end_time=plan["end_time"],
-            recharge_power=int(plan["recharge_power"]),
-            speed_kph=float(plan["speed_kph"]),
-            run_count=int(plan["run_count"]),
-            sequence=sequence,
-        )
-        client.publish(payload)
-        if not client.wait_for_own_echo(2.0):
-            raise TransportError("任务计划已发送但未收到 Broker 回显，投递状态未知")
-        return {
-            "ok": True,
-            "vehicle_id": plan["vehicle_id"],
-            "vin": vin,
-            "message_id": "0x0A08",
-            "sequence": sequence,
-            "broker_echo": True,
-            "vehicle_state": {
-                "ready": latest_state.get("ready"),
-                "speed_kph": latest_state.get("speed_kph"),
-                "gear": latest_state.get("gear"),
-            },
-        }
-    finally:
-        client.close()
 
 
 class RosGuardProcess:

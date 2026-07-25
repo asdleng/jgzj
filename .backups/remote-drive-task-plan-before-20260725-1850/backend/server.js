@@ -19320,7 +19320,6 @@ registerParkPcmRoutes(app, {
 registerRemoteDriveRoutes(app, {
   requirePermission: (permission) => authStore.requirePermission(permission),
   operationAuditStore,
-  fetchRouteCatalog: (vehicleId) => fetchCloudOpsRouteCatalog(vehicleId, { timeout_s: 30 }),
   rootDir: path.resolve(__dirname, '..')
 });
 const remoteDriveWebSocketGateway = createRemoteDriveWebSocketGateway();

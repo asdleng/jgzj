@@ -11,7 +11,6 @@ import json
 import os
 import pathlib
 import queue
-import re
 import secrets
 import shlex
 import signal
@@ -26,7 +25,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
 
-from mqtt_remote_transport import GuardedMqttTransport, TransportError, publish_route_task_plan
+from mqtt_remote_transport import GuardedMqttTransport, TransportError
 
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -36,30 +35,6 @@ PORT = int(os.environ.get("VEHICLE_VIEWER_PORT", "8766"))
 CONTROL_TRANSPORT = os.environ.get("VEHICLE_CONTROL_TRANSPORT", "mqtt").strip().lower()
 CONTROL_VEHICLE_ID = "BIT-0041"
 CONTROL_VIN = "a001I3829202711775712260"
-TASK_PLAN_VINS = {
-    "BIT-0011": "a001i3829202651720595339",
-    "BIT-0013": "a001I3829202691723622254",
-    "BIT-0016": "a001I3829202591733810464",
-    "BIT-0019": "a001I3829202911732775610",
-    "BIT-0020": "a001I3829202661733810464",
-    "BIT-0022": "a001I382920271I382920271",
-    "BIT-0030": "a001I3829202831732866810",
-    "BIT-0031": "a001I3829202911763350050",
-    "BIT-0032": "a001I3829202901763433057",
-    "BIT-0033": "a001J2507800691764296379",
-    "BIT-0034": "a001J2507800731763913599",
-    "BIT-0036": "a001J3770700651775700467",
-    "BIT-0037": "a001J2507800531775700672",
-    "BIT-0038": "a001I3829202881775700760",
-    "BIT-0039": "a001J2507800651775701476",
-    "BIT-0040": "a001I3829202741775711588",
-    "BIT-0041": CONTROL_VIN,
-    "BIT-0042": "a001J3770700371775713195",
-    "BIT-0046": "a001J2507800931782713473",
-    "BIT-0047": "a001I3829202651778135815",
-    "FTUGV-002": "a001I3829202641733810464",
-    "FTUGV-004": "a001i3829202651720596608",
-}
 CONTROL_SSH_TARGET = os.environ.get("VEHICLE_CONTROL_SSH_TARGET", "nvidia@100.98.77.65")
 COMMAND_TIMEOUT_S = 5.00
 MOTION_COMMAND_TIMEOUT_S = 0.60
@@ -79,49 +54,6 @@ class GatewayError(RuntimeError):
     def __init__(self, message: str, status: int = HTTPStatus.BAD_REQUEST):
         super().__init__(message)
         self.status = int(status)
-
-
-def validate_task_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
-    vehicle_id = str(payload.get("vehicle_id") or "").strip().upper()
-    vin = str(payload.get("vin") or "").strip()
-    if not vehicle_id or TASK_PLAN_VINS.get(vehicle_id) != vin:
-        raise GatewayError("任务车辆与 VIN 不匹配")
-
-    main_route_id = str(payload.get("main_route_id") or "").strip()
-    auxiliary_route_id = str(payload.get("auxiliary_route_id") or "").strip()
-    if not main_route_id or not auxiliary_route_id:
-        raise GatewayError("巡逻路线和接驳路线不能为空")
-    if len(main_route_id) > 240 or len(auxiliary_route_id) > 240:
-        raise GatewayError("路线 ID 过长")
-
-    start_time = str(payload.get("start_time") or "").strip()
-    end_time = str(payload.get("end_time") or "").strip()
-    daily_time = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$")
-    if not daily_time.fullmatch(start_time) or not daily_time.fullmatch(end_time):
-        raise GatewayError("任务时间必须为 HH:MM:SS")
-
-    speed_kph = float(payload.get("speed_kph"))
-    run_count = int(payload.get("run_count"))
-    recharge_power = int(payload.get("recharge_power"))
-    if not 0.5 <= speed_kph <= 8.0:
-        raise GatewayError("巡逻速度必须在 0.5-8.0 km/h")
-    if not 1 <= run_count <= 9999:
-        raise GatewayError("循环次数必须在 1-9999")
-    if not 1 <= recharge_power <= 100:
-        raise GatewayError("回充电量必须在 1-100%")
-
-    return {
-        "plan_id": str(payload.get("plan_id") or "")[:80],
-        "vehicle_id": vehicle_id,
-        "vin": vin,
-        "main_route_id": main_route_id,
-        "auxiliary_route_id": auxiliary_route_id,
-        "start_time": start_time,
-        "end_time": end_time,
-        "speed_kph": speed_kph,
-        "run_count": run_count,
-        "recharge_power": recharge_power,
-    }
 
 
 class CloudStatusClient:
@@ -956,11 +888,6 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 result = GATEWAY.release(str(payload.get("session_id", "")), "release")
             elif path == "/api/control/estop":
                 result = GATEWAY.release(str(payload.get("session_id", "")), "estop")
-            elif path == "/api/control/task-plan":
-                with GATEWAY.lock:
-                    if GATEWAY.session_id or GATEWAY.acquiring:
-                        raise GatewayError("车辆正在远程接管，任务计划未投递", HTTPStatus.CONFLICT)
-                result = publish_route_task_plan(validate_task_plan(payload))
             else:
                 raise GatewayError("接口不存在", HTTPStatus.NOT_FOUND)
             self._json_response(HTTPStatus.OK, result)

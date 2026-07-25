@@ -34,7 +34,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
           frame.style.removeProperty("height");
           return;
         }
-        const content = frame.contentDocument?.querySelector(".app-shell");
+        const content = frame.contentDocument?.querySelector(".operation-workspace");
         if (!content) return;
         const contentHeight = Math.ceil(content.getBoundingClientRect().bottom + (frame.contentWindow?.scrollY || 0)) + 2;
         if (contentHeight > 0) frame.style.height = `${contentHeight}px`;
@@ -43,7 +43,7 @@ import SiteLayout from "../../components/SiteLayout.astro";
 
     const observeFrame = () => {
       resizeObserver?.disconnect();
-      const content = frame?.contentDocument?.querySelector(".app-shell");
+      const content = frame?.contentDocument?.querySelector(".operation-workspace");
       if (!content) return;
       resizeObserver = new ResizeObserver(syncFrameHeight);
       resizeObserver.observe(content);
