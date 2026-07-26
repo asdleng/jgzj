@@ -1,0 +1,56 @@
+<!DOCTYPE html><html lang="zh-CN"> <head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="canonical" href="https://jgzj.dev/app/remote-driving"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="generator" content="Astro v4.15.4"><meta name="description" content="BIT-0041 实车环视监看与安全远程驾驶工作台。"><meta name="robots" content="noindex,nofollow"><meta property="og:type" content="website"><meta property="og:title" content="远程驾驶 | 深圳吉光智界科技有限公司"><meta property="og:url" content="https://jgzj.dev/app/remote-driving"><meta property="og:image" content="https://jgzj.dev/assets/fallback/home-hero-1920.jpg"><meta property="og:description" content="BIT-0041 实车环视监看与安全远程驾驶工作台。"><title>远程驾驶 | 深圳吉光智界科技有限公司</title><link rel="stylesheet" href="/_astro/cloud-mapping.Dg3Yf7Ui.css">
+<link rel="stylesheet" href="/_astro/cloud-mapping.BItA3UO4.css">
+<style>.remote-driving-main[data-astro-cid-u7yvakxl]{width:100%;min-height:calc(100vh - 64px);background:#090d12}.remote-driving-frame[data-astro-cid-u7yvakxl]{display:block;width:100%;height:calc(100vh - 64px);min-height:760px;border:0;background:#090d12}@media (max-width: 760px){.remote-driving-main[data-astro-cid-u7yvakxl]{min-height:calc(100vh - 56px)}.remote-driving-frame[data-astro-cid-u7yvakxl]{height:calc(100vh - 56px);min-height:840px}}
+</style></head> <body class="is-app-page">  <div class="scroll-progress"> <span id="scroll-progress"></span> </div> <nav class="site-nav"> <div class="site-nav-shell"> <a href="/" class="site-brand"> <img src="/assets/s19_91432e393d0c.png" alt="吉光智界 logo" class="h-8 w-8 rounded" width="32" height="32" decoding="async">
+吉光智界
+</a> <div class="site-nav-links"> <a href="/"> 公司首页 </a><a href="/l4-autonomous-driving"> L4级园区自动驾驶 </a><a href="/robot-capabilities"> 机器人能力 </a><a href="/cases-awards"> 案例与奖项 </a><a href="/login"> 登录 </a> </div> <div class="site-nav-links site-nav-links--private" data-private-nav hidden></div> <script data-cfasync="false" src="/js/account-auth.js?v=20260721-1" defer data-auth-mode="controller"></script> </div> </nav>  <main class="remote-driving-main" data-astro-cid-u7yvakxl> <iframe class="remote-driving-frame" src="/remote-drive/index.html?vehicle=BIT-0041" title="BIT-0041 远程驾驶控制台" allow="autoplay" data-astro-cid-u7yvakxl></iframe> </main> <script data-cfasync="false">
+  (() => {
+    const frame = document.querySelector(".remote-driving-frame");
+    const mobileLayout = window.matchMedia("(max-width: 900px)");
+    let resizeObserver;
+    let animationFrame;
+
+    const syncFrameHeight = () => {
+      cancelAnimationFrame(animationFrame);
+      animationFrame = requestAnimationFrame(() => {
+        if (!(frame instanceof HTMLIFrameElement)) return;
+        if (!mobileLayout.matches) {
+          frame.style.removeProperty("height");
+          return;
+        }
+        const content = frame.contentDocument?.querySelector(".operation-workspace");
+        if (!content) return;
+        const contentHeight = Math.ceil(content.getBoundingClientRect().bottom + (frame.contentWindow?.scrollY || 0)) + 2;
+        if (contentHeight > 0) frame.style.height = `${contentHeight}px`;
+      });
+    };
+
+    const observeFrame = () => {
+      resizeObserver?.disconnect();
+      const content = frame?.contentDocument?.querySelector(".operation-workspace");
+      if (!content) return;
+      resizeObserver = new ResizeObserver(syncFrameHeight);
+      resizeObserver.observe(content);
+      syncFrameHeight();
+    };
+
+    const observeLoadedFrame = () => {
+      if (!frame?.contentDocument?.querySelector(".app-shell")) return false;
+      observeFrame();
+      return true;
+    };
+
+    const readinessTimer = window.setInterval(() => {
+      if (observeLoadedFrame()) window.clearInterval(readinessTimer);
+    }, 100);
+    frame?.addEventListener("load", () => {
+      window.clearInterval(readinessTimer);
+      observeFrame();
+    });
+    observeFrame();
+    mobileLayout.addEventListener("change", syncFrameHeight);
+    window.addEventListener("resize", syncFrameHeight, { passive: true });
+  })();
+</script>  <button type="button" id="back-to-top" class="back-to-top" aria-label="返回顶部" hidden> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"> <polyline points="6 14 12 8 18 14"></polyline> </svg> </button>  <footer class="site-footer">
+© 2026 深圳吉光智界科技有限公司. All Rights Reserved.
+</footer> <script data-cfasync="false" src="/js/site-ui.js?v=20260610-3" defer></script> </body> </html> 
