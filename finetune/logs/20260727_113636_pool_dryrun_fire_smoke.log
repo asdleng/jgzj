@@ -1,0 +1,276 @@
+{
+  "model": "fire_smoke_yolo",
+  "task_id": "fire_smoke_yolo",
+  "title": "火源烟雾",
+  "task": "detect",
+  "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+  "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+  "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+  "class_id": 0,
+  "class_ids": [
+    0,
+    1
+  ],
+  "class_name": "fire_smoke",
+  "class_names": [
+    "fire",
+    "smoke"
+  ],
+  "qwen_class": "fire",
+  "qwen_classes": [
+    "fire",
+    "smoke"
+  ],
+  "run_tag": "20260727_113922_fire_smoke_yolo_c0_1_fire_smoke",
+  "run_dir": "/home/admin1/jgzj/finetune/runs/20260727_113922_fire_smoke_yolo_c0_1_fire_smoke",
+  "qwen_no_root": "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+  "web_fire_smoke_dataset": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+  "external_hard_neg": 200,
+  "qwen_no_hard_neg": 100,
+  "web_hard_neg": 100,
+  "dataset_pool_mode": true,
+  "target_total": 1000,
+  "primary_dataset": "loop:finetune_v2",
+  "secondary_dataset": "loop:fire_smoke_web_candidates_v3",
+  "pool_reviewed_only": true,
+  "manual_root": "/home/admin1/jgzj/.runtime/yolo_label_review/manual_annotations_v1"
+}
+{
+  "schema": "jgzj_yolo_target_finetune.v1",
+  "created_at": "2026-07-27T11:40:21.229354+08:00",
+  "resolved": {
+    "model": "fire_smoke_yolo",
+    "task_id": "fire_smoke_yolo",
+    "title": "火源烟雾",
+    "task": "detect",
+    "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+    "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+    "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+    "class_id": 0,
+    "class_ids": [
+      0,
+      1
+    ],
+    "class_name": "fire_smoke",
+    "class_names": [
+      "fire",
+      "smoke"
+    ],
+    "qwen_class": "fire",
+    "qwen_classes": [
+      "fire",
+      "smoke"
+    ],
+    "run_tag": "20260727_113922_fire_smoke_yolo_c0_1_fire_smoke",
+    "run_dir": "/home/admin1/jgzj/finetune/runs/20260727_113922_fire_smoke_yolo_c0_1_fire_smoke",
+    "qwen_no_root": "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+    "web_fire_smoke_dataset": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+    "external_hard_neg": 200,
+    "qwen_no_hard_neg": 100,
+    "web_hard_neg": 100,
+    "dataset_pool_mode": true,
+    "target_total": 1000,
+    "primary_dataset": "loop:finetune_v2",
+    "secondary_dataset": "loop:fire_smoke_web_candidates_v3",
+    "pool_reviewed_only": true,
+    "manual_root": "/home/admin1/jgzj/.runtime/yolo_label_review/manual_annotations_v1"
+  },
+  "availability": {
+    "dataset_pool": {
+      "normal_positive": 75,
+      "hard_positive": 236,
+      "normal_negative": 219,
+      "hard_negative": 44
+    },
+    "selected_samples": 151
+  },
+  "thresholds": {
+    "predict_conf_floor": 0.001,
+    "predict_nms_iou": 0.7,
+    "pos_iou_threshold": 0.5,
+    "normal_pos_min_conf": 0.5,
+    "hard_neg_min_conf": 0.25
+  },
+  "requested": {
+    "original_normal_positive": 1000,
+    "original_hard_positive": 150,
+    "feedback_hard_positive": 150,
+    "original_normal_negative": 400,
+    "original_hard_negative": 100,
+    "external_hard_negative": 200,
+    "qwen_no_hard_negative": 100,
+    "web_qwen_hard_negative": 100,
+    "target_total": 1000
+  },
+  "selection": {
+    "dataset_pool": {
+      "requested_total": 1000,
+      "actual_total": 151,
+      "lowered_total": true,
+      "base_counts": {
+        "normal_positive": 1000,
+        "hard_positive": 300,
+        "normal_negative": 400,
+        "hard_negative": 300
+      },
+      "category_targets": {
+        "normal_positive": 75,
+        "hard_positive": 23,
+        "normal_negative": 30,
+        "hard_negative": 23
+      },
+      "availability": {
+        "normal_positive": 75,
+        "hard_positive": 236,
+        "normal_negative": 219,
+        "hard_negative": 44
+      },
+      "sources": [
+        {
+          "role": "primary",
+          "input": "loop:finetune_v2",
+          "label": "finetune_v2",
+          "dataset_root": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/finetune_v2",
+          "data_yaml": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/finetune_v2/data.yaml",
+          "dataset_id": "loop:finetune_v2",
+          "reviewed_only": true,
+          "positive_images": 157,
+          "negative_images": 61,
+          "review": {
+            "dataset_id": "loop:finetune_v2",
+            "manual_annotations": 218,
+            "positive_images": 157,
+            "negative_images": 61,
+            "skipped_missing_image": 0,
+            "skipped_empty_pass": 0
+          }
+        },
+        {
+          "role": "secondary",
+          "input": "loop:fire_smoke_web_candidates_v3",
+          "label": "loop_fire_smoke_web_candidates_v3",
+          "dataset_root": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+          "data_yaml": "",
+          "dataset_id": "loop:fire_smoke_web_candidates_v3",
+          "reviewed_only": true,
+          "positive_images": 154,
+          "negative_images": 202,
+          "review": {
+            "dataset_id": "loop:fire_smoke_web_candidates_v3",
+            "manual_annotations": 356,
+            "positive_images": 154,
+            "negative_images": 202,
+            "skipped_missing_image": 0,
+            "skipped_empty_pass": 0
+          }
+        }
+      ],
+      "source_categories": [
+        {
+          "role": "primary",
+          "label": "finetune_v2",
+          "dataset_id": "loop:finetune_v2",
+          "positive_images": 157,
+          "negative_images": 61,
+          "category_counts": {
+            "normal_positive": 20,
+            "hard_positive": 137,
+            "normal_negative": 31,
+            "hard_negative": 30
+          }
+        },
+        {
+          "role": "secondary",
+          "label": "loop_fire_smoke_web_candidates_v3",
+          "dataset_id": "loop:fire_smoke_web_candidates_v3",
+          "positive_images": 154,
+          "negative_images": 202,
+          "category_counts": {
+            "normal_positive": 55,
+            "hard_positive": 99,
+            "normal_negative": 188,
+            "hard_negative": 14
+          }
+        }
+      ],
+      "selection": {
+        "normal_positive": {
+          "requested": 75,
+          "selected": 75,
+          "shortfall": 0,
+          "selected_by_source": {
+            "primary": 20,
+            "secondary": 55
+          }
+        },
+        "hard_positive": {
+          "requested": 23,
+          "selected": 23,
+          "shortfall": 0,
+          "selected_by_source": {
+            "primary": 23
+          }
+        },
+        "normal_negative": {
+          "requested": 30,
+          "selected": 30,
+          "shortfall": 0,
+          "selected_by_source": {
+            "primary": 30
+          }
+        },
+        "hard_negative": {
+          "requested": 23,
+          "selected": 23,
+          "shortfall": 0,
+          "selected_by_source": {
+            "primary": 23
+          }
+        }
+      }
+    },
+    "original": {
+      "skipped": true,
+      "reason": "dataset_pool_mode"
+    },
+    "feedback_hard_positive": {
+      "skipped": true,
+      "reason": "dataset_pool_mode"
+    },
+    "external_hard_negative": {
+      "skipped": true,
+      "reason": "dataset_pool_mode"
+    },
+    "external_shortfall_fallback": {
+      "skipped": true,
+      "reason": "dataset_pool_mode"
+    }
+  },
+  "dataset": {
+    "dataset_dir": "/home/admin1/jgzj/.runtime/finetune/datasets/20260727_113922_fire_smoke_yolo_c0_1_fire_smoke/fire_smoke_yolo_c0_1_fire_smoke_finetune",
+    "data_yaml": "/home/admin1/jgzj/.runtime/finetune/datasets/20260727_113922_fire_smoke_yolo_c0_1_fire_smoke/fire_smoke_yolo_c0_1_fire_smoke_finetune/data.yaml",
+    "samples": 151,
+    "split_counts": {
+      "train": 128,
+      "val": 15,
+      "test": 8
+    },
+    "category_counts": {
+      "normal_positive": 75,
+      "normal_negative": 30,
+      "hard_positive": 23,
+      "hard_negative": 23
+    },
+    "source_counts": {
+      "secondary_normal_positive": 55,
+      "primary_normal_negative": 30,
+      "primary_hard_positive": 23,
+      "primary_normal_positive": 20,
+      "primary_hard_negative": 23
+    },
+    "manifest": "/home/admin1/jgzj/.runtime/finetune/datasets/20260727_113922_fire_smoke_yolo_c0_1_fire_smoke/fire_smoke_yolo_c0_1_fire_smoke_finetune/samples_manifest.jsonl"
+  },
+  "training": {
+    "skipped": true
+  }
+}

@@ -145,9 +145,7 @@ class ModelInfo:
 class DatasetPoolSource:
     role: str
     label: str
-    data: Path | None
-    dataset_root: Path
-    dataset_id: str
+    data: Path
     positives: list[dict[str, Any]]
     negatives: list[dict[str, Any]]
 
@@ -459,8 +457,6 @@ def allocate_category_targets(base_counts: dict[str, int], target_total: int) ->
 def dataset_pool_mode(args: argparse.Namespace) -> bool:
     return bool(
         int(getattr(args, "target_total", 0) or 0) > 0
-        or str(getattr(args, "primary_dataset", "") or "").strip()
-        or str(getattr(args, "secondary_dataset", "") or "").strip()
         or str(getattr(args, "preferred_dataset", "") or "").strip()
         or flatten_csv_values(getattr(args, "supplemental_dataset", []) or [])
     )
@@ -693,276 +689,6 @@ def collect_dataset_records(
     return positives, negatives
 
 
-def normalize_rel(value: Any) -> str:
-    return str(value or "").replace("\\", "/").lstrip("/")
-
-
-def optional_data_yaml_in_dir(dataset_dir: Path) -> Path | None:
-    direct = [dataset_dir / "data.yaml", dataset_dir / "data.yml"]
-    for candidate in direct:
-        if candidate.exists():
-            return candidate.resolve()
-    nested = sorted(dataset_dir.glob("*/data.yaml")) + sorted(dataset_dir.glob("*/data.yml"))
-    if len(nested) == 1:
-        return nested[0].resolve()
-    if len(nested) > 1:
-        names = ", ".join(str(path) for path in nested[:8])
-        raise SystemExit(f"ambiguous_dataset_data_yaml:{dataset_dir}; candidates={names}")
-    return None
-
-
-def dataset_id_from_path(path: Path) -> str:
-    resolved = path.resolve()
-    try:
-        rel = resolved.relative_to(YOLO_LOOP_DATASETS_ROOT.resolve())
-        return f"loop:{rel.as_posix()}"
-    except Exception:
-        return safe_path_token(str(resolved), "dataset")
-
-
-def resolve_dataset_source_input(value: str, default_data: Path | None = None) -> tuple[Path, Path | None, str]:
-    raw = str(value or "").strip()
-    if not raw:
-        if default_data is None:
-            raise SystemExit("empty_dataset_input")
-        data = default_data.resolve()
-        return data.parent.resolve(), data, dataset_id_from_path(data.parent)
-    if ":" in raw and not raw.startswith("/") and not re.match(r"^[A-Za-z]:[\\/]", raw):
-        alias, rel = raw.split(":", 1)
-        root = yolo_review_dataset_root_for_alias(alias)
-        if root is not None:
-            safe_parts = [part for part in Path(rel).parts if part not in ("", ".", "..")]
-            rel_path = Path(*safe_parts) if safe_parts else Path(".")
-            root_resolved = root.resolve()
-            candidate = (root / rel_path).resolve()
-            if candidate != root_resolved and root_resolved not in candidate.parents:
-                raise SystemExit(f"dataset_id_out_of_root:{raw}")
-            if not candidate.exists():
-                raise SystemExit(f"dataset_not_found:{raw}")
-            data = candidate if candidate.is_file() and candidate.suffix in {".yaml", ".yml"} else optional_data_yaml_in_dir(candidate)
-            dataset_root = candidate.parent if candidate.is_file() else candidate
-            return dataset_root.resolve(), data, f"{alias}:{rel_path.as_posix()}"
-    candidate = map_external_dataset(Path(raw).expanduser()).resolve()
-    if candidate.is_file():
-        data = candidate if candidate.suffix in {".yaml", ".yml"} else None
-        return candidate.parent.resolve(), data, dataset_id_from_path(candidate.parent)
-    if candidate.is_dir():
-        return candidate.resolve(), optional_data_yaml_in_dir(candidate), dataset_id_from_path(candidate)
-    raise SystemExit(f"dataset_not_found:{raw}")
-
-
-def parse_label_lines(lines: list[str]) -> list[dict[str, Any]]:
-    labels = []
-    for raw in lines:
-        parts = str(raw or "").strip().split()
-        if len(parts) < 5:
-            continue
-        try:
-            cls = int(float(parts[0]))
-            x, y, w, h = [float(v) for v in parts[1:5]]
-        except Exception:
-            continue
-        labels.append({"cls": cls, "xywh": [x, y, w, h], "raw": " ".join([str(cls), *[f"{v:.6f}" for v in (x, y, w, h)]])})
-    return labels
-
-
-def manual_label_line(label: dict[str, Any], names: list[str]) -> str | None:
-    name_to_id = {normalize_name(name): idx for idx, name in enumerate(names)}
-    raw = str(label.get("raw") or "").strip()
-    parts = raw.split()
-    raw_cls: Any = label.get("class_id")
-    if raw_cls is None and parts:
-        raw_cls = parts[0]
-    cls: int | None = None
-    try:
-        cls = int(float(raw_cls))
-    except Exception:
-        cls = name_to_id.get(normalize_name(raw_cls or label.get("class_name") or label.get("class") or label.get("label")))
-    if cls is None or cls < 0 or cls >= len(names):
-        return None
-    coords: list[Any]
-    if all(key in label for key in ("x", "y", "w", "h")):
-        coords = [label.get("x"), label.get("y"), label.get("w"), label.get("h")]
-    elif len(parts) >= 5:
-        coords = parts[1:5]
-    else:
-        return None
-    try:
-        x, y, w, h = [float(value) for value in coords]
-    except Exception:
-        return None
-    return f"{cls} {x:.6f} {y:.6f} {w:.6f} {h:.6f}"
-
-
-def manual_label_lines(annotation: dict[str, Any], names: list[str]) -> list[str]:
-    out = []
-    for label in annotation.get("labels") or []:
-        if not isinstance(label, dict):
-            continue
-        line = manual_label_line(label, names)
-        if line is not None:
-            out.append(line)
-    return out
-
-
-def load_manual_review_annotations(manual_root: Path, dataset_id: str) -> dict[str, dict[str, Any]]:
-    annotations: dict[str, dict[str, Any]] = {}
-    if not manual_root.exists():
-        return annotations
-    for path in manual_root.glob("*/*.json"):
-        payload = load_json(path, {})
-        if not isinstance(payload, dict) or str(payload.get("schema") or "") != "jgzj_yolo_manual_annotation.v1":
-            continue
-        if str(payload.get("dataset_id") or "") != dataset_id:
-            continue
-        if payload.get("deleted"):
-            continue
-        if str(payload.get("kind") or "detect") != "detect":
-            continue
-        verdict = normalize_name(payload.get("review_verdict") or "")
-        if verdict not in {"pass", "negative"}:
-            continue
-        item_key = normalize_rel(payload.get("item_key"))
-        if not item_key:
-            continue
-        payload = dict(payload)
-        payload["_annotation_path"] = str(path)
-        current = annotations.get(item_key)
-        if current is None or str(payload.get("updated_at") or "") >= str(current.get("updated_at") or ""):
-            annotations[item_key] = payload
-    return annotations
-
-
-def split_from_item_key(item_key: str) -> str:
-    parts = Path(normalize_rel(item_key)).parts
-    for idx, part in enumerate(parts[:-1]):
-        if part == "images" and idx + 1 < len(parts) - 1:
-            return parts[idx + 1]
-    return ""
-
-
-def collect_reviewed_dataset_records(
-    dataset_root: Path,
-    dataset_id: str,
-    names: list[str],
-    class_ids: list[int],
-    manual_root: Path,
-    source: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    annotations = load_manual_review_annotations(manual_root, dataset_id)
-    positives: list[dict[str, Any]] = []
-    negatives: list[dict[str, Any]] = []
-    target_ids = set(class_ids)
-    skipped_missing_image = 0
-    skipped_empty_pass = 0
-    for item_key, annotation in annotations.items():
-        image = Path(str(annotation.get("source_image_path") or ""))
-        if not image.exists():
-            image = (dataset_root / item_key).resolve()
-        if not image.exists() or image.suffix.lower() not in IMAGE_EXTS:
-            skipped_missing_image += 1
-            continue
-        verdict = normalize_name(annotation.get("review_verdict") or "")
-        label_lines = manual_label_lines(annotation, names) if verdict == "pass" else []
-        labels = parse_label_lines(label_lines)
-        if verdict == "pass" and not labels:
-            skipped_empty_pass += 1
-            continue
-        target_labels = [item for item in labels if item["cls"] in target_ids]
-        row = {
-            "image": image.resolve(),
-            "label": "",
-            "split": split_from_item_key(item_key),
-            "labels": labels,
-            "target_labels": target_labels,
-            "source": source,
-            "source_data_yaml": "",
-            "source_image": str(image.resolve()),
-            "meta": {
-                "dataset_id": dataset_id,
-                "item_key": item_key,
-                "review_verdict": verdict,
-                "annotation_path": annotation.get("_annotation_path") or "",
-            },
-            "label_mode": "override",
-            "label_lines": label_lines,
-        }
-        if target_labels:
-            positives.append(row)
-        else:
-            negatives.append(row)
-    summary = {
-        "dataset_id": dataset_id,
-        "manual_annotations": len(annotations),
-        "positive_images": len(positives),
-        "negative_images": len(negatives),
-        "skipped_missing_image": skipped_missing_image,
-        "skipped_empty_pass": skipped_empty_pass,
-    }
-    return positives, negatives, summary
-
-
-def build_dataset_pool_source(
-    *,
-    role: str,
-    value: str,
-    dataset_id: str,
-    reviewed_only: bool,
-    names: list[str],
-    class_ids: list[int],
-    manual_root: Path,
-    default_data: Path | None = None,
-) -> tuple[DatasetPoolSource, dict[str, Any]]:
-    dataset_root, data_yaml, derived_dataset_id = resolve_dataset_source_input(value, default_data)
-    effective_dataset_id = dataset_id or derived_dataset_id
-    label = dataset_label_for_data(data_yaml) if data_yaml else safe_path_token(effective_dataset_id, role)
-    if reviewed_only:
-        positives, negatives, review_summary = collect_reviewed_dataset_records(
-            dataset_root,
-            effective_dataset_id,
-            names,
-            class_ids,
-            manual_root,
-            source=f"{role}_manual_review",
-        )
-    elif data_yaml is not None:
-        positives, negatives = collect_dataset_records(data_yaml, class_ids, source=f"{role}_dataset")
-        review_summary = {"reviewed_only": False}
-    else:
-        positives, negatives, review_summary = collect_reviewed_dataset_records(
-            dataset_root,
-            effective_dataset_id,
-            names,
-            class_ids,
-            manual_root,
-            source=f"{role}_manual_review",
-        )
-    if not positives and not negatives:
-        raise SystemExit(f"dataset_pool_source_empty:{role}:{value or default_data}; dataset_id={effective_dataset_id}")
-    source = DatasetPoolSource(
-        role=role,
-        label=label,
-        data=data_yaml,
-        dataset_root=dataset_root,
-        dataset_id=effective_dataset_id,
-        positives=positives,
-        negatives=negatives,
-    )
-    summary = {
-        "role": role,
-        "input": value,
-        "label": label,
-        "dataset_root": str(dataset_root),
-        "data_yaml": str(data_yaml or ""),
-        "dataset_id": effective_dataset_id,
-        "reviewed_only": reviewed_only,
-        "positive_images": len(positives),
-        "negative_images": len(negatives),
-        "review": review_summary,
-    }
-    return source, summary
-
-
 def balanced_positive_order(rows: list[dict[str, Any]], class_ids: list[int], rng: random.Random) -> list[dict[str, Any]]:
     if len(class_ids) <= 1:
         out = rows[:]
@@ -1162,111 +888,7 @@ def select_original_samples(
         "original_normal_positive": args.original_normal_pos,
         "original_hard_positive": args.original_hard_pos,
         "original_normal_negative": args.original_normal_neg,
-        "original_hard_negative": args.original_hard_neg,
-    }
-    counts = {key: 0 for key in need}
-
-    pos_scan = min(len(positives), max(args.min_positive_scan, (args.original_normal_pos + args.original_hard_pos) * args.scan_multiplier))
-    neg_scan = min(len(negatives), max(args.min_negative_scan, (args.original_normal_neg + args.original_hard_neg) * args.scan_multiplier))
-
-    pos_rows = positives[:pos_scan]
-    neg_rows = negatives[:neg_scan]
-    log(f"original_scan positives={len(pos_rows)}/{len(positives)} negatives={len(neg_rows)}/{len(negatives)}")
-
-    pos_preds = predict_batch(model, [row["image"] for row in pos_rows], args)
-    for row in pos_rows:
-        score = score_positive(row, pos_preds.get(Path(row["image"]).resolve(), []), class_ids, args)
-        if score["bucket"] == "normal_positive" and counts["original_normal_positive"] < need["original_normal_positive"]:
-            if add_selected(selected, used, row, "normal_positive", "original_normal_positive", score):
-                counts["original_normal_positive"] += 1
-        elif score["bucket"] == "hard_positive" and counts["original_hard_positive"] < need["original_hard_positive"]:
-            if add_selected(selected, used, row, "hard_positive", "original_hard_positive", score):
-                counts["original_hard_positive"] += 1
-        if all(counts[key] >= need[key] for key in ("original_normal_positive", "original_hard_positive")):
-            break
-
-    neg_preds = predict_batch(model, [row["image"] for row in neg_rows], args)
-    for row in neg_rows:
-        score = score_negative(neg_preds.get(Path(row["image"]).resolve(), []), class_ids, args)
-        if score["bucket"] == "normal_negative" and counts["original_normal_negative"] < need["original_normal_negative"]:
-            if add_selected(selected, used, row, "normal_negative", "original_normal_negative", score):
-                counts["original_normal_negative"] += 1
-        elif score["bucket"] == "hard_negative" and counts["original_hard_negative"] < need["original_hard_negative"]:
-            if add_selected(selected, used, row, "hard_negative", "original_hard_negative", score):
-                counts["original_hard_negative"] += 1
-        if all(counts[key] >= need[key] for key in ("original_normal_negative", "original_hard_negative")):
-            break
-
-    fallback_fill_from_original(
-        selected=selected,
-        used=used,
-        positives=positives,
-        negatives=negatives,
-        counts=counts,
-        needs=need,
-        rng=rng,
-    )
-    return {"requested": need, "selected": counts, "scanned_positive": len(pos_rows), "scanned_negative": len(neg_rows)}
-
-
-def fallback_fill_from_original(
-    *,
-    selected: list[dict[str, Any]],
-    used: set[str],
-    positives: list[dict[str, Any]],
-    negatives: list[dict[str, Any]],
-    counts: dict[str, int],
-    needs: dict[str, int],
-    rng: random.Random,
-) -> None:
-    for key in ("original_normal_positive", "original_hard_positive"):
-        if counts.get(key, 0) >= needs.get(key, 0):
-            continue
-        category = "normal_positive" if key == "original_normal_positive" else "hard_positive"
-        rows = positives[:]
-        rng.shuffle(rows)
-        for row in rows:
-            if counts[key] >= needs[key]:
-                break
-            score = {"reason": "fallback_original", "target_conf": None, "max_iou": None}
-            if add_selected(selected, used, row, category, key, score):
-                counts[key] += 1
-    for key in ("original_normal_negative", "original_hard_negative"):
-        if counts.get(key, 0) >= needs.get(key, 0):
-            continue
-        category = "normal_negative" if key == "original_normal_negative" else "hard_negative"
-        rows = negatives[:]
-        rng.shuffle(rows)
-        for row in rows:
-            if counts[key] >= needs[key]:
-                break
-            score = {"reason": "fallback_original", "target_conf": None, "max_iou": None}
-            if add_selected(selected, used, row, category, key, score):
-                counts[key] += 1
-
-
-def cache_path(root: Path, image_sha: str | None) -> Path | None:
-    safe = "".join(ch for ch in str(image_sha or "").lower() if ch in "0123456789abcdef")
-    if not safe:
-        return None
-    return root / safe[:2] / f"{safe}.json"
-
-
-def hardlink_or_copy(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
-        dst.unlink()
-    try:
-        os.link(src, dst)
-    except OSError:
-        shutil.copy2(src, dst)
-
-
-def sidecar_json_paths(image: Path) -> list[Path]:
-    return [
-        image.with_suffix(image.suffix + ".json"),
-        image.with_suffix(".json"),
-        image.parent / f"{image.name}.json",
+        "original_hard_n  image.parent / f"{image.name}.json",
     ]
 
 
@@ -1275,167 +897,6 @@ def read_sidecar_json(image: Path) -> dict[str, Any]:
         if path.exists():
             return load_json(path, {})
     return {}
-
-
-def categorize_pool_source(
-    model: Any,
-    source: DatasetPoolSource,
-    class_ids: list[int],
-    args: argparse.Namespace,
-    rng: random.Random,
-) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
-    buckets = {key: [] for key in CATEGORY_ORDER}
-    positives = balanced_positive_order(source.positives, class_ids, rng)
-    negatives = source.negatives[:]
-    rng.shuffle(negatives)
-
-    pos_preds = predict_batch(model, [row["image"] for row in positives], args)
-    for row in positives:
-        image = Path(row["image"]).resolve()
-        score = score_positive(row, pos_preds.get(image, []), class_ids, args)
-        item = dict(row)
-        item["_score"] = score
-        buckets[score["bucket"]].append(item)
-
-    neg_preds = predict_batch(model, [row["image"] for row in negatives], args)
-    for row in negatives:
-        image = Path(row["image"]).resolve()
-        score = score_negative(neg_preds.get(image, []), class_ids, args)
-        item = dict(row)
-        item["_score"] = score
-        buckets[score["bucket"]].append(item)
-
-    for rows in buckets.values():
-        rng.shuffle(rows)
-    summary = {
-        "role": source.role,
-        "label": source.label,
-        "dataset_id": source.dataset_id,
-        "positive_images": len(source.positives),
-        "negative_images": len(source.negatives),
-        "category_counts": {key: len(buckets[key]) for key in CATEGORY_ORDER},
-    }
-    return buckets, summary
-
-
-def feasible_pool_targets(base_counts: dict[str, int], requested_total: int, availability: dict[str, int]) -> tuple[int, dict[str, int]]:
-    total = requested_total if requested_total > 0 else sum(max(0, int(base_counts.get(key, 0) or 0)) for key in CATEGORY_ORDER)
-    for candidate_total in range(total, 0, -1):
-        targets = allocate_category_targets(base_counts, candidate_total)
-        if all(targets.get(key, 0) <= availability.get(key, 0) for key in CATEGORY_ORDER):
-            return candidate_total, targets
-    raise SystemExit(f"dataset_pool_no_available_samples:availability={availability}")
-
-
-def select_pool_category(
-    *,
-    category: str,
-    requested: int,
-    source_buckets: list[tuple[DatasetPoolSource, dict[str, list[dict[str, Any]]]]],
-    selected: list[dict[str, Any]],
-    used: set[str],
-) -> dict[str, Any]:
-    remaining = requested
-    selected_by_source: dict[str, int] = {}
-    for source, buckets in source_buckets:
-        if remaining <= 0:
-            break
-        count = 0
-        for row in buckets.get(category, []):
-            if remaining <= 0:
-                break
-            score = row.get("_score") or {"reason": "dataset_pool"}
-            label_lines = row.get("label_lines")
-            label_mode = row.get("label_mode") or ("override" if label_lines is not None else "copy")
-            if add_selected(
-                selected,
-                used,
-                row,
-                category,
-                f"{source.role}_{category}",
-                score,
-                label_mode=label_mode,
-                label_lines=label_lines,
-            ):
-                count += 1
-                remaining -= 1
-        selected_by_source[source.role] = count
-    return {"requested": requested, "selected": requested - remaining, "shortfall": remaining, "selected_by_source": selected_by_source}
-
-
-def select_dataset_pool_samples(
-    model: Any,
-    class_ids: list[int],
-    names: list[str],
-    args: argparse.Namespace,
-    rng: random.Random,
-    selected: list[dict[str, Any]],
-    used: set[str],
-) -> dict[str, Any]:
-    if not str(args.primary_dataset or "").strip():
-        raise SystemExit("--primary-dataset is required when --target-total is used.")
-    primary, primary_summary = build_dataset_pool_source(
-        role="primary",
-        value=args.primary_dataset,
-        dataset_id=args.primary_dataset_id,
-        reviewed_only=args.pool_reviewed_only,
-        names=names,
-        class_ids=class_ids,
-        manual_root=args.manual_root,
-        default_data=None,
-    )
-    sources = [primary]
-    source_summaries = [primary_summary]
-    if str(args.secondary_dataset or "").strip():
-        secondary, secondary_summary = build_dataset_pool_source(
-            role="secondary",
-            value=args.secondary_dataset,
-            dataset_id=args.secondary_dataset_id,
-            reviewed_only=args.pool_reviewed_only,
-            names=names,
-            class_ids=class_ids,
-            manual_root=args.manual_root,
-            default_data=None,
-        )
-        sources.append(secondary)
-        source_summaries.append(secondary_summary)
-
-    source_buckets: list[tuple[DatasetPoolSource, dict[str, list[dict[str, Any]]]]] = []
-    bucket_summaries = []
-    availability = {key: 0 for key in CATEGORY_ORDER}
-    for source in sources:
-        buckets, bucket_summary = categorize_pool_source(model, source, class_ids, args, rng)
-        source_buckets.append((source, buckets))
-        bucket_summaries.append(bucket_summary)
-        for key in CATEGORY_ORDER:
-            availability[key] += len(buckets[key])
-
-    base_counts = sample_ratio_base_counts(args)
-    actual_total, category_targets = feasible_pool_targets(base_counts, int(args.target_total or 0), availability)
-    selection = {
-        category: select_pool_category(
-            category=category,
-            requested=category_targets.get(category, 0),
-            source_buckets=source_buckets,
-            selected=selected,
-            used=used,
-        )
-        for category in CATEGORY_ORDER
-    }
-    selected_total = sum(int(item.get("selected") or 0) for item in selection.values())
-    if selected_total != actual_total:
-        raise SystemExit(f"dataset_pool_selection_shortfall:selected={selected_total}; expected={actual_total}; selection={selection}")
-    return {
-        "requested_total": int(args.target_total or 0),
-        "actual_total": actual_total,
-        "lowered_total": actual_total != int(args.target_total or 0),
-        "base_counts": base_counts,
-        "category_targets": category_targets,
-        "availability": availability,
-        "sources": source_summaries,
-        "source_categories": bucket_summaries,
-        "selection": selection,
-    }
 
 
 def snapshot_qwen_no_candidate(image: Path, meta: dict[str, Any], run_dir: Path | None) -> Path | None:
@@ -2303,13 +1764,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--qwen-no-hard-neg", type=int, default=100)
     parser.add_argument("--web-hard-neg", type=int, default=100)
     parser.add_argument("--feedback-hard-pos", type=int, default=150)
-    parser.add_argument("--target-total", type=int, default=0, help="Total samples to build from dataset-pool mode.")
-    parser.add_argument("--primary-dataset", "--preferred-dataset", dest="primary_dataset", default="", help="First dataset source. Alias values like loop:finetune_v2 are supported.")
-    parser.add_argument("--secondary-dataset", "--supplemental-dataset", dest="secondary_dataset", default="", help="Second dataset source used to refill category shortfalls.")
-    parser.add_argument("--primary-dataset-id", default="", help="Manual-review dataset_id override for the first dataset source.")
-    parser.add_argument("--secondary-dataset-id", default="", help="Manual-review dataset_id override for the second dataset source.")
-    parser.add_argument("--pool-reviewed-only", action="store_true", help="Use only pass/negative human-reviewed manual annotations from pool datasets.")
-    parser.add_argument("--manual-root", type=Path, default=RUNTIME_ROOT / "yolo_label_review" / "manual_annotations_v1")
 
     parser.add_argument("--qwen-no-root", type=Path, default=QWEN_NO_ROOT)
     parser.add_argument("--web-fire-smoke-dataset", type=Path, default=WEB_FIRE_SMOKE_DATASET)
@@ -2382,8 +1836,6 @@ def main() -> None:
         raise SystemExit("--pull-retries must be >= 1.")
     if args.external_hard_neg < 0:
         raise SystemExit("--external-hard-neg must be >= 0.")
-    if args.target_total < 0:
-        raise SystemExit("--target-total must be >= 0.")
 
     model_info = resolve_model(args.model)
     if model_info.task != "detect":
@@ -2420,69 +1872,49 @@ def main() -> None:
         "external_hard_neg": args.external_hard_neg,
         "qwen_no_hard_neg": args.qwen_no_hard_neg,
         "web_hard_neg": args.web_hard_neg,
-        "dataset_pool_mode": dataset_pool_mode(args),
-        "target_total": args.target_total,
-        "primary_dataset": args.primary_dataset,
-        "secondary_dataset": args.secondary_dataset,
-        "pool_reviewed_only": args.pool_reviewed_only,
-        "manual_root": str(args.manual_root),
     }
     write_json(run_dir / "resolved_model.json", resolved)
     print(json.dumps(resolved, ensure_ascii=False, indent=2), flush=True)
     if args.resolve_only:
         return
 
+    positives, negatives = collect_dataset_records(model_info.data, class_ids)
+    availability = {
+        "original_positive_images": len(positives),
+        "original_negative_images": len(negatives),
+    }
+    write_json(run_dir / "availability.json", availability)
+    if args.dry_run:
+        print(json.dumps({"resolved": resolved, "availability": availability}, ensure_ascii=False, indent=2), flush=True)
+        return
+
     rng = random.Random(args.seed)
+    model = load_yolo(model_info.weight)
     selected: list[dict[str, Any]] = []
     used: set[str] = set()
-    pool_summary: dict[str, Any] = {"skipped": True}
-    model = load_yolo(model_info.weight)
 
-    if dataset_pool_mode(args):
-        pool_summary = select_dataset_pool_samples(model, class_ids, names, args, rng, selected, used)
-        availability = {
-            "dataset_pool": pool_summary["availability"],
-            "selected_samples": len(selected),
-        }
-        original_summary = {"skipped": True, "reason": "dataset_pool_mode"}
-        feedback_summary = {"skipped": True, "reason": "dataset_pool_mode"}
-        external_negative_summary = {"skipped": True, "reason": "dataset_pool_mode"}
-        fallback_summary = {"skipped": True, "reason": "dataset_pool_mode"}
-    else:
-        positives, negatives = collect_dataset_records(model_info.data, class_ids)
-        availability = {
-            "original_positive_images": len(positives),
-            "original_negative_images": len(negatives),
-        }
-        if args.dry_run:
-            write_json(run_dir / "availability.json", availability)
-            print(json.dumps({"resolved": resolved, "availability": availability}, ensure_ascii=False, indent=2), flush=True)
-            return
-
-        original_summary = select_original_samples(model, positives, negatives, class_ids, args, rng, selected, used)
-        feedback_summary = select_feedback_hard_positives(model, class_ids, target_names, qwen_targets, args, rng, selected, used)
-        external_negative_summary = select_external_hard_negatives(
-            model,
-            class_ids,
-            target_names,
-            qwen_targets,
-            args,
-            rng,
-            selected,
-            used,
-            run_dir=run_dir,
-        )
-        fallback_summary = fill_external_shortfall_from_original(
-            selected=selected,
-            used=used,
-            positives=positives,
-            negatives=negatives,
-            feedback_summary=feedback_summary,
-            external_negative_summary=external_negative_summary,
-            rng=rng,
-        )
-
-    write_json(run_dir / "availability.json", availability)
+    original_summary = select_original_samples(model, positives, negatives, class_ids, args, rng, selected, used)
+    feedback_summary = select_feedback_hard_positives(model, class_ids, target_names, qwen_targets, args, rng, selected, used)
+    external_negative_summary = select_external_hard_negatives(
+        model,
+        class_ids,
+        target_names,
+        qwen_targets,
+        args,
+        rng,
+        selected,
+        used,
+        run_dir=run_dir,
+    )
+    fallback_summary = fill_external_shortfall_from_original(
+        selected=selected,
+        used=used,
+        positives=positives,
+        negatives=negatives,
+        feedback_summary=feedback_summary,
+        external_negative_summary=external_negative_summary,
+        rng=rng,
+    )
 
     dataset_dir = FINETUNE_RUNTIME / "datasets" / run_tag / f"{model_info.task_id}_c{class_token}_{normalize_name(target_name)}_finetune"
     dataset_summary = write_dataset(selected, model_info.data, dataset_dir, args, rng)
@@ -2508,10 +1940,8 @@ def main() -> None:
             "external_hard_negative": args.external_hard_neg,
             "qwen_no_hard_negative": args.qwen_no_hard_neg,
             "web_qwen_hard_negative": args.web_hard_neg,
-            "target_total": args.target_total,
         },
         "selection": {
-            "dataset_pool": pool_summary,
             "original": original_summary,
             "feedback_hard_positive": feedback_summary,
             "external_hard_negative": external_negative_summary,

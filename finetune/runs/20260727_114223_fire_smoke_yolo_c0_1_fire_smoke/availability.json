@@ -1,0 +1,9 @@
+{
+  "dataset_pool": {
+    "normal_positive": 75,
+    "hard_positive": 236,
+    "normal_negative": 219,
+    "hard_negative": 44
+  },
+  "selected_samples": 151
+}
