@@ -212,7 +212,7 @@
     { value: "", label: "全部来源" },
     { value: "vehicle_collection", label: "车辆自采" },
     { value: "web_crawler", label: "网络搜索数据集" },
-    { value: "finetune_dataset", label: "二次整合数据集" },
+    { value: "finetune_dataset", label: "Finetune训练集" },
     { value: "checker_archive", label: "云端校核" },
     { value: "public_dataset", label: "公开数据集" }
   ];

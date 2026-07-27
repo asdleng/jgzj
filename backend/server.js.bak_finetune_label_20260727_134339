@@ -3164,7 +3164,7 @@ function yoloReviewSourceLabel(sourceType) {
     return '网络搜索数据集';
   }
   if (sourceType === 'finetune_dataset') {
-    return '二次整合数据集';
+    return 'Finetune训练集';
   }
   if (sourceType === 'public_dataset') {
     return '公开数据集';
@@ -10262,7 +10262,7 @@ async function readLidarRelocPcdPreviewPoints(pcdPath, options = {}) {
       const firstOffset = (sampleStride - (recordStart % sampleStride)) % sampleStride;
       for (let recordIndex = firstOffset; recordIndex < recordsRead; recordIndex += sampleStride) {
         const recordOffset = recordIndex * header.pointStride;
-        const x = readLidarRelocPcdField(chunk, recofset, xField);
+        const x = readLidarRelocPcdField(chunk, recordOffset, xField);
         const y = readLidarRelocPcdField(chunk, recordOffset, yField);
         const z = zField ? readLidarRelocPcdField(chunk, recordOffset, zField) : 0;
         inspected += 1;
