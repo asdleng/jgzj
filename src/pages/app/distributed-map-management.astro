@@ -80,48 +80,50 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
             </article>
           </div>
 
-          <section class="map-upload-panel" aria-labelledby="map-upload-title">
-            <div class="map-upload-head">
-              <div>
-                <p class="map-upload-kicker">MAP PACKAGE</p>
-                <h3 id="map-upload-title">服务器与车辆地图包</h3>
-              </div>
-              <p id="map-upload-status" class="map-upload-status" data-state="idle">等待选择 PCD 和 config.yaml</p>
-            </div>
+          <details class="map-upload-panel">
+            <summary class="map-upload-summary">
+              <span>
+                <small class="map-upload-kicker">MAP PACKAGE</small>
+                <strong id="map-upload-title">上传地图与同步</strong>
+              </span>
+              <span id="map-upload-status" class="map-upload-status" data-state="idle">等待选择 PCD 和 config.yaml</span>
+            </summary>
 
-            <div class="map-upload-files">
-              <div class="map-upload-file">
-                <span class="map-upload-file-type">PCD</span>
-                <span id="map-upload-pcd-name" class="map-upload-file-name">未选择地图点云</span>
-                <button id="map-upload-pcd-select" class="map-editor-button" type="button">选择地图</button>
-                <input id="map-upload-pcd-input" type="file" accept=".pcd" hidden />
+            <div class="map-upload-body">
+              <div class="map-upload-files">
+                <div class="map-upload-file">
+                  <span class="map-upload-file-type">PCD</span>
+                  <span id="map-upload-pcd-name" class="map-upload-file-name">未选择地图点云</span>
+                  <button id="map-upload-pcd-select" class="map-editor-button" type="button">选择地图</button>
+                  <input id="map-upload-pcd-input" type="file" accept=".pcd" hidden />
+                </div>
+                <div class="map-upload-file">
+                  <span class="map-upload-file-type">YAML</span>
+                  <span id="map-upload-config-name" class="map-upload-file-name">未选择 config.yaml</span>
+                  <button id="map-upload-config-select" class="map-editor-button" type="button">选择配置</button>
+                  <input id="map-upload-config-input" type="file" accept=".yaml" hidden />
+                </div>
               </div>
-              <div class="map-upload-file">
-                <span class="map-upload-file-type">YAML</span>
-                <span id="map-upload-config-name" class="map-upload-file-name">未选择 config.yaml</span>
-                <button id="map-upload-config-select" class="map-editor-button" type="button">选择配置</button>
-                <input id="map-upload-config-input" type="file" accept=".yaml" hidden />
+
+              <div class="map-upload-progress-shell">
+                <progress id="map-upload-progress" class="map-upload-progress" max="100" value="0"></progress>
+                <span id="map-upload-progress-label">0%</span>
+              </div>
+
+              <div class="map-upload-actions">
+                <button id="map-upload-start" class="map-editor-button map-editor-button--primary" type="button" disabled>
+                  上传地图
+                </button>
+                <button id="map-upload-sync" class="map-editor-button" type="button" disabled>
+                  同步到服务器和车辆
+                </button>
+                <button id="map-upload-cancel" class="map-editor-button map-editor-button--danger" type="button" disabled>
+                  取消上传
+                </button>
+                <p id="map-upload-meta" class="map-upload-meta">尚无已校验地图包</p>
               </div>
             </div>
-
-            <div class="map-upload-progress-shell">
-              <progress id="map-upload-progress" class="map-upload-progress" max="100" value="0"></progress>
-              <span id="map-upload-progress-label">0%</span>
-            </div>
-
-            <div class="map-upload-actions">
-              <button id="map-upload-start" class="map-editor-button map-editor-button--primary" type="button" disabled>
-                上传地图
-              </button>
-              <button id="map-upload-sync" class="map-editor-button" type="button" disabled>
-                同步到服务器和车辆
-              </button>
-              <button id="map-upload-cancel" class="map-editor-button map-editor-button--danger" type="button" disabled>
-                取消上传
-              </button>
-              <p id="map-upload-meta" class="map-upload-meta">尚无已校验地图包</p>
-            </div>
-          </section>
+          </details>
 
           <div id="map-editor-frame-shell" class="map-editor-frame-shell" data-state="empty">
             <div id="map-editor-placeholder" class="map-editor-placeholder">
@@ -814,29 +816,58 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
 
   html.is-map-embed,
   html.is-map-embed body {
+    width: 100%;
+    height: 100%;
     min-height: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
     background: #020617;
   }
 
   html.is-map-embed .distributed-map-content-main {
+    height: 100%;
     min-height: 0;
     padding: 0 !important;
+    overflow: hidden;
     background-color: #020617;
   }
 
   html.is-map-embed .distributed-map-content-main .map-editor-page-section {
     width: 100%;
+    height: 100%;
+    min-height: 0;
     max-width: none;
     margin: 0;
     padding: 0;
   }
 
   html.is-map-embed .distributed-map-content-main .section-card {
-    padding: clamp(14px, 2vw, 24px);
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    padding: 8px;
     border: 0;
     border-radius: 0;
     background: #07101f;
     box-shadow: none;
+  }
+
+  html.is-map-embed .distributed-map-content-main .section-card > .section-kicker,
+  html.is-map-embed .distributed-map-content-main .section-card > .section-title,
+  html.is-map-embed .distributed-map-content-main .section-card > .section-copy,
+  html.is-map-embed .map-editor-info-grid {
+    display: none;
+  }
+
+  html.is-map-embed .map-editor-console {
+    min-height: 0;
+    height: 100%;
+    margin: 0;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 8px;
+    overflow: hidden;
   }
 
   html.is-map-embed .map-editor-field,
@@ -845,18 +876,44 @@ const isEmbedded = Astro.url.searchParams.get("embed") === "1";
   }
 
   html.is-map-embed .map-editor-toolbar {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(3, auto) minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+    padding: 8px;
+    border-radius: 8px;
+  }
+
+  html.is-map-embed .map-editor-toolbar .map-editor-button {
+    width: auto;
+    min-height: 36px;
+    padding: 0 12px;
   }
 
   html.is-map-embed .map-editor-inline-status {
-    grid-column: 1 / -1;
-    justify-self: start;
+    grid-column: auto;
+    min-width: 0;
+    justify-self: stretch;
     text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  html.is-map-embed .map-upload-panel {
+    flex: 0 0 auto;
+  }
+
+  html.is-map-embed .map-editor-frame-shell,
+  html.is-map-embed .map-editor-frame,
+  html.is-map-embed .map-editor-placeholder {
+    min-height: 0;
+    height: 100%;
+    border-radius: 8px;
   }
 
   @media (max-width: 720px) {
     html.is-map-embed .distributed-map-content-main .section-card {
-      padding: 12px;
+      padding: 6px;
     }
 
     html.is-map-embed .map-editor-toolbar {

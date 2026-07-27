@@ -211,7 +211,7 @@
   position: relative;
   min-height: clamp(720px, 86vh, 1120px);
   overflow: hidden;
-  border-radius: 22px;
+  border-radius: 8px;
   border: 1px solid rgba(71, 85, 105, 0.62);
   background:
     radial-gradient(circle at 16% 16%, rgba(34, 211, 238, 0.12), transparent 30%),
@@ -270,12 +270,57 @@
 }
 
 .map-upload-panel {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
+  display: block;
+  padding: 0;
   border: 1px solid rgba(71, 85, 105, 0.58);
-  border-radius: 16px;
+  border-radius: 8px;
   background: rgba(15, 23, 42, 0.66);
+  overflow: hidden;
+}
+
+.map-upload-summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.map-upload-summary::-webkit-details-marker {
+  display: none;
+}
+
+.map-upload-summary > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.map-upload-summary strong {
+  color: #f8fafc;
+  font-size: 0.88rem;
+}
+
+.map-upload-summary::after {
+  content: "+";
+  flex: 0 0 auto;
+  color: #67e8f9;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.map-upload-panel[open] .map-upload-summary::after {
+  content: "−";
+}
+
+.map-upload-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border-top: 1px solid rgba(71, 85, 105, 0.5);
 }
 
 .map-upload-head,
@@ -12176,4 +12221,95 @@ body.yolo-review-is-panning {
   .cloud-ops-map-page-actions > * { flex: 1; }
   .cloud-ops-map-embed-shell,
   .cloud-ops-map-embed-frame { min-height: 920px; }
+}
+
+/* Keep map management pinned to one viewport so wheel input belongs to the pointcloud editor. */
+@supports selector(body:has(#cloud-ops-test-map[data-active="true"])) {
+  html:has(#cloud-ops-test-map[data-active="true"]),
+  body:has(#cloud-ops-test-map[data-active="true"]) {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-main {
+    height: calc(100dvh - 68px);
+    min-height: 0;
+    padding-top: 46px !important;
+    padding-bottom: 8px !important;
+    overflow: hidden;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-section,
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-shell,
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-layout,
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-pages,
+  body:has(#cloud-ops-test-map[data-active="true"]) #cloud-ops-test-map {
+    min-height: 0;
+    height: 100%;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-section {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-shell {
+    display: block;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-topbar {
+    display: none;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-layout {
+    align-items: stretch;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-vehicle-picker-rail--global,
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-tabs {
+    position: static;
+    top: auto;
+    height: 100%;
+    max-height: none;
+    overflow: hidden;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-vehicle-picker-list,
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-tabs {
+    overscroll-behavior: contain;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-vehicle-picker-list {
+    overflow-y: auto;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-test-tabs {
+    align-content: start;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) #cloud-ops-test-map {
+    grid-template-rows: auto minmax(0, 1fr);
+    border-radius: 8px;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-map-page-head {
+    min-height: 56px;
+    padding: 8px 12px;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-map-page-head h2 {
+    font-size: 1.25rem;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-map-page-head .cloud-ops-test-kicker {
+    font-size: 0.66rem;
+  }
+
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-map-embed-shell,
+  body:has(#cloud-ops-test-map[data-active="true"]) .cloud-ops-map-embed-frame {
+    min-height: 0 !important;
+    height: 100% !important;
+    overflow: hidden;
+  }
 }
