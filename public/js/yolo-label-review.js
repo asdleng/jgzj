@@ -25,8 +25,10 @@
     qwenAudit: document.getElementById("yolo-review-qwen-audit"),
     hasBox: document.getElementById("yolo-review-has-box"),
     query: document.getElementById("yolo-review-query"),
-    eventStatus: document.getElementById("yolo-review-event-status"),
-    eventButtons: Array.from(document.querySelectorAll("[data-yolo-review-event]")),
+    eventSelect: document.getElementById("yolo-review-event-select"),
+    eventWrap: document.getElementById("yolo-review-event-wrap"),
+    datasetWrap: document.getElementById("yolo-review-dataset-wrap"),
+    sourceStatus: document.getElementById("yolo-review-source-status"),
     datasetStatus: document.getElementById("yolo-review-dataset-status"),
     sourceCards: document.getElementById("yolo-review-source-cards"),
     dailyStats: document.getElementById("yolo-review-daily-stats"),
@@ -1350,7 +1352,9 @@
   }
 
   function markCustomEventFilter() {
-    updateEventButtons();
+    if (refs.eventSelect) {
+      refs.eventSelect.value = state.activeEvent;
+    }
   }
 
   function applyReviewEvent(eventKey) {

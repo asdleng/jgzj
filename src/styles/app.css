@@ -5947,6 +5947,91 @@
   white-space: nowrap;
 }
 
+
+.yolo-review-source-strip {
+  display: grid;
+  gap: 10px;
+  padding: 12px 0 8px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.38);
+}
+
+.yolo-review-source-strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.yolo-review-source-strip-title {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 0.92rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.yolo-review-source-status {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.yolo-review-dataset-wrap {
+  display: grid;
+  gap: 10px;
+  padding: 10px 0 8px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.38);
+}
+
+.yolo-review-event-wrap {
+  display: grid;
+  gap: 8px;
+  padding: 10px 0 4px;
+}
+
+.yolo-review-event-area-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.yolo-review-event-area-title {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 0.88rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.yolo-review-event-select {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 10px;
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  background: rgba(2, 6, 23, 0.78) url("data:image/svg+xml,%3Csvg xmlns=http://www.w3.org/2000/svg width=14 height=9 viewBox=0 0 14 9%3E%3Cpath d=M1 1l6 6 6-6 stroke=%2394a3b8 stroke-width=1.8 fill=none stroke-linecap=round stroke-linejoin=round/%3E%3C/svg%3E") no-repeat right 12px center;
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0 36px 0 14px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: border-color 0.18s ease;
+}
+
+.yolo-review-event-select:focus {
+  border-color: rgba(45, 212, 191, 0.72);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
+  outline: none;
+}
+
+.yolo-review-event-select option {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
 .yolo-review-toolbar {
   display: none;
 }
