@@ -1,0 +1,79 @@
+{
+  "api_url": "https://api.openverse.org/v1/images/",
+  "page_size": 20,
+  "licenses": [
+    "cc0",
+    "pdm",
+    "by",
+    "by-sa"
+  ],
+  "exclude_title_regex": "\\b(?:illustration|drawing|painting|poster|logo|trash can only|bin only|recycling symbol)\\b",
+  "queries": [
+    {
+      "bucket": "trash_positive_openverse_litter",
+      "query": "trash litter sidewalk street",
+      "limit": 240,
+      "max_accept": 85
+    },
+    {
+      "bucket": "trash_positive_openverse_bottle",
+      "query": "plastic bottle litter ground",
+      "limit": 220,
+      "max_accept": 80
+    },
+    {
+      "bucket": "trash_positive_openverse_paper",
+      "query": "paper litter street ground",
+      "limit": 220,
+      "max_accept": 80
+    },
+    {
+      "bucket": "trash_positive_openverse_bag",
+      "query": "plastic bag litter roadside",
+      "limit": 220,
+      "max_accept": 80
+    },
+    {
+      "bucket": "trash_positive_openverse_box",
+      "query": "cardboard box discarded sidewalk",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "trash_positive_openverse_park_litter",
+      "query": "litter park ground bottle paper",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "trash_positive_openverse_roadside",
+      "query": "roadside litter plastic bag bottle",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "hard_negative_trash_openverse_container",
+      "query": "waste container street closed",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_trash_openverse_leaf",
+      "query": "fallen leaves sidewalk",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_trash_openverse_road_marking",
+      "query": "road arrow marking ground",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_trash_openverse_cone",
+      "query": "traffic cone roadside ground",
+      "limit": 150,
+      "max_accept": 30
+    }
+  ]
+}

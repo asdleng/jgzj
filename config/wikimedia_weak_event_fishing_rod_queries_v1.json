@@ -6,50 +6,90 @@
     {
       "bucket": "fishing_rod_positive_category",
       "category": "Fishing rods",
-      "limit": 507,
-      "max_accept": 169
+      "limit": 760,
+      "max_accept": 254,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "fishing_rod_positive_pier",
       "query": "angler fishing rod pier",
-      "limit": 423,
-      "max_accept": 141
+      "limit": 634,
+      "max_accept": 212
     },
     {
       "bucket": "fishing_rod_positive_waterfront",
       "query": "person fishing rod waterfront",
-      "limit": 423,
-      "max_accept": 141
+      "limit": 634,
+      "max_accept": 212
     },
     {
       "bucket": "fishing_rod_positive_in_use",
       "query": "fishing rod in use",
-      "limit": 339,
-      "max_accept": 113
+      "limit": 508,
+      "max_accept": 170
     },
     {
       "bucket": "hard_negative_fishing_rod_walking_stick",
       "category": "Walking sticks",
-      "limit": 204,
-      "max_accept": 68
+      "limit": 306,
+      "max_accept": 102,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "hard_negative_fishing_rod_trekking_pole",
       "query": "trekking pole person outdoors",
-      "limit": 168,
-      "max_accept": 56
+      "limit": 252,
+      "max_accept": 84
     },
     {
       "bucket": "hard_negative_fishing_rod_umbrella",
       "query": "umbrella person waterfront",
-      "limit": 168,
-      "max_accept": 56
+      "limit": 252,
+      "max_accept": 84
     },
     {
       "bucket": "hard_negative_fishing_rod_railing",
       "query": "metal railing waterfront",
-      "limit": 168,
-      "max_accept": 56
+      "limit": 252,
+      "max_accept": 84
+    },
+    {
+      "bucket": "fishing_rod_positive_river_bank",
+      "query": "shore fishing rod angler river bank",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "fishing_rod_positive_sea_pier",
+      "query": "sea fishing rod angler pier beach",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "fishing_rod_positive_lake_person",
+      "query": "person holding fishing rod lake",
+      "limit": 260,
+      "max_accept": 70
+    },
+    {
+      "bucket": "fishing_rod_positive_boat",
+      "query": "fishing rod boat angler",
+      "limit": 240,
+      "max_accept": 60
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_camera_tripod",
+      "query": "camera tripod waterfront person",
+      "limit": 200,
+      "max_accept": 40
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_flagpole",
+      "query": "flag pole waterfront person",
+      "limit": 180,
+      "max_accept": 35
     }
   ]
 }

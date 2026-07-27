@@ -1236,7 +1236,11 @@ const yoloPatrolClasses = [
   'smoking',
   'vehicle',
   'nonmotor',
-  'trash'
+  'trash',
+  'license_plate',
+  'lying',
+  'fighting',
+  'falldown'
 ];
 const vehicleQwenLabelClasses = [
   'person',
@@ -1248,7 +1252,11 @@ const vehicleQwenLabelClasses = [
   'phone',
   'smoking',
   'vehicle',
-  'nonmotor'
+  'nonmotor',
+  'license_plate',
+  'lying',
+  'fighting',
+  'falldown'
 ];
 const vehicleQwenFilterOptions = [
   ...vehicleQwenLabelClasses.map((value) => ({ value, label: value })),

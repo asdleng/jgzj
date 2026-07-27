@@ -1,0 +1,8 @@
+path: /home/admin1/jgzj/.runtime/finetune/datasets/20260727_155000_fire_smoke_full_review_full20/fire_smoke_yolo_c0_1_fire_smoke_full_review_finetune
+train: images/train
+val: images/val
+test: images/test
+names:
+- fire
+- smoke
+nc: 2

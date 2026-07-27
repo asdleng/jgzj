@@ -42,6 +42,10 @@ CLASSES = (
     "stall",
     "phone",
     "smoking",
+    "license_plate",
+    "lying",
+    "fighting",
+    "falldown",
 )
 CLASS_IDS = {name: idx for idx, name in enumerate(CLASSES)}
 BLOCKED_QUALITIES = {"bad", "blocked"}
@@ -58,9 +62,9 @@ STATUS_PRIORITY = {
 EVENT_CLASS_MAP = {
     "person": "person",
     "crowdincidents": "person",
-    "falldown": "person",
-    "fighting": "person",
-    "lying": "person",
+    "falldown": "falldown",
+    "fighting": "fighting",
+    "lying": "lying",
     "lawn": "person",
     "linger": "person",
     "car": "vehicle",
@@ -86,6 +90,10 @@ EVENT_CLASS_MAP = {
     "phone": "phone",
     "smoking": "smoking",
     "cigarette": "smoking",
+    "licenseplate": "license_plate",
+    "numberplate": "license_plate",
+    "vehicleplate": "license_plate",
+    "plate": "license_plate",
 }
 
 
@@ -196,7 +204,15 @@ def normalize_labels(payload: dict | None) -> list[dict]:
     for raw in labels if isinstance(labels, list) else []:
         if not isinstance(raw, dict):
             continue
-        class_name = str(raw.get("class_name") or raw.get("class") or "").strip().lower()
+        class_name = str(raw.get("class_name") or raw.get("class") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if class_name in {"licence_plate", "licenseplate", "licenceplate", "number_plate", "vehicle_plate", "car_plate", "plate"}:
+            class_name = "license_plate"
+        if class_name in {"person_lying", "lying_person", "reclining_person", "horizontal_person"}:
+            class_name = "lying"
+        if class_name in {"fight", "physical_fight", "people_fighting", "person_fighting"}:
+            class_name = "fighting"
+        if class_name in {"fall_down", "fallen_person", "person_fallen", "collapsed_person"}:
+            class_name = "falldown"
         if class_name not in CLASS_IDS:
             continue
         box = normalize_box(raw)

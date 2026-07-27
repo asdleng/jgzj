@@ -1,0 +1,45 @@
+{
+  "api_url": "https://commons.wikimedia.org/w/api.php",
+  "download_width": 1600,
+  "exclude_title_regex": "\\b(?:painting|drawing|illustration|poster|pamphlet|map|diagram|logo|collage|screenshot|video|film|festival)\\b|Bundesarchiv|LCCN|NYPL",
+  "queries": [
+    {"bucket": "fishing_rod_positive_category", "category": "Fishing rods", "limit": 45, "max_accept": 30},
+    {"bucket": "fishing_rod_positive_pier", "query": "angler fishing rod pier", "limit": 45, "max_accept": 25},
+    {"bucket": "fishing_rod_positive_waterfront", "query": "person fishing rod waterfront", "limit": 45, "max_accept": 25},
+    {"bucket": "fishing_rod_positive_in_use", "query": "fishing rod in use", "limit": 35, "max_accept": 20},
+    {"bucket": "hard_negative_fishing_rod_walking_stick", "category": "Walking sticks", "limit": 25, "max_accept": 12},
+    {"bucket": "hard_negative_fishing_rod_trekking_pole", "query": "trekking pole person outdoors", "limit": 20, "max_accept": 10},
+    {"bucket": "hard_negative_fishing_rod_umbrella", "query": "umbrella person waterfront", "limit": 20, "max_accept": 10},
+    {"bucket": "hard_negative_fishing_rod_railing", "query": "metal railing waterfront", "limit": 20, "max_accept": 10},
+
+    {"bucket": "stall_positive_market", "category": "Market stalls", "limit": 50, "max_accept": 30},
+    {"bucket": "stall_positive_vendor", "category": "Street vendors", "limit": 45, "max_accept": 25},
+    {"bucket": "stall_positive_food_cart", "category": "Food carts", "limit": 40, "max_accept": 20},
+    {"bucket": "stall_positive_temporary", "query": "temporary street vendor stall", "limit": 40, "max_accept": 20},
+    {"bucket": "hard_negative_stall_vending", "category": "Vending machines", "limit": 25, "max_accept": 12},
+    {"bucket": "hard_negative_stall_kiosk", "query": "fixed kiosk street", "limit": 25, "max_accept": 12},
+    {"bucket": "hard_negative_stall_checkpoint", "query": "security checkpoint tent", "limit": 20, "max_accept": 10},
+    {"bucket": "hard_negative_stall_shelter", "query": "bus shelter street", "limit": 20, "max_accept": 10},
+
+    {"bucket": "pet_domain_positive_dog_park", "category": "Dogs in parks", "limit": 30, "max_accept": 18},
+    {"bucket": "pet_domain_positive_cat_outdoor", "category": "Cats outdoors", "limit": 30, "max_accept": 18},
+    {"bucket": "pet_domain_positive_small_dog", "query": "small dog distant park", "limit": 25, "max_accept": 14},
+    {"bucket": "pet_domain_positive_stray_cat", "query": "stray cat street", "limit": 25, "max_accept": 14},
+    {"bucket": "pet_domain_positive_stray_dog", "query": "stray dog street surveillance", "limit": 25, "max_accept": 14},
+    {"bucket": "hard_negative_pet_sculpture", "category": "Animal sculptures", "limit": 25, "max_accept": 12},
+    {"bucket": "hard_negative_pet_dog_statue", "query": "dog statue park", "limit": 20, "max_accept": 10},
+    {"bucket": "hard_negative_pet_cat_statue", "query": "cat statue outdoors", "limit": 20, "max_accept": 10},
+    {"bucket": "hard_negative_pet_plush", "query": "plush dog toy outdoors", "limit": 15, "max_accept": 8},
+
+    {"bucket": "trash_positive_litter", "category": "Litter", "limit": 45, "max_accept": 25},
+    {"bucket": "trash_positive_paper", "query": "discarded paper litter ground", "limit": 35, "max_accept": 20},
+    {"bucket": "trash_positive_bag", "query": "discarded plastic bag street", "limit": 35, "max_accept": 20},
+    {"bucket": "trash_positive_bottle", "query": "discarded bottle park", "limit": 35, "max_accept": 20},
+    {"bucket": "trash_positive_box", "query": "discarded cardboard box street", "limit": 35, "max_accept": 20},
+    {"bucket": "hard_negative_trash_container", "category": "Waste containers", "limit": 25, "max_accept": 12},
+    {"bucket": "hard_negative_trash_storage_box", "query": "stacked cardboard boxes storage", "limit": 25, "max_accept": 12},
+    {"bucket": "hard_negative_trash_utility_box", "query": "utility box roadside", "limit": 20, "max_accept": 10},
+    {"bucket": "hard_negative_trash_road_marking", "query": "road arrow marking", "limit": 20, "max_accept": 10},
+    {"bucket": "hard_negative_trash_sign", "query": "traffic sign roadside", "limit": 20, "max_accept": 10}
+  ]
+}

@@ -6,56 +6,104 @@
     {
       "bucket": "pet_domain_positive_dog_park",
       "category": "Dogs in parks",
-      "limit": 366,
-      "max_accept": 122
+      "limit": 549,
+      "max_accept": 183,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "pet_domain_positive_cat_outdoor",
       "category": "Cats outdoors",
-      "limit": 366,
-      "max_accept": 122
+      "limit": 549,
+      "max_accept": 183,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "pet_domain_positive_small_dog",
       "query": "small dog distant park",
-      "limit": 285,
-      "max_accept": 95
+      "limit": 428,
+      "max_accept": 142
     },
     {
       "bucket": "pet_domain_positive_stray_cat",
       "query": "stray cat street",
-      "limit": 285,
-      "max_accept": 95
+      "limit": 428,
+      "max_accept": 142
     },
     {
       "bucket": "pet_domain_positive_stray_dog",
       "query": "stray dog street surveillance",
-      "limit": 285,
-      "max_accept": 95
+      "limit": 428,
+      "max_accept": 142
     },
     {
       "bucket": "hard_negative_pet_sculpture",
       "category": "Animal sculptures",
-      "limit": 243,
-      "max_accept": 81
+      "limit": 364,
+      "max_accept": 122,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "hard_negative_pet_dog_statue",
       "query": "dog statue park",
-      "limit": 204,
-      "max_accept": 68
+      "limit": 306,
+      "max_accept": 102
     },
     {
       "bucket": "hard_negative_pet_cat_statue",
       "query": "cat statue outdoors",
-      "limit": 204,
-      "max_accept": 68
+      "limit": 306,
+      "max_accept": 102
     },
     {
       "bucket": "hard_negative_pet_plush",
       "query": "plush dog toy outdoors",
-      "limit": 162,
-      "max_accept": 54
+      "limit": 243,
+      "max_accept": 81
+    },
+    {
+      "bucket": "pet_domain_positive_dog_walking",
+      "query": "dog walking street park leash",
+      "limit": 320,
+      "max_accept": 85
+    },
+    {
+      "bucket": "pet_domain_positive_cat_garden",
+      "query": "cat garden outdoors street",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "pet_domain_positive_small_dog_sidewalk",
+      "query": "small dog sidewalk street",
+      "limit": 280,
+      "max_accept": 75
+    },
+    {
+      "bucket": "pet_domain_positive_dog_leash_park",
+      "query": "dog on leash park path",
+      "limit": 260,
+      "max_accept": 70
+    },
+    {
+      "bucket": "pet_domain_positive_cat_street",
+      "query": "cat walking outdoors street",
+      "limit": 240,
+      "max_accept": 65
+    },
+    {
+      "bucket": "hard_negative_pet_stuffed_toy",
+      "query": "stuffed dog toy outdoors",
+      "limit": 180,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_pet_wildlife_park",
+      "query": "wild animal park outdoors",
+      "limit": 180,
+      "max_accept": 35
     }
   ]
 }

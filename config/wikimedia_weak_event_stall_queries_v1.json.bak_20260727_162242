@@ -1,0 +1,55 @@
+{
+  "api_url": "https://commons.wikimedia.org/w/api.php",
+  "download_width": 1600,
+  "exclude_title_regex": "\\b(?:painting|drawing|illustration|poster|pamphlet|map|diagram|logo|collage|screenshot|video|film|festival)\\b|Bundesarchiv|LCCN|NYPL",
+  "queries": [
+    {
+      "bucket": "stall_positive_market",
+      "category": "Market stalls",
+      "limit": 519,
+      "max_accept": 173
+    },
+    {
+      "bucket": "stall_positive_vendor",
+      "category": "Street vendors",
+      "limit": 432,
+      "max_accept": 144
+    },
+    {
+      "bucket": "stall_positive_food_cart",
+      "category": "Food carts",
+      "limit": 345,
+      "max_accept": 115
+    },
+    {
+      "bucket": "stall_positive_temporary",
+      "query": "temporary street vendor stall",
+      "limit": 345,
+      "max_accept": 115
+    },
+    {
+      "bucket": "hard_negative_stall_vending",
+      "category": "Vending machines",
+      "limit": 207,
+      "max_accept": 69
+    },
+    {
+      "bucket": "hard_negative_stall_kiosk",
+      "query": "fixed kiosk street",
+      "limit": 207,
+      "max_accept": 69
+    },
+    {
+      "bucket": "hard_negative_stall_checkpoint",
+      "query": "security checkpoint tent",
+      "limit": 174,
+      "max_accept": 58
+    },
+    {
+      "bucket": "hard_negative_stall_shelter",
+      "query": "bus shelter street",
+      "limit": 171,
+      "max_accept": 57
+    }
+  ]
+}

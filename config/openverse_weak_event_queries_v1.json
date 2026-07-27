@@ -1,0 +1,259 @@
+{
+  "api_url": "https://api.openverse.org/v1/images/",
+  "page_size": 20,
+  "licenses": [
+    "cc0",
+    "pdm",
+    "by",
+    "by-sa"
+  ],
+  "exclude_title_regex": "\\b(?:illustration|drawing|painting|poster|logo|toy|model|miniature)\\b",
+  "queries": [
+    {
+      "bucket": "fishing_rod_positive_openverse_pier",
+      "query": "person fishing rod pier",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "fishing_rod_positive_openverse_river",
+      "query": "angler fishing rod river bank",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "fishing_rod_positive_openverse_lake",
+      "query": "person holding fishing rod lake",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "fishing_rod_positive_openverse_beach",
+      "query": "surf fishing rod beach person",
+      "limit": 200,
+      "max_accept": 65
+    },
+    {
+      "bucket": "fishing_rod_positive_openverse_boat",
+      "query": "fishing rod boat angler",
+      "limit": 180,
+      "max_accept": 55
+    },
+    {
+      "bucket": "fishing_rod_positive_openverse_waterfront",
+      "query": "people fishing rods waterfront",
+      "limit": 180,
+      "max_accept": 55
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_openverse_trekking",
+      "query": "trekking pole person outdoors",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_openverse_umbrella",
+      "query": "umbrella person waterfront",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_openverse_tripod",
+      "query": "camera tripod waterfront person",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_openverse_railing",
+      "query": "metal railing waterfront",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "stall_positive_openverse_market",
+      "query": "street market stall vendor",
+      "limit": 240,
+      "max_accept": 85
+    },
+    {
+      "bucket": "stall_positive_openverse_food",
+      "query": "food stall street market",
+      "limit": 220,
+      "max_accept": 80
+    },
+    {
+      "bucket": "stall_positive_openverse_canopy",
+      "query": "vendor stall canopy sidewalk",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "stall_positive_openverse_night_market",
+      "query": "night market stall vendor",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "stall_positive_openverse_roadside",
+      "query": "temporary roadside vendor stall",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "stall_positive_openverse_fair",
+      "query": "outdoor market stall booth",
+      "limit": 180,
+      "max_accept": 60
+    },
+    {
+      "bucket": "hard_negative_stall_openverse_vending",
+      "query": "vending machine street",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_stall_openverse_bus_shelter",
+      "query": "bus shelter street",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_stall_openverse_checkpoint",
+      "query": "security checkpoint tent",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_stall_openverse_event_tent",
+      "query": "event canopy tent no vendor",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "pet_positive_openverse_dog_park",
+      "query": "dog park leash outdoors",
+      "limit": 240,
+      "max_accept": 85
+    },
+    {
+      "bucket": "pet_positive_openverse_cat_outdoor",
+      "query": "cat outdoors street garden",
+      "limit": 220,
+      "max_accept": 80
+    },
+    {
+      "bucket": "pet_positive_openverse_stray_dog",
+      "query": "stray dog street sidewalk",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "pet_positive_openverse_stray_cat",
+      "query": "stray cat street sidewalk",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "pet_positive_openverse_small_dog",
+      "query": "small dog sidewalk park",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "pet_positive_openverse_dog_walking",
+      "query": "person walking dog street",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "pet_positive_openverse_cat_garden",
+      "query": "cat garden outdoors",
+      "limit": 180,
+      "max_accept": 60
+    },
+    {
+      "bucket": "hard_negative_pet_openverse_statue",
+      "query": "dog statue park",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_pet_openverse_plush",
+      "query": "stuffed dog toy outdoors",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_pet_openverse_wildlife",
+      "query": "wild animal outdoors park",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "trash_positive_openverse_litter",
+      "query": "trash litter sidewalk street",
+      "limit": 240,
+      "max_accept": 85
+    },
+    {
+      "bucket": "trash_positive_openverse_bottle",
+      "query": "plastic bottle litter ground",
+      "limit": 220,
+      "max_accept": 80
+    },
+    {
+      "bucket": "trash_positive_openverse_paper",
+      "query": "paper litter street ground",
+      "limit": 220,
+      "max_accept": 80
+    },
+    {
+      "bucket": "trash_positive_openverse_bag",
+      "query": "plastic bag litter roadside",
+      "limit": 220,
+      "max_accept": 80
+    },
+    {
+      "bucket": "trash_positive_openverse_box",
+      "query": "cardboard box discarded sidewalk",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "trash_positive_openverse_park_litter",
+      "query": "litter park ground bottle paper",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "trash_positive_openverse_roadside",
+      "query": "roadside litter plastic bag bottle",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "hard_negative_trash_openverse_container",
+      "query": "waste container street closed",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_trash_openverse_leaf",
+      "query": "fallen leaves sidewalk",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_trash_openverse_road_marking",
+      "query": "road arrow marking ground",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_trash_openverse_cone",
+      "query": "traffic cone roadside ground",
+      "limit": 150,
+      "max_accept": 30
+    }
+  ]
+}

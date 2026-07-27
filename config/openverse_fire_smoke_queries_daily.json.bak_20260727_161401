@@ -1,0 +1,22 @@
+{
+  "api_url": "https://api.openverse.org/v1/images/",
+  "page_size": 20,
+  "licenses": ["cc0", "pdm", "by", "by-sa"],
+  "exclude_title_regex": "\\b(?:art|painting|drawing|illustration|poster|pamphlet|map|diagram|logo|sculpture|memorial|museum|drill|aftermath|archive|radar|satellite|aerial|festival|light show|fireplace|candle|fireworks)\\b",
+  "queries": [
+    {"bucket": "fire_building_openverse", "query": "building fire flames", "limit": 80, "max_accept": 8},
+    {"bucket": "fire_vehicle_openverse", "query": "vehicle fire flames", "limit": 80, "max_accept": 6},
+    {"bucket": "fire_dumpster_openverse", "query": "dumpster fire street", "limit": 80, "max_accept": 6},
+    {"bucket": "fire_house_openverse", "query": "house fire smoke flames", "limit": 80, "max_accept": 6},
+    {"bucket": "smoke_industrial_openverse", "query": "industrial fire smoke plume", "limit": 80, "max_accept": 5},
+    {"bucket": "fire_warehouse_openverse", "query": "warehouse fire flames", "limit": 80, "max_accept": 4},
+    {"bucket": "fire_urban_openverse", "query": "urban street fire", "limit": 80, "max_accept": 5},
+    {"bucket": "smoke_wildfire_openverse", "query": "wildfire smoke flames", "limit": 80, "max_accept": 5},
+    {"bucket": "fire_roadside_openverse", "query": "roadside fire smoke", "limit": 80, "max_accept": 4},
+    {"bucket": "smoke_city_openverse", "query": "smoke plume city fire", "limit": 80, "max_accept": 5},
+    {"bucket": "hard_negative_steam_openverse", "query": "street steam vent", "limit": 60, "max_accept": 3},
+    {"bucket": "hard_negative_exhaust_openverse", "query": "vehicle exhaust smoke", "limit": 60, "max_accept": 3},
+    {"bucket": "hard_negative_fog_openverse", "query": "foggy road traffic", "limit": 60, "max_accept": 3},
+    {"bucket": "hard_negative_dust_openverse", "query": "dust cloud road", "limit": 60, "max_accept": 3}
+  ]
+}

@@ -514,7 +514,7 @@ const agentRules = [
           <div class="cloud-ops-param-row" role="row" data-param-row="body.ad_screen">
             <div role="cell"><strong>广告机上下电</strong><span data-param-current="body.ad_screen">当前：--</span></div>
             <p role="cell">控制车载广告屏供电状态</p>
-            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="广告机上下电设置值" data-param-input data-param-kind="mode" data-param-group="body" data-param-key="body.ad_screen" data-param-label="广告机上下电" data-original="" disabled><option value="0">关闭 0</option><option value="1">开启 1</option><option value="2" data-param-conditional disabled>条件控制 2</option></select></div>
+            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="广告机上下电设置值" data-param-input data-param-kind="mode" data-param-group="body" data-param-key="body.ad_screen" data-param-label="广告机上下电" data-original="" disabled><option value="0">关闭 0</option><option value="1">开启 1</option></select></div>
           </div>
           <div class="cloud-ops-param-row" role="row" data-param-row="body.steer_lamp">
             <div role="cell"><strong>转向灯控制</strong><span data-param-current="body.steer_lamp">当前：--</span></div>
@@ -524,12 +524,12 @@ const agentRules = [
           <div class="cloud-ops-param-row" role="row" data-param-row="body.front_lamp">
             <div role="cell"><strong>前照灯控制</strong><span data-param-current="body.front_lamp">当前：--</span></div>
             <p role="cell">控制车辆前照灯开关</p>
-            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="前照灯设置值" data-param-input data-param-kind="mode" data-param-group="body" data-param-key="body.front_lamp" data-param-label="前照灯控制" data-original="" disabled><option value="0">关闭 0</option><option value="1">开启 1</option><option value="2" data-param-conditional disabled>条件控制 2</option></select></div>
+            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="前照灯设置值" data-param-input data-param-kind="mode" data-param-group="body" data-param-key="body.front_lamp" data-param-label="前照灯控制" data-original="" disabled><option value="0">关闭 0</option><option value="1">开启 1</option></select></div>
           </div>
           <div class="cloud-ops-param-row" role="row" data-param-row="body.mood_lamp">
             <div role="cell"><strong>氛围灯控制</strong><span data-param-current="body.mood_lamp">当前：--</span></div>
             <p role="cell">控制车内氛围灯开关</p>
-            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="氛围灯设置值" data-param-input data-param-kind="mode" data-param-group="body" data-param-key="body.mood_lamp" data-param-label="氛围灯控制" data-original="" disabled><option value="0">关闭 0</option><option value="1">开启 1</option><option value="2" data-param-conditional disabled>条件控制 2</option></select></div>
+            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="氛围灯设置值" data-param-input data-param-kind="mode" data-param-group="body" data-param-key="body.mood_lamp" data-param-label="氛围灯控制" data-original="" disabled><option value="0">关闭 0</option><option value="1">开启 1</option></select></div>
           </div>
           <div class="cloud-ops-param-row is-unavailable" role="row">
             <div role="cell"><strong>电机上下电控制</strong><span>车端未接入</span></div>
@@ -1257,7 +1257,24 @@ const agentRules = [
     const toolEnumValues = (fieldSchema) => [fieldSchema, ...(fieldSchema?.oneOf || []), ...(fieldSchema?.anyOf || [])]
       .flatMap((schema) => Array.isArray(schema?.enum) ? schema.enum : schema?.const !== undefined ? [schema.const] : []);
     const bodyFieldSupported = (tool, field) => Boolean(tool) && (!toolHasDeclaredProperties(tool) || Boolean(toolFieldSchema(tool, field)));
-    const bodyFieldSupportsConditionalMode = (tool, field) => toolEnumValues(toolFieldSchema(tool, field)).some((value) => Number(value) === 2);
+    const bodyFieldSupportsConditionalMode = (tool, field) => {
+      const enumValues = tool?.args_schema?.[field]?.enum;
+      return Array.isArray(enumValues) && enumValues.some((value) => Number(value) === 2);
+    };
+    const setAccessoryConditionalModeOption = (input, supported) => {
+      let option = input.querySelector('option[data-param-conditional]');
+      if (supported && !option) {
+        option = document.createElement("option");
+        option.value = "2";
+        option.textContent = "条件控制 2";
+        option.dataset.paramConditional = "true";
+        input.append(option);
+      }
+      if (!supported) {
+        if (input.value === "2") input.value = "";
+        option?.remove();
+      }
+    };
     const toolAvailable = (toolName, state = vehicleToolListState) => state?.status === "ready" && state.byName?.has(toolName);
     const bodyControlTool = (state = vehicleToolListState) => state?.byName?.get("vehicle.body_control") || null;
     const audioStatusTool = (state = vehicleToolListState) => toolAvailable("status.audio", state)
@@ -1273,9 +1290,7 @@ const agentRules = [
       if (input.dataset.paramKind === "mode") {
         const field = String(input.dataset.paramKey || "").replace("body.", "");
         const conditional = bodyFieldSupportsConditionalMode(bodyControlTool(), field);
-        const option = input.querySelector('option[data-param-conditional]');
-        if (option) option.disabled = !conditional;
-        if (!conditional && input.value === "2") input.value = "";
+        setAccessoryConditionalModeOption(input, conditional);
       }
       if (!current) return;
       if (capability === "pending") current.textContent = "正在读取写入能力";

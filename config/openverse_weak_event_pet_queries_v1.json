@@ -1,0 +1,73 @@
+{
+  "api_url": "https://api.openverse.org/v1/images/",
+  "page_size": 20,
+  "licenses": [
+    "cc0",
+    "pdm",
+    "by",
+    "by-sa"
+  ],
+  "exclude_title_regex": "\\b(?:illustration|drawing|painting|poster|logo|plush|toy|statue|sculpture|taxidermy)\\b",
+  "queries": [
+    {
+      "bucket": "pet_positive_openverse_dog_park",
+      "query": "dog park leash outdoors",
+      "limit": 240,
+      "max_accept": 85
+    },
+    {
+      "bucket": "pet_positive_openverse_cat_outdoor",
+      "query": "cat outdoors street garden",
+      "limit": 220,
+      "max_accept": 80
+    },
+    {
+      "bucket": "pet_positive_openverse_stray_dog",
+      "query": "stray dog street sidewalk",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "pet_positive_openverse_stray_cat",
+      "query": "stray cat street sidewalk",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "pet_positive_openverse_small_dog",
+      "query": "small dog sidewalk park",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "pet_positive_openverse_dog_walking",
+      "query": "person walking dog street",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "pet_positive_openverse_cat_garden",
+      "query": "cat garden outdoors",
+      "limit": 180,
+      "max_accept": 60
+    },
+    {
+      "bucket": "hard_negative_pet_openverse_statue",
+      "query": "dog statue park",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_pet_openverse_plush",
+      "query": "stuffed dog toy outdoors",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_pet_openverse_wildlife",
+      "query": "wild animal outdoors park",
+      "limit": 150,
+      "max_accept": 30
+    }
+  ]
+}

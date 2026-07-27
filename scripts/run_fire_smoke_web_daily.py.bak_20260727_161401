@@ -224,7 +224,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--baseline-count",
         type=int,
-        default=int(os.environ.get("FIRE_SMOKE_WEB_DAILY_BASELINE_COUNT", "0")),
+        default=int(os.environ.get("FIRE_SMOKE_WEB_DAILY_BASELINE_COUNT", "8000")),
         help="Minimum baseline_count used for daily planning; use 0 to start from the current dataset count.",
     )
     parser.add_argument("--endpoint", default="http://127.0.0.1:18016")

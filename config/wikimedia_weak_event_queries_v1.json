@@ -3,43 +3,393 @@
   "download_width": 1600,
   "exclude_title_regex": "\\b(?:painting|drawing|illustration|poster|pamphlet|map|diagram|logo|collage|screenshot|video|film|festival)\\b|Bundesarchiv|LCCN|NYPL",
   "queries": [
-    {"bucket": "fishing_rod_positive_category", "category": "Fishing rods", "limit": 45, "max_accept": 30},
-    {"bucket": "fishing_rod_positive_pier", "query": "angler fishing rod pier", "limit": 45, "max_accept": 25},
-    {"bucket": "fishing_rod_positive_waterfront", "query": "person fishing rod waterfront", "limit": 45, "max_accept": 25},
-    {"bucket": "fishing_rod_positive_in_use", "query": "fishing rod in use", "limit": 35, "max_accept": 20},
-    {"bucket": "hard_negative_fishing_rod_walking_stick", "category": "Walking sticks", "limit": 25, "max_accept": 12},
-    {"bucket": "hard_negative_fishing_rod_trekking_pole", "query": "trekking pole person outdoors", "limit": 20, "max_accept": 10},
-    {"bucket": "hard_negative_fishing_rod_umbrella", "query": "umbrella person waterfront", "limit": 20, "max_accept": 10},
-    {"bucket": "hard_negative_fishing_rod_railing", "query": "metal railing waterfront", "limit": 20, "max_accept": 10},
-
-    {"bucket": "stall_positive_market", "category": "Market stalls", "limit": 50, "max_accept": 30},
-    {"bucket": "stall_positive_vendor", "category": "Street vendors", "limit": 45, "max_accept": 25},
-    {"bucket": "stall_positive_food_cart", "category": "Food carts", "limit": 40, "max_accept": 20},
-    {"bucket": "stall_positive_temporary", "query": "temporary street vendor stall", "limit": 40, "max_accept": 20},
-    {"bucket": "hard_negative_stall_vending", "category": "Vending machines", "limit": 25, "max_accept": 12},
-    {"bucket": "hard_negative_stall_kiosk", "query": "fixed kiosk street", "limit": 25, "max_accept": 12},
-    {"bucket": "hard_negative_stall_checkpoint", "query": "security checkpoint tent", "limit": 20, "max_accept": 10},
-    {"bucket": "hard_negative_stall_shelter", "query": "bus shelter street", "limit": 20, "max_accept": 10},
-
-    {"bucket": "pet_domain_positive_dog_park", "category": "Dogs in parks", "limit": 30, "max_accept": 18},
-    {"bucket": "pet_domain_positive_cat_outdoor", "category": "Cats outdoors", "limit": 30, "max_accept": 18},
-    {"bucket": "pet_domain_positive_small_dog", "query": "small dog distant park", "limit": 25, "max_accept": 14},
-    {"bucket": "pet_domain_positive_stray_cat", "query": "stray cat street", "limit": 25, "max_accept": 14},
-    {"bucket": "pet_domain_positive_stray_dog", "query": "stray dog street surveillance", "limit": 25, "max_accept": 14},
-    {"bucket": "hard_negative_pet_sculpture", "category": "Animal sculptures", "limit": 25, "max_accept": 12},
-    {"bucket": "hard_negative_pet_dog_statue", "query": "dog statue park", "limit": 20, "max_accept": 10},
-    {"bucket": "hard_negative_pet_cat_statue", "query": "cat statue outdoors", "limit": 20, "max_accept": 10},
-    {"bucket": "hard_negative_pet_plush", "query": "plush dog toy outdoors", "limit": 15, "max_accept": 8},
-
-    {"bucket": "trash_positive_litter", "category": "Litter", "limit": 45, "max_accept": 25},
-    {"bucket": "trash_positive_paper", "query": "discarded paper litter ground", "limit": 35, "max_accept": 20},
-    {"bucket": "trash_positive_bag", "query": "discarded plastic bag street", "limit": 35, "max_accept": 20},
-    {"bucket": "trash_positive_bottle", "query": "discarded bottle park", "limit": 35, "max_accept": 20},
-    {"bucket": "trash_positive_box", "query": "discarded cardboard box street", "limit": 35, "max_accept": 20},
-    {"bucket": "hard_negative_trash_container", "category": "Waste containers", "limit": 25, "max_accept": 12},
-    {"bucket": "hard_negative_trash_storage_box", "query": "stacked cardboard boxes storage", "limit": 25, "max_accept": 12},
-    {"bucket": "hard_negative_trash_utility_box", "query": "utility box roadside", "limit": 20, "max_accept": 10},
-    {"bucket": "hard_negative_trash_road_marking", "query": "road arrow marking", "limit": 20, "max_accept": 10},
-    {"bucket": "hard_negative_trash_sign", "query": "traffic sign roadside", "limit": 20, "max_accept": 10}
+    {
+      "bucket": "fishing_rod_positive_category",
+      "category": "Fishing rods",
+      "limit": 68,
+      "max_accept": 45,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "fishing_rod_positive_pier",
+      "query": "angler fishing rod pier",
+      "limit": 68,
+      "max_accept": 38
+    },
+    {
+      "bucket": "fishing_rod_positive_waterfront",
+      "query": "person fishing rod waterfront",
+      "limit": 68,
+      "max_accept": 38
+    },
+    {
+      "bucket": "fishing_rod_positive_in_use",
+      "query": "fishing rod in use",
+      "limit": 52,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_walking_stick",
+      "category": "Walking sticks",
+      "limit": 38,
+      "max_accept": 18,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_trekking_pole",
+      "query": "trekking pole person outdoors",
+      "limit": 30,
+      "max_accept": 15
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_umbrella",
+      "query": "umbrella person waterfront",
+      "limit": 30,
+      "max_accept": 15
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_railing",
+      "query": "metal railing waterfront",
+      "limit": 30,
+      "max_accept": 15
+    },
+    {
+      "bucket": "stall_positive_market",
+      "category": "Market stalls",
+      "limit": 75,
+      "max_accept": 45,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "stall_positive_vendor",
+      "category": "Street vendors",
+      "limit": 68,
+      "max_accept": 38,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "stall_positive_food_cart",
+      "category": "Food carts",
+      "limit": 60,
+      "max_accept": 30,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "stall_positive_temporary",
+      "query": "temporary street vendor stall",
+      "limit": 60,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_stall_vending",
+      "category": "Vending machines",
+      "limit": 38,
+      "max_accept": 18,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_stall_kiosk",
+      "query": "fixed kiosk street",
+      "limit": 38,
+      "max_accept": 18
+    },
+    {
+      "bucket": "hard_negative_stall_checkpoint",
+      "query": "security checkpoint tent",
+      "limit": 30,
+      "max_accept": 15
+    },
+    {
+      "bucket": "hard_negative_stall_shelter",
+      "query": "bus shelter street",
+      "limit": 30,
+      "max_accept": 15
+    },
+    {
+      "bucket": "pet_domain_positive_dog_park",
+      "category": "Dogs in parks",
+      "limit": 45,
+      "max_accept": 27,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "pet_domain_positive_cat_outdoor",
+      "category": "Cats outdoors",
+      "limit": 45,
+      "max_accept": 27,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "pet_domain_positive_small_dog",
+      "query": "small dog distant park",
+      "limit": 38,
+      "max_accept": 21
+    },
+    {
+      "bucket": "pet_domain_positive_stray_cat",
+      "query": "stray cat street",
+      "limit": 38,
+      "max_accept": 21
+    },
+    {
+      "bucket": "pet_domain_positive_stray_dog",
+      "query": "stray dog street surveillance",
+      "limit": 38,
+      "max_accept": 21
+    },
+    {
+      "bucket": "hard_negative_pet_sculpture",
+      "category": "Animal sculptures",
+      "limit": 38,
+      "max_accept": 18,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_pet_dog_statue",
+      "query": "dog statue park",
+      "limit": 30,
+      "max_accept": 15
+    },
+    {
+      "bucket": "hard_negative_pet_cat_statue",
+      "query": "cat statue outdoors",
+      "limit": 30,
+      "max_accept": 15
+    },
+    {
+      "bucket": "hard_negative_pet_plush",
+      "query": "plush dog toy outdoors",
+      "limit": 22,
+      "max_accept": 12
+    },
+    {
+      "bucket": "trash_positive_litter",
+      "category": "Litter",
+      "limit": 68,
+      "max_accept": 38,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "trash_positive_paper",
+      "query": "discarded paper litter ground",
+      "limit": 52,
+      "max_accept": 30
+    },
+    {
+      "bucket": "trash_positive_bag",
+      "query": "discarded plastic bag street",
+      "limit": 52,
+      "max_accept": 30
+    },
+    {
+      "bucket": "trash_positive_bottle",
+      "query": "discarded bottle park",
+      "limit": 52,
+      "max_accept": 30
+    },
+    {
+      "bucket": "trash_positive_box",
+      "query": "discarded cardboard box street",
+      "limit": 52,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_trash_container",
+      "category": "Waste containers",
+      "limit": 38,
+      "max_accept": 18,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_trash_storage_box",
+      "query": "stacked cardboard boxes storage",
+      "limit": 38,
+      "max_accept": 18
+    },
+    {
+      "bucket": "hard_negative_trash_utility_box",
+      "query": "utility box roadside",
+      "limit": 30,
+      "max_accept": 15
+    },
+    {
+      "bucket": "hard_negative_trash_road_marking",
+      "query": "road arrow marking",
+      "limit": 30,
+      "max_accept": 15
+    },
+    {
+      "bucket": "hard_negative_trash_sign",
+      "query": "traffic sign roadside",
+      "limit": 30,
+      "max_accept": 15
+    },
+    {
+      "bucket": "fishing_rod_positive_river_bank",
+      "query": "shore fishing rod angler river bank",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "fishing_rod_positive_sea_pier",
+      "query": "sea fishing rod angler pier beach",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "fishing_rod_positive_lake_person",
+      "query": "person holding fishing rod lake",
+      "limit": 260,
+      "max_accept": 70
+    },
+    {
+      "bucket": "fishing_rod_positive_boat",
+      "query": "fishing rod boat angler",
+      "limit": 240,
+      "max_accept": 60
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_camera_tripod",
+      "query": "camera tripod waterfront person",
+      "limit": 200,
+      "max_accept": 40
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_flagpole",
+      "query": "flag pole waterfront person",
+      "limit": 180,
+      "max_accept": 35
+    },
+    {
+      "bucket": "stall_positive_canopy_market",
+      "query": "street market stall vendor canopy",
+      "limit": 320,
+      "max_accept": 85
+    },
+    {
+      "bucket": "stall_positive_night_market",
+      "query": "night market food stall street vendor",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "stall_positive_roadside_vendor",
+      "query": "temporary roadside vendor stall",
+      "limit": 280,
+      "max_accept": 75
+    },
+    {
+      "bucket": "stall_positive_food_stand",
+      "query": "food stand street market",
+      "limit": 260,
+      "max_accept": 70
+    },
+    {
+      "bucket": "hard_negative_stall_event_tent",
+      "query": "event tent canopy no vendor",
+      "limit": 200,
+      "max_accept": 40
+    },
+    {
+      "bucket": "hard_negative_stall_bus_stop",
+      "query": "bus stop shelter kiosk street",
+      "limit": 180,
+      "max_accept": 35
+    },
+    {
+      "bucket": "pet_domain_positive_dog_walking",
+      "query": "dog walking street park leash",
+      "limit": 320,
+      "max_accept": 85
+    },
+    {
+      "bucket": "pet_domain_positive_cat_garden",
+      "query": "cat garden outdoors street",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "pet_domain_positive_small_dog_sidewalk",
+      "query": "small dog sidewalk street",
+      "limit": 280,
+      "max_accept": 75
+    },
+    {
+      "bucket": "pet_domain_positive_dog_leash_park",
+      "query": "dog on leash park path",
+      "limit": 260,
+      "max_accept": 70
+    },
+    {
+      "bucket": "pet_domain_positive_cat_street",
+      "query": "cat walking outdoors street",
+      "limit": 240,
+      "max_accept": 65
+    },
+    {
+      "bucket": "hard_negative_pet_stuffed_toy",
+      "query": "stuffed dog toy outdoors",
+      "limit": 180,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_pet_wildlife_park",
+      "query": "wild animal park outdoors",
+      "limit": 180,
+      "max_accept": 35
+    },
+    {
+      "bucket": "trash_positive_sidewalk_litter",
+      "query": "trash litter sidewalk street",
+      "limit": 320,
+      "max_accept": 85
+    },
+    {
+      "bucket": "trash_positive_plastic_bottle_ground",
+      "query": "plastic bottle litter ground sidewalk",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "trash_positive_paper_street",
+      "query": "paper litter street ground",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "trash_positive_plastic_bag_roadside",
+      "query": "plastic bag litter roadside",
+      "limit": 280,
+      "max_accept": 75
+    },
+    {
+      "bucket": "trash_positive_cardboard_sidewalk",
+      "query": "cardboard box discarded sidewalk",
+      "limit": 260,
+      "max_accept": 70
+    },
+    {
+      "bucket": "hard_negative_trash_leaf_litter",
+      "query": "fallen leaves on sidewalk",
+      "limit": 180,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_trash_road_cone",
+      "query": "traffic cone roadside ground",
+      "limit": 180,
+      "max_accept": 35
+    }
   ]
 }

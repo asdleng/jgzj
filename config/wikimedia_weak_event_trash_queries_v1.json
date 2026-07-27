@@ -6,62 +6,108 @@
     {
       "bucket": "trash_positive_litter",
       "category": "Litter",
-      "limit": 378,
-      "max_accept": 126
+      "limit": 567,
+      "max_accept": 189,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "trash_positive_paper",
       "query": "discarded paper litter ground",
-      "limit": 303,
-      "max_accept": 101
+      "limit": 454,
+      "max_accept": 152
     },
     {
       "bucket": "trash_positive_bag",
       "query": "discarded plastic bag street",
-      "limit": 303,
-      "max_accept": 101
+      "limit": 454,
+      "max_accept": 152
     },
     {
       "bucket": "trash_positive_bottle",
       "query": "discarded bottle park",
-      "limit": 303,
-      "max_accept": 101
+      "limit": 454,
+      "max_accept": 152
     },
     {
       "bucket": "trash_positive_box",
       "query": "discarded cardboard box street",
-      "limit": 303,
-      "max_accept": 101
+      "limit": 454,
+      "max_accept": 152
     },
     {
       "bucket": "hard_negative_trash_container",
       "category": "Waste containers",
-      "limit": 180,
-      "max_accept": 60
+      "limit": 270,
+      "max_accept": 90,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "hard_negative_trash_storage_box",
       "query": "stacked cardboard boxes storage",
-      "limit": 180,
-      "max_accept": 60
+      "limit": 270,
+      "max_accept": 90
     },
     {
       "bucket": "hard_negative_trash_utility_box",
       "query": "utility box roadside",
-      "limit": 150,
-      "max_accept": 50
+      "limit": 225,
+      "max_accept": 75
     },
     {
       "bucket": "hard_negative_trash_road_marking",
       "query": "road arrow marking",
-      "limit": 150,
-      "max_accept": 50
+      "limit": 225,
+      "max_accept": 75
     },
     {
       "bucket": "hard_negative_trash_sign",
       "query": "traffic sign roadside",
-      "limit": 150,
-      "max_accept": 50
+      "limit": 225,
+      "max_accept": 75
+    },
+    {
+      "bucket": "trash_positive_sidewalk_litter",
+      "query": "trash litter sidewalk street",
+      "limit": 320,
+      "max_accept": 85
+    },
+    {
+      "bucket": "trash_positive_plastic_bottle_ground",
+      "query": "plastic bottle litter ground sidewalk",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "trash_positive_paper_street",
+      "query": "paper litter street ground",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "trash_positive_plastic_bag_roadside",
+      "query": "plastic bag litter roadside",
+      "limit": 280,
+      "max_accept": 75
+    },
+    {
+      "bucket": "trash_positive_cardboard_sidewalk",
+      "query": "cardboard box discarded sidewalk",
+      "limit": 260,
+      "max_accept": 70
+    },
+    {
+      "bucket": "hard_negative_trash_leaf_litter",
+      "query": "fallen leaves on sidewalk",
+      "limit": 180,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_trash_road_cone",
+      "query": "traffic cone roadside ground",
+      "limit": 180,
+      "max_accept": 35
     }
   ]
 }

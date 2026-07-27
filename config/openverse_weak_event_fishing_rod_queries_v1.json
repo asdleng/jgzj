@@ -1,0 +1,73 @@
+{
+  "api_url": "https://api.openverse.org/v1/images/",
+  "page_size": 20,
+  "licenses": [
+    "cc0",
+    "pdm",
+    "by",
+    "by-sa"
+  ],
+  "exclude_title_regex": "\\b(?:illustration|drawing|painting|poster|logo|toy|model|catalog|product only|close up)\\b",
+  "queries": [
+    {
+      "bucket": "fishing_rod_positive_openverse_pier",
+      "query": "person fishing rod pier",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "fishing_rod_positive_openverse_river",
+      "query": "angler fishing rod river bank",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "fishing_rod_positive_openverse_lake",
+      "query": "person holding fishing rod lake",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "fishing_rod_positive_openverse_beach",
+      "query": "surf fishing rod beach person",
+      "limit": 200,
+      "max_accept": 65
+    },
+    {
+      "bucket": "fishing_rod_positive_openverse_boat",
+      "query": "fishing rod boat angler",
+      "limit": 180,
+      "max_accept": 55
+    },
+    {
+      "bucket": "fishing_rod_positive_openverse_waterfront",
+      "query": "people fishing rods waterfront",
+      "limit": 180,
+      "max_accept": 55
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_openverse_trekking",
+      "query": "trekking pole person outdoors",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_openverse_umbrella",
+      "query": "umbrella person waterfront",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_openverse_tripod",
+      "query": "camera tripod waterfront person",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_openverse_railing",
+      "query": "metal railing waterfront",
+      "limit": 150,
+      "max_accept": 30
+    }
+  ]
+}

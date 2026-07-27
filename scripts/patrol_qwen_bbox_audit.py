@@ -30,8 +30,12 @@ CLASSES = (
     "smoking",
     "vehicle",
     "nonmotor",
+    "license_plate",
+    "lying",
+    "fighting",
+    "falldown",
 )
-HIGH_RISK_CLASSES = {"fire", "smoke", "pet", "trash", "stall", "phone", "smoking"}
+HIGH_RISK_CLASSES = {"fire", "smoke", "pet", "trash", "stall", "phone", "smoking", "license_plate", "lying", "fighting", "falldown"}
 AUDITABLE_MISS_CLASSES = set(CLASSES)
 
 AUDIT_PROMPT = """You are auditing existing Qwen YOLO pre-labels for an autonomous patrol vehicle image.
@@ -63,7 +67,7 @@ Audit rules:
 - Mark suspect for uncertainty that should be reviewed by a human.
 - Mark needs_human for likely false positives, wrong class, a clear missed training target, or an unusable image.
 - A bad label should be added when it is false positive, wrong class, not visible, duplicate, very loose, or box covers the wrong object.
-- For miss, report only clear missed training targets: person, vehicle, nonmotor, fire, smoke, pet, trash, stall, phone, smoking. Do not report weak or ambiguous misses.
+- For miss, report only clear missed training targets: person, vehicle, nonmotor, fire, smoke, pet, trash, stall, phone, smoking, license_plate, lying, fighting, falldown. Do not report weak or ambiguous misses.
 
 Hard class definitions:
 - fire: actual visible flame with flame shape and orange/yellow luminous core. Red fire boxes, extinguishers, hydrants,消防箱, red signs, warning boards, lamps, reflections, taillights, cones, and red/orange equipment are NOT fire.
@@ -76,6 +80,10 @@ Hard class definitions:
 - person: a real visible human. Posters, advertising portraits, mannequins, traffic cones, poles, covers, and vehicle accessories are NOT people.
 - vehicle: a real car, truck, bus, or van. Fences, buildings, signs, covers without a visible vehicle, and printed vehicle images are NOT vehicles.
 - nonmotor: a real bicycle, electric bicycle, scooter, tricycle, or cart. Railings, racks, covers without a visible vehicle, and printed images are NOT nonmotor vehicles.
+- license_plate: a visible real license plate physically mounted on a real vehicle, such as a car, truck, bus, van, motorcycle, e-bike, or scooter. The box must cover the plate only. Standalone plates, road signs, shop signs, door numbers, wall numbers, parking space numbers, advertisements, whole vehicles, bumpers, headlights, tail lights, logos, stickers, and decorative rectangles are NOT license_plate.
+- lying: a real person clearly lying down or strongly reclined horizontally. Standing, walking, sitting upright, squatting, bending, posters, statues, and reflections are NOT lying.
+- fighting: a clear physical fight between people, such as punching, kicking, grappling, wrestling, or aggressive body contact. Ordinary crowds, playing, hugging, helping, queueing, or standing close are NOT fighting.
+- falldown: a real person fallen/collapsed on the ground or in an abnormal fallen posture. Ordinary resting, sleeping, sitting, squatting, bending, posters, statues, and shadows are NOT falldown.
 
 Be strict. When evidence is weak, flag suspect instead of passing. Use short snake_case reasons.
 """
@@ -111,6 +119,28 @@ REJECT_PATTERNS = {
     ),
     "phone": re.compile(r"sign|screen_on_wall|dashboard|mirror|black_rectangle|bag|reflection|traffic", re.I),
     "smoking": re.compile(r"hand_near_mouth_only|unclear|food|drink|microphone|mask|shadow", re.I),
+    "license_plate": re.compile(
+        r"road[_ -]?sign|traffic[_ -]?sign|logo|sticker|bumper|headlight|tail[_ -]?light|taillight|"
+        r"decorative|printed[_ -]?ad|billboard|reflection|unknown[_ -]?rectangle|standalone|not[_ -]?on[_ -]?vehicle|"
+        r"shop[_ -]?sign|door[_ -]?number|wall[_ -]?number|parking[_ -]?space|house[_ -]?number|"
+        r"车标|标志|路牌|广告|反光|门牌|墙面|墙上|车位号|停车位|商铺招牌|独立车牌",
+        re.I,
+    ),
+    "lying": re.compile(
+        r"standing|walking|sitting|squat|bending|poster|statue|mannequin|reflection|shadow|unclear|"
+        r"站立|行走|坐着|蹲|弯腰|海报|雕像|反光|阴影",
+        re.I,
+    ),
+    "fighting": re.compile(
+        r"crowd|standing|walking|hugging|helping|playing|queue|close[_ -]?people|unclear|"
+        r"人群|站立|行走|拥抱|搀扶|玩耍|排队|靠近|不清楚",
+        re.I,
+    ),
+    "falldown": re.compile(
+        r"sitting|squat|bending|ordinary[_ -]?lying|resting|sleeping|poster|statue|reflection|shadow|unclear|"
+        r"坐着|蹲|弯腰|休息|睡觉|海报|雕像|反光|阴影",
+        re.I,
+    ),
 }
 
 ACCEPT_PATTERNS = {
@@ -125,6 +155,25 @@ ACCEPT_PATTERNS = {
     "stall": re.compile(r"vendor|stall|booth|selling|goods|table|canopy|market|cart", re.I),
     "phone": re.compile(r"handheld|phone|mobile|smartphone|hand_phone|screen_in_hand", re.I),
     "smoking": re.compile(r"cigarette|cigar|vape|smoke_from_mouth|smoking|lit_tip", re.I),
+    "license_plate": re.compile(
+        r"vehicle[_ -]?license[_ -]?plate|vehicle[_ -]?licence[_ -]?plate|vehicle[_ -]?number[_ -]?plate|"
+        r"front[_ -]?plate[_ -]?on[_ -]?vehicle|rear[_ -]?plate[_ -]?on[_ -]?vehicle|"
+        r"plate[_ -]?on[_ -]?(?:car|truck|bus|van|motorcycle|ebike|e[_ -]?bike|scooter|vehicle)|"
+        r"mounted[_ -]?plate|plate[_ -]?characters[_ -]?on[_ -]?vehicle|车辆车牌|机动车车牌|电动车车牌|摩托车车牌|车上的车牌",
+        re.I,
+    ),
+    "lying": re.compile(
+        r"lying|person[_ -]?lying|lying[_ -]?person|horizontal[_ -]?body|reclining[_ -]?person|person[_ -]?on[_ -]?bench|躺",
+        re.I,
+    ),
+    "fighting": re.compile(
+        r"fighting|physical[_ -]?fight|punch|kick|grappling|wrestling|aggressive[_ -]?contact|people[_ -]?fighting|打架|斗殴|拳打|脚踢",
+        re.I,
+    ),
+    "falldown": re.compile(
+        r"falldown|fall[_ -]?down|fallen[_ -]?person|person[_ -]?fallen|collapsed[_ -]?person|person[_ -]?on[_ -]?ground|摔倒|倒地",
+        re.I,
+    ),
 }
 
 
@@ -255,6 +304,14 @@ def normalize_class_name(value):
         return "vehicle"
     if class_name in {"bike", "bicycle", "ebike", "e_bike", "scooter", "cart"}:
         return "nonmotor"
+    if class_name in {"licence_plate", "licenseplate", "licenceplate", "number_plate", "vehicle_plate", "car_plate", "plate"}:
+        return "license_plate"
+    if class_name in {"person_lying", "lying_person", "reclining_person", "horizontal_person"}:
+        return "lying"
+    if class_name in {"fight", "physical_fight", "people_fighting", "person_fighting"}:
+        return "fighting"
+    if class_name in {"fall_down", "fallen_person", "person_fallen", "collapsed_person"}:
+        return "falldown"
     return class_name
 
 
@@ -383,6 +440,16 @@ def heuristic_findings(labels):
                 "issue": "box_too_large_for_smoking_evidence",
                 "should": "review",
                 "reason": "smoking_whole_person_or_unclear",
+                "severity": "medium",
+                "source": "heuristic",
+            })
+        if class_name == "license_plate" and (w * h > 0.08 or h > 0.25):
+            findings.append({
+                "index": label["i"],
+                "class_name": class_name,
+                "issue": "box_too_large_for_license_plate",
+                "should": "review",
+                "reason": "license_plate_box_covers_non_plate_area",
                 "severity": "medium",
                 "source": "heuristic",
             })

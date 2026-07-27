@@ -1,0 +1,61 @@
+{
+  "api_url": "https://commons.wikimedia.org/w/api.php",
+  "download_width": 1600,
+  "exclude_title_regex": "\\b(?:painting|drawing|illustration|poster|pamphlet|map|diagram|logo|collage|screenshot|video|film|festival)\\b|Bundesarchiv|LCCN|NYPL",
+  "queries": [
+    {
+      "bucket": "pet_domain_positive_dog_park",
+      "category": "Dogs in parks",
+      "limit": 366,
+      "max_accept": 122
+    },
+    {
+      "bucket": "pet_domain_positive_cat_outdoor",
+      "category": "Cats outdoors",
+      "limit": 366,
+      "max_accept": 122
+    },
+    {
+      "bucket": "pet_domain_positive_small_dog",
+      "query": "small dog distant park",
+      "limit": 285,
+      "max_accept": 95
+    },
+    {
+      "bucket": "pet_domain_positive_stray_cat",
+      "query": "stray cat street",
+      "limit": 285,
+      "max_accept": 95
+    },
+    {
+      "bucket": "pet_domain_positive_stray_dog",
+      "query": "stray dog street surveillance",
+      "limit": 285,
+      "max_accept": 95
+    },
+    {
+      "bucket": "hard_negative_pet_sculpture",
+      "category": "Animal sculptures",
+      "limit": 243,
+      "max_accept": 81
+    },
+    {
+      "bucket": "hard_negative_pet_dog_statue",
+      "query": "dog statue park",
+      "limit": 204,
+      "max_accept": 68
+    },
+    {
+      "bucket": "hard_negative_pet_cat_statue",
+      "query": "cat statue outdoors",
+      "limit": 204,
+      "max_accept": 68
+    },
+    {
+      "bucket": "hard_negative_pet_plush",
+      "query": "plush dog toy outdoors",
+      "limit": 162,
+      "max_accept": 54
+    }
+  ]
+}

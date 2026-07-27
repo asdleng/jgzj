@@ -16,7 +16,16 @@ from typing import Dict, Iterator, List, Optional
 import requests
 
 
-SCHEMA = "jgzj_fire_smoke_web_daily.v1"
+SCHEMA = "jgzj_weak_event_web_daily.v1"
+
+WEAK_EVENT_CLASSES = ("fishing_rod", "pet", "stall", "bottle", "box", "paper", "bag")
+TARGET_CLASSES = {
+    "all": WEAK_EVENT_CLASSES,
+    "fishing_rod": ("fishing_rod",),
+    "stall": ("stall",),
+    "pet": ("pet",),
+    "trash": ("bottle", "box", "paper", "bag"),
+}
 
 
 class DailyValidationError(RuntimeError):
@@ -81,6 +90,77 @@ def count_jsonl(path: Path) -> int:
     return sum(1 for _ in iter_jsonl(path))
 
 
+def capped_target_count(baseline_count: int, daily_limit: int, total_target: int = 0) -> int:
+    target_count = baseline_count + daily_limit
+    if total_target > 0:
+        target_count = min(target_count, total_target)
+        target_count = max(target_count, baseline_count)
+    return target_count
+
+
+def ensure_pending_dataset_summary(
+    dataset: Path,
+    target: str,
+    class_names: tuple[str, ...],
+    image_count: int,
+    target_count: int,
+    total_target: int,
+    timestamp: str,
+) -> None:
+    summary_path = dataset / "dataset_summary.json"
+    existing = read_json(summary_path)
+    if existing.get("schema") == "jgzj_weak_event_web_qwen_summary.v1":
+        desired_profile = f"弱事件网络候选集:{target}"
+        desired_classes = list(class_names)
+        if existing.get("profile") != desired_profile or existing.get("classes") != desired_classes:
+            updated = dict(existing)
+            updated["profile"] = desired_profile
+            updated["classes"] = desired_classes
+            updated["updated_at"] = existing.get("updated_at") or timestamp
+            write_json_atomic(summary_path, updated)
+        return
+    write_json_atomic(summary_path, {
+        "schema": "jgzj_weak_event_web_qwen_summary.v1",
+        "profile": f"弱事件网络候选集:{target}",
+        "kind": "detect",
+        "updated_at": timestamp,
+        "classes": list(class_names),
+        "images": {"review": image_count},
+        "crawl_target_images": target_count,
+        "crawl_total_target_images": total_target,
+        "run_counts": {},
+        "scene_counts": {},
+        "target_scene_counts": {},
+        "boxes_by_class": {},
+        "audit_counts": {},
+        "quarantine_counts": {},
+        "qwen_model": "",
+        "qwen_label_summary": {
+            "labeled_images": 0,
+            "scene_positive": 0,
+            "scene_hard_negative": 0,
+            "scene_needs_human": 0,
+            "scene_unusable": 0,
+            "accepted_boxes": 0,
+            "model_accepted_boxes": 0,
+            "proposed_boxes": 0,
+            "audit_pass": 0,
+            "audit_needs_human": 0,
+            "audit_not_run": 0,
+            "quarantine_positive_in_hard_negative_bucket": 0,
+        },
+        "training_eligible": False,
+        "training_policy": "two_pass_qwen_then_human_review",
+        "source_policy": "license_metadata_required",
+    })
+    write_json_atomic(dataset / "training_guard.json", {
+        "schema": "jgzj_yolo_training_guard.v1",
+        "training_eligible": False,
+        "reason": "Weak-event web candidates require human review before any training split is built.",
+        "updated_at": timestamp,
+    })
+
+
 def plan_daily_state(
     existing: dict,
     day: str,
@@ -88,35 +168,44 @@ def plan_daily_state(
     daily_limit: int,
     timestamp: str,
     baseline_count_floor: int = 0,
+    total_target: int = 0,
 ) -> dict:
     if daily_limit <= 0:
         raise ValueError("daily_limit must be positive")
     if baseline_count_floor < 0:
         raise ValueError("baseline_count_floor must be non-negative")
+    if total_target < 0:
+        raise ValueError("total_target must be non-negative")
     same_day = existing.get("schema") == SCHEMA and existing.get("day") == day
     if same_day:
         try:
             baseline_count = int(existing["baseline_count"])
             target_count = int(existing["target_count"])
             existing_daily_limit = int(existing.get("daily_limit", daily_limit))
+            existing_total_target = int(existing.get("total_target") or 0)
             attempts = int(existing.get("attempts") or 0) + 1
         except (KeyError, TypeError, ValueError) as exc:
             raise DailyValidationError("same_day_state_is_incomplete") from exc
-        if baseline_count < 0 or existing_daily_limit <= 0 or target_count != baseline_count + existing_daily_limit:
+        expected_target_count = capped_target_count(
+            baseline_count, existing_daily_limit, existing_total_target
+        )
+        if baseline_count < 0 or existing_daily_limit <= 0 or target_count != expected_target_count:
             raise DailyValidationError("same_day_state_target_is_invalid")
         state = dict(existing)
         baseline_changed = bool(baseline_count_floor and baseline_count < baseline_count_floor)
         limit_changed = existing_daily_limit != daily_limit
+        total_target_changed = existing_total_target != total_target
         if baseline_changed:
             baseline_count = baseline_count_floor
-        if baseline_changed or limit_changed:
-            target_count = baseline_count + daily_limit
+        if baseline_changed or limit_changed or total_target_changed:
+            target_count = capped_target_count(baseline_count, daily_limit, total_target)
             state["baseline_count"] = baseline_count
             state["target_count"] = target_count
             state["daily_limit"] = daily_limit
+            state["total_target"] = total_target
     else:
         baseline_count = max(current_count, baseline_count_floor)
-        target_count = baseline_count + daily_limit
+        target_count = capped_target_count(baseline_count, daily_limit, total_target)
         attempts = 1
         state = {
             "schema": SCHEMA,
@@ -124,6 +213,7 @@ def plan_daily_state(
             "baseline_count": baseline_count,
             "target_count": target_count,
             "daily_limit": daily_limit,
+            "total_target": total_target,
             "created_at": timestamp,
         }
     state.update({
@@ -211,20 +301,22 @@ def validate_dataset(dataset: Path) -> dict:
 def parse_args() -> argparse.Namespace:
     repo_default = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(
-        description="Run the idempotent daily licensed fire/smoke crawl and Qwen review."
+        description="Run the idempotent daily licensed weak-event crawl and Qwen review."
     )
     parser.add_argument("--repo-root", type=Path, default=repo_default)
     parser.add_argument("--dataset", type=Path)
     parser.add_argument("--commons-config", type=Path)
-    parser.add_argument("--openverse-config", type=Path)
+    parser.add_argument("--openverse-config", type=Path, action="append", default=[])
     parser.add_argument("--dedupe-manifest", type=Path, action="append", default=[])
     parser.add_argument("--state", type=Path)
     parser.add_argument("--lock", type=Path)
     parser.add_argument("--daily-limit", type=int, default=500)
+    parser.add_argument("--total-target", type=int, default=0)
+    parser.add_argument("--target", choices=sorted(TARGET_CLASSES), default="all")
     parser.add_argument(
         "--baseline-count",
         type=int,
-        default=int(os.environ.get("FIRE_SMOKE_WEB_DAILY_BASELINE_COUNT", "0")),
+        default=int(os.environ.get("WEAK_EVENT_WEB_DAILY_BASELINE_COUNT", "0")),
         help="Minimum baseline_count used for daily planning; use 0 to start from the current dataset count.",
     )
     parser.add_argument("--endpoint", default="http://127.0.0.1:18016")
@@ -239,16 +331,29 @@ def parse_args() -> argparse.Namespace:
 def main(args: Optional[argparse.Namespace] = None) -> int:
     args = args or parse_args()
     repo_root = args.repo_root.resolve()
-    dataset = (args.dataset or repo_root / ".runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3").resolve()
-    commons_config = (args.commons_config or repo_root / "config/wikimedia_fire_smoke_queries_daily.json").resolve()
-    openverse_config = (args.openverse_config or repo_root / "config/openverse_fire_smoke_queries_daily.json").resolve()
-    state_path = (args.state or repo_root / ".runtime/yolo_loop/fire_smoke_web_daily/state.json").resolve()
+    target = getattr(args, "target", "all")
+    target_suffix = target if target != "all" else ""
+    default_dataset_name = (
+        f"weak_event_web_{target_suffix}_candidates_v1"
+        if target_suffix else "weak_event_web_candidates_v1"
+    )
+    default_config_name = (
+        f"wikimedia_weak_event_{target_suffix}_queries_v1.json"
+        if target_suffix else "wikimedia_weak_event_queries_v1.json"
+    )
+    default_state_dir = (
+        f"weak_event_web_{target_suffix}_daily"
+        if target_suffix else "weak_event_web_daily"
+    )
+    dataset = (
+        args.dataset or repo_root / ".runtime/yolo_loop/datasets" / default_dataset_name
+    ).resolve()
+    commons_config = (args.commons_config or repo_root / "config" / default_config_name).resolve()
+    openverse_configs = [path.resolve() for path in getattr(args, "openverse_config", [])]
+    state_path = (args.state or repo_root / ".runtime/yolo_loop" / default_state_dir / "state.json").resolve()
     lock_path = (args.lock or state_path.with_suffix(".lock")).resolve()
     dedupe_manifests = [path.resolve() for path in args.dedupe_manifest]
-    if not dedupe_manifests:
-        dedupe_manifests = [
-            (repo_root / ".runtime/yolo_loop/datasets/fire_smoke_web_candidates_v2/manifest_selected_images.jsonl").resolve()
-        ]
+    class_names = TARGET_CLASSES[target]
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock_handle:
@@ -269,19 +374,22 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
             args.daily_limit,
             timestamp,
             getattr(args, "baseline_count", 0),
+            getattr(args, "total_target", 0),
         )
         plan = {
             "schema": SCHEMA,
             "dry_run": bool(args.dry_run),
+            "target": target,
             "dataset": str(dataset),
             "commons_config": str(commons_config),
-            "openverse_config": str(openverse_config),
+            "openverse_configs": [str(path) for path in openverse_configs],
             "dedupe_manifests": [str(path) for path in dedupe_manifests],
             "day": planned_state["day"],
             "baseline_count": planned_state["baseline_count"],
             "current_count": current_count,
             "target_count": planned_state["target_count"],
             "daily_limit": args.daily_limit,
+            "total_target": getattr(args, "total_target", 0),
             "attempt": planned_state["attempts"],
             "qwen_endpoint": args.endpoint,
             "qwen_model": args.model,
@@ -291,6 +399,15 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
         if args.dry_run:
             return 0
 
+        ensure_pending_dataset_summary(
+            dataset,
+            target,
+            class_names,
+            current_count,
+            planned_state["target_count"],
+            getattr(args, "total_target", 0),
+            timestamp,
+        )
         write_json_atomic(state_path, planned_state)
         started = time.monotonic()
         try:
@@ -300,16 +417,22 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
                 str(repo_root / "scripts/crawl_fire_smoke_candidates.py"),
                 "--output", str(dataset),
                 "--commons-config", str(commons_config),
-                "--openverse-config", str(openverse_config),
+                "--dataset-schema", "jgzj_weak_event_web_candidate.v1",
+                "--summary-schema", "jgzj_weak_event_web_candidate_summary.v1",
+                "--profile", f"弱事件网络候选集:{target}",
                 "--max-images", str(planned_state["target_count"]),
                 "--max-per-series", "4",
             ]
+            for class_name in class_names:
+                crawler_command.extend(["--class-name", class_name])
+            for path in openverse_configs:
+                crawler_command.extend(["--openverse-config", str(path)])
             for path in dedupe_manifests:
                 crawler_command.extend(["--dedupe-manifest", str(path)])
             run_command(crawler_command)
             run_command([
                 args.python,
-                str(repo_root / "scripts/label_fire_smoke_candidates_qwen.py"),
+                str(repo_root / "scripts/label_weak_event_candidates_qwen.py"),
                 "--dataset", str(dataset),
                 "--endpoint", args.endpoint,
                 "--model", args.model,

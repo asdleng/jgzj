@@ -3,26 +3,232 @@
   "download_width": 1600,
   "exclude_title_regex": "\\b(?:art|painting|drawing|illustration|poster|pamphlet|map|diagram|logo|sculpture|memorial|museum|drill|aftermath|archive|radar|satellite|aerial|festival|light show)\\b|Bundesarchiv|LCCN|NYPL",
   "queries": [
-    {"bucket": "fire_building", "category": "Burning buildings", "limit": 100, "max_accept": 5, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "fire_building_general", "category": "Building fires", "limit": 240, "max_accept": 8, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "hard_negative_fog_building", "category": "Buildings in fog", "limit": 80, "max_accept": 4, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "fire_vehicle", "category": "Vehicle fires", "limit": 100, "max_accept": 5, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "fire_dumpster", "category": "Dumpster fires", "limit": 100, "max_accept": 5, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "hard_negative_exhaust", "category": "Exhaust fumes", "limit": 80, "max_accept": 4, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "smoke_fire", "category": "Smoke from fires", "limit": 240, "max_accept": 8, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "fire_urban", "category": "Urban fires", "limit": 100, "max_accept": 4, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "hard_negative_chimney", "category": "Smoking chimneys", "limit": 80, "max_accept": 4, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "fire_house", "category": "House fires", "limit": 100, "max_accept": 4, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "fire_wildfire", "category": "Wildfires", "limit": 240, "max_accept": 5, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "hard_negative_hydrant", "category": "Fire hydrants", "limit": 80, "max_accept": 3, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "fire_restaurant", "category": "Restaurant fires", "limit": 80, "max_accept": 4, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "fire_forest", "category": "Forest fires", "limit": 200, "max_accept": 4, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "hard_negative_extinguisher", "category": "Fire extinguishers", "limit": 80, "max_accept": 3, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "fire_general", "category": "Fires", "limit": 240, "max_accept": 5, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "hard_negative_fog_road", "category": "Fog on roads", "limit": 80, "max_accept": 3, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "hard_negative_fire_cabinet", "category": "Fire hose cabinets", "limit": 80, "max_accept": 2, "category_sort": "timestamp", "category_direction": "descending"},
-    {"bucket": "hard_negative_dust", "query": "road dust cloud", "limit": 100, "max_accept": 2, "exclude_title_regex": "Dust bowl"},
-    {"bucket": "hard_negative_light", "query": "traffic lights night street", "limit": 100, "max_accept": 2, "exclude_title_regex": "art|festival|show"},
-    {"bucket": "hard_negative_sunset", "query": "sunset behind buildings street", "limit": 100, "max_accept": 3, "exclude_title_regex": "painting|art"}
+    {
+      "bucket": "fire_building",
+      "category": "Burning buildings",
+      "limit": 240,
+      "max_accept": 20,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "fire_building_general",
+      "category": "Building fires",
+      "limit": 400,
+      "max_accept": 28,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_fog_building",
+      "category": "Buildings in fog",
+      "limit": 160,
+      "max_accept": 12,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "fire_vehicle",
+      "category": "Vehicle fires",
+      "limit": 240,
+      "max_accept": 20,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "fire_dumpster",
+      "category": "Dumpster fires",
+      "limit": 240,
+      "max_accept": 20,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_exhaust",
+      "category": "Exhaust fumes",
+      "limit": 160,
+      "max_accept": 12,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "smoke_fire",
+      "category": "Smoke from fires",
+      "limit": 400,
+      "max_accept": 28,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "fire_urban",
+      "category": "Urban fires",
+      "limit": 240,
+      "max_accept": 20,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_chimney",
+      "category": "Smoking chimneys",
+      "limit": 160,
+      "max_accept": 12,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "fire_house",
+      "category": "House fires",
+      "limit": 240,
+      "max_accept": 20,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "fire_wildfire",
+      "category": "Wildfires",
+      "limit": 400,
+      "max_accept": 28,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_hydrant",
+      "category": "Fire hydrants",
+      "limit": 160,
+      "max_accept": 12,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "fire_restaurant",
+      "category": "Restaurant fires",
+      "limit": 240,
+      "max_accept": 20,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "fire_forest",
+      "category": "Forest fires",
+      "limit": 240,
+      "max_accept": 20,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_extinguisher",
+      "category": "Fire extinguishers",
+      "limit": 160,
+      "max_accept": 12,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "fire_general",
+      "category": "Fires",
+      "limit": 400,
+      "max_accept": 28,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_fog_road",
+      "category": "Fog on roads",
+      "limit": 160,
+      "max_accept": 12,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_fire_cabinet",
+      "category": "Fire hose cabinets",
+      "limit": 160,
+      "max_accept": 12,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
+    },
+    {
+      "bucket": "hard_negative_dust",
+      "query": "road dust cloud",
+      "limit": 160,
+      "max_accept": 12,
+      "exclude_title_regex": "Dust bowl"
+    },
+    {
+      "bucket": "hard_negative_light",
+      "query": "traffic lights night street",
+      "limit": 160,
+      "max_accept": 12,
+      "exclude_title_regex": "art|festival|show"
+    },
+    {
+      "bucket": "hard_negative_sunset",
+      "query": "sunset behind buildings street",
+      "limit": 160,
+      "max_accept": 12,
+      "exclude_title_regex": "painting|art"
+    },
+    {
+      "bucket": "fire_apartment_search",
+      "query": "apartment building fire smoke flames",
+      "limit": 220,
+      "max_accept": 18
+    },
+    {
+      "bucket": "fire_shop_market_search",
+      "query": "shop market fire street smoke flames",
+      "limit": 200,
+      "max_accept": 16
+    },
+    {
+      "bucket": "fire_factory_search",
+      "query": "factory industrial fire smoke plume flames",
+      "limit": 240,
+      "max_accept": 20
+    },
+    {
+      "bucket": "smoke_plume_city_search",
+      "query": "smoke plume fire city street",
+      "limit": 220,
+      "max_accept": 18
+    },
+    {
+      "bucket": "fire_electrical_search",
+      "query": "electrical fire smoke building",
+      "limit": 180,
+      "max_accept": 14
+    },
+    {
+      "bucket": "fire_garage_search",
+      "query": "garage fire smoke flames",
+      "limit": 180,
+      "max_accept": 14
+    },
+    {
+      "bucket": "fire_rooftop_search",
+      "query": "roof fire smoke flames",
+      "limit": 180,
+      "max_accept": 14
+    },
+    {
+      "bucket": "firefighters_scene_search",
+      "query": "firefighters smoke flames building street",
+      "limit": 180,
+      "max_accept": 14
+    },
+    {
+      "bucket": "hard_negative_welding_search",
+      "query": "welding sparks workshop smoke",
+      "limit": 160,
+      "max_accept": 10,
+      "exclude_title_regex": "fire|wildfire|burning building"
+    },
+    {
+      "bucket": "hard_negative_orange_lights_search",
+      "query": "orange street lights night fog smoke-like",
+      "limit": 160,
+      "max_accept": 10,
+      "exclude_title_regex": "fire|flames|wildfire"
+    }
   ]
 }

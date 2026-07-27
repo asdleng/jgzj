@@ -1,0 +1,67 @@
+{
+  "api_url": "https://commons.wikimedia.org/w/api.php",
+  "download_width": 1600,
+  "exclude_title_regex": "\\b(?:painting|drawing|illustration|poster|pamphlet|map|diagram|logo|collage|screenshot|video|film|festival)\\b|Bundesarchiv|LCCN|NYPL",
+  "queries": [
+    {
+      "bucket": "trash_positive_litter",
+      "category": "Litter",
+      "limit": 378,
+      "max_accept": 126
+    },
+    {
+      "bucket": "trash_positive_paper",
+      "query": "discarded paper litter ground",
+      "limit": 303,
+      "max_accept": 101
+    },
+    {
+      "bucket": "trash_positive_bag",
+      "query": "discarded plastic bag street",
+      "limit": 303,
+      "max_accept": 101
+    },
+    {
+      "bucket": "trash_positive_bottle",
+      "query": "discarded bottle park",
+      "limit": 303,
+      "max_accept": 101
+    },
+    {
+      "bucket": "trash_positive_box",
+      "query": "discarded cardboard box street",
+      "limit": 303,
+      "max_accept": 101
+    },
+    {
+      "bucket": "hard_negative_trash_container",
+      "category": "Waste containers",
+      "limit": 180,
+      "max_accept": 60
+    },
+    {
+      "bucket": "hard_negative_trash_storage_box",
+      "query": "stacked cardboard boxes storage",
+      "limit": 180,
+      "max_accept": 60
+    },
+    {
+      "bucket": "hard_negative_trash_utility_box",
+      "query": "utility box roadside",
+      "limit": 150,
+      "max_accept": 50
+    },
+    {
+      "bucket": "hard_negative_trash_road_marking",
+      "query": "road arrow marking",
+      "limit": 150,
+      "max_accept": 50
+    },
+    {
+      "bucket": "hard_negative_trash_sign",
+      "query": "traffic sign roadside",
+      "limit": 150,
+      "max_accept": 50
+    }
+  ]
+}

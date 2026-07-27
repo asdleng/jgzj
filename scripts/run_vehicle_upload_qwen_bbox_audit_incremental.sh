@@ -18,7 +18,7 @@ MAX_NEW="${VEHICLE_QWEN_AUDIT_MAX_NEW:-1000}"
 WORKERS="${VEHICLE_QWEN_AUDIT_WORKERS:-4}"
 TIMEOUT_S="${VEHICLE_QWEN_AUDIT_TIMEOUT_S:-120}"
 MAX_TOKENS="${VEHICLE_QWEN_AUDIT_MAX_TOKENS:-768}"
-CLASS_FILTER="${VEHICLE_QWEN_AUDIT_CLASS_FILTER:-person,vehicle,nonmotor,fire,smoke,pet,trash,stall,phone,smoking}"
+CLASS_FILTER="${VEHICLE_QWEN_AUDIT_CLASS_FILTER:-person,vehicle,nonmotor,fire,smoke,pet,trash,stall,phone,smoking,license_plate,lying,fighting,falldown}"
 EXTRA_ARGS="${VEHICLE_QWEN_AUDIT_EXTRA_ARGS:-}"
 PROMPT_FILE="${VEHICLE_QWEN_AUDIT_PROMPT_FILE:-}"
 

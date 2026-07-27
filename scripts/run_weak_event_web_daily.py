@@ -341,6 +341,10 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
         f"wikimedia_weak_event_{target_suffix}_queries_v1.json"
         if target_suffix else "wikimedia_weak_event_queries_v1.json"
     )
+    default_openverse_config_name = (
+        f"openverse_weak_event_{target_suffix}_queries_v1.json"
+        if target_suffix else "openverse_weak_event_queries_v1.json"
+    )
     default_state_dir = (
         f"weak_event_web_{target_suffix}_daily"
         if target_suffix else "weak_event_web_daily"
@@ -350,6 +354,10 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
     ).resolve()
     commons_config = (args.commons_config or repo_root / "config" / default_config_name).resolve()
     openverse_configs = [path.resolve() for path in getattr(args, "openverse_config", [])]
+    if not openverse_configs:
+        default_openverse_config = repo_root / "config" / default_openverse_config_name
+        if default_openverse_config.is_file():
+            openverse_configs = [default_openverse_config.resolve()]
     state_path = (args.state or repo_root / ".runtime/yolo_loop" / default_state_dir / "state.json").resolve()
     lock_path = (args.lock or state_path.with_suffix(".lock")).resolve()
     dedupe_manifests = [path.resolve() for path in args.dedupe_manifest]

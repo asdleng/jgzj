@@ -6,50 +6,94 @@
     {
       "bucket": "stall_positive_market",
       "category": "Market stalls",
-      "limit": 519,
-      "max_accept": 173
+      "limit": 778,
+      "max_accept": 260,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "stall_positive_vendor",
       "category": "Street vendors",
-      "limit": 432,
-      "max_accept": 144
+      "limit": 648,
+      "max_accept": 216,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "stall_positive_food_cart",
       "category": "Food carts",
-      "limit": 345,
-      "max_accept": 115
+      "limit": 518,
+      "max_accept": 172,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "stall_positive_temporary",
       "query": "temporary street vendor stall",
-      "limit": 345,
-      "max_accept": 115
+      "limit": 518,
+      "max_accept": 172
     },
     {
       "bucket": "hard_negative_stall_vending",
       "category": "Vending machines",
-      "limit": 207,
-      "max_accept": 69
+      "limit": 310,
+      "max_accept": 104,
+      "category_sort": "timestamp",
+      "category_direction": "descending"
     },
     {
       "bucket": "hard_negative_stall_kiosk",
       "query": "fixed kiosk street",
-      "limit": 207,
-      "max_accept": 69
+      "limit": 310,
+      "max_accept": 104
     },
     {
       "bucket": "hard_negative_stall_checkpoint",
       "query": "security checkpoint tent",
-      "limit": 174,
-      "max_accept": 58
+      "limit": 261,
+      "max_accept": 87
     },
     {
       "bucket": "hard_negative_stall_shelter",
       "query": "bus shelter street",
-      "limit": 171,
-      "max_accept": 57
+      "limit": 256,
+      "max_accept": 86
+    },
+    {
+      "bucket": "stall_positive_canopy_market",
+      "query": "street market stall vendor canopy",
+      "limit": 320,
+      "max_accept": 85
+    },
+    {
+      "bucket": "stall_positive_night_market",
+      "query": "night market food stall street vendor",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "stall_positive_roadside_vendor",
+      "query": "temporary roadside vendor stall",
+      "limit": 280,
+      "max_accept": 75
+    },
+    {
+      "bucket": "stall_positive_food_stand",
+      "query": "food stand street market",
+      "limit": 260,
+      "max_accept": 70
+    },
+    {
+      "bucket": "hard_negative_stall_event_tent",
+      "query": "event tent canopy no vendor",
+      "limit": 200,
+      "max_accept": 40
+    },
+    {
+      "bucket": "hard_negative_stall_bus_stop",
+      "query": "bus stop shelter kiosk street",
+      "limit": 180,
+      "max_accept": 35
     }
   ]
 }

@@ -1,0 +1,73 @@
+{
+  "api_url": "https://api.openverse.org/v1/images/",
+  "page_size": 20,
+  "licenses": [
+    "cc0",
+    "pdm",
+    "by",
+    "by-sa"
+  ],
+  "exclude_title_regex": "\\b(?:illustration|drawing|painting|poster|logo|miniature|toy|museum)\\b",
+  "queries": [
+    {
+      "bucket": "stall_positive_openverse_market",
+      "query": "street market stall vendor",
+      "limit": 240,
+      "max_accept": 85
+    },
+    {
+      "bucket": "stall_positive_openverse_food",
+      "query": "food stall street market",
+      "limit": 220,
+      "max_accept": 80
+    },
+    {
+      "bucket": "stall_positive_openverse_canopy",
+      "query": "vendor stall canopy sidewalk",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "stall_positive_openverse_night_market",
+      "query": "night market stall vendor",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "stall_positive_openverse_roadside",
+      "query": "temporary roadside vendor stall",
+      "limit": 200,
+      "max_accept": 70
+    },
+    {
+      "bucket": "stall_positive_openverse_fair",
+      "query": "outdoor market stall booth",
+      "limit": 180,
+      "max_accept": 60
+    },
+    {
+      "bucket": "hard_negative_stall_openverse_vending",
+      "query": "vending machine street",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_stall_openverse_bus_shelter",
+      "query": "bus shelter street",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_stall_openverse_checkpoint",
+      "query": "security checkpoint tent",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_stall_openverse_event_tent",
+      "query": "event canopy tent no vendor",
+      "limit": 150,
+      "max_accept": 30
+    }
+  ]
+}

@@ -1,0 +1,2938 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import random
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+try:
+    import yaml
+except Exception as exc:  # pragma: no cover
+    raise SystemExit(f"missing PyYAML: {exc}")
+
+
+CN_TZ = timezone(timedelta(hours=8))
+PROJECT_ROOT = Path(os.environ.get("JGZJ_PROJECT_ROOT", "/home/admin1/jgzj"))
+RUNTIME_ROOT = PROJECT_ROOT / ".runtime"
+MODEL_SERVICE_ROOT = RUNTIME_ROOT / "yolo_model_service"
+MODEL_REGISTRY = MODEL_SERVICE_ROOT / "model_registry.json"
+WEIGHTS_DIR = MODEL_SERVICE_ROOT / "weights"
+DEFAULT_PULL_SCRIPT_PY36 = Path("/home/admin1/pull_remote_dateconf_filter_py36.py")
+DEFAULT_PULL_SCRIPT = Path("/home/admin1/pull_remote_dateconf_filter.py")
+PULL_SCRIPT = Path(os.environ.get(
+    "JGZJ_PULL_SCRIPT",
+    str(DEFAULT_PULL_SCRIPT_PY36 if DEFAULT_PULL_SCRIPT_PY36.exists() else DEFAULT_PULL_SCRIPT),
+))
+PULL_SSH_KEY = Path(os.environ.get("JGZJ_PULL_SSH_KEY", "/home/admin1/.ssh/id_ed25519_data_ps_pull"))
+PULL_DEFAULT_SSH_OPTIONS = shlex.split(os.environ.get(
+    "JGZJ_PULL_SSH_OPTIONS",
+    "-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=no",
+))
+QWEN_LABEL_SCRIPT = PROJECT_ROOT / "scripts" / "patrol_qwen_label_vehicle_uploads.py"
+TRAIN_SCRIPT = RUNTIME_ROOT / "reliable_vehicle_yolo_20260704" / "train_reliable_yolo_finetune.py"
+POLICY_SCRIPT = PROJECT_ROOT / "scripts" / "yolo_closed_loop_policy.py"
+FINETUNE_ROOT = PROJECT_ROOT / "finetune"
+FINETUNE_RUNTIME = RUNTIME_ROOT / "finetune"
+YOLO_LOOP_DATASETS_ROOT = RUNTIME_ROOT / "yolo_loop" / "datasets"
+EVENT_FEEDBACK_ROOT = RUNTIME_ROOT / "yolo_loop" / "datasets" / "yolo_event_feedback_v1"
+QWEN_NO_ROOT = Path(os.environ.get(
+    "YOLO_FINETUNE_QWEN_NO_ROOT",
+    "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+))
+WEB_FIRE_SMOKE_DATASET = Path(os.environ.get(
+    "YOLO_FINETUNE_WEB_FIRE_SMOKE_DATASET",
+    str(RUNTIME_ROOT / "yolo_loop" / "datasets" / "fire_smoke_web_candidates_v3"),
+))
+FIRE_SMOKE_REVIEW_PRIMARY_DATASET = "loop:finetune_v2"
+FIRE_SMOKE_REVIEW_SECONDARY_DATASET = "loop:fire_smoke_web_candidates_v3"
+FIRE_SMOKE_DEFAULT_MAX_POS_NEG_RATIO = 1.5
+LOCAL_TRAIN_PROJECT_ROOT = FINETUNE_RUNTIME / "local_runs"
+LOCAL_TRAIN_RESULTS_ROOT = FINETUNE_RUNTIME / "local_results"
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+YOLO_REVIEW_FINETUNE_SCHEMA = "jgzj_yolo_finetune_review_dataset.v1"
+CATEGORY_ORDER = ("normal_positive", "hard_positive", "normal_negative", "hard_negative")
+
+A100_HOST = os.environ.get("YOLO_A100_HOST", "192.168.80.49")
+A100_USER = os.environ.get("YOLO_A100_USER", "sari")
+A100_KEY = os.environ.get("YOLO_A100_KEY", "/home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519")
+A100_ROOT = os.environ.get("YOLO_FINETUNE_A100_ROOT", "/home/sari/jgzj_yolo_finetune")
+A100_PY = os.environ.get("YOLO_DAILY_A100_PY", "/home/sari/autodistill/bin/python")
+
+FEEDBACK_CLASSES = [
+    "person",
+    "vehicle",
+    "nonmotor",
+    "fire",
+    "smoke",
+    "trash",
+    "pet",
+    "stall",
+    "phone",
+    "smoking",
+]
+FEEDBACK_CLASS_ID = {name: idx for idx, name in enumerate(FEEDBACK_CLASSES)}
+
+KNOWN_DATASET_BY_TASK = {
+    "person_yolo": RUNTIME_ROOT / "yolo_daily_closed_loop" / "runs" / "20260714_232301" / "datasets" / "person_yolo_closed_loop_20260713" / "data.yaml",
+    "vehicle_yolo": RUNTIME_ROOT / "yolo_daily_closed_loop" / "runs" / "20260719_150443" / "datasets" / "vehicle_yolo_closed_loop_20260718" / "data.yaml",
+    "pet_yolo": RUNTIME_ROOT / "yolo_loop" / "datasets" / "pet_yolo_public_merged_20260627" / "pet_yolo" / "data.yaml",
+    "phone_yolo": RUNTIME_ROOT / "external_yolo" / "phone_yolo_coco2017_v1" / "data.yaml",
+    "trash_yolo": RUNTIME_ROOT / "yolo_loop" / "datasets" / "trash_yolo_20260623_000839" / "trash_yolo" / "data.yaml",
+    "stall_yolo": RUNTIME_ROOT / "yolo_loop_manual" / "stall_yolo" / "datasets" / "stall_yolo_20260623_214302" / "stall_yolo" / "data.yaml",
+    "fire_smoke_yolo": Path("/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml"),
+    "license_plate_yolo": RUNTIME_ROOT / "license_plate_yolo_20260629" / "datasets" / "ccpd2020_lp_yolo_30k" / "data.yaml",
+    "fishing_rod_yolo": RUNTIME_ROOT / "yolo_loop" / "datasets" / "fishing_rod_yolo_public_plus_local_neg_20260629" / "fishing_rod_yolo" / "data.yaml",
+}
+
+QWEN_COARSE_CLASS = {
+    "car": "vehicle",
+    "truck": "vehicle",
+    "bus": "vehicle",
+    "van": "vehicle",
+    "non_motor_vehicle": "nonmotor",
+    "non-motorvehicle": "nonmotor",
+    "bicycle": "nonmotor",
+    "bike": "nonmotor",
+    "ebike": "nonmotor",
+    "e_bike": "nonmotor",
+    "scooter": "nonmotor",
+    "bottle": "trash",
+    "box": "trash",
+    "paper": "trash",
+    "bag": "trash",
+}
+
+PULL_CLASS_ALIASES = {
+    "vehicle": ["vehicle", "car", "truck", "bus", "van"],
+    "car": ["car"],
+    "truck": ["truck"],
+    "nonmotor": ["nonmotor", "non_motor_vehicle", "non-motorVehicle", "bicycle", "bike", "ebike", "e_bike", "scooter", "motorcycle"],
+    "non_motor_vehicle": ["non_motor_vehicle", "non-motorVehicle", "bicycle", "bike", "ebike", "e_bike", "scooter", "motorcycle"],
+    "trash": ["trash", "bottle", "box", "paper", "bag"],
+    "bottle": ["bottle"],
+    "box": ["box"],
+    "paper": ["paper"],
+    "bag": ["bag"],
+    "pet": ["pet", "dog", "cat", "off_leash_dog"],
+    "fire": ["fire"],
+    "smoke": ["smoke"],
+    "stall": ["stall"],
+    "phone": ["phone"],
+    "smoking": ["smoking"],
+    "person": ["person"],
+}
+
+
+@dataclass
+class ModelInfo:
+    task_id: str
+    title: str
+    task: str
+    weight: Path
+    data: Path
+    registry_entry: dict[str, Any]
+    data_source: str
+
+
+@dataclass
+class DatasetPoolSource:
+    role: str
+    label: str
+    data: Path | None
+    dataset_root: Path
+    dataset_id: str
+    positives: list[dict[str, Any]]
+    negatives: list[dict[str, Any]]
+
+
+def log(message: str) -> None:
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
+
+
+def cn_now() -> datetime:
+    return datetime.now(CN_TZ)
+
+
+def normalize_name(value: str) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def safe_path_token(value: str, fallback: str = "dataset") -> str:
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "").strip()).strip("._-")
+    return token or fallback
+
+
+def qwen_class_for(name: str) -> str:
+    normalized = normalize_name(name)
+    return QWEN_COARSE_CLASS.get(normalized, normalized)
+
+
+def parse_csv_tokens(value: str) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
+def flatten_csv_values(values: list[str] | tuple[str, ...] | None) -> list[str]:
+    out: list[str] = []
+    for value in values or []:
+        out.extend(parse_csv_tokens(value))
+    return out
+
+
+def resolve_target_class_ids(args: argparse.Namespace, names: list[str]) -> list[int]:
+    raw_ids = parse_csv_tokens(getattr(args, "class_ids", "") or "")
+    ids = [int(item) for item in raw_ids] if raw_ids else [int(args.class_id)]
+    out: list[int] = []
+    for class_id in ids:
+        if class_id < 0 or class_id >= len(names):
+            raise SystemExit(f"class_id_out_of_range:{class_id}; names={names}")
+        if class_id not in out:
+            out.append(class_id)
+    return out
+
+
+def resolve_qwen_targets(args: argparse.Namespace, target_names: list[str]) -> list[str]:
+    if getattr(args, "qwen_class", ""):
+        raw = parse_csv_tokens(args.qwen_class)
+        targets = [normalize_name(item) for item in raw]
+    else:
+        targets = [qwen_class_for(name) for name in target_names]
+    out: list[str] = []
+    for item in targets:
+        if item and item not in out:
+            out.append(item)
+    return out
+
+
+def pull_aliases_for(name: str) -> list[str]:
+    normalized = normalize_name(name)
+    aliases = PULL_CLASS_ALIASES.get(normalized, [normalized])
+    seen = set()
+    out = []
+    for item in aliases:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def run(cmd: list[str], *, timeout: int = 600, check: bool = True) -> subprocess.CompletedProcess:
+    log(f"run: {shlex.join(cmd)}")
+    result = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    if check and result.returncode != 0:
+        raise RuntimeError(
+            "command_failed "
+            f"rc={result.returncode} cmd={shlex.join(cmd)}\n"
+            f"stdout={result.stdout[-4000:]}\n"
+            f"stderr={result.stderr[-4000:]}"
+        )
+    return result
+
+
+def pull_ssh_args(args: argparse.Namespace) -> list[str]:
+    options = list(PULL_DEFAULT_SSH_OPTIONS)
+    options.extend(getattr(args, "pull_ssh_option", []) or [])
+    key_value = str(getattr(args, "pull_ssh_key", "") or "").strip()
+    key = Path(key_value) if key_value else None
+    if key and key.exists() and "-i" not in options and "IdentityFile" not in " ".join(options):
+        options.extend(["-i", str(key)])
+    out: list[str] = []
+    for option in options:
+        out.append(f"--ssh-option={option}")
+    return out
+
+
+def a100(command: str, *, timeout: int = 120, check: bool = True) -> subprocess.CompletedProcess:
+    return run(
+        [
+            "ssh",
+            "-i",
+            A100_KEY,
+            "-o",
+            "ClearAllForwardings=yes",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=12",
+            "-o",
+            "StrictHostKeyChecking=no",
+            f"{A100_USER}@{A100_HOST}",
+            command,
+        ],
+        timeout=timeout,
+        check=check,
+    )
+
+
+def rsync_to_a100(local_path: Path, remote_path: str, *, timeout: int = 1800) -> None:
+    local = str(local_path)
+    if local_path.is_dir():
+        local = local.rstrip("/") + "/"
+        remote_path = remote_path.rstrip("/") + "/"
+    run(
+        [
+            "rsync",
+            "-a",
+            "-e",
+            f"ssh -i {shlex.quote(A100_KEY)} -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no",
+            local,
+            f"{A100_USER}@{A100_HOST}:{remote_path}",
+        ],
+        timeout=timeout,
+        check=True,
+    )
+
+
+def query_gpu_status() -> list[dict[str, int]]:
+    try:
+        result = run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,memory.free,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            timeout=20,
+            check=True,
+        )
+    except Exception:
+        return []
+    out = []
+    for raw in result.stdout.splitlines():
+        parts = [part.strip() for part in raw.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            out.append({
+                "index": int(parts[0]),
+                "memory_free_mb": int(parts[1]),
+                "utilization_gpu": int(parts[2]),
+            })
+        except Exception:
+            continue
+    return out
+
+
+def select_training_gpu(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    explicit = int(getattr(args, "local_gpu", -1))
+    status = query_gpu_status()
+    if explicit >= 0:
+        return explicit, {"selected": explicit, "reason": "explicit", "gpus": status}
+    if not status:
+        return 0, {"selected": 0, "reason": "fallback_no_nvidia_smi", "gpus": status}
+    best = max(status, key=lambda row: (row["memory_free_mb"], -row["utilization_gpu"], -row["index"]))
+    return int(best["index"]), {"selected": int(best["index"]), "reason": "max_free_memory", "gpus": status}
+
+
+def auto_epochs_for_sample_count(sample_count: int) -> int:
+    if sample_count < 400:
+        return 25
+    if sample_count < 1000:
+        return 20
+    if sample_count < 3000:
+        return 15
+    if sample_count < 10000:
+        return 10
+    if sample_count < 30000:
+        return 6
+    return 4
+
+
+def apply_auto_training_params(args: argparse.Namespace, sample_count: int) -> dict[str, Any]:
+    epochs_was_auto = int(args.epochs) == 0
+    patience_disabled = bool(getattr(args, "disable_early_stop", False))
+    patience_was_auto = int(args.patience) == 0 and not patience_disabled
+    if epochs_was_auto:
+        args.epochs = auto_epochs_for_sample_count(sample_count)
+    if patience_disabled:
+        args.patience = 0
+    if patience_was_auto:
+        args.patience = max(3, min(8, max(1, int(args.epochs) // 3)))
+    return {
+        "sample_count": sample_count,
+        "epochs": int(args.epochs),
+        "epochs_auto": epochs_was_auto,
+        "patience": int(args.patience),
+        "patience_auto": patience_was_auto,
+        "patience_disabled": patience_disabled,
+        "save_period": int(args.save_period),
+    }
+
+
+def load_json(path: Path, default: Any = None) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def iter_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8", errors="ignore") as handle:
+        for raw in handle:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                row = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def read_yaml(path: Path) -> dict[str, Any]:
+    with path.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"invalid_yaml:{path}")
+    return data
+
+
+def normalize_yolo_names(names: Any) -> list[str]:
+    if isinstance(names, dict):
+        pairs = []
+        for key, value in names.items():
+            pairs.append((int(key), str(value)))
+        return [value for _, value in sorted(pairs)]
+    if isinstance(names, list):
+        return [str(item) for item in names]
+    return []
+
+
+def parse_args_yaml(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$", raw)
+        if match:
+            out[match.group(1)] = match.group(2).strip().strip("\"'")
+    return out
+
+
+def map_external_dataset(path: Path) -> Path:
+    text = str(path)
+    prefix = "/home/sari/jgzj_yolo_datasets/"
+    if not text.startswith(prefix):
+        return path
+    tail = text[len(prefix):]
+    candidate = RUNTIME_ROOT / "external_yolo" / tail
+    if candidate.exists():
+        return candidate
+    parts = Path(tail).parts
+    if parts:
+        candidate = RUNTIME_ROOT / "external_yolo" / parts[0] / Path(*parts[1:])
+        if candidate.exists():
+            return candidate
+    return path
+
+
+def yolo_review_dataset_root_for_alias(alias: str) -> Path | None:
+    if alias == "loop":
+        return YOLO_LOOP_DATASETS_ROOT
+    if alias == "legacy":
+        return RUNTIME_ROOT / "yolo_datasets"
+    return None
+
+
+def find_data_yaml_in_dir(dataset_dir: Path) -> Path:
+    direct = [dataset_dir / "data.yaml", dataset_dir / "data.yml"]
+    for candidate in direct:
+        if candidate.exists():
+            return candidate.resolve()
+    nested = sorted(dataset_dir.glob("*/data.yaml")) + sorted(dataset_dir.glob("*/data.yml"))
+    if len(nested) == 1:
+        return nested[0].resolve()
+    if len(nested) > 1:
+        names = ", ".join(str(path) for path in nested[:8])
+        raise SystemExit(f"ambiguous_dataset_data_yaml:{dataset_dir}; candidates={names}")
+    raise SystemExit(f"data_yaml_not_found:{dataset_dir}")
+
+
+def resolve_dataset_input(value: str, default_data: Path | None = None) -> Path:
+    raw = str(value or "").strip()
+    if not raw:
+        if default_data is None:
+            raise SystemExit("empty_dataset_input")
+        return default_data.resolve()
+    if ":" in raw and not raw.startswith("/") and not re.match(r"^[A-Za-z]:[\\/]", raw):
+        alias, rel = raw.split(":", 1)
+        root = yolo_review_dataset_root_for_alias(alias)
+        if root is not None:
+            safe_parts = [part for part in Path(rel).parts if part not in ("", ".", "..")]
+            root_resolved = root.resolve()
+            candidate = (root / Path(*safe_parts)).resolve()
+            if candidate != root_resolved and root_resolved not in candidate.parents:
+                raise SystemExit(f"dataset_id_out_of_root:{raw}")
+            return find_data_yaml_in_dir(candidate) if candidate.is_dir() else candidate
+    candidate = map_external_dataset(Path(raw).expanduser()).resolve()
+    if candidate.is_dir():
+        return find_data_yaml_in_dir(candidate)
+    if not candidate.exists():
+        raise SystemExit(f"dataset_not_found:{raw}")
+    return candidate
+
+
+def dataset_label_for_data(data_yaml: Path) -> str:
+    parent = data_yaml.parent
+    if data_yaml.name in {"data.yaml", "data.yml"}:
+        return parent.name
+    return data_yaml.stem
+
+
+def sample_ratio_base_counts(args: argparse.Namespace) -> dict[str, int]:
+    return {
+        "normal_positive": max(0, int(args.original_normal_pos)),
+        "hard_positive": max(0, int(args.original_hard_pos) + int(args.feedback_hard_pos)),
+        "normal_negative": max(0, int(args.original_normal_neg)),
+        "hard_negative": max(0, int(args.original_hard_neg) + int(args.external_hard_neg)),
+    }
+
+
+def allocate_category_targets(base_counts: dict[str, int], target_total: int) -> dict[str, int]:
+    if target_total <= 0:
+        return {key: int(base_counts.get(key, 0) or 0) for key in CATEGORY_ORDER}
+    base_total = sum(max(0, int(base_counts.get(key, 0) or 0)) for key in CATEGORY_ORDER)
+    if base_total <= 0:
+        raise SystemExit("sample_ratio_base_total_is_zero")
+    exact = {
+        key: (target_total * max(0, int(base_counts.get(key, 0) or 0)) / base_total)
+        for key in CATEGORY_ORDER
+    }
+    allocated = {key: int(exact[key]) for key in CATEGORY_ORDER}
+    remaining = target_total - sum(allocated.values())
+    order = sorted(CATEGORY_ORDER, key=lambda key: (exact[key] - allocated[key], base_counts.get(key, 0)), reverse=True)
+    for key in order[:remaining]:
+        allocated[key] += 1
+    return allocated
+
+
+def dataset_pool_mode(args: argparse.Namespace) -> bool:
+    return bool(
+        int(getattr(args, "target_total", 0) or 0) > 0
+        or int(getattr(args, "positive_total", 0) or 0) > 0
+        or int(getattr(args, "negative_total", 0) or 0) > 0
+        or bool(getattr(args, "pool_use_all", False))
+        or str(getattr(args, "primary_dataset", "") or "").strip()
+        or str(getattr(args, "secondary_dataset", "") or "").strip()
+        or str(getattr(args, "preferred_dataset", "") or "").strip()
+        or flatten_csv_values(getattr(args, "supplemental_dataset", []) or [])
+    )
+
+
+def apply_model_defaults(args: argparse.Namespace) -> None:
+    if normalize_name(args.model) != "fire_smoke_yolo":
+        return
+    if not parse_csv_tokens(getattr(args, "class_ids", "") or "") and int(args.class_id) < 0:
+        args.class_ids = "0,1"
+        args.class_id = 0
+    if not str(args.target_name or "").strip():
+        args.target_name = "fire_smoke_full_review"
+    if not str(args.primary_dataset or "").strip():
+        args.primary_dataset = FIRE_SMOKE_REVIEW_PRIMARY_DATASET
+    if not str(args.secondary_dataset or "").strip():
+        args.secondary_dataset = FIRE_SMOKE_REVIEW_SECONDARY_DATASET
+    args.pool_reviewed_only = True
+    if args.positive_total <= 0 and args.negative_total <= 0 and args.target_total <= 0:
+        args.pool_use_all = True
+    if float(args.max_positive_negative_ratio or 0.0) <= 0.0:
+        args.max_positive_negative_ratio = FIRE_SMOKE_DEFAULT_MAX_POS_NEG_RATIO
+
+
+def find_dataset_by_weight_hash(weight: Path) -> tuple[Path | None, str]:
+    if not weight.exists() or weight.suffix != ".pt":
+        return None, "no_pt_weight"
+    target_sha = sha256_file(weight)
+    for best in RUNTIME_ROOT.rglob("weights/best.pt"):
+        if "yolo_model_service" in best.parts:
+            continue
+        try:
+            if sha256_file(best) != target_sha:
+                continue
+        except Exception:
+            continue
+        args = parse_args_yaml(best.parent.parent / "args.yaml")
+        raw = args.get("data")
+        if raw:
+            candidate = map_external_dataset(Path(raw))
+            if candidate.exists():
+                return candidate, f"sha256_match:{best}"
+            return Path(raw), f"sha256_match_missing_data:{best}"
+    return None, "no_sha256_match"
+
+
+def latest_fire_smoke_runtime_weight() -> tuple[Path | None, str]:
+    candidates: list[Path] = []
+    for root in (WEIGHTS_DIR, MODEL_SERVICE_ROOT / "downloads", FINETUNE_RUNTIME / "base_weights"):
+        if not root.exists():
+            continue
+        for path in root.glob("*.pt"):
+            token = normalize_name(path.name)
+            if "fire" in token and "smoke" in token:
+                candidates.append(path)
+    runs_root = RUNTIME_ROOT / "yolo_loop" / "runs"
+    if runs_root.exists():
+        for path in runs_root.glob("fire_smoke*/weights/best.pt"):
+            candidates.append(path)
+    existing = [path.resolve() for path in candidates if path.exists()]
+    if not existing:
+        return None, "no_fire_smoke_runtime_weight"
+    latest = max(existing, key=lambda path: path.stat().st_mtime)
+    return latest, f"latest_mtime:{latest.stat().st_mtime:.0f}"
+
+
+def infer_closed_loop_dataset(entry: dict[str, Any], task_id: str) -> tuple[Path | None, str]:
+    text = " ".join(str(entry.get(key) or "") for key in ("model_family", "source_run", "best_weight"))
+    tags = re.findall(r"20\d{6}_\d{6}", text)
+    for tag in tags:
+        run_dir = RUNTIME_ROOT / "yolo_daily_closed_loop" / "runs" / tag
+        if not run_dir.exists():
+            continue
+        dataset_root = run_dir / "datasets"
+        for data_yaml in sorted(dataset_root.glob(f"{task_id}_*/data.yaml")):
+            return data_yaml, f"closed_loop:{tag}"
+        for data_yaml in sorted(dataset_root.glob("*/data.yaml")):
+            if task_id.split("_", 1)[0] in data_yaml.as_posix():
+                return data_yaml, f"closed_loop_fuzzy:{tag}"
+    return None, "no_closed_loop_dataset"
+
+
+def resolve_model(model_name: str) -> ModelInfo:
+    registry = load_json(MODEL_REGISTRY, {})
+    entries = registry.get("entries") if isinstance(registry, dict) else []
+    if not isinstance(entries, list):
+        raise SystemExit(f"invalid_registry:{MODEL_REGISTRY}")
+
+    token = normalize_name(model_name)
+    matched = None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        aliases = {
+            normalize_name(entry.get("task_id", "")),
+            normalize_name(entry.get("title", "")),
+            normalize_name(Path(str(entry.get("local_weight") or "")).stem),
+            normalize_name(Path(str(entry.get("download_file") or "")).stem),
+        }
+        if token in aliases:
+            matched = entry
+            break
+    if matched is None:
+        known = ", ".join(str(e.get("task_id")) for e in entries if isinstance(e, dict))
+        raise SystemExit(f"unknown_model:{model_name}; registry_tasks={known}")
+
+    task_id = str(matched.get("task_id") or model_name)
+    weight = Path(str(matched.get("local_weight") or ""))
+    if not weight.exists():
+        candidates = list(WEIGHTS_DIR.glob(f"{task_id}*.pt"))
+        if candidates:
+            weight = max(candidates, key=lambda p: p.stat().st_mtime)
+    if not weight.exists():
+        raise SystemExit(f"weight_not_found:{weight}")
+
+    dataset = None
+    source = ""
+    registry_text = " ".join(str(matched.get(key) or "") for key in ("source_run", "model_family", "best_weight"))
+    if task_id == "fire_smoke_yolo" and task_id in KNOWN_DATASET_BY_TASK:
+        dataset = KNOWN_DATASET_BY_TASK[task_id]
+        source = "known_fire_smoke_current_table"
+    if (dataset is None or not dataset.exists()) and "yolo_daily_closed_loop" in registry_text:
+        dataset, source = infer_closed_loop_dataset(matched, task_id)
+    if dataset is None or not dataset.exists():
+        dataset, source = find_dataset_by_weight_hash(weight)
+    if dataset is None or not dataset.exists():
+        dataset, source2 = infer_closed_loop_dataset(matched, task_id)
+        source = source2
+    if (dataset is None or not dataset.exists()) and task_id in KNOWN_DATASET_BY_TASK:
+        dataset = KNOWN_DATASET_BY_TASK[task_id]
+        source = "known_current_table"
+    if dataset is None or not dataset.exists():
+        raise SystemExit(f"dataset_not_found_for:{task_id}; last_source={source}")
+
+    task = "detect"
+    if dataset.is_dir() and dataset.suffix not in {".yaml", ".yml"}:
+        task = "classify"
+    elif dataset.suffix in {".yaml", ".yml"}:
+        data = read_yaml(dataset)
+        if not data.get("train") or not data.get("names"):
+            task = "classify"
+
+    return ModelInfo(
+        task_id=task_id,
+        title=str(matched.get("title") or ""),
+        task=task,
+        weight=weight,
+        data=dataset,
+        registry_entry=matched,
+        data_source=source,
+    )
+
+
+def names_from_data(data_yaml: Path) -> list[str]:
+    data = read_yaml(data_yaml)
+    names = normalize_yolo_names(data.get("names"))
+    if names:
+        return names
+    raise SystemExit(f"missing_names:{data_yaml}")
+
+
+def split_paths_from_data(data_yaml: Path) -> dict[str, list[Path]]:
+    data = read_yaml(data_yaml)
+    root = Path(str(data.get("path") or data_yaml.parent))
+    if not root.is_absolute():
+        root = data_yaml.parent / root
+    out: dict[str, list[Path]] = {}
+    for split in ("train", "val", "test"):
+        raw = data.get(split)
+        if not raw:
+            continue
+        values = raw if isinstance(raw, list) else [raw]
+        images: list[Path] = []
+        for value in values:
+            p = Path(str(value))
+            if not p.is_absolute():
+                p = root / p
+            if p.is_dir():
+                images.extend(
+                    path for path in p.rglob("*")
+                    if path.is_file() and path.suffix.lower() in IMAGE_EXTS
+                )
+            elif p.is_file():
+                for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    item = Path(line)
+                    if not item.is_absolute():
+                        item = p.parent / item
+                    if item.exists() and item.suffix.lower() in IMAGE_EXTS:
+                        images.append(item)
+        out[split] = sorted(set(path.resolve() for path in images))
+    return out
+
+
+def label_path_for_image(image_path: Path) -> Path:
+    parts = list(image_path.parts)
+    for idx in range(len(parts) - 1, -1, -1):
+        if parts[idx] == "images":
+            parts[idx] = "labels"
+            return Path(*parts).with_suffix(".txt")
+    return image_path.with_suffix(".txt")
+
+
+def parse_label_file(label_path: Path) -> list[dict[str, Any]]:
+    if not label_path.exists():
+        return []
+    labels = []
+    for raw in label_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        parts = raw.strip().split()
+        if len(parts) < 5:
+            continue
+        try:
+            cls = int(float(parts[0]))
+            x, y, w, h = [float(v) for v in parts[1:5]]
+        except Exception:
+            continue
+        labels.append({"cls": cls, "xywh": [x, y, w, h], "raw": raw.strip()})
+    return labels
+
+
+def xywh_to_xyxy(box: list[float]) -> list[float]:
+    x, y, w, h = box
+    return [x - w / 2.0, y - h / 2.0, x + w / 2.0, y + h / 2.0]
+
+
+def iou_xyxy(a: list[float], b: list[float]) -> float:
+    x1 = max(a[0], b[0])
+    y1 = max(a[1], b[1])
+    x2 = min(a[2], b[2])
+    y2 = min(a[3], b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    denom = area_a + area_b - inter
+    return inter / denom if denom > 0 else 0.0
+
+
+def coerce_class_ids(class_ids: int | list[int] | tuple[int, ...] | set[int]) -> list[int]:
+    if isinstance(class_ids, int):
+        return [class_ids]
+    return [int(item) for item in class_ids]
+
+
+def collect_dataset_records(
+    data_yaml: Path,
+    class_ids: list[int],
+    source: str = "original_dataset",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    positives: list[dict[str, Any]] = []
+    negatives: list[dict[str, Any]] = []
+    target_ids = set(class_ids)
+    for split, images in split_paths_from_data(data_yaml).items():
+        for image_path in images:
+            label_path = label_path_for_image(image_path)
+            labels = parse_label_file(label_path)
+            target_labels = [item for item in labels if item["cls"] in target_ids]
+            row = {
+                "image": image_path,
+                "label": label_path,
+                "split": split,
+                "labels": labels,
+                "target_labels": target_labels,
+                "source": source,
+                "source_data_yaml": str(data_yaml),
+            }
+            if target_labels:
+                positives.append(row)
+            else:
+                negatives.append(row)
+    return positives, negatives
+
+
+def normalize_rel(value: Any) -> str:
+    return str(value or "").replace("\\", "/").lstrip("/")
+
+
+def optional_data_yaml_in_dir(dataset_dir: Path) -> Path | None:
+    direct = [dataset_dir / "data.yaml", dataset_dir / "data.yml"]
+    for candidate in direct:
+        if candidate.exists():
+            return candidate.resolve()
+    nested = sorted(dataset_dir.glob("*/data.yaml")) + sorted(dataset_dir.glob("*/data.yml"))
+    if len(nested) == 1:
+        return nested[0].resolve()
+    if len(nested) > 1:
+        names = ", ".join(str(path) for path in nested[:8])
+        raise SystemExit(f"ambiguous_dataset_data_yaml:{dataset_dir}; candidates={names}")
+    return None
+
+
+def dataset_id_from_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        rel = resolved.relative_to(YOLO_LOOP_DATASETS_ROOT.resolve())
+        return f"loop:{rel.as_posix()}"
+    except Exception:
+        return safe_path_token(str(resolved), "dataset")
+
+
+def resolve_dataset_source_input(value: str, default_data: Path | None = None) -> tuple[Path, Path | None, str]:
+    raw = str(value or "").strip()
+    if not raw:
+        if default_data is None:
+            raise SystemExit("empty_dataset_input")
+        data = default_data.resolve()
+        return data.parent.resolve(), data, dataset_id_from_path(data.parent)
+    if ":" in raw and not raw.startswith("/") and not re.match(r"^[A-Za-z]:[\\/]", raw):
+        alias, rel = raw.split(":", 1)
+        root = yolo_review_dataset_root_for_alias(alias)
+        if root is not None:
+            safe_parts = [part for part in Path(rel).parts if part not in ("", ".", "..")]
+            rel_path = Path(*safe_parts) if safe_parts else Path(".")
+            root_resolved = root.resolve()
+            candidate = (root / rel_path).resolve()
+            if candidate != root_resolved and root_resolved not in candidate.parents:
+                raise SystemExit(f"dataset_id_out_of_root:{raw}")
+            if not candidate.exists():
+                raise SystemExit(f"dataset_not_found:{raw}")
+            data = candidate if candidate.is_file() and candidate.suffix in {".yaml", ".yml"} else optional_data_yaml_in_dir(candidate)
+            dataset_root = candidate.parent if candidate.is_file() else candidate
+            return dataset_root.resolve(), data, f"{alias}:{rel_path.as_posix()}"
+    candidate = map_external_dataset(Path(raw).expanduser()).resolve()
+    if candidate.is_file():
+        data = candidate if candidate.suffix in {".yaml", ".yml"} else None
+        return candidate.parent.resolve(), data, dataset_id_from_path(candidate.parent)
+    if candidate.is_dir():
+        return candidate.resolve(), optional_data_yaml_in_dir(candidate), dataset_id_from_path(candidate)
+    raise SystemExit(f"dataset_not_found:{raw}")
+
+
+def parse_label_lines(lines: list[str]) -> list[dict[str, Any]]:
+    labels = []
+    for raw in lines:
+        parts = str(raw or "").strip().split()
+        if len(parts) < 5:
+            continue
+        try:
+            cls = int(float(parts[0]))
+            x, y, w, h = [float(v) for v in parts[1:5]]
+        except Exception:
+            continue
+        labels.append({"cls": cls, "xywh": [x, y, w, h], "raw": " ".join([str(cls), *[f"{v:.6f}" for v in (x, y, w, h)]])})
+    return labels
+
+
+def manual_label_line(label: dict[str, Any], names: list[str]) -> str | None:
+    name_to_id = {normalize_name(name): idx for idx, name in enumerate(names)}
+    raw = str(label.get("raw") or "").strip()
+    parts = raw.split()
+    raw_cls: Any = label.get("class_id")
+    if raw_cls is None and parts:
+        raw_cls = parts[0]
+    cls: int | None = None
+    try:
+        cls = int(float(raw_cls))
+    except Exception:
+        cls = name_to_id.get(normalize_name(raw_cls or label.get("class_name") or label.get("class") or label.get("label")))
+    if cls is None or cls < 0 or cls >= len(names):
+        return None
+    coords: list[Any]
+    if all(key in label for key in ("x", "y", "w", "h")):
+        coords = [label.get("x"), label.get("y"), label.get("w"), label.get("h")]
+    elif len(parts) >= 5:
+        coords = parts[1:5]
+    else:
+        return None
+    try:
+        x, y, w, h = [float(value) for value in coords]
+    except Exception:
+        return None
+    return f"{cls} {x:.6f} {y:.6f} {w:.6f} {h:.6f}"
+
+
+def manual_label_lines(annotation: dict[str, Any], names: list[str]) -> list[str]:
+    out = []
+    for label in annotation.get("labels") or []:
+        if not isinstance(label, dict):
+            continue
+        line = manual_label_line(label, names)
+        if line is not None:
+            out.append(line)
+    return out
+
+
+def load_manual_review_annotations(manual_root: Path, dataset_id: str) -> dict[str, dict[str, Any]]:
+    annotations: dict[str, dict[str, Any]] = {}
+    if not manual_root.exists():
+        return annotations
+    for path in manual_root.glob("*/*.json"):
+        payload = load_json(path, {})
+        if not isinstance(payload, dict) or str(payload.get("schema") or "") != "jgzj_yolo_manual_annotation.v1":
+            continue
+        if str(payload.get("dataset_id") or "") != dataset_id:
+            continue
+        if payload.get("deleted"):
+            continue
+        if str(payload.get("kind") or "detect") != "detect":
+            continue
+        verdict = normalize_name(payload.get("review_verdict") or "")
+        if verdict not in {"pass", "negative"}:
+            continue
+        item_key = normalize_rel(payload.get("item_key"))
+        if not item_key:
+            continue
+        payload = dict(payload)
+        payload["_annotation_path"] = str(path)
+        current = annotations.get(item_key)
+        if current is None or str(payload.get("updated_at") or "") >= str(current.get("updated_at") or ""):
+            annotations[item_key] = payload
+    return annotations
+
+
+def split_from_item_key(item_key: str) -> str:
+    parts = Path(normalize_rel(item_key)).parts
+    for idx, part in enumerate(parts[:-1]):
+        if part == "images" and idx + 1 < len(parts) - 1:
+            return parts[idx + 1]
+    return ""
+
+
+def collect_reviewed_dataset_records(
+    dataset_root: Path,
+    dataset_id: str,
+    names: list[str],
+    class_ids: list[int],
+    manual_root: Path,
+    source: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    annotations = load_manual_review_annotations(manual_root, dataset_id)
+    positives: list[dict[str, Any]] = []
+    negatives: list[dict[str, Any]] = []
+    target_ids = set(class_ids)
+    skipped_missing_image = 0
+    empty_pass_as_negative = 0
+    for item_key, annotation in annotations.items():
+        image = Path(str(annotation.get("source_image_path") or ""))
+        if not image.exists():
+            image = (dataset_root / item_key).resolve()
+        if not image.exists() or image.suffix.lower() not in IMAGE_EXTS:
+            skipped_missing_image += 1
+            continue
+        verdict = normalize_name(annotation.get("review_verdict") or "")
+        label_lines = manual_label_lines(annotation, names) if verdict == "pass" else []
+        labels = parse_label_lines(label_lines)
+        if verdict == "pass" and not labels:
+            empty_pass_as_negative += 1
+        target_labels = [item for item in labels if item["cls"] in target_ids]
+        row = {
+            "image": image.resolve(),
+            "label": "",
+            "split": split_from_item_key(item_key),
+            "labels": labels,
+            "target_labels": target_labels,
+            "source": source,
+            "source_data_yaml": "",
+            "source_image": str(image.resolve()),
+            "meta": {
+                "dataset_id": dataset_id,
+                "item_key": item_key,
+                "review_verdict": verdict,
+                "annotation_path": annotation.get("_annotation_path") or "",
+            },
+            "label_mode": "override",
+            "label_lines": label_lines,
+        }
+        if target_labels:
+            positives.append(row)
+        else:
+            negatives.append(row)
+    summary = {
+        "dataset_id": dataset_id,
+        "manual_annotations": len(annotations),
+        "positive_images": len(positives),
+        "negative_images": len(negatives),
+        "skipped_missing_image": skipped_missing_image,
+        "empty_pass_as_negative": empty_pass_as_negative,
+    }
+    return positives, negatives, summary
+
+
+def build_dataset_pool_source(
+    *,
+    role: str,
+    value: str,
+    dataset_id: str,
+    reviewed_only: bool,
+    names: list[str],
+    class_ids: list[int],
+    manual_root: Path,
+    default_data: Path | None = None,
+) -> tuple[DatasetPoolSource, dict[str, Any]]:
+    dataset_root, data_yaml, derived_dataset_id = resolve_dataset_source_input(value, default_data)
+    effective_dataset_id = dataset_id or derived_dataset_id
+    label = dataset_label_for_data(data_yaml) if data_yaml else safe_path_token(effective_dataset_id, role)
+    if reviewed_only:
+        positives, negatives, review_summary = collect_reviewed_dataset_records(
+            dataset_root,
+            effective_dataset_id,
+            names,
+            class_ids,
+            manual_root,
+            source=f"{role}_manual_review",
+        )
+    elif data_yaml is not None:
+        positives, negatives = collect_dataset_records(data_yaml, class_ids, source=f"{role}_dataset")
+        review_summary = {"reviewed_only": False}
+    else:
+        positives, negatives, review_summary = collect_reviewed_dataset_records(
+            dataset_root,
+            effective_dataset_id,
+            names,
+            class_ids,
+            manual_root,
+            source=f"{role}_manual_review",
+        )
+    if not positives and not negatives:
+        raise SystemExit(f"dataset_pool_source_empty:{role}:{value or default_data}; dataset_id={effective_dataset_id}")
+    source = DatasetPoolSource(
+        role=role,
+        label=label,
+        data=data_yaml,
+        dataset_root=dataset_root,
+        dataset_id=effective_dataset_id,
+        positives=positives,
+        negatives=negatives,
+    )
+    summary = {
+        "role": role,
+        "input": value,
+        "label": label,
+        "dataset_root": str(dataset_root),
+        "data_yaml": str(data_yaml or ""),
+        "dataset_id": effective_dataset_id,
+        "reviewed_only": reviewed_only,
+        "positive_images": len(positives),
+        "negative_images": len(negatives),
+        "review": review_summary,
+    }
+    return source, summary
+
+
+def balanced_positive_order(rows: list[dict[str, Any]], class_ids: list[int], rng: random.Random) -> list[dict[str, Any]]:
+    if len(class_ids) <= 1:
+        out = rows[:]
+        rng.shuffle(out)
+        return out
+    target_ids = set(class_ids)
+    buckets: dict[tuple[int, ...], list[dict[str, Any]]] = {}
+    for row in rows:
+        key = tuple(sorted({item["cls"] for item in row.get("target_labels", []) if item.get("cls") in target_ids}))
+        if not key:
+            key = tuple(class_ids)
+        buckets.setdefault(key, []).append(row)
+    for bucket_rows in buckets.values():
+        rng.shuffle(bucket_rows)
+    keys = sorted(buckets)
+    out: list[dict[str, Any]] = []
+    while any(buckets[key] for key in keys):
+        for key in keys:
+            if buckets[key]:
+                out.append(buckets[key].pop())
+    return out
+
+
+def load_yolo(weight: Path):
+    from ultralytics import YOLO
+
+    return YOLO(str(weight))
+
+
+def predict_batch(model: Any, paths: list[Path], args: argparse.Namespace) -> dict[Path, list[dict[str, Any]]]:
+    out: dict[Path, list[dict[str, Any]]] = {}
+    if not paths:
+        return out
+    paths = [Path(p).resolve() for p in paths if Path(p).exists()]
+    if not paths:
+        return out
+
+    def result_preds(result: Any) -> list[dict[str, Any]]:
+        preds: list[dict[str, Any]] = []
+        boxes = getattr(result, "boxes", None)
+        if boxes is not None and len(boxes) > 0:
+            cls_values = boxes.cls.detach().cpu().tolist()
+            conf_values = boxes.conf.detach().cpu().tolist()
+            xyxyn_values = boxes.xyxyn.detach().cpu().tolist()
+            for cls, conf, xyxy in zip(cls_values, conf_values, xyxyn_values):
+                preds.append({"cls": int(cls), "conf": float(conf), "xyxy": [float(v) for v in xyxy]})
+        return preds
+
+    for start in range(0, len(paths), args.infer_chunk_size):
+        chunk = paths[start:start + args.infer_chunk_size]
+        chunk = [p for p in chunk if p.exists()]
+        if not chunk:
+            continue
+        try:
+            results = model.predict(
+                source=[str(p) for p in chunk],
+                stream=True,
+                conf=args.predict_conf_floor,
+                iou=args.predict_nms_iou,
+                imgsz=args.imgsz,
+                device=args.infer_device,
+                batch=args.infer_batch,
+                verbose=False,
+            )
+            seen: set[Path] = set()
+            for expected_path, result in zip(chunk, results):
+                out[expected_path] = result_preds(result)
+                seen.add(expected_path)
+            for path in chunk:
+                if path not in seen:
+                    out[path] = []
+        except Exception as exc:
+            log(f"predict_chunk_failed start={start} size={len(chunk)} error={exc}; fallback_single")
+            for path in chunk:
+                if not path.exists():
+                    continue
+                try:
+                    results = model.predict(
+                        source=str(path),
+                        stream=True,
+                        conf=args.predict_conf_floor,
+                        iou=args.predict_nms_iou,
+                        imgsz=args.imgsz,
+                        device=args.infer_device,
+                        batch=1,
+                        verbose=False,
+                    )
+                    seen = False
+                    for result in results:
+                        out[path] = result_preds(result)
+                        seen = True
+                    if not seen:
+                        out[path] = []
+                except Exception as single_exc:
+                    log(f"predict_skip path={path} error={single_exc}")
+    return out
+
+
+def score_positive(row: dict[str, Any], preds: list[dict[str, Any]], class_ids: int | list[int], args: argparse.Namespace) -> dict[str, Any]:
+    target_ids = set(coerce_class_ids(class_ids))
+    target_preds = [p for p in preds if p["cls"] in target_ids]
+    gt_boxes = [xywh_to_xyxy(item["xywh"]) for item in row["target_labels"]]
+    max_conf = max([p["conf"] for p in target_preds], default=0.0)
+    best_iou = 0.0
+    best_matched_conf = 0.0
+    hard_gt_count = 0
+    for item, gt in zip(row["target_labels"], gt_boxes):
+        cls_preds = [pred for pred in target_preds if pred["cls"] == item["cls"]]
+        gt_best_iou = 0.0
+        gt_best_matched_conf = 0.0
+        for pred in cls_preds:
+            iou = iou_xyxy(gt, pred["xyxy"])
+            best_iou = max(best_iou, iou)
+            gt_best_iou = max(gt_best_iou, iou)
+            if iou >= args.pos_iou_threshold:
+                best_matched_conf = max(best_matched_conf, pred["conf"])
+                gt_best_matched_conf = max(gt_best_matched_conf, pred["conf"])
+        if gt_best_iou < args.pos_iou_threshold or gt_best_matched_conf < args.normal_pos_min_conf:
+            hard_gt_count += 1
+    is_hard = hard_gt_count > 0
+    return {
+        "bucket": "hard_positive" if is_hard else "normal_positive",
+        "target_conf": max_conf,
+        "matched_conf": best_matched_conf,
+        "max_iou": best_iou,
+        "target_class_ids": sorted(target_ids),
+        "hard_gt_count": hard_gt_count,
+        "reason": "low_conf_or_low_iou" if is_hard else "conf_iou_ok",
+    }
+
+
+def score_negative(preds: list[dict[str, Any]], class_ids: int | list[int], args: argparse.Namespace) -> dict[str, Any]:
+    target_ids = set(coerce_class_ids(class_ids))
+    target_preds = [p for p in preds if p["cls"] in target_ids]
+    max_conf = max([p["conf"] for p in target_preds], default=0.0)
+    max_cls = None
+    if target_preds:
+        max_pred = max(target_preds, key=lambda item: item["conf"])
+        max_cls = max_pred["cls"]
+    if max_conf >= args.hard_neg_min_conf:
+        return {"bucket": "hard_negative", "target_conf": max_conf, "target_cls": max_cls, "max_iou": 0.0, "reason": "false_positive_conf"}
+    return {"bucket": "normal_negative", "target_conf": max_conf, "target_cls": max_cls, "max_iou": 0.0, "reason": "no_target_prediction"}
+
+
+def add_selected(
+    selected: list[dict[str, Any]],
+    used: set[str],
+    row: dict[str, Any],
+    category: str,
+    source_bucket: str,
+    score: dict[str, Any],
+    *,
+    label_mode: str = "copy",
+    label_lines: list[str] | None = None,
+) -> bool:
+    image = Path(row["image"]).resolve()
+    key = str(image)
+    if key in used:
+        return False
+    used.add(key)
+    selected.append(
+        {
+            "image": str(image),
+            "label": str(row.get("label") or ""),
+            "category": category,
+            "source_bucket": source_bucket,
+            "source": row.get("source") or "",
+            "split": row.get("split") or "",
+            "source_image": str(row.get("source_image") or row.get("image") or ""),
+            "meta": row.get("meta") or {},
+            "reason": score.get("reason"),
+            "target_conf": score.get("target_conf"),
+            "target_cls": score.get("target_cls"),
+            "target_class_ids": score.get("target_class_ids"),
+            "matched_conf": score.get("matched_conf"),
+            "max_iou": score.get("max_iou"),
+            "label_mode": label_mode,
+            "label_lines": label_lines,
+        }
+    )
+    return True
+
+
+def select_original_samples(
+    model: Any,
+    positives: list[dict[str, Any]],
+    negatives: list[dict[str, Any]],
+    class_ids: list[int],
+    args: argparse.Namespace,
+    rng: random.Random,
+    selected: list[dict[str, Any]],
+    used: set[str],
+) -> dict[str, Any]:
+    positives = balanced_positive_order(positives, class_ids, rng)
+    rng.shuffle(negatives)
+    need = {
+        "original_normal_positive": args.original_normal_pos,
+        "original_hard_positive": args.original_hard_pos,
+        "original_normal_negative": args.original_normal_neg,
+        "original_hard_negative": args.original_hard_neg,
+    }
+    counts = {key: 0 for key in need}
+
+    pos_scan = min(len(positives), max(args.min_positive_scan, (args.original_normal_pos + args.original_hard_pos) * args.scan_multiplier))
+    neg_scan = min(len(negatives), max(args.min_negative_scan, (args.original_normal_neg + args.original_hard_neg) * args.scan_multiplier))
+
+    pos_rows = positives[:pos_scan]
+    neg_rows = negatives[:neg_scan]
+    log(f"original_scan positives={len(pos_rows)}/{len(positives)} negatives={len(neg_rows)}/{len(negatives)}")
+
+    pos_preds = predict_batch(model, [row["image"] for row in pos_rows], args)
+    for row in pos_rows:
+        score = score_positive(row, pos_preds.get(Path(row["image"]).resolve(), []), class_ids, args)
+        if score["bucket"] == "normal_positive" and counts["original_normal_positive"] < need["original_normal_positive"]:
+            if add_selected(selected, used, row, "normal_positive", "original_normal_positive", score):
+                counts["original_normal_positive"] += 1
+        elif score["bucket"] == "hard_positive" and counts["original_hard_positive"] < need["original_hard_positive"]:
+            if add_selected(selected, used, row, "hard_positive", "original_hard_positive", score):
+                counts["original_hard_positive"] += 1
+        if all(counts[key] >= need[key] for key in ("original_normal_positive", "original_hard_positive")):
+            break
+
+    neg_preds = predict_batch(model, [row["image"] for row in neg_rows], args)
+    for row in neg_rows:
+        score = score_negative(neg_preds.get(Path(row["image"]).resolve(), []), class_ids, args)
+        if score["bucket"] == "normal_negative" and counts["original_normal_negative"] < need["original_normal_negative"]:
+            if add_selected(selected, used, row, "normal_negative", "original_normal_negative", score):
+                counts["original_normal_negative"] += 1
+        elif score["bucket"] == "hard_negative" and counts["original_hard_negative"] < need["original_hard_negative"]:
+            if add_selected(selected, used, row, "hard_negative", "original_hard_negative", score):
+                counts["original_hard_negative"] += 1
+        if all(counts[key] >= need[key] for key in ("original_normal_negative", "original_hard_negative")):
+            break
+
+    fallback_fill_from_original(
+        selected=selected,
+        used=used,
+        positives=positives,
+        negatives=negatives,
+        counts=counts,
+        needs=need,
+        rng=rng,
+    )
+    return {"requested": need, "selected": counts, "scanned_positive": len(pos_rows), "scanned_negative": len(neg_rows)}
+
+
+def fallback_fill_from_original(
+    *,
+    selected: list[dict[str, Any]],
+    used: set[str],
+    positives: list[dict[str, Any]],
+    negatives: list[dict[str, Any]],
+    counts: dict[str, int],
+    needs: dict[str, int],
+    rng: random.Random,
+) -> None:
+    for key in ("original_normal_positive", "original_hard_positive"):
+        if counts.get(key, 0) >= needs.get(key, 0):
+            continue
+        category = "normal_positive" if key == "original_normal_positive" else "hard_positive"
+        rows = positives[:]
+        rng.shuffle(rows)
+        for row in rows:
+            if counts[key] >= needs[key]:
+                break
+            score = {"reason": "fallback_original", "target_conf": None, "max_iou": None}
+            if add_selected(selected, used, row, category, key, score):
+                counts[key] += 1
+    for key in ("original_normal_negative", "original_hard_negative"):
+        if counts.get(key, 0) >= needs.get(key, 0):
+            continue
+        category = "normal_negative" if key == "original_normal_negative" else "hard_negative"
+        rows = negatives[:]
+        rng.shuffle(rows)
+        for row in rows:
+            if counts[key] >= needs[key]:
+                break
+            score = {"reason": "fallback_original", "target_conf": None, "max_iou": None}
+            if add_selected(selected, used, row, category, key, score):
+                counts[key] += 1
+
+
+def cache_path(root: Path, image_sha: str | None) -> Path | None:
+    safe = "".join(ch for ch in str(image_sha or "").lower() if ch in "0123456789abcdef")
+    if not safe:
+        return None
+    return root / safe[:2] / f"{safe}.json"
+
+
+def hardlink_or_copy(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        dst.unlink()
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def sidecar_json_paths(image: Path) -> list[Path]:
+    return [
+        image.with_suffix(image.suffix + ".json"),
+        image.with_suffix(".json"),
+        image.parent / f"{image.name}.json",
+    ]
+
+
+def read_sidecar_json(image: Path) -> dict[str, Any]:
+    for path in sidecar_json_paths(image):
+        if path.exists():
+            return load_json(path, {})
+    return {}
+
+
+def categorize_pool_source(
+    model: Any,
+    source: DatasetPoolSource,
+    class_ids: list[int],
+    args: argparse.Namespace,
+    rng: random.Random,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    buckets = {key: [] for key in CATEGORY_ORDER}
+    positives = balanced_positive_order(source.positives, class_ids, rng)
+    negatives = source.negatives[:]
+    rng.shuffle(negatives)
+
+    pos_preds = predict_batch(model, [row["image"] for row in positives], args)
+    for row in positives:
+        image = Path(row["image"]).resolve()
+        score = score_positive(row, pos_preds.get(image, []), class_ids, args)
+        item = dict(row)
+        item["_score"] = score
+        buckets[score["bucket"]].append(item)
+
+    neg_preds = predict_batch(model, [row["image"] for row in negatives], args)
+    for row in negatives:
+        image = Path(row["image"]).resolve()
+        score = score_negative(neg_preds.get(image, []), class_ids, args)
+        item = dict(row)
+        item["_score"] = score
+        buckets[score["bucket"]].append(item)
+
+    for rows in buckets.values():
+        rng.shuffle(rows)
+    summary = {
+        "role": source.role,
+        "label": source.label,
+        "dataset_id": source.dataset_id,
+        "positive_images": len(source.positives),
+        "negative_images": len(source.negatives),
+        "category_counts": {key: len(buckets[key]) for key in CATEGORY_ORDER},
+    }
+    return buckets, summary
+
+
+def feasible_pool_targets(base_counts: dict[str, int], requested_total: int, availability: dict[str, int]) -> tuple[int, dict[str, int]]:
+    total = requested_total if requested_total > 0 else sum(max(0, int(base_counts.get(key, 0) or 0)) for key in CATEGORY_ORDER)
+    for candidate_total in range(total, 0, -1):
+        targets = allocate_category_targets(base_counts, candidate_total)
+        if all(targets.get(key, 0) <= availability.get(key, 0) for key in CATEGORY_ORDER):
+            return candidate_total, targets
+    raise SystemExit(f"dataset_pool_no_available_samples:availability={availability}")
+
+
+def select_pool_category(
+    *,
+    category: str,
+    requested: int,
+    source_buckets: list[tuple[DatasetPoolSource, dict[str, list[dict[str, Any]]]]],
+    selected: list[dict[str, Any]],
+    used: set[str],
+) -> dict[str, Any]:
+    remaining = requested
+    selected_by_source: dict[str, int] = {}
+    for source, buckets in source_buckets:
+        if remaining <= 0:
+            break
+        count = 0
+        for row in buckets.get(category, []):
+            if remaining <= 0:
+                break
+            score = row.get("_score") or {"reason": "dataset_pool"}
+            label_lines = row.get("label_lines")
+            label_mode = row.get("label_mode") or ("override" if label_lines is not None else "copy")
+            if add_selected(
+                selected,
+                used,
+                row,
+                category,
+                f"{source.role}_{category}",
+                score,
+                label_mode=label_mode,
+                label_lines=label_lines,
+            ):
+                count += 1
+                remaining -= 1
+        selected_by_source[source.role] = count
+    return {"requested": requested, "selected": requested - remaining, "shortfall": remaining, "selected_by_source": selected_by_source}
+
+
+def select_dataset_pool_samples(
+    model: Any,
+    class_ids: list[int],
+    names: list[str],
+    args: argparse.Namespace,
+    rng: random.Random,
+    selected: list[dict[str, Any]],
+    used: set[str],
+) -> dict[str, Any]:
+    if not str(args.primary_dataset or "").strip():
+        raise SystemExit("--primary-dataset is required when --target-total is used.")
+    primary, primary_summary = build_dataset_pool_source(
+        role="primary",
+        value=args.primary_dataset,
+        dataset_id=args.primary_dataset_id,
+        reviewed_only=args.pool_reviewed_only,
+        names=names,
+        class_ids=class_ids,
+        manual_root=args.manual_root,
+        default_data=None,
+    )
+    sources = [primary]
+    source_summaries = [primary_summary]
+    if str(args.secondary_dataset or "").strip():
+        secondary, secondary_summary = build_dataset_pool_source(
+            role="secondary",
+            value=args.secondary_dataset,
+            dataset_id=args.secondary_dataset_id,
+            reviewed_only=args.pool_reviewed_only,
+            names=names,
+            class_ids=class_ids,
+            manual_root=args.manual_root,
+            default_data=None,
+        )
+        sources.append(secondary)
+        source_summaries.append(secondary_summary)
+
+    source_buckets: list[tuple[DatasetPoolSource, dict[str, list[dict[str, Any]]]]] = []
+    bucket_summaries = []
+    availability = {key: 0 for key in CATEGORY_ORDER}
+    for source in sources:
+        buckets, bucket_summary = categorize_pool_source(model, source, class_ids, args, rng)
+        source_buckets.append((source, buckets))
+        bucket_summaries.append(bucket_summary)
+        for key in CATEGORY_ORDER:
+            availability[key] += len(buckets[key])
+
+    base_counts = sample_ratio_base_counts(args)
+    actual_total, category_targets = feasible_pool_targets(base_counts, int(args.target_total or 0), availability)
+    selection = {
+        category: select_pool_category(
+            category=category,
+            requested=category_targets.get(category, 0),
+            source_buckets=source_buckets,
+            selected=selected,
+            used=used,
+        )
+        for category in CATEGORY_ORDER
+    }
+    selected_total = sum(int(item.get("selected") or 0) for item in selection.values())
+    if selected_total != actual_total:
+        raise SystemExit(f"dataset_pool_selection_shortfall:selected={selected_total}; expected={actual_total}; selection={selection}")
+    return {
+        "requested_total": int(args.target_total or 0),
+        "actual_total": actual_total,
+        "lowered_total": actual_total != int(args.target_total or 0),
+        "base_counts": base_counts,
+        "category_targets": category_targets,
+        "availability": availability,
+        "sources": source_summaries,
+        "source_categories": bucket_summaries,
+        "selection": selection,
+    }
+
+
+def select_nohard_from_rows(
+    *,
+    category: str,
+    rows: list[tuple[DatasetPoolSource, dict[str, Any]]],
+    requested: int,
+    rng: random.Random,
+    selected: list[dict[str, Any]],
+    used: set[str],
+) -> dict[str, Any]:
+    pool = rows[:]
+    rng.shuffle(pool)
+    remaining = requested
+    selected_by_source: dict[str, int] = {}
+    for source, row in pool:
+        if remaining <= 0:
+            break
+        label_lines = row.get("label_lines")
+        label_mode = row.get("label_mode") or ("override" if label_lines is not None else "copy")
+        if category == "negative" and not label_lines:
+            label_mode = "empty"
+            label_lines = []
+        score = {"reason": "manual_review_nohard", "target_conf": None, "max_iou": None}
+        if add_selected(
+            selected,
+            used,
+            row,
+            category,
+            f"{source.role}_{category}",
+            score,
+            label_mode=label_mode,
+            label_lines=label_lines,
+        ):
+            selected_by_source[source.role] = selected_by_source.get(source.role, 0) + 1
+            remaining -= 1
+    return {
+        "requested": requested,
+        "selected": requested - remaining,
+        "shortfall": remaining,
+        "selected_by_source": selected_by_source,
+    }
+
+
+def select_nohard_pool_samples(
+    class_ids: list[int],
+    names: list[str],
+    args: argparse.Namespace,
+    rng: random.Random,
+    selected: list[dict[str, Any]],
+    used: set[str],
+) -> dict[str, Any]:
+    if not str(args.primary_dataset or "").strip():
+        raise SystemExit("--primary-dataset is required when positive/negative pool sampling is used.")
+    if args.positive_total <= 0 and args.negative_total <= 0 and not args.pool_use_all:
+        raise SystemExit("--positive-total or --negative-total must be > 0 for no-hard pool sampling, unless --pool-use-all is set.")
+    primary, primary_summary = build_dataset_pool_source(
+        role="primary",
+        value=args.primary_dataset,
+        dataset_id=args.primary_dataset_id,
+        reviewed_only=args.pool_reviewed_only,
+        names=names,
+        class_ids=class_ids,
+        manual_root=args.manual_root,
+        default_data=None,
+    )
+    sources = [primary]
+    source_summaries = [primary_summary]
+    if str(args.secondary_dataset or "").strip():
+        secondary, secondary_summary = build_dataset_pool_source(
+            role="secondary",
+            value=args.secondary_dataset,
+            dataset_id=args.secondary_dataset_id,
+            reviewed_only=args.pool_reviewed_only,
+            names=names,
+            class_ids=class_ids,
+            manual_root=args.manual_root,
+            default_data=None,
+        )
+        sources.append(secondary)
+        source_summaries.append(secondary_summary)
+
+    positive_rows: list[tuple[DatasetPoolSource, dict[str, Any]]] = []
+    negative_rows: list[tuple[DatasetPoolSource, dict[str, Any]]] = []
+    source_counts = []
+    for source in sources:
+        source_positive = [(source, row) for row in source.positives]
+        source_negative = [(source, row) for row in source.negatives]
+        positive_rows.extend(source_positive)
+        negative_rows.extend(source_negative)
+        source_counts.append({
+            "role": source.role,
+            "label": source.label,
+            "dataset_id": source.dataset_id,
+            "positive_images": len(source_positive),
+            "negative_images": len(source_negative),
+        })
+
+    positive_requested = len(positive_rows) if args.pool_use_all and args.positive_total <= 0 else int(args.positive_total)
+    negative_requested = len(negative_rows) if args.pool_use_all and args.negative_total <= 0 else int(args.negative_total)
+    positive_actual = min(positive_requested, len(positive_rows))
+    negative_actual = min(negative_requested, len(negative_rows))
+    max_ratio = float(getattr(args, "max_positive_negative_ratio", 0.0) or 0.0)
+    ratio_limited = False
+    if max_ratio > 0 and positive_actual > 0 and negative_actual > 0:
+        if positive_actual / negative_actual > max_ratio:
+            positive_actual = max(1, int(negative_actual * max_ratio))
+            ratio_limited = True
+        elif negative_actual / positive_actual > max_ratio:
+            negative_actual = max(1, int(positive_actual * max_ratio))
+            ratio_limited = True
+
+    positive_summary = select_nohard_from_rows(
+        category="positive",
+        rows=positive_rows,
+        requested=positive_actual,
+        rng=rng,
+        selected=selected,
+        used=used,
+    )
+    negative_summary = select_nohard_from_rows(
+        category="negative",
+        rows=negative_rows,
+        requested=negative_actual,
+        rng=rng,
+        selected=selected,
+        used=used,
+    )
+    return {
+        "mode": "nohard_positive_negative",
+        "requested_positive": positive_requested,
+        "requested_negative": negative_requested,
+        "actual_positive": int(positive_summary["selected"]),
+        "actual_negative": int(negative_summary["selected"]),
+        "actual_total": int(positive_summary["selected"]) + int(negative_summary["selected"]),
+        "lowered_positive": positive_actual != positive_requested,
+        "lowered_negative": negative_actual != negative_requested,
+        "pool_use_all": bool(args.pool_use_all),
+        "max_positive_negative_ratio": max_ratio,
+        "ratio_limited": ratio_limited,
+        "availability": {
+            "positive": len(positive_rows),
+            "negative": len(negative_rows),
+        },
+        "sources": source_summaries,
+        "source_counts": source_counts,
+        "selection": {
+            "positive": positive_summary,
+            "negative": negative_summary,
+        },
+    }
+
+
+def snapshot_qwen_no_candidate(image: Path, meta: dict[str, Any], run_dir: Path | None) -> Path | None:
+    if run_dir is None:
+        return image.resolve() if image.exists() else None
+    if not image.exists():
+        return None
+    sha = str(meta.get("image_sha256") or "")[:16]
+    digest = hashlib.sha1(str(image.resolve()).encode("utf-8")).hexdigest()[:12]
+    date_part = re.sub(r"[^A-Za-z0-9_.-]+", "_", image.parent.name)[:32]
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", image.stem)[:80]
+    suffix = image.suffix.lower() if image.suffix.lower() in IMAGE_EXTS else ".jpg"
+    token = sha or digest
+    dst = run_dir / "external_sources" / "qwen_temporary_no_frames" / f"{date_part}_{token}_{stem}{suffix}"
+    try:
+        hardlink_or_copy(image, dst)
+    except Exception as exc:
+        log(f"snapshot_qwen_no_skip image={image} error={exc}")
+        return None
+    for sidecar in sidecar_json_paths(image):
+        if not sidecar.exists():
+            continue
+        try:
+            hardlink_or_copy(sidecar, dst.with_suffix(dst.suffix + ".json"))
+        except Exception as exc:
+            log(f"snapshot_qwen_no_sidecar_skip image={image} sidecar={sidecar} error={exc}")
+        break
+    return dst.resolve()
+
+
+def normalized_blob(*values: Any) -> str:
+    return normalize_name(" ".join(str(value or "") for value in values))
+
+
+def fire_smoke_negative_aliases(target_names: list[str], qwen_targets: list[str]) -> list[str]:
+    aliases: set[str] = set()
+    for target_name in target_names:
+        aliases.update(pull_aliases_for(target_name))
+    for qwen_target in qwen_targets:
+        aliases.update(pull_aliases_for(qwen_target))
+    normalized_targets = {normalize_name(name) for name in target_names}
+    normalized_targets.update(qwen_targets)
+    if normalized_targets.intersection({"fire", "smoke"}):
+        aliases.update(["fire", "smoke"])
+    return sorted(alias for alias in aliases if alias)
+
+
+def collect_qwen_no_candidates(args: argparse.Namespace, aliases: list[str], run_dir: Path | None) -> list[dict[str, Any]]:
+    root = Path(args.qwen_no_root)
+    if not root.exists():
+        return []
+    alias_tokens = {normalize_name(alias) for alias in aliases if alias}
+    rows: list[dict[str, Any]] = []
+    for image in root.rglob("*"):
+        if not image.is_file() or image.suffix.lower() not in IMAGE_EXTS:
+            continue
+        meta = read_sidecar_json(image)
+        task_names = {
+            normalize_name(task.get("event_name") or task.get("class_name") or task.get("target") or "")
+            for task in (meta.get("no_tasks") or [])
+            if isinstance(task, dict)
+        }
+        if alias_tokens:
+            matched_task = any(name in alias_tokens for name in task_names if name)
+            if not matched_task:
+                blob = normalized_blob(image, json.dumps(meta, ensure_ascii=False, sort_keys=True))
+                if not any(alias in blob for alias in alias_tokens):
+                    continue
+        source_image = image.resolve()
+        snapshot_image = snapshot_qwen_no_candidate(image, meta, run_dir)
+        if snapshot_image is None:
+            continue
+        rows.append({
+            "image": snapshot_image,
+            "label": "",
+            "source": "qwen_vl_infer_temporary_no",
+            "split": "qwen_no",
+            "source_image": str(source_image),
+            "meta": meta,
+        })
+        if len(rows) >= args.external_negative_max_candidates:
+            break
+    return rows
+
+
+def image_path_from_web_row(dataset: Path, row: dict[str, Any], manifest_by_sha: dict[str, dict[str, Any]]) -> Path | None:
+    image_value = row.get("image") or row.get("image_path") or row.get("relative_path")
+    sha = str(row.get("image_sha256") or row.get("sha256") or "")
+    if not image_value and sha and sha in manifest_by_sha:
+        image_value = manifest_by_sha[sha].get("image") or manifest_by_sha[sha].get("image_path")
+    if image_value:
+        path = Path(str(image_value))
+        if not path.is_absolute():
+            path = dataset / path
+        if path.exists():
+            return path.resolve()
+    if sha:
+        for ext in IMAGE_EXTS:
+            path = dataset / "images" / "review" / f"{sha[:24]}{ext}"
+            if path.exists():
+                return path.resolve()
+    return None
+
+
+def collect_web_hard_negative_candidates(args: argparse.Namespace, aliases: list[str]) -> list[dict[str, Any]]:
+    dataset = Path(args.web_fire_smoke_dataset)
+    review_path = dataset / "qwen_review_manifest.jsonl"
+    manifest_path = dataset / "manifest_selected_images.jsonl"
+    if not review_path.exists():
+        return []
+    manifest_by_sha: dict[str, dict[str, Any]] = {}
+    for row in iter_jsonl(manifest_path):
+        sha = str(row.get("sha256") or row.get("image_sha256") or "")
+        if sha:
+            manifest_by_sha[sha] = row
+
+    rows: list[dict[str, Any]] = []
+    for row in iter_jsonl(review_path):
+        scene = normalize_name(row.get("scene") or row.get("review_scene") or "")
+        model_scene = normalize_name(row.get("model_scene") or "")
+        box_count = int(row.get("box_count") or 0)
+        if scene != "hard_negative" and model_scene != "hard_negative":
+            continue
+        if box_count > 0:
+            continue
+        image = image_path_from_web_row(dataset, row, manifest_by_sha)
+        if not image:
+            continue
+        rows.append({
+            "image": image,
+            "label": "",
+            "source": "fire_smoke_web_candidates_qwen_hard_negative",
+            "split": "web_hard_negative",
+            "source_image": str(image),
+            "meta": row,
+        })
+        if len(rows) >= args.external_negative_max_candidates:
+            break
+    return rows
+
+
+def select_hard_negatives_from_candidates(
+    *,
+    model: Any,
+    class_ids: list[int],
+    candidates: list[dict[str, Any]],
+    requested: int,
+    source_bucket: str,
+    args: argparse.Namespace,
+    rng: random.Random,
+    selected: list[dict[str, Any]],
+    used: set[str],
+) -> dict[str, Any]:
+    if requested <= 0:
+        return {"requested": requested, "selected": 0, "candidates": len(candidates), "scanned": 0}
+    candidates = balanced_positive_order(candidates, class_ids, rng)
+    scan_limit = min(
+        len(candidates),
+        max(args.min_external_negative_scan, requested * args.scan_multiplier),
+    )
+    initial_scan = candidates[:scan_limit]
+    missing_before_predict = sum(1 for row in initial_scan if not Path(row["image"]).exists())
+    scan = [row for row in initial_scan if Path(row["image"]).exists()]
+    preds = predict_batch(model, [row["image"] for row in scan], args)
+    count = 0
+    not_hard = 0
+    duplicate = 0
+    predict_missing = 0
+    for row in scan:
+        if count >= requested:
+            break
+        image = Path(row["image"]).resolve()
+        if image not in preds:
+            predict_missing += 1
+            continue
+        score = score_negative(preds.get(image, []), class_ids, args)
+        if score["bucket"] != "hard_negative":
+            not_hard += 1
+            continue
+        source_row = {
+            "image": row["image"],
+            "label": "",
+            "source": row.get("source") or source_bucket,
+            "split": row.get("split") or "",
+            "source_image": row.get("source_image") or str(row.get("image") or ""),
+            "meta": row.get("meta") or {},
+        }
+        if add_selected(selected, used, source_row, "hard_negative", source_bucket, score, label_mode="empty", label_lines=[]):
+            count += 1
+        else:
+            duplicate += 1
+    return {
+        "requested": requested,
+        "selected": count,
+        "candidates": len(candidates),
+        "scanned": len(scan),
+        "missing_before_predict": missing_before_predict,
+        "predict_missing": predict_missing,
+        "not_hard": not_hard,
+        "duplicate": duplicate,
+    }
+
+
+def select_external_hard_negatives(
+    model: Any,
+    class_ids: list[int],
+    target_names: list[str],
+    qwen_targets: list[str],
+    args: argparse.Namespace,
+    rng: random.Random,
+    selected: list[dict[str, Any]],
+    used: set[str],
+    run_dir: Path | None = None,
+) -> dict[str, Any]:
+    requested_total = max(0, args.external_hard_neg)
+    if args.skip_external_negatives:
+        return {"requested": requested_total, "selected": 0, "skipped": True}
+    if requested_total <= 0:
+        return {"requested": 0, "selected": 0, "skipped": True}
+    aliases = fire_smoke_negative_aliases(target_names, qwen_targets)
+    qwen_need = min(args.qwen_no_hard_neg, requested_total)
+    web_need = min(args.web_hard_neg, max(0, requested_total - qwen_need))
+    if qwen_need + web_need < requested_total:
+        web_need += requested_total - qwen_need - web_need
+
+    qwen_candidates = collect_qwen_no_candidates(args, aliases, run_dir)
+    qwen_summary = select_hard_negatives_from_candidates(
+        model=model,
+        class_ids=class_ids,
+        candidates=qwen_candidates,
+        requested=qwen_need,
+        source_bucket="qwen_no_hard_negative",
+        args=args,
+        rng=rng,
+        selected=selected,
+        used=used,
+    )
+    web_candidates = collect_web_hard_negative_candidates(args, aliases)
+    web_summary = select_hard_negatives_from_candidates(
+        model=model,
+        class_ids=class_ids,
+        candidates=web_candidates,
+        requested=web_need,
+        source_bucket="web_qwen_hard_negative",
+        args=args,
+        rng=rng,
+        selected=selected,
+        used=used,
+    )
+    selected_count = int(qwen_summary.get("selected") or 0) + int(web_summary.get("selected") or 0)
+    if selected_count < requested_total:
+        remaining = requested_total - selected_count
+        combined = qwen_candidates + web_candidates
+        refill_summary = select_hard_negatives_from_candidates(
+            model=model,
+            class_ids=class_ids,
+            candidates=combined,
+            requested=remaining,
+            source_bucket="external_local_hard_negative_refill",
+            args=args,
+            rng=rng,
+            selected=selected,
+            used=used,
+        )
+        selected_count += int(refill_summary.get("selected") or 0)
+    else:
+        refill_summary = {"requested": 0, "selected": 0, "skipped": True}
+    return {
+        "requested": requested_total,
+        "selected": selected_count,
+        "aliases": aliases,
+        "qwen_no_root": str(args.qwen_no_root),
+        "qwen_no_snapshot_dir": str(run_dir / "external_sources" / "qwen_temporary_no_frames") if run_dir else "",
+        "web_fire_smoke_dataset": str(args.web_fire_smoke_dataset),
+        "qwen_no_hard_negative": qwen_summary,
+        "web_qwen_hard_negative": web_summary,
+        "refill": refill_summary,
+    }
+
+
+def pull_low_conf_images(class_name: str, run_dir: Path, args: argparse.Namespace) -> tuple[Path | None, dict[str, Any]]:
+    if args.skip_pull:
+        return None, {"skipped": True}
+    aliases = pull_aliases_for(class_name)
+    pull_script = Path(args.pull_script)
+    if not pull_script.exists():
+        return None, {
+            "error": f"pull_script_missing:{pull_script}",
+            "aliases": aliases,
+            "pull_script": str(pull_script),
+        }
+    ssh_args = pull_ssh_args(args)
+    today = cn_now().date()
+    attempts = [args.pull_lookback_days]
+    if args.pull_fallback_days > args.pull_lookback_days:
+        attempts.append(args.pull_fallback_days)
+    last_summary: dict[str, Any] = {}
+    best_success: tuple[Path, dict[str, Any]] | None = None
+    for days in attempts:
+        start = today - timedelta(days=max(0, days - 1))
+        out_dir = run_dir / "tmp" / f"pulled_low_conf_{days}d"
+        for attempt in range(1, args.pull_retries + 1):
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
+            cmd = [
+                sys.executable,
+                str(pull_script),
+                *ssh_args,
+                "--output-dir",
+                str(out_dir),
+                "--classes",
+                *aliases,
+                "--min-conf",
+                str(args.pull_min_conf),
+                "--max-conf",
+                str(args.pull_max_conf),
+                "--strict-max-conf",
+                "--max-images",
+                str(args.pull_limit),
+                "--time-from",
+                start.isoformat(),
+                "--time-to",
+                today.isoformat(),
+            ]
+            try:
+                result = run(cmd, timeout=args.pull_timeout, check=True)
+            except Exception as exc:
+                last_summary = {
+                    "error": repr(exc),
+                    "lookback_days": days,
+                    "attempt": attempt,
+                    "pull_retries": args.pull_retries,
+                    "aliases": aliases,
+                    "pull_script": str(pull_script),
+                    "ssh_options": ssh_args,
+                }
+                if attempt < args.pull_retries:
+                    time.sleep(max(0.0, args.pull_retry_sleep))
+                continue
+            summary = load_json(out_dir / "summary.json", {})
+            summary["stdout_tail"] = result.stdout[-2000:]
+            summary["lookback_days"] = days
+            summary["attempt"] = attempt
+            summary["pull_retries"] = args.pull_retries
+            summary["aliases"] = aliases
+            summary["pull_script"] = str(pull_script)
+            summary["ssh_options"] = ssh_args
+            last_summary = summary
+            best_success = (out_dir, summary)
+            if int(summary.get("matched_images") or 0) >= args.pull_limit or days == attempts[-1]:
+                return out_dir, summary
+            break
+    if best_success is not None:
+        out_dir, summary = best_success
+        summary = dict(summary)
+        summary["fallback_error"] = last_summary.get("error")
+        return out_dir, summary
+    return None, last_summary
+
+
+def prepare_qwen_frames(pull_dir: Path, run_dir: Path) -> tuple[Path, Path, list[dict[str, Any]]]:
+    frames_root = run_dir / "tmp" / "qwen_frames"
+    images_dir = frames_root / "images"
+    if frames_root.exists():
+        shutil.rmtree(frames_root)
+    images_dir.mkdir(parents=True, exist_ok=True)
+    manifest = []
+    manifest_path = pull_dir / "manifest.jsonl"
+    if manifest_path.exists():
+        for line in manifest_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if not line.strip():
+                continue
+            try:
+                manifest.append(json.loads(line))
+            except Exception:
+                pass
+    rows: list[dict[str, Any]] = []
+    for idx, image in enumerate(sorted(p for p in pull_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS), 1):
+        rel = Path("images") / image.name
+        dst = frames_root / rel
+        hardlink_or_copy(image, dst)
+        image_sha = sha256_file(dst)
+        meta = manifest[idx - 1] if idx - 1 < len(manifest) else {}
+        meta_payload = {
+            "image_path": rel.as_posix(),
+            "image_sha256": image_sha,
+            "source": "finetune_pull_low_conf",
+            "collected_at": meta.get("device_time") or "",
+            "pull_manifest": meta,
+        }
+        meta_path = dst.with_suffix(dst.suffix + ".json")
+        write_json(meta_path, meta_payload)
+        rows.append({"image": dst, "image_rel": rel.as_posix(), "image_sha256": image_sha, "meta": meta_payload})
+    image_list = run_dir / "tmp" / "qwen_image_list.txt"
+    image_list.write_text("\n".join(row["image_rel"] for row in rows) + "\n", encoding="utf-8")
+    return frames_root, image_list, rows
+
+
+def run_qwen_label(frames_root: Path, image_list: Path, label_root: Path, args: argparse.Namespace) -> dict[str, Any]:
+    if args.skip_qwen:
+        return {"skipped": True}
+    cmd = [
+        sys.executable,
+        str(QWEN_LABEL_SCRIPT),
+        "--frames-root",
+        str(frames_root),
+        "--output-root",
+        str(label_root),
+        "--source",
+        "",
+        "--image-list",
+        str(image_list),
+        "--workers",
+        str(args.qwen_workers),
+        "--service-url",
+        args.qwen_service_url,
+        "--max-side",
+        str(args.qwen_max_side),
+        "--jpeg-quality",
+        str(args.qwen_jpeg_quality),
+        "--timeout-s",
+        str(args.qwen_timeout_s),
+        "--max-tokens",
+        str(args.qwen_max_tokens),
+    ]
+    result = run(cmd, timeout=args.qwen_timeout_s * max(2, args.pull_limit // max(1, args.qwen_workers)) + 300, check=False)
+    return {
+        "returncode": result.returncode,
+        "stdout_tail": result.stdout[-4000:],
+        "stderr_tail": result.stderr[-4000:],
+    }
+
+
+def load_qwen_label_classes(label_root: Path, image_sha: str) -> tuple[list[str], list[dict[str, Any]], str]:
+    path = cache_path(label_root, image_sha)
+    if not path or not path.exists():
+        return [], [], "missing"
+    payload = load_json(path, {})
+    labels = payload.get("labels") or []
+    classes = [normalize_name(item.get("class_name") or item.get("class") or item.get("label")) for item in labels if isinstance(item, dict)]
+    quality = str(payload.get("quality") or payload.get("q") or "")
+    return classes, labels, quality
+
+
+def select_pulled_hard_negatives(
+    model: Any,
+    class_id: int,
+    qwen_target: str,
+    pull_dir: Path | None,
+    run_dir: Path,
+    args: argparse.Namespace,
+    rng: random.Random,
+    selected: list[dict[str, Any]],
+    used: set[str],
+) -> dict[str, Any]:
+    if pull_dir is None or not pull_dir.exists() or args.skip_pull:
+        return {"requested": args.pulled_hard_neg, "selected": 0, "skipped": True}
+    frames_root, image_list, rows = prepare_qwen_frames(pull_dir, run_dir)
+    label_root = run_dir / "tmp" / "qwen_labels"
+    qwen_summary = run_qwen_label(frames_root, image_list, label_root, args)
+    if qwen_summary.get("returncode", 0) != 0 and not args.allow_qwen_failure:
+        raise RuntimeError(f"qwen_label_failed:{qwen_summary}")
+
+    rng.shuffle(rows)
+    preds = predict_batch(model, [row["image"] for row in rows], args)
+    count = 0
+    rejected_qwen_positive = 0
+    missing_qwen = 0
+    for row in rows:
+        if count >= args.pulled_hard_neg:
+            break
+        classes, _, quality = load_qwen_label_classes(label_root, row["image_sha256"])
+        coarse_classes = {qwen_class_for(item) for item in classes}
+        if not classes and quality == "missing":
+            missing_qwen += 1
+            continue
+        if qwen_target in coarse_classes:
+            rejected_qwen_positive += 1
+            continue
+        score = score_negative(preds.get(Path(row["image"]).resolve(), []), class_id, args)
+        if score["bucket"] != "hard_negative":
+            continue
+        source_row = {
+            "image": row["image"],
+            "label": "",
+            "source": "pulled_low_conf_qwen_negative",
+            "split": "",
+        }
+        if add_selected(selected, used, source_row, "hard_negative", "pulled_hard_negative", score, label_mode="empty", label_lines=[]):
+            count += 1
+    return {
+        "requested": args.pulled_hard_neg,
+        "selected": count,
+        "rows": len(rows),
+        "qwen": qwen_summary,
+        "rejected_qwen_positive": rejected_qwen_positive,
+        "missing_qwen": missing_qwen,
+    }
+
+
+def feedback_aliases(target_names: list[str], qwen_targets: list[str]) -> list[str]:
+    aliases = {normalize_name(name) for name in target_names}
+    aliases.update(qwen_targets)
+    if "trash" in qwen_targets:
+        aliases.update(["bottle", "box", "paper", "bag"])
+    if "vehicle" in qwen_targets:
+        aliases.update(["car", "truck", "bus", "van"])
+    if "nonmotor" in qwen_targets:
+        aliases.update(["bicycle", "bike", "non_motor_vehicle", "non_motorvehicle", "motorcycle", "scooter"])
+    if "pet" in qwen_targets:
+        aliases.update(["pet", "dog", "cat", "off_leash_dog"])
+    return sorted(aliases)
+
+
+def remap_feedback_labels(
+    label_path: Path,
+    qwen_to_class_id: dict[str, int],
+    filename_match: bool,
+) -> list[str]:
+    labels = parse_label_file(label_path)
+    if not labels:
+        return []
+    global_to_local = {
+        FEEDBACK_CLASS_ID[qwen_target]: class_id
+        for qwen_target, class_id in qwen_to_class_id.items()
+        if qwen_target in FEEDBACK_CLASS_ID
+    }
+    remapped = []
+    for item in labels:
+        if item["cls"] in global_to_local:
+            parts = item["raw"].split()
+            remapped.append(" ".join([str(global_to_local[item["cls"]]), *parts[1:5]]))
+    if not remapped and filename_match and len(qwen_to_class_id) == 1:
+        class_id = next(iter(qwen_to_class_id.values()))
+        for item in labels:
+            parts = item["raw"].split()
+            remapped.append(" ".join([str(class_id), *parts[1:5]]))
+    return remapped
+
+
+def select_feedback_hard_positives(
+    model: Any,
+    class_ids: list[int],
+    target_names: list[str],
+    qwen_targets: list[str],
+    args: argparse.Namespace,
+    rng: random.Random,
+    selected: list[dict[str, Any]],
+    used: set[str],
+) -> dict[str, Any]:
+    if args.skip_feedback:
+        return {"requested": args.feedback_hard_pos, "selected": 0, "skipped": True}
+    image_dir = EVENT_FEEDBACK_ROOT / "images" / "review"
+    label_dir = EVENT_FEEDBACK_ROOT / "labels" / "review"
+    if not image_dir.exists() or not label_dir.exists():
+        return {"requested": args.feedback_hard_pos, "selected": 0, "missing_root": True}
+
+    aliases = feedback_aliases(target_names, qwen_targets)
+    qwen_to_class_id = {qwen_class_for(name): class_id for name, class_id in zip(target_names, class_ids)}
+    for qwen_target in qwen_targets:
+        if qwen_target not in qwen_to_class_id and qwen_target in FEEDBACK_CLASS_ID:
+            for class_id, target_name in zip(class_ids, target_names):
+                if qwen_class_for(target_name) == qwen_target:
+                    qwen_to_class_id[qwen_target] = class_id
+    candidates = []
+    for label_path in label_dir.glob("*.txt"):
+        name_norm = normalize_name(label_path.stem)
+        filename_match = any(f"_{alias}_" in f"_{name_norm}_" for alias in aliases)
+        if not filename_match and not any(qwen_target in name_norm for qwen_target in qwen_targets):
+            continue
+        image_path = image_dir / (label_path.stem + ".jpg")
+        if not image_path.exists():
+            continue
+        label_lines = remap_feedback_labels(label_path, qwen_to_class_id, filename_match)
+        if not label_lines:
+            continue
+        candidates.append({
+            "image": image_path.resolve(),
+            "label": label_path,
+            "label_lines": label_lines,
+            "source": "yolo_event_feedback_v1",
+            "split": "review",
+            "target_labels": [
+                {"cls": int(float(line.split()[0])), "xywh": [float(x) for x in line.split()[1:5]], "raw": line}
+                for line in label_lines
+            ],
+        })
+    rng.shuffle(candidates)
+    scan = candidates[: min(len(candidates), max(args.feedback_hard_pos * args.scan_multiplier, args.min_feedback_scan))]
+    preds = predict_batch(model, [row["image"] for row in scan], args)
+    count = 0
+    for row in scan:
+        if count >= args.feedback_hard_pos:
+            break
+        score = score_positive(row, preds.get(Path(row["image"]).resolve(), []), class_ids, args)
+        if score["bucket"] != "hard_positive":
+            continue
+        if add_selected(
+            selected,
+            used,
+            row,
+            "hard_positive",
+            "feedback_hard_positive",
+            score,
+            label_mode="override",
+            label_lines=row["label_lines"],
+        ):
+            count += 1
+    return {
+        "requested": args.feedback_hard_pos,
+        "selected": count,
+        "candidates": len(candidates),
+        "scanned": len(scan),
+        "aliases": aliases,
+    }
+
+
+def fill_external_shortfall_from_original(
+    *,
+    selected: list[dict[str, Any]],
+    used: set[str],
+    positives: list[dict[str, Any]],
+    negatives: list[dict[str, Any]],
+    feedback_summary: dict[str, Any],
+    external_negative_summary: dict[str, Any],
+    rng: random.Random,
+) -> dict[str, Any]:
+    filled = {"feedback_hard_positive": 0, "external_hard_negative": 0}
+    missing_feedback = max(0, int(feedback_summary.get("requested") or 0) - int(feedback_summary.get("selected") or 0))
+    missing_external = max(0, int(external_negative_summary.get("requested") or 0) - int(external_negative_summary.get("selected") or 0))
+    pos_rows = positives[:]
+    neg_rows = negatives[:]
+    rng.shuffle(pos_rows)
+    rng.shuffle(neg_rows)
+    for row in pos_rows:
+        if filled["feedback_hard_positive"] >= missing_feedback:
+            break
+        score = {"reason": "fallback_original_for_feedback_hard_positive", "target_conf": None, "max_iou": None}
+        if add_selected(selected, used, row, "hard_positive", "feedback_hard_positive_fallback", score):
+            filled["feedback_hard_positive"] += 1
+    for row in neg_rows:
+        if filled["external_hard_negative"] >= missing_external:
+            break
+        score = {"reason": "fallback_original_for_external_hard_negative", "target_conf": None, "max_iou": None}
+        if add_selected(selected, used, row, "hard_negative", "external_hard_negative_fallback", score):
+            filled["external_hard_negative"] += 1
+    return filled
+
+
+def unique_output_name(sample: dict[str, Any], idx: int) -> str:
+    image = Path(sample["image"])
+    digest = hashlib.sha1(str(image).encode("utf-8")).hexdigest()[:12]
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", image.stem)[:80]
+    return f"{idx:06d}_{sample['source_bucket']}_{stem}_{digest}{image.suffix.lower() or '.jpg'}"
+
+
+def write_dataset(
+    selected: list[dict[str, Any]],
+    data_yaml: Path,
+    dataset_dir: Path,
+    args: argparse.Namespace,
+    rng: random.Random,
+) -> dict[str, Any]:
+    source_data = read_yaml(data_yaml)
+    if dataset_dir.exists():
+        shutil.rmtree(dataset_dir)
+    for split in ("train", "val", "test"):
+        (dataset_dir / "images" / split).mkdir(parents=True, exist_ok=True)
+        (dataset_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
+
+    shuffled = selected[:]
+    rng.shuffle(shuffled)
+    manifest_rows = []
+    split_counts = {"train": 0, "val": 0, "test": 0}
+    category_counts: dict[str, int] = {}
+    source_counts: dict[str, int] = {}
+    for idx, sample in enumerate(shuffled, 1):
+        ratio = idx / max(1, len(shuffled))
+        split = "train"
+        if ratio > 0.95:
+            split = "test"
+        elif ratio > 0.85:
+            split = "val"
+        out_name = unique_output_name(sample, idx)
+        src_image = Path(sample["image"])
+        dst_image = dataset_dir / "images" / split / out_name
+        hardlink_or_copy(src_image, dst_image)
+        dst_label = (dataset_dir / "labels" / split / out_name).with_suffix(".txt")
+        mode = sample.get("label_mode")
+        lines = sample.get("label_lines")
+        if mode == "empty":
+            dst_label.write_text("", encoding="utf-8")
+        elif mode == "override" and lines is not None:
+            dst_label.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        else:
+            src_label = Path(sample.get("label") or "")
+            if src_label.exists():
+                shutil.copy2(src_label, dst_label)
+            else:
+                dst_label.write_text("", encoding="utf-8")
+        split_counts[split] += 1
+        category_counts[sample["category"]] = category_counts.get(sample["category"], 0) + 1
+        source_counts[sample["source_bucket"]] = source_counts.get(sample["source_bucket"], 0) + 1
+        row = dict(sample)
+        row.update({"dataset_image": str(dst_image), "dataset_label": str(dst_label), "dataset_split": split})
+        row.pop("label_lines", None)
+        manifest_rows.append(row)
+
+    out_data = {
+        "path": str(dataset_dir),
+        "train": "images/train",
+        "val": "images/val",
+        "test": "images/test",
+        "names": source_data.get("names"),
+    }
+    if "nc" in source_data:
+        out_data["nc"] = source_data["nc"]
+    data_out = dataset_dir / "data.yaml"
+    data_out.write_text(yaml.safe_dump(out_data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    manifest_path = dataset_dir / "samples_manifest.jsonl"
+    with manifest_path.open("w", encoding="utf-8") as handle:
+        for row in manifest_rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return {
+        "dataset_dir": str(dataset_dir),
+        "data_yaml": str(data_out),
+        "samples": len(selected),
+        "split_counts": split_counts,
+        "category_counts": category_counts,
+        "source_counts": source_counts,
+        "manifest": str(manifest_path),
+    }
+
+
+def make_a100_job(
+    *,
+    run_tag: str,
+    task_id: str,
+    target_name: str,
+    local_dataset: Path,
+    remote_dataset: str,
+    remote_data_yaml: str,
+    remote_weight: str,
+    args: argparse.Namespace,
+    run_dir: Path,
+) -> Path:
+    remote_log = f"{A100_ROOT}/logs/{task_id}_{target_name}_{run_tag}.log"
+    project = f"{A100_ROOT}/runs/{task_id}"
+    out = f"{A100_ROOT}/results/{task_id}_{target_name}_{run_tag}"
+    alias = f"{run_tag}_{task_id}_{target_name}"
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        f"ROOT={shlex.quote(A100_ROOT)}",
+        "cd \"$ROOT\"",
+        "mkdir -p logs results runs scripts",
+        f"python3 - <<'PY'",
+        "from pathlib import Path",
+        f"p = Path({remote_data_yaml!r})",
+        f"remote_dataset = {remote_dataset!r}",
+        "lines = p.read_text(encoding='utf-8').splitlines()",
+        "out = []",
+        "for line in lines:",
+        "    if line.startswith('path:'):",
+        "        out.append('path: ' + remote_dataset)",
+        "    else:",
+        "        out.append(line)",
+        "p.write_text('\\n'.join(out) + '\\n', encoding='utf-8')",
+        "PY",
+        f"echo \"$(date -Is) finetune_start task={task_id} class={target_name} data={remote_data_yaml}\" | tee -a {shlex.quote(remote_log)}",
+        f"CUDA_VISIBLE_DEVICES={args.a100_gpu} \\",
+        f"RELIABLE_YOLO_TASK={shlex.quote(task_id + '_' + target_name + '_finetune')} \\",
+        f"RELIABLE_YOLO_RUN_TAG={shlex.quote(run_tag)} \\",
+        f"RELIABLE_YOLO_DATA={shlex.quote(remote_data_yaml)} \\",
+        f"RELIABLE_YOLO_OUT={shlex.quote(out)} \\",
+        f"RELIABLE_YOLO_PROJECT={shlex.quote(project)} \\",
+        f"RELIABLE_YOLO_BASE_WEIGHTS={shlex.quote(alias + '=' + remote_weight)} \\",
+        f"RELIABLE_YOLO_EPOCHS={args.epochs} \\",
+        f"RELIABLE_YOLO_PATIENCE={args.patience} \\",
+        f"RELIABLE_YOLO_BATCH={args.batch} \\",
+        f"RELIABLE_YOLO_IMGSZ={args.imgsz} \\",
+        f"RELIABLE_YOLO_WORKERS={args.workers} \\",
+        f"RELIABLE_YOLO_SAVE_PERIOD={args.save_period} \\",
+        f"{shlex.quote(A100_PY)} scripts/train_reliable_yolo_finetune.py 2>&1 | tee -a {shlex.quote(remote_log)}",
+        f"echo \"$(date -Is) finetune_done task={task_id} class={target_name}\" | tee -a {shlex.quote(remote_log)}",
+    ]
+    job = run_dir / f"{run_tag}.a100_finetune.sh"
+    job.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    job.chmod(0o755)
+    return job
+
+
+def make_local_job(
+    *,
+    run_tag: str,
+    task_id: str,
+    target_name: str,
+    data_yaml: Path,
+    weight: Path,
+    gpu: int,
+    args: argparse.Namespace,
+    run_dir: Path,
+) -> tuple[Path, Path, Path, Path]:
+    project = LOCAL_TRAIN_PROJECT_ROOT / task_id
+    out = LOCAL_TRAIN_RESULTS_ROOT / f"{task_id}_{target_name}_{run_tag}"
+    log_path = FINETUNE_ROOT / "logs" / f"{run_tag}_local_train.log"
+    alias = f"{run_tag}_{task_id}_{target_name}"
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        f"cd {shlex.quote(str(PROJECT_ROOT))}",
+        f"mkdir -p {shlex.quote(str(log_path.parent))} {shlex.quote(str(project))} {shlex.quote(str(out))}",
+        f"echo \"$(date -Is) finetune_start backend=local task={task_id} class={target_name} gpu={gpu} data={data_yaml}\" | tee -a {shlex.quote(str(log_path))}",
+        f"CUDA_VISIBLE_DEVICES={gpu} \\",
+        f"RELIABLE_YOLO_TASK={shlex.quote(task_id + '_' + target_name + '_finetune')} \\",
+        f"RELIABLE_YOLO_RUN_TAG={shlex.quote(run_tag)} \\",
+        f"RELIABLE_YOLO_DATA={shlex.quote(str(data_yaml))} \\",
+        f"RELIABLE_YOLO_OUT={shlex.quote(str(out))} \\",
+        f"RELIABLE_YOLO_PROJECT={shlex.quote(str(project))} \\",
+        f"RELIABLE_YOLO_DOWNLOADS={shlex.quote(str(MODEL_SERVICE_ROOT / 'downloads'))} \\",
+        f"RELIABLE_YOLO_BASE_WEIGHTS={shlex.quote(alias + '=' + str(weight))} \\",
+        f"RELIABLE_YOLO_EPOCHS={args.epochs} \\",
+        f"RELIABLE_YOLO_PATIENCE={args.patience} \\",
+        f"RELIABLE_YOLO_BATCH={args.batch} \\",
+        f"RELIABLE_YOLO_IMGSZ={args.imgsz} \\",
+        f"RELIABLE_YOLO_WORKERS={args.workers} \\",
+        f"RELIABLE_YOLO_SAVE_PERIOD={args.save_period} \\",
+        f"{shlex.quote(sys.executable)} {shlex.quote(str(TRAIN_SCRIPT))} 2>&1 | tee -a {shlex.quote(str(log_path))}",
+        f"echo \"$(date -Is) finetune_done backend=local task={task_id} class={target_name}\" | tee -a {shlex.quote(str(log_path))}",
+    ]
+    job = run_dir / f"{run_tag}.local_finetune.sh"
+    job.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    job.chmod(0o755)
+    return job, log_path, project, out
+
+
+def schedule_training(
+    *,
+    model_info: ModelInfo,
+    target_name: str,
+    dataset_summary: dict[str, Any],
+    run_tag: str,
+    run_dir: Path,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    if args.skip_train or args.dry_run:
+        return {"skipped": True}
+    if args.train_backend == "local":
+        data_yaml = Path(dataset_summary["data_yaml"])
+        gpu, gpu_summary = select_training_gpu(args)
+        job, log_path, project, out = make_local_job(
+            run_tag=run_tag,
+            task_id=model_info.task_id,
+            target_name=target_name,
+            data_yaml=data_yaml,
+            weight=model_info.weight,
+            gpu=gpu,
+            args=args,
+            run_dir=run_dir,
+        )
+        session = f"yolo-finetune-local-gpu{gpu}-{run_tag}"
+        run(["tmux", "new-session", "-d", "-s", session, "bash", str(job)], check=True)
+        return {
+            "backend": "local",
+            "session": session,
+            "gpu": gpu,
+            "gpu_selection": gpu_summary,
+            "local_job": str(job),
+            "local_log": str(log_path),
+            "local_project": str(project),
+            "local_out": str(out),
+        }
+    local_dataset = Path(dataset_summary["dataset_dir"])
+    remote_dataset = f"{A100_ROOT}/datasets/{run_tag}/{local_dataset.name}"
+    remote_data_yaml = f"{remote_dataset}/data.yaml"
+    remote_weight = f"{A100_ROOT}/weights/{run_tag}_{model_info.weight.name}"
+    a100(
+        f"mkdir -p {shlex.quote(A100_ROOT)}/scripts {shlex.quote(A100_ROOT)}/weights "
+        f"{shlex.quote(A100_ROOT)}/datasets/{shlex.quote(run_tag)} {shlex.quote(A100_ROOT)}/logs",
+        check=True,
+    )
+    rsync_to_a100(TRAIN_SCRIPT, f"{A100_ROOT}/scripts/train_reliable_yolo_finetune.py")
+    if POLICY_SCRIPT.exists():
+        rsync_to_a100(POLICY_SCRIPT, f"{A100_ROOT}/scripts/yolo_closed_loop_policy.py")
+    rsync_to_a100(model_info.weight, remote_weight, timeout=1800)
+    rsync_to_a100(local_dataset, remote_dataset, timeout=3600)
+    job = make_a100_job(
+        run_tag=run_tag,
+        task_id=model_info.task_id,
+        target_name=target_name,
+        local_dataset=local_dataset,
+        remote_dataset=remote_dataset,
+        remote_data_yaml=remote_data_yaml,
+        remote_weight=remote_weight,
+        args=args,
+        run_dir=run_dir,
+    )
+    remote_job = f"{A100_ROOT}/logs/{job.name}"
+    rsync_to_a100(job, remote_job)
+    session = f"yolo-finetune-gpu{args.a100_gpu}-{run_tag}"
+    a100(f"tmux new-session -d -s {shlex.quote(session)} 'bash {shlex.quote(remote_job)}'", check=True)
+    return {
+        "session": session,
+        "remote_dataset": remote_dataset,
+        "remote_weight": remote_weight,
+        "remote_job": remote_job,
+        "remote_log": f"{A100_ROOT}/logs/{model_info.task_id}_{target_name}_{run_tag}.log",
+    }
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Build a target-class YOLO finetune dataset and schedule finetuning.")
+    parser.add_argument("--model", required=True, help="Current registry model name, e.g. trash_yolo.")
+    parser.add_argument("--class-id", type=int, default=-1, help="Target class id in the model training dataset.")
+    parser.add_argument("--class-ids", default="", help="Comma-separated target class ids for joint finetune, e.g. 0,1. Overrides --class-id.")
+    parser.add_argument("--target-name", default="", help="Override target name shown in run/logs.")
+    parser.add_argument("--qwen-class", default="", help="Override coarse class(es) used for Qwen judgement. Comma-separated for multi-class.")
+    parser.add_argument("--run-tag", default="", help="Override run tag.")
+    parser.add_argument("--seed", type=int, default=20260720)
+    parser.add_argument("--base-weight", type=Path, default=None, help="Override registry weight, e.g. a previous finetune best.pt.")
+    parser.add_argument("--resolve-only", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--skip-train", action="store_true")
+    parser.add_argument("--skip-pull", action="store_true")
+    parser.add_argument("--skip-external-negatives", action="store_true")
+    parser.add_argument("--skip-qwen", action="store_true")
+    parser.add_argument("--skip-feedback", action="store_true")
+    parser.add_argument("--allow-qwen-failure", action="store_true")
+
+    parser.add_argument("--original-normal-pos", type=int, default=1000)
+    parser.add_argument("--original-hard-pos", type=int, default=150)
+    parser.add_argument("--original-normal-neg", type=int, default=400)
+    parser.add_argument("--original-hard-neg", type=int, default=100)
+    parser.add_argument("--external-hard-neg", type=int, default=None)
+    parser.add_argument("--pulled-hard-neg", type=int, default=200, help="Compatibility alias for --external-hard-neg.")
+    parser.add_argument("--qwen-no-hard-neg", type=int, default=100)
+    parser.add_argument("--web-hard-neg", type=int, default=100)
+    parser.add_argument("--feedback-hard-pos", type=int, default=150)
+    parser.add_argument("--target-total", type=int, default=0, help="Total samples to build from dataset-pool mode.")
+    parser.add_argument("--positive-total", type=int, default=0, help="Positive samples to draw in no-hard pool mode.")
+    parser.add_argument("--negative-total", type=int, default=0, help="Negative samples to draw in no-hard pool mode.")
+    parser.add_argument("--primary-dataset", "--preferred-dataset", dest="primary_dataset", default="", help="First dataset source. Alias values like loop:finetune_v2 are supported.")
+    parser.add_argument("--secondary-dataset", "--supplemental-dataset", dest="secondary_dataset", default="", help="Second dataset source used to refill category shortfalls.")
+    parser.add_argument("--primary-dataset-id", default="", help="Manual-review dataset_id override for the first dataset source.")
+    parser.add_argument("--secondary-dataset-id", default="", help="Manual-review dataset_id override for the second dataset source.")
+    parser.add_argument("--pool-use-all", action="store_true", help="Use all reviewed positives/negatives when positive/negative totals are omitted.")
+    parser.add_argument("--max-positive-negative-ratio", type=float, default=0.0, help="Optional max majority/minority ratio for no-hard positive/negative pools. 0 disables.")
+    parser.add_argument("--pool-reviewed-only", action="store_true", help="Use only pass/negative human-reviewed manual annotations from pool datasets.")
+    parser.add_argument("--manual-root", type=Path, default=RUNTIME_ROOT / "yolo_label_review" / "manual_annotations_v1")
+
+    parser.add_argument("--qwen-no-root", type=Path, default=QWEN_NO_ROOT)
+    parser.add_argument("--web-fire-smoke-dataset", type=Path, default=WEB_FIRE_SMOKE_DATASET)
+    parser.add_argument("--external-negative-max-candidates", type=int, default=20000)
+    parser.add_argument("--min-external-negative-scan", type=int, default=1000)
+
+    parser.add_argument("--pull-limit", type=int, default=1000)
+    parser.add_argument("--pull-lookback-days", type=int, default=7)
+    parser.add_argument("--pull-fallback-days", type=int, default=30)
+    parser.add_argument("--pull-min-conf", type=float, default=0.0)
+    parser.add_argument("--pull-max-conf", type=float, default=0.5)
+    parser.add_argument("--pull-timeout", type=int, default=3600)
+    parser.add_argument("--pull-retries", type=int, default=3)
+    parser.add_argument("--pull-retry-sleep", type=float, default=10.0)
+    parser.add_argument(
+        "--pull-script",
+        type=Path,
+        default=PULL_SCRIPT,
+        help="Low-confidence image pull helper. Defaults to the Python 3.6 compatible script when present.",
+    )
+    parser.add_argument(
+        "--pull-ssh-key",
+        type=Path,
+        default=PULL_SSH_KEY,
+        help="SSH identity file for the remote data source pull helper. Use an empty path plus --pull-ssh-option to override.",
+    )
+    parser.add_argument(
+        "--pull-ssh-option",
+        action="append",
+        default=[],
+        help="Extra --ssh-option passed through to the pull helper. Repeat for multiple options.",
+    )
+
+    parser.add_argument("--predict-conf-floor", type=float, default=0.001)
+    parser.add_argument("--predict-nms-iou", type=float, default=0.7)
+    parser.add_argument("--pos-iou-threshold", type=float, default=0.5)
+    parser.add_argument("--normal-pos-min-conf", type=float, default=0.5)
+    parser.add_argument("--hard-neg-min-conf", type=float, default=0.25)
+    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--infer-device", default="0")
+    parser.add_argument("--infer-batch", type=int, default=16)
+    parser.add_argument("--infer-chunk-size", type=int, default=256)
+    parser.add_argument("--scan-multiplier", type=int, default=8)
+    parser.add_argument("--min-positive-scan", type=int, default=3000)
+    parser.add_argument("--min-negative-scan", type=int, default=2000)
+    parser.add_argument("--min-feedback-scan", type=int, default=800)
+
+    parser.add_argument("--qwen-service-url", default="http://127.0.0.1:18016")
+    parser.add_argument("--qwen-workers", type=int, default=2)
+    parser.add_argument("--qwen-max-side", type=int, default=960)
+    parser.add_argument("--qwen-jpeg-quality", type=int, default=82)
+    parser.add_argument("--qwen-timeout-s", type=int, default=120)
+    parser.add_argument("--qwen-max-tokens", type=int, default=768)
+
+    parser.add_argument("--epochs", type=int, default=0, help="Training epochs. 0 chooses automatically from the built dataset size.")
+    parser.add_argument("--patience", type=int, default=0, help="Early-stopping patience. 0 chooses automatically from epochs.")
+    parser.add_argument("--disable-early-stop", action="store_true", help="Run all epochs by passing patience=0 to Ultralytics.")
+    parser.add_argument("--save-period", type=int, default=-1, help="Checkpoint save period in epochs. Use 1 to save every epoch.")
+    parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--train-backend", choices=("local", "a100"), default=os.environ.get("YOLO_FINETUNE_TRAIN_BACKEND", "local"))
+    parser.add_argument("--local-gpu", type=int, default=int(os.environ.get("YOLO_FINETUNE_LOCAL_GPU", "-1")), help="Local GPU index. -1 selects the GPU with the most free memory at launch time.")
+    parser.add_argument("--a100-gpu", type=int, default=int(os.environ.get("YOLO_FINETUNE_A100_GPU", "3")))
+    return parser
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
+    apply_model_defaults(args)
+    if args.external_hard_neg is None:
+        args.external_hard_neg = args.pulled_hard_neg
+    if not parse_csv_tokens(getattr(args, "class_ids", "") or "") and int(args.class_id) < 0:
+        raise SystemExit("--class-id is required unless --class-ids is provided.")
+    if args.epochs < 0 or args.epochs > 200:
+        raise SystemExit("--epochs must be in [0, 200]. Use 0 for automatic selection.")
+    if args.patience < 0 or args.patience > 100:
+        raise SystemExit("--patience must be in [0, 100]. Use 0 for automatic selection.")
+    if args.save_period < -1:
+        raise SystemExit("--save-period must be >= -1.")
+    if args.pull_retries < 1:
+        raise SystemExit("--pull-retries must be >= 1.")
+    if args.external_hard_neg < 0:
+        raise SystemExit("--external-hard-neg must be >= 0.")
+    if args.target_total < 0:
+        raise SystemExit("--target-total must be >= 0.")
+    if args.positive_total < 0 or args.negative_total < 0:
+        raise SystemExit("--positive-total and --negative-total must be >= 0.")
+    if args.max_positive_negative_ratio < 0:
+        raise SystemExit("--max-positive-negative-ratio must be >= 0.")
+    if args.local_gpu < -1:
+        raise SystemExit("--local-gpu must be >= -1.")
+
+    model_info = resolve_model(args.model)
+    base_weight_override = ""
+    if args.base_weight is not None:
+        base_weight = Path(args.base_weight).expanduser().resolve()
+        if not base_weight.exists():
+            raise SystemExit(f"base_weight_not_found:{base_weight}")
+        model_info.weight = base_weight
+        model_info.data_source = f"base_weight_override:{base_weight}"
+        base_weight_override = str(base_weight)
+    elif normalize_name(args.model) == "fire_smoke_yolo":
+        latest_weight, latest_source = latest_fire_smoke_runtime_weight()
+        if latest_weight is not None:
+            model_info.weight = latest_weight
+            model_info.data_source = f"latest_fire_smoke_runtime_weight:{latest_source}"
+    if model_info.task != "detect":
+        raise SystemExit(f"unsupported_task:{model_info.task}; this script handles detect datasets because hard samples need boxes and IoU.")
+
+    names = names_from_data(model_info.data)
+    class_ids = resolve_target_class_ids(args, names)
+    target_names = [names[class_id] for class_id in class_ids]
+    target_name = args.target_name or "_".join(normalize_name(name) for name in target_names)
+    qwen_targets = resolve_qwen_targets(args, target_names)
+    class_token = "_".join(str(class_id) for class_id in class_ids)
+    run_tag = args.run_tag or f"{cn_now().strftime('%Y%m%d_%H%M%S')}_{model_info.task_id}_c{class_token}_{normalize_name(target_name)}"
+    run_dir = FINETUNE_ROOT / "runs" / run_tag
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    resolved = {
+        "model": args.model,
+        "task_id": model_info.task_id,
+        "title": model_info.title,
+        "task": model_info.task,
+        "weight": str(model_info.weight),
+        "base_weight_override": base_weight_override,
+        "data": str(model_info.data),
+        "data_source": model_info.data_source,
+        "class_id": class_ids[0],
+        "class_ids": class_ids,
+        "class_name": target_name,
+        "class_names": target_names,
+        "qwen_class": qwen_targets[0] if qwen_targets else "",
+        "qwen_classes": qwen_targets,
+        "run_tag": run_tag,
+        "run_dir": str(run_dir),
+        "qwen_no_root": str(args.qwen_no_root),
+        "web_fire_smoke_dataset": str(args.web_fire_smoke_dataset),
+        "external_hard_neg": args.external_hard_neg,
+        "qwen_no_hard_neg": args.qwen_no_hard_neg,
+        "web_hard_neg": args.web_hard_neg,
+        "dataset_pool_mode": dataset_pool_mode(args),
+        "target_total": args.target_total,
+        "positive_total": args.positive_total,
+        "negative_total": args.negative_total,
+        "primary_dataset": args.primary_dataset,
+        "secondary_dataset": args.secondary_dataset,
+        "pool_reviewed_only": args.pool_reviewed_only,
+        "manual_root": str(args.manual_root),
+        "train_backend": args.train_backend,
+        "epochs_requested": args.epochs,
+        "patience_requested": args.patience,
+        "disable_early_stop": args.disable_early_stop,
+        "save_period": args.save_period,
+        "batch": args.batch,
+        "workers": args.workers,
+    }
+    write_json(run_dir / "resolved_model.json", resolved)
+    print(json.dumps(resolved, ensure_ascii=False, indent=2), flush=True)
+    if args.resolve_only:
+        return
+
+    rng = random.Random(args.seed)
+    selected: list[dict[str, Any]] = []
+    used: set[str] = set()
+    pool_summary: dict[str, Any] = {"skipped": True}
+    nohard_pool_mode = args.pool_use_all or args.positive_total > 0 or args.negative_total > 0
+    model = None
+
+    if dataset_pool_mode(args):
+        if nohard_pool_mode:
+            pool_summary = select_nohard_pool_samples(class_ids, names, args, rng, selected, used)
+        else:
+            model = load_yolo(model_info.weight)
+            pool_summary = select_dataset_pool_samples(model, class_ids, names, args, rng, selected, used)
+        availability = {
+            "dataset_pool": pool_summary["availability"],
+            "selected_samples": len(selected),
+        }
+        original_summary = {"skipped": True, "reason": "dataset_pool_mode"}
+        feedback_summary = {"skipped": True, "reason": "dataset_pool_mode"}
+        external_negative_summary = {"skipped": True, "reason": "dataset_pool_mode"}
+        fallback_summary = {"skipped": True, "reason": "dataset_pool_mode"}
+    else:
+        positives, negatives = collect_dataset_records(model_info.data, class_ids)
+        availability = {
+            "original_positive_images": len(positives),
+            "original_negative_images": len(negatives),
+        }
+        if args.dry_run:
+            write_json(run_dir / "availability.json", availability)
+            print(json.dumps({"resolved": resolved, "availability": availability}, ensure_ascii=False, indent=2), flush=True)
+            return
+
+        model = load_yolo(model_info.weight)
+        original_summary = select_original_samples(model, positives, negatives, class_ids, args, rng, selected, used)
+        feedback_summary = select_feedback_hard_positives(model, class_ids, target_names, qwen_targets, args, rng, selected, used)
+        external_negative_summary = select_external_hard_negatives(
+            model,
+            class_ids,
+            target_names,
+            qwen_targets,
+            args,
+            rng,
+            selected,
+            used,
+            run_dir=run_dir,
+        )
+        fallback_summary = fill_external_shortfall_from_original(
+            selected=selected,
+            used=used,
+            positives=positives,
+            negatives=negatives,
+            feedback_summary=feedback_summary,
+            external_negative_summary=external_negative_summary,
+            rng=rng,
+        )
+
+    write_json(run_dir / "availability.json", availability)
+
+    dataset_dir = FINETUNE_RUNTIME / "datasets" / run_tag / f"{model_info.task_id}_c{class_token}_{normalize_name(target_name)}_finetune"
+    dataset_summary = write_dataset(selected, model_info.data, dataset_dir, args, rng)
+    training_config = apply_auto_training_params(args, int(dataset_summary["samples"]))
+    thresholds = {
+        "predict_conf_floor": args.predict_conf_floor,
+        "predict_nms_iou": args.predict_nms_iou,
+        "pos_iou_threshold": args.pos_iou_threshold,
+        "normal_pos_min_conf": args.normal_pos_min_conf,
+        "hard_neg_min_conf": args.hard_neg_min_conf,
+    }
+    summary = {
+        "schema": "jgzj_yolo_target_finetune.v1",
+        "created_at": cn_now().isoformat(),
+        "resolved": resolved,
+        "availability": availability,
+        "thresholds": thresholds,
+        "requested": {
+            "original_normal_positive": args.original_normal_pos,
+            "original_hard_positive": args.original_hard_pos,
+            "feedback_hard_positive": args.feedback_hard_pos,
+            "original_normal_negative": args.original_normal_neg,
+            "original_hard_negative": args.original_hard_neg,
+            "external_hard_negative": args.external_hard_neg,
+            "qwen_no_hard_negative": args.qwen_no_hard_neg,
+            "web_qwen_hard_negative": args.web_hard_neg,
+            "target_total": args.target_total,
+            "positive_total": args.positive_total,
+            "negative_total": args.negative_total,
+            "pool_use_all": args.pool_use_all,
+            "max_positive_negative_ratio": args.max_positive_negative_ratio,
+        },
+        "selection": {
+            "dataset_pool": pool_summary,
+            "original": original_summary,
+            "feedback_hard_positive": feedback_summary,
+            "external_hard_negative": external_negative_summary,
+            "external_shortfall_fallback": fallback_summary,
+        },
+        "dataset": dataset_summary,
+        "training_config": training_config,
+    }
+    training_summary = schedule_training(
+        model_info=model_info,
+        target_name=normalize_name(target_name),
+        dataset_summary=dataset_summary,
+        run_tag=run_tag,
+        run_dir=run_dir,
+        args=args,
+    )
+    summary["training"] = training_summary
+    write_json(run_dir / "selection_log.json", summary)
+    print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
+
+
+if __name__ == "__main__":
+    main()

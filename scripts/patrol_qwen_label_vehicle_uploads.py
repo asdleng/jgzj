@@ -28,6 +28,10 @@ CLASSES = (
     "smoking",
     "vehicle",
     "nonmotor",
+    "license_plate",
+    "lying",
+    "fighting",
+    "falldown",
 )
 
 LABEL_PROMPT = """Detect high-precision YOLO pre-label boxes in this autonomous patrol vehicle image.
@@ -47,7 +51,7 @@ Fields:
 - evidence is a short snake_case phrase proving the object is real and visible.
 
 Classes:
-person, vehicle, nonmotor, fire, smoke, trash, pet, stall, phone, smoking.
+person, vehicle, nonmotor, fire, smoke, trash, pet, stall, phone, smoking, license_plate, lying, fighting, falldown.
 
 Positive class rules:
 - person: visible real human body/head/torso/limbs. Do not label posters, mannequins, statues, reflections, or screen images.
@@ -55,6 +59,10 @@ Positive class rules:
 - nonmotor: real bicycle/e-bike/scooter/wheelchair/hand cart/stroller. Do not label road markings, sign icons, or distant ambiguous rails.
 - phone: visible handheld mobile phone or clear hand-phone interaction. Do not label black rectangles, dashboards, bags, screens on walls, traffic signs, or car mirrors.
 - smoking: visible cigarette/cigar/vape OR clear smoke from a person's mouth/hand. Box the cigarette/hand-mouth evidence tightly. Do not label a whole person only because a hand is near the mouth.
+- license_plate: visible real license plate physically mounted on a real vehicle, such as a car, truck, bus, van, motorcycle, e-bike, or scooter. Box only the plate. Do not label standalone plates, road signs, shop signs, door numbers, wall numbers, parking space numbers, advertisements, the whole vehicle, bumper, logo, headlight, tail light, sticker, or decorative rectangle.
+- lying: real person clearly lying down or strongly reclined horizontally on the ground, bench, chair, or similar surface. Box the visible full body. Do not label standing, walking, sitting upright, squatting, bending, posters, statues, or reflections.
+- fighting: clear physical fight between people, such as punching, kicking, grappling, wrestling, or aggressive body contact. Box the involved people as one tight group if they overlap. Do not label ordinary crowds, playing, hugging, helping, queueing, or people merely standing close.
+- falldown: real person fallen/collapsed on the ground or in an abnormal fallen posture. Box the visible fallen person. Do not label ordinary lying/resting, sitting, squatting, bending, shadows, posters, or statues.
 
 High-risk classes, use only when visual evidence is very strong:
 - fire: actual visible flame with flame shape and orange/yellow luminous core. Do NOT label red fire extinguisher boxes, hydrants,消防箱, red signs, warning boards, lamps, reflections, taillights, traffic lights, red clothes, cones, or red/orange equipment as fire.
@@ -65,9 +73,9 @@ High-risk classes, use only when visual evidence is very strong:
 
 Rules:
 - Do not invent boxes. If uncertain, omit. Prefer false negatives over false positives.
-- For fire/smoke/pet/trash/stall/phone/smoking, always include numeric score and a double-quoted evidence string that names the visible proof, e.g. "actual_flame", "rising_smoke_plume", "live_dog_leash", "loose_plastic_bottle_on_ground", "vendor_table_goods", "handheld_phone", "visible_cigarette". Boxes without numeric score are invalid.
-- For dark/blurred/blocked frames, do not label pet/trash/stall/phone/smoking unless the object is large and unmistakable.
-- Never use evidence phrases like red_box, red_sign, fire_box, extinguisher, trash_bin, fog, mist, haze, statue, sculpture, fixed_kiosk, or unknown_object as a positive target.
+- For fire/smoke/pet/trash/stall/phone/smoking/license_plate/lying/fighting/falldown, always include numeric score and a double-quoted evidence string that names the visible proof, e.g. "actual_flame", "rising_smoke_plume", "live_dog_leash", "loose_plastic_bottle_on_ground", "vendor_table_goods", "handheld_phone", "visible_cigarette", "plate_characters", "horizontal_lying_body", "people_grappling", "fallen_person_on_ground". Boxes without numeric score are invalid.
+- For dark/blurred/blocked frames, do not label pet/trash/stall/phone/smoking/license_plate/lying/fighting/falldown unless the target is large and unmistakable.
+- Never use evidence phrases like red_box, red_sign, fire_box, extinguisher, trash_bin, fog, mist, haze, statue, sculpture, fixed_kiosk, standing_person, sitting_person, vehicle_logo, headlight, traffic_sign, or unknown_object as a positive target.
 - Ignore sky, trees, buildings, road, shadows, reflections, traffic lights, and text unless part of a target.
 - Prefer fewer precise boxes. In crowded scenes keep the 20 largest/clearest targets.
 - For small/distant ambiguous objects, omit unless the target class is visually clear.
@@ -121,6 +129,51 @@ PHONE_ACCEPT_NOTE_RE = re.compile(r"handheld|phone|mobile|smartphone|hand_phone|
 
 SMOKING_REJECT_NOTE_RE = re.compile(r"hand_near_mouth_only|unclear|food|drink|microphone|mask|shadow", re.I)
 SMOKING_ACCEPT_NOTE_RE = re.compile(r"cigarette|cigar|vape|smoke_from_mouth|smoking|lit_tip", re.I)
+
+LICENSE_PLATE_REJECT_NOTE_RE = re.compile(
+    r"road[_ -]?sign|traffic[_ -]?sign|logo|sticker|bumper|headlight|tail[_ -]?light|taillight|"
+    r"decorative|printed[_ -]?ad|billboard|reflection|unknown[_ -]?rectangle|standalone|not[_ -]?on[_ -]?vehicle|"
+    r"shop[_ -]?sign|door[_ -]?number|wall[_ -]?number|parking[_ -]?space|house[_ -]?number|"
+    r"车标|标志|路牌|广告|反光|门牌|墙面|墙上|车位号|停车位|商铺招牌|独立车牌",
+    re.I,
+)
+LICENSE_PLATE_ACCEPT_NOTE_RE = re.compile(
+    r"vehicle[_ -]?license[_ -]?plate|vehicle[_ -]?licence[_ -]?plate|vehicle[_ -]?number[_ -]?plate|"
+    r"front[_ -]?plate[_ -]?on[_ -]?vehicle|rear[_ -]?plate[_ -]?on[_ -]?vehicle|"
+    r"plate[_ -]?on[_ -]?(?:car|truck|bus|van|motorcycle|ebike|e[_ -]?bike|scooter|vehicle)|"
+    r"mounted[_ -]?plate|plate[_ -]?characters[_ -]?on[_ -]?vehicle|车辆车牌|机动车车牌|电动车车牌|摩托车车牌|车上的车牌",
+    re.I,
+)
+
+LYING_REJECT_NOTE_RE = re.compile(
+    r"standing|walking|sitting|squat|bending|poster|statue|mannequin|reflection|shadow|unclear|"
+    r"站立|行走|坐着|蹲|弯腰|海报|雕像|反光|阴影",
+    re.I,
+)
+LYING_ACCEPT_NOTE_RE = re.compile(
+    r"lying|person[_ -]?lying|lying[_ -]?person|horizontal[_ -]?body|reclining[_ -]?person|person[_ -]?on[_ -]?bench|躺",
+    re.I,
+)
+
+FIGHTING_REJECT_NOTE_RE = re.compile(
+    r"crowd|standing|walking|hugging|helping|playing|queue|close[_ -]?people|unclear|"
+    r"人群|站立|行走|拥抱|搀扶|玩耍|排队|靠近|不清楚",
+    re.I,
+)
+FIGHTING_ACCEPT_NOTE_RE = re.compile(
+    r"fighting|physical[_ -]?fight|punch|kick|grappling|wrestling|aggressive[_ -]?contact|people[_ -]?fighting|打架|斗殴|拳打|脚踢",
+    re.I,
+)
+
+FALLDOWN_REJECT_NOTE_RE = re.compile(
+    r"sitting|squat|bending|ordinary[_ -]?lying|resting|sleeping|poster|statue|reflection|shadow|unclear|"
+    r"坐着|蹲|弯腰|休息|睡觉|海报|雕像|反光|阴影",
+    re.I,
+)
+FALLDOWN_ACCEPT_NOTE_RE = re.compile(
+    r"falldown|fall[_ -]?down|fallen[_ -]?person|person[_ -]?fallen|collapsed[_ -]?person|person[_ -]?on[_ -]?ground|摔倒|倒地",
+    re.I,
+)
 
 
 def log(message):
@@ -332,6 +385,14 @@ def normalize_box(item, index):
         class_name = "vehicle"
     if class_name in {"bike", "bicycle", "ebike", "e_bike", "scooter", "cart"}:
         class_name = "nonmotor"
+    if class_name in {"licence_plate", "licenseplate", "licenceplate", "number_plate", "vehicle_plate", "car_plate", "plate"}:
+        class_name = "license_plate"
+    if class_name in {"person_lying", "lying_person", "reclining_person", "horizontal_person"}:
+        class_name = "lying"
+    if class_name in {"fight", "physical_fight", "people_fighting", "person_fighting"}:
+        class_name = "fighting"
+    if class_name in {"fall_down", "fallen_person", "person_fallen", "collapsed_person"}:
+        class_name = "falldown"
     if class_name not in CLASSES:
         return None
     if not isinstance(bbox, list) or len(bbox) != 4:
@@ -407,6 +468,34 @@ def normalize_box(item, index):
             return None
         if note and not SMOKING_ACCEPT_NOTE_RE.search(note):
             return None
+    if class_name == "license_plate":
+        if score is not None and score < 0.65:
+            return None
+        if LICENSE_PLATE_REJECT_NOTE_RE.search(note):
+            return None
+        if note and not LICENSE_PLATE_ACCEPT_NOTE_RE.search(note):
+            return None
+    if class_name == "lying":
+        if score is not None and score < 0.75:
+            return None
+        if LYING_REJECT_NOTE_RE.search(note):
+            return None
+        if note and not LYING_ACCEPT_NOTE_RE.search(note):
+            return None
+    if class_name == "fighting":
+        if score is not None and score < 0.80:
+            return None
+        if FIGHTING_REJECT_NOTE_RE.search(note):
+            return None
+        if note and not FIGHTING_ACCEPT_NOTE_RE.search(note):
+            return None
+    if class_name == "falldown":
+        if score is not None and score < 0.80:
+            return None
+        if FALLDOWN_REJECT_NOTE_RE.search(note):
+            return None
+        if note and not FALLDOWN_ACCEPT_NOTE_RE.search(note):
+            return None
     raw = f"{class_name} {x:.6f} {y:.6f} {w:.6f} {h:.6f}"
     return {
         "model_task": "qwen_bbox",
@@ -478,15 +567,17 @@ def normalize_annotation(parsed):
         if label:
             labels.append(label)
     labels = dedupe_labels(labels)
-    high_risk = {"fire", "smoke", "pet", "trash", "stall", "phone", "smoking"}
+    high_risk = {"fire", "smoke", "pet", "trash", "stall", "phone", "smoking", "license_plate", "lying", "fighting", "falldown"}
     filtered = []
     for label in labels:
         cls = label["class_name"]
         if cls in high_risk and label.get("confidence") is None:
             continue
-        if quality != "good" and cls in {"pet", "trash", "stall", "phone", "smoking"}:
+        if quality != "good" and cls in {"pet", "trash", "stall", "phone", "smoking", "license_plate", "lying", "fighting", "falldown"}:
             continue
         if cls == "trash" and label.get("w", 0) * label.get("h", 0) < 0.0015:
+            continue
+        if cls == "license_plate" and label.get("w", 0) * label.get("h", 0) > 0.08:
             continue
         filtered.append(label)
     labels = filtered
