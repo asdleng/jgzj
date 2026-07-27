@@ -98,6 +98,69 @@ def capped_target_count(baseline_count: int, daily_limit: int, total_target: int
     return target_count
 
 
+def ensure_pending_dataset_summary(
+    dataset: Path,
+    target: str,
+    class_names: tuple[str, ...],
+    image_count: int,
+    target_count: int,
+    total_target: int,
+    timestamp: str,
+) -> None:
+    summary_path = dataset / "dataset_summary.json"
+    existing = read_json(summary_path)
+    if existing.get("schema") == "jgzj_weak_event_web_qwen_summary.v1":
+        desired_profile = f"弱事件网络候选集:{target}"
+        desired_classes = list(class_names)
+        if existing.get("profile") != desired_profile or existing.get("classes") != desired_classes:
+            updated = dict(existing)
+            updated["profile"] = desired_profile
+            updated["classes"] = desired_classes
+            updated["updated_at"] = existing.get("updated_at") or timestamp
+            write_json_atomic(summary_path, updated)
+        return
+    write_json_atomic(summary_path, {
+        "schema": "jgzj_weak_event_web_qwen_summary.v1",
+        "profile": f"弱事件网络候选集:{target}",
+        "kind": "detect",
+        "updated_at": timestamp,
+        "classes": list(class_names),
+        "images": {"review": image_count},
+        "crawl_target_images": target_count,
+        "crawl_total_target_images": total_target,
+        "run_counts": {},
+        "scene_counts": {},
+        "target_scene_counts": {},
+        "boxes_by_class": {},
+        "audit_counts": {},
+        "quarantine_counts": {},
+        "qwen_model": "",
+        "qwen_label_summary": {
+            "labeled_images": 0,
+            "scene_positive": 0,
+            "scene_hard_negative": 0,
+            "scene_needs_human": 0,
+            "scene_unusable": 0,
+            "accepted_boxes": 0,
+            "model_accepted_boxes": 0,
+            "proposed_boxes": 0,
+            "audit_pass": 0,
+            "audit_needs_human": 0,
+            "audit_not_run": 0,
+            "quarantine_positive_in_hard_negative_bucket": 0,
+        },
+        "training_eligible": False,
+        "training_policy": "two_pass_qwen_then_human_review",
+        "source_policy": "license_metadata_required",
+    })
+    write_json_atomic(dataset / "training_guard.json", {
+        "schema": "jgzj_yolo_training_guard.v1",
+        "training_eligible": False,
+        "reason": "Weak-event web candidates require human review before any training split is built.",
+        "updated_at": timestamp,
+    })
+
+
 def plan_daily_state(
     existing: dict,
     day: str,
@@ -336,6 +399,15 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
         if args.dry_run:
             return 0
 
+        ensure_pending_dataset_summary(
+            dataset,
+            target,
+            class_names,
+            current_count,
+            planned_state["target_count"],
+            getattr(args, "total_target", 0),
+            timestamp,
+        )
         write_json_atomic(state_path, planned_state)
         started = time.monotonic()
         try:

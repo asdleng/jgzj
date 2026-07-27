@@ -350,12 +350,9 @@ def auto_epochs_for_sample_count(sample_count: int) -> int:
 
 def apply_auto_training_params(args: argparse.Namespace, sample_count: int) -> dict[str, Any]:
     epochs_was_auto = int(args.epochs) == 0
-    patience_disabled = bool(getattr(args, "disable_early_stop", False))
-    patience_was_auto = int(args.patience) == 0 and not patience_disabled
+    patience_was_auto = int(args.patience) == 0
     if epochs_was_auto:
         args.epochs = auto_epochs_for_sample_count(sample_count)
-    if patience_disabled:
-        args.patience = 0
     if patience_was_auto:
         args.patience = max(3, min(8, max(1, int(args.epochs) // 3)))
     return {
@@ -364,8 +361,6 @@ def apply_auto_training_params(args: argparse.Namespace, sample_count: int) -> d
         "epochs_auto": epochs_was_auto,
         "patience": int(args.patience),
         "patience_auto": patience_was_auto,
-        "patience_disabled": patience_disabled,
-        "save_period": int(args.save_period),
     }
 
 
@@ -2493,7 +2488,6 @@ def make_a100_job(
         f"RELIABLE_YOLO_BATCH={args.batch} \\",
         f"RELIABLE_YOLO_IMGSZ={args.imgsz} \\",
         f"RELIABLE_YOLO_WORKERS={args.workers} \\",
-        f"RELIABLE_YOLO_SAVE_PERIOD={args.save_period} \\",
         f"{shlex.quote(A100_PY)} scripts/train_reliable_yolo_finetune.py 2>&1 | tee -a {shlex.quote(remote_log)}",
         f"echo \"$(date -Is) finetune_done task={task_id} class={target_name}\" | tee -a {shlex.quote(remote_log)}",
     ]
@@ -2537,7 +2531,6 @@ def make_local_job(
         f"RELIABLE_YOLO_BATCH={args.batch} \\",
         f"RELIABLE_YOLO_IMGSZ={args.imgsz} \\",
         f"RELIABLE_YOLO_WORKERS={args.workers} \\",
-        f"RELIABLE_YOLO_SAVE_PERIOD={args.save_period} \\",
         f"{shlex.quote(sys.executable)} {shlex.quote(str(TRAIN_SCRIPT))} 2>&1 | tee -a {shlex.quote(str(log_path))}",
         f"echo \"$(date -Is) finetune_done backend=local task={task_id} class={target_name}\" | tee -a {shlex.quote(str(log_path))}",
     ]
@@ -2716,8 +2709,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--epochs", type=int, default=0, help="Training epochs. 0 chooses automatically from the built dataset size.")
     parser.add_argument("--patience", type=int, default=0, help="Early-stopping patience. 0 chooses automatically from epochs.")
-    parser.add_argument("--disable-early-stop", action="store_true", help="Run all epochs by passing patience=0 to Ultralytics.")
-    parser.add_argument("--save-period", type=int, default=-1, help="Checkpoint save period in epochs. Use 1 to save every epoch.")
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--train-backend", choices=("local", "a100"), default=os.environ.get("YOLO_FINETUNE_TRAIN_BACKEND", "local"))
@@ -2737,8 +2728,6 @@ def main() -> None:
         raise SystemExit("--epochs must be in [0, 200]. Use 0 for automatic selection.")
     if args.patience < 0 or args.patience > 100:
         raise SystemExit("--patience must be in [0, 100]. Use 0 for automatic selection.")
-    if args.save_period < -1:
-        raise SystemExit("--save-period must be >= -1.")
     if args.pull_retries < 1:
         raise SystemExit("--pull-retries must be >= 1.")
     if args.external_hard_neg < 0:
@@ -2812,8 +2801,6 @@ def main() -> None:
         "train_backend": args.train_backend,
         "epochs_requested": args.epochs,
         "patience_requested": args.patience,
-        "disable_early_stop": args.disable_early_stop,
-        "save_period": args.save_period,
         "batch": args.batch,
         "workers": args.workers,
     }

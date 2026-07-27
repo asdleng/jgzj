@@ -219,8 +219,21 @@ def yolo_text(labels: Iterable[dict]) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def read_json_object(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def label_candidates(args: argparse.Namespace) -> dict:
     dataset = args.dataset.resolve()
+    existing_summary = read_json_object(dataset / "dataset_summary.json")
+    summary_profile = str(existing_summary.get("profile") or "弱事件网络候选集")
+    summary_classes = existing_summary.get("classes")
+    if not isinstance(summary_classes, list) or not summary_classes:
+        summary_classes = list(CLASSES)
     rows = list(iter_jsonl(dataset / "manifest_selected_images.jsonl"))
     process_rows = select_shard(rows, args.shard_index, args.shard_count)
     cache_root = dataset / "qwen_labels"
@@ -417,10 +430,10 @@ def label_candidates(args: argparse.Namespace) -> dict:
     accepted_boxes = sum(class_boxes.values())
     summary = {
         "schema": "jgzj_weak_event_web_qwen_summary.v1",
-        "profile": "弱事件网络候选集",
+        "profile": summary_profile,
         "kind": "detect",
         "updated_at": now_iso(),
-        "classes": list(CLASSES),
+        "classes": [str(item) for item in summary_classes if str(item).strip()],
         "images": {"review": len(rows)},
         "run_counts": dict(run_counts),
         "scene_counts": dict(summary_counts),

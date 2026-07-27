@@ -55,11 +55,6 @@ WEB_FIRE_SMOKE_DATASET = Path(os.environ.get(
     "YOLO_FINETUNE_WEB_FIRE_SMOKE_DATASET",
     str(RUNTIME_ROOT / "yolo_loop" / "datasets" / "fire_smoke_web_candidates_v3"),
 ))
-FIRE_SMOKE_REVIEW_PRIMARY_DATASET = "loop:finetune_v2"
-FIRE_SMOKE_REVIEW_SECONDARY_DATASET = "loop:fire_smoke_web_candidates_v3"
-FIRE_SMOKE_DEFAULT_MAX_POS_NEG_RATIO = 1.5
-LOCAL_TRAIN_PROJECT_ROOT = FINETUNE_RUNTIME / "local_runs"
-LOCAL_TRAIN_RESULTS_ROOT = FINETUNE_RUNTIME / "local_results"
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 YOLO_REVIEW_FINETUNE_SCHEMA = "jgzj_yolo_finetune_review_dataset.v1"
 CATEGORY_ORDER = ("normal_positive", "hard_positive", "normal_negative", "hard_negative")
@@ -294,81 +289,6 @@ def rsync_to_a100(local_path: Path, remote_path: str, *, timeout: int = 1800) ->
     )
 
 
-def query_gpu_status() -> list[dict[str, int]]:
-    try:
-        result = run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,memory.free,utilization.gpu",
-                "--format=csv,noheader,nounits",
-            ],
-            timeout=20,
-            check=True,
-        )
-    except Exception:
-        return []
-    out = []
-    for raw in result.stdout.splitlines():
-        parts = [part.strip() for part in raw.split(",")]
-        if len(parts) < 3:
-            continue
-        try:
-            out.append({
-                "index": int(parts[0]),
-                "memory_free_mb": int(parts[1]),
-                "utilization_gpu": int(parts[2]),
-            })
-        except Exception:
-            continue
-    return out
-
-
-def select_training_gpu(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
-    explicit = int(getattr(args, "local_gpu", -1))
-    status = query_gpu_status()
-    if explicit >= 0:
-        return explicit, {"selected": explicit, "reason": "explicit", "gpus": status}
-    if not status:
-        return 0, {"selected": 0, "reason": "fallback_no_nvidia_smi", "gpus": status}
-    best = max(status, key=lambda row: (row["memory_free_mb"], -row["utilization_gpu"], -row["index"]))
-    return int(best["index"]), {"selected": int(best["index"]), "reason": "max_free_memory", "gpus": status}
-
-
-def auto_epochs_for_sample_count(sample_count: int) -> int:
-    if sample_count < 400:
-        return 25
-    if sample_count < 1000:
-        return 20
-    if sample_count < 3000:
-        return 15
-    if sample_count < 10000:
-        return 10
-    if sample_count < 30000:
-        return 6
-    return 4
-
-
-def apply_auto_training_params(args: argparse.Namespace, sample_count: int) -> dict[str, Any]:
-    epochs_was_auto = int(args.epochs) == 0
-    patience_disabled = bool(getattr(args, "disable_early_stop", False))
-    patience_was_auto = int(args.patience) == 0 and not patience_disabled
-    if epochs_was_auto:
-        args.epochs = auto_epochs_for_sample_count(sample_count)
-    if patience_disabled:
-        args.patience = 0
-    if patience_was_auto:
-        args.patience = max(3, min(8, max(1, int(args.epochs) // 3)))
-    return {
-        "sample_count": sample_count,
-        "epochs": int(args.epochs),
-        "epochs_auto": epochs_was_auto,
-        "patience": int(args.patience),
-        "patience_auto": patience_was_auto,
-        "patience_disabled": patience_disabled,
-        "save_period": int(args.save_period),
-    }
-
-
 def load_json(path: Path, default: Any = None) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -541,31 +461,11 @@ def dataset_pool_mode(args: argparse.Namespace) -> bool:
         int(getattr(args, "target_total", 0) or 0) > 0
         or int(getattr(args, "positive_total", 0) or 0) > 0
         or int(getattr(args, "negative_total", 0) or 0) > 0
-        or bool(getattr(args, "pool_use_all", False))
         or str(getattr(args, "primary_dataset", "") or "").strip()
         or str(getattr(args, "secondary_dataset", "") or "").strip()
         or str(getattr(args, "preferred_dataset", "") or "").strip()
         or flatten_csv_values(getattr(args, "supplemental_dataset", []) or [])
     )
-
-
-def apply_model_defaults(args: argparse.Namespace) -> None:
-    if normalize_name(args.model) != "fire_smoke_yolo":
-        return
-    if not parse_csv_tokens(getattr(args, "class_ids", "") or "") and int(args.class_id) < 0:
-        args.class_ids = "0,1"
-        args.class_id = 0
-    if not str(args.target_name or "").strip():
-        args.target_name = "fire_smoke_full_review"
-    if not str(args.primary_dataset or "").strip():
-        args.primary_dataset = FIRE_SMOKE_REVIEW_PRIMARY_DATASET
-    if not str(args.secondary_dataset or "").strip():
-        args.secondary_dataset = FIRE_SMOKE_REVIEW_SECONDARY_DATASET
-    args.pool_reviewed_only = True
-    if args.positive_total <= 0 and args.negative_total <= 0 and args.target_total <= 0:
-        args.pool_use_all = True
-    if float(args.max_positive_negative_ratio or 0.0) <= 0.0:
-        args.max_positive_negative_ratio = FIRE_SMOKE_DEFAULT_MAX_POS_NEG_RATIO
 
 
 def find_dataset_by_weight_hash(weight: Path) -> tuple[Path | None, str]:
@@ -588,26 +488,6 @@ def find_dataset_by_weight_hash(weight: Path) -> tuple[Path | None, str]:
                 return candidate, f"sha256_match:{best}"
             return Path(raw), f"sha256_match_missing_data:{best}"
     return None, "no_sha256_match"
-
-
-def latest_fire_smoke_runtime_weight() -> tuple[Path | None, str]:
-    candidates: list[Path] = []
-    for root in (WEIGHTS_DIR, MODEL_SERVICE_ROOT / "downloads", FINETUNE_RUNTIME / "base_weights"):
-        if not root.exists():
-            continue
-        for path in root.glob("*.pt"):
-            token = normalize_name(path.name)
-            if "fire" in token and "smoke" in token:
-                candidates.append(path)
-    runs_root = RUNTIME_ROOT / "yolo_loop" / "runs"
-    if runs_root.exists():
-        for path in runs_root.glob("fire_smoke*/weights/best.pt"):
-            candidates.append(path)
-    existing = [path.resolve() for path in candidates if path.exists()]
-    if not existing:
-        return None, "no_fire_smoke_runtime_weight"
-    latest = max(existing, key=lambda path: path.stat().st_mtime)
-    return latest, f"latest_mtime:{latest.stat().st_mtime:.0f}"
 
 
 def infer_closed_loop_dataset(entry: dict[str, Any], task_id: str) -> tuple[Path | None, str]:
@@ -662,10 +542,7 @@ def resolve_model(model_name: str) -> ModelInfo:
     dataset = None
     source = ""
     registry_text = " ".join(str(matched.get(key) or "") for key in ("source_run", "model_family", "best_weight"))
-    if task_id == "fire_smoke_yolo" and task_id in KNOWN_DATASET_BY_TASK:
-        dataset = KNOWN_DATASET_BY_TASK[task_id]
-        source = "known_fire_smoke_current_table"
-    if (dataset is None or not dataset.exists()) and "yolo_daily_closed_loop" in registry_text:
+    if "yolo_daily_closed_loop" in registry_text:
         dataset, source = infer_closed_loop_dataset(matched, task_id)
     if dataset is None or not dataset.exists():
         dataset, source = find_dataset_by_weight_hash(weight)
@@ -1614,8 +1491,8 @@ def select_nohard_pool_samples(
 ) -> dict[str, Any]:
     if not str(args.primary_dataset or "").strip():
         raise SystemExit("--primary-dataset is required when positive/negative pool sampling is used.")
-    if args.positive_total <= 0 and args.negative_total <= 0 and not args.pool_use_all:
-        raise SystemExit("--positive-total or --negative-total must be > 0 for no-hard pool sampling, unless --pool-use-all is set.")
+    if args.positive_total <= 0 and args.negative_total <= 0:
+        raise SystemExit("--positive-total or --negative-total must be > 0 for no-hard pool sampling.")
     primary, primary_summary = build_dataset_pool_source(
         role="primary",
         value=args.primary_dataset,
@@ -1658,19 +1535,10 @@ def select_nohard_pool_samples(
             "negative_images": len(source_negative),
         })
 
-    positive_requested = len(positive_rows) if args.pool_use_all and args.positive_total <= 0 else int(args.positive_total)
-    negative_requested = len(negative_rows) if args.pool_use_all and args.negative_total <= 0 else int(args.negative_total)
+    positive_requested = int(args.positive_total)
+    negative_requested = int(args.negative_total)
     positive_actual = min(positive_requested, len(positive_rows))
     negative_actual = min(negative_requested, len(negative_rows))
-    max_ratio = float(getattr(args, "max_positive_negative_ratio", 0.0) or 0.0)
-    ratio_limited = False
-    if max_ratio > 0 and positive_actual > 0 and negative_actual > 0:
-        if positive_actual / negative_actual > max_ratio:
-            positive_actual = max(1, int(negative_actual * max_ratio))
-            ratio_limited = True
-        elif negative_actual / positive_actual > max_ratio:
-            negative_actual = max(1, int(positive_actual * max_ratio))
-            ratio_limited = True
 
     positive_summary = select_nohard_from_rows(
         category="positive",
@@ -1697,9 +1565,6 @@ def select_nohard_pool_samples(
         "actual_total": int(positive_summary["selected"]) + int(negative_summary["selected"]),
         "lowered_positive": positive_actual != positive_requested,
         "lowered_negative": negative_actual != negative_requested,
-        "pool_use_all": bool(args.pool_use_all),
-        "max_positive_negative_ratio": max_ratio,
-        "ratio_limited": ratio_limited,
         "availability": {
             "positive": len(positive_rows),
             "negative": len(negative_rows),
@@ -2493,7 +2358,6 @@ def make_a100_job(
         f"RELIABLE_YOLO_BATCH={args.batch} \\",
         f"RELIABLE_YOLO_IMGSZ={args.imgsz} \\",
         f"RELIABLE_YOLO_WORKERS={args.workers} \\",
-        f"RELIABLE_YOLO_SAVE_PERIOD={args.save_period} \\",
         f"{shlex.quote(A100_PY)} scripts/train_reliable_yolo_finetune.py 2>&1 | tee -a {shlex.quote(remote_log)}",
         f"echo \"$(date -Is) finetune_done task={task_id} class={target_name}\" | tee -a {shlex.quote(remote_log)}",
     ]
@@ -2501,50 +2365,6 @@ def make_a100_job(
     job.write_text("\n".join(lines) + "\n", encoding="utf-8")
     job.chmod(0o755)
     return job
-
-
-def make_local_job(
-    *,
-    run_tag: str,
-    task_id: str,
-    target_name: str,
-    data_yaml: Path,
-    weight: Path,
-    gpu: int,
-    args: argparse.Namespace,
-    run_dir: Path,
-) -> tuple[Path, Path, Path, Path]:
-    project = LOCAL_TRAIN_PROJECT_ROOT / task_id
-    out = LOCAL_TRAIN_RESULTS_ROOT / f"{task_id}_{target_name}_{run_tag}"
-    log_path = FINETUNE_ROOT / "logs" / f"{run_tag}_local_train.log"
-    alias = f"{run_tag}_{task_id}_{target_name}"
-    lines = [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        f"cd {shlex.quote(str(PROJECT_ROOT))}",
-        f"mkdir -p {shlex.quote(str(log_path.parent))} {shlex.quote(str(project))} {shlex.quote(str(out))}",
-        f"echo \"$(date -Is) finetune_start backend=local task={task_id} class={target_name} gpu={gpu} data={data_yaml}\" | tee -a {shlex.quote(str(log_path))}",
-        f"CUDA_VISIBLE_DEVICES={gpu} \\",
-        f"RELIABLE_YOLO_TASK={shlex.quote(task_id + '_' + target_name + '_finetune')} \\",
-        f"RELIABLE_YOLO_RUN_TAG={shlex.quote(run_tag)} \\",
-        f"RELIABLE_YOLO_DATA={shlex.quote(str(data_yaml))} \\",
-        f"RELIABLE_YOLO_OUT={shlex.quote(str(out))} \\",
-        f"RELIABLE_YOLO_PROJECT={shlex.quote(str(project))} \\",
-        f"RELIABLE_YOLO_DOWNLOADS={shlex.quote(str(MODEL_SERVICE_ROOT / 'downloads'))} \\",
-        f"RELIABLE_YOLO_BASE_WEIGHTS={shlex.quote(alias + '=' + str(weight))} \\",
-        f"RELIABLE_YOLO_EPOCHS={args.epochs} \\",
-        f"RELIABLE_YOLO_PATIENCE={args.patience} \\",
-        f"RELIABLE_YOLO_BATCH={args.batch} \\",
-        f"RELIABLE_YOLO_IMGSZ={args.imgsz} \\",
-        f"RELIABLE_YOLO_WORKERS={args.workers} \\",
-        f"RELIABLE_YOLO_SAVE_PERIOD={args.save_period} \\",
-        f"{shlex.quote(sys.executable)} {shlex.quote(str(TRAIN_SCRIPT))} 2>&1 | tee -a {shlex.quote(str(log_path))}",
-        f"echo \"$(date -Is) finetune_done backend=local task={task_id} class={target_name}\" | tee -a {shlex.quote(str(log_path))}",
-    ]
-    job = run_dir / f"{run_tag}.local_finetune.sh"
-    job.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    job.chmod(0o755)
-    return job, log_path, project, out
 
 
 def schedule_training(
@@ -2558,31 +2378,6 @@ def schedule_training(
 ) -> dict[str, Any]:
     if args.skip_train or args.dry_run:
         return {"skipped": True}
-    if args.train_backend == "local":
-        data_yaml = Path(dataset_summary["data_yaml"])
-        gpu, gpu_summary = select_training_gpu(args)
-        job, log_path, project, out = make_local_job(
-            run_tag=run_tag,
-            task_id=model_info.task_id,
-            target_name=target_name,
-            data_yaml=data_yaml,
-            weight=model_info.weight,
-            gpu=gpu,
-            args=args,
-            run_dir=run_dir,
-        )
-        session = f"yolo-finetune-local-gpu{gpu}-{run_tag}"
-        run(["tmux", "new-session", "-d", "-s", session, "bash", str(job)], check=True)
-        return {
-            "backend": "local",
-            "session": session,
-            "gpu": gpu,
-            "gpu_selection": gpu_summary,
-            "local_job": str(job),
-            "local_log": str(log_path),
-            "local_project": str(project),
-            "local_out": str(out),
-        }
     local_dataset = Path(dataset_summary["dataset_dir"])
     remote_dataset = f"{A100_ROOT}/datasets/{run_tag}/{local_dataset.name}"
     remote_data_yaml = f"{remote_dataset}/data.yaml"
@@ -2622,9 +2417,9 @@ def schedule_training(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Build a target-class YOLO finetune dataset and schedule finetuning.")
+    parser = argparse.ArgumentParser(description="Build a target-class YOLO finetune dataset and schedule <=10 epoch finetuning.")
     parser.add_argument("--model", required=True, help="Current registry model name, e.g. trash_yolo.")
-    parser.add_argument("--class-id", type=int, default=-1, help="Target class id in the model training dataset.")
+    parser.add_argument("--class-id", type=int, required=True, help="Target class id in the model training dataset.")
     parser.add_argument("--class-ids", default="", help="Comma-separated target class ids for joint finetune, e.g. 0,1. Overrides --class-id.")
     parser.add_argument("--target-name", default="", help="Override target name shown in run/logs.")
     parser.add_argument("--qwen-class", default="", help="Override coarse class(es) used for Qwen judgement. Comma-separated for multi-class.")
@@ -2656,8 +2451,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--secondary-dataset", "--supplemental-dataset", dest="secondary_dataset", default="", help="Second dataset source used to refill category shortfalls.")
     parser.add_argument("--primary-dataset-id", default="", help="Manual-review dataset_id override for the first dataset source.")
     parser.add_argument("--secondary-dataset-id", default="", help="Manual-review dataset_id override for the second dataset source.")
-    parser.add_argument("--pool-use-all", action="store_true", help="Use all reviewed positives/negatives when positive/negative totals are omitted.")
-    parser.add_argument("--max-positive-negative-ratio", type=float, default=0.0, help="Optional max majority/minority ratio for no-hard positive/negative pools. 0 disables.")
     parser.add_argument("--pool-reviewed-only", action="store_true", help="Use only pass/negative human-reviewed manual annotations from pool datasets.")
     parser.add_argument("--manual-root", type=Path, default=RUNTIME_ROOT / "yolo_label_review" / "manual_annotations_v1")
 
@@ -2714,31 +2507,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--qwen-timeout-s", type=int, default=120)
     parser.add_argument("--qwen-max-tokens", type=int, default=768)
 
-    parser.add_argument("--epochs", type=int, default=0, help="Training epochs. 0 chooses automatically from the built dataset size.")
-    parser.add_argument("--patience", type=int, default=0, help="Early-stopping patience. 0 chooses automatically from epochs.")
-    parser.add_argument("--disable-early-stop", action="store_true", help="Run all epochs by passing patience=0 to Ultralytics.")
-    parser.add_argument("--save-period", type=int, default=-1, help="Checkpoint save period in epochs. Use 1 to save every epoch.")
+    parser.add_argument("--epochs", type=int, default=8)
+    parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument("--train-backend", choices=("local", "a100"), default=os.environ.get("YOLO_FINETUNE_TRAIN_BACKEND", "local"))
-    parser.add_argument("--local-gpu", type=int, default=int(os.environ.get("YOLO_FINETUNE_LOCAL_GPU", "-1")), help="Local GPU index. -1 selects the GPU with the most free memory at launch time.")
     parser.add_argument("--a100-gpu", type=int, default=int(os.environ.get("YOLO_FINETUNE_A100_GPU", "3")))
     return parser
 
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    apply_model_defaults(args)
     if args.external_hard_neg is None:
         args.external_hard_neg = args.pulled_hard_neg
-    if not parse_csv_tokens(getattr(args, "class_ids", "") or "") and int(args.class_id) < 0:
-        raise SystemExit("--class-id is required unless --class-ids is provided.")
-    if args.epochs < 0 or args.epochs > 200:
-        raise SystemExit("--epochs must be in [0, 200]. Use 0 for automatic selection.")
-    if args.patience < 0 or args.patience > 100:
-        raise SystemExit("--patience must be in [0, 100]. Use 0 for automatic selection.")
-    if args.save_period < -1:
-        raise SystemExit("--save-period must be >= -1.")
+    if args.epochs < 1 or args.epochs > 10:
+        raise SystemExit("--epochs must be in [1, 10].")
     if args.pull_retries < 1:
         raise SystemExit("--pull-retries must be >= 1.")
     if args.external_hard_neg < 0:
@@ -2747,10 +2529,6 @@ def main() -> None:
         raise SystemExit("--target-total must be >= 0.")
     if args.positive_total < 0 or args.negative_total < 0:
         raise SystemExit("--positive-total and --negative-total must be >= 0.")
-    if args.max_positive_negative_ratio < 0:
-        raise SystemExit("--max-positive-negative-ratio must be >= 0.")
-    if args.local_gpu < -1:
-        raise SystemExit("--local-gpu must be >= -1.")
 
     model_info = resolve_model(args.model)
     base_weight_override = ""
@@ -2761,11 +2539,6 @@ def main() -> None:
         model_info.weight = base_weight
         model_info.data_source = f"base_weight_override:{base_weight}"
         base_weight_override = str(base_weight)
-    elif normalize_name(args.model) == "fire_smoke_yolo":
-        latest_weight, latest_source = latest_fire_smoke_runtime_weight()
-        if latest_weight is not None:
-            model_info.weight = latest_weight
-            model_info.data_source = f"latest_fire_smoke_runtime_weight:{latest_source}"
     if model_info.task != "detect":
         raise SystemExit(f"unsupported_task:{model_info.task}; this script handles detect datasets because hard samples need boxes and IoU.")
 
@@ -2809,13 +2582,6 @@ def main() -> None:
         "secondary_dataset": args.secondary_dataset,
         "pool_reviewed_only": args.pool_reviewed_only,
         "manual_root": str(args.manual_root),
-        "train_backend": args.train_backend,
-        "epochs_requested": args.epochs,
-        "patience_requested": args.patience,
-        "disable_early_stop": args.disable_early_stop,
-        "save_period": args.save_period,
-        "batch": args.batch,
-        "workers": args.workers,
     }
     write_json(run_dir / "resolved_model.json", resolved)
     print(json.dumps(resolved, ensure_ascii=False, indent=2), flush=True)
@@ -2826,7 +2592,7 @@ def main() -> None:
     selected: list[dict[str, Any]] = []
     used: set[str] = set()
     pool_summary: dict[str, Any] = {"skipped": True}
-    nohard_pool_mode = args.pool_use_all or args.positive_total > 0 or args.negative_total > 0
+    nohard_pool_mode = args.positive_total > 0 or args.negative_total > 0
     model = None
 
     if dataset_pool_mode(args):
@@ -2882,7 +2648,6 @@ def main() -> None:
 
     dataset_dir = FINETUNE_RUNTIME / "datasets" / run_tag / f"{model_info.task_id}_c{class_token}_{normalize_name(target_name)}_finetune"
     dataset_summary = write_dataset(selected, model_info.data, dataset_dir, args, rng)
-    training_config = apply_auto_training_params(args, int(dataset_summary["samples"]))
     thresholds = {
         "predict_conf_floor": args.predict_conf_floor,
         "predict_nms_iou": args.predict_nms_iou,
@@ -2908,8 +2673,6 @@ def main() -> None:
             "target_total": args.target_total,
             "positive_total": args.positive_total,
             "negative_total": args.negative_total,
-            "pool_use_all": args.pool_use_all,
-            "max_positive_negative_ratio": args.max_positive_negative_ratio,
         },
         "selection": {
             "dataset_pool": pool_summary,
@@ -2919,7 +2682,6 @@ def main() -> None:
             "external_shortfall_fallback": fallback_summary,
         },
         "dataset": dataset_summary,
-        "training_config": training_config,
     }
     training_summary = schedule_training(
         model_info=model_info,

@@ -11778,6 +11778,14 @@ body.yolo-review-is-panning {
   color: #fbbf24;
 }
 
+#cloud-ops-test-params .cloud-ops-param-row.is-capability-pending > div[role="cell"]:first-child span {
+  color: #67e8f9;
+}
+
+.cloud-ops-test-command-button--control[data-tool-availability="pending"] {
+  cursor: progress;
+}
+
 #cloud-ops-test-params .cloud-ops-param-row.is-critical {
   background: rgba(69, 10, 10, 0.16);
 }

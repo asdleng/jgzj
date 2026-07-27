@@ -1,0 +1,45 @@
+{
+  "model": "fire_smoke_yolo",
+  "task_id": "fire_smoke_yolo",
+  "title": "火源烟雾",
+  "task": "detect",
+  "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_nohard_round2_20260727_130839.pt",
+  "base_weight_override": "",
+  "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+  "data_source": "latest_fire_smoke_runtime_weight:latest_mtime:1785129355",
+  "class_id": 0,
+  "class_ids": [
+    0,
+    1
+  ],
+  "class_name": "fire_smoke_full_review",
+  "class_names": [
+    "fire",
+    "smoke"
+  ],
+  "qwen_class": "fire",
+  "qwen_classes": [
+    "fire",
+    "smoke"
+  ],
+  "run_tag": "20260727_153417_fire_smoke_yolo_c0_1_fire_smoke_full_review",
+  "run_dir": "/home/admin1/jgzj/finetune/runs/20260727_153417_fire_smoke_yolo_c0_1_fire_smoke_full_review",
+  "qwen_no_root": "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+  "web_fire_smoke_dataset": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+  "external_hard_neg": 200,
+  "qwen_no_hard_neg": 100,
+  "web_hard_neg": 100,
+  "dataset_pool_mode": true,
+  "target_total": 0,
+  "positive_total": 0,
+  "negative_total": 0,
+  "primary_dataset": "loop:finetune_v2",
+  "secondary_dataset": "loop:fire_smoke_web_candidates_v3",
+  "pool_reviewed_only": true,
+  "manual_root": "/home/admin1/jgzj/.runtime/yolo_label_review/manual_annotations_v1",
+  "train_backend": "local",
+  "epochs_requested": 0,
+  "patience_requested": 0,
+  "batch": 32,
+  "workers": 8
+}
