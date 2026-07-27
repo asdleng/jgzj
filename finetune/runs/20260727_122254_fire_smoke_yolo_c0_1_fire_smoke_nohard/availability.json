@@ -1,0 +1,7 @@
+{
+  "dataset_pool": {
+    "positive": 320,
+    "negative": 264
+  },
+  "selected_samples": 574
+}

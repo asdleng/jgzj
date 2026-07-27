@@ -1,0 +1,252 @@
+{
+  "model": "fire_smoke_yolo",
+  "task_id": "fire_smoke_yolo",
+  "title": "火源烟雾",
+  "task": "detect",
+  "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+  "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+  "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+  "class_id": 0,
+  "class_ids": [
+    0,
+    1
+  ],
+  "class_name": "fire_smoke_nohard",
+  "class_names": [
+    "fire",
+    "smoke"
+  ],
+  "qwen_class": "fire",
+  "qwen_classes": [
+    "fire",
+    "smoke"
+  ],
+  "run_tag": "20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard",
+  "run_dir": "/home/admin1/jgzj/finetune/runs/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard",
+  "qwen_no_root": "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+  "web_fire_smoke_dataset": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+  "external_hard_neg": 200,
+  "qwen_no_hard_neg": 100,
+  "web_hard_neg": 100,
+  "dataset_pool_mode": true,
+  "target_total": 0,
+  "positive_total": 311,
+  "negative_total": 263,
+  "primary_dataset": "loop:finetune_v2",
+  "secondary_dataset": "loop:fire_smoke_web_candidates_v3",
+  "pool_reviewed_only": true,
+  "manual_root": "/home/admin1/jgzj/.runtime/yolo_label_review/manual_annotations_v1"
+}
+[2026-07-27 12:23:44] run: ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no sari@192.168.80.49 'mkdir -p /home/sari/jgzj_yolo_finetune/scripts /home/sari/jgzj_yolo_finetune/weights /home/sari/jgzj_yolo_finetune/datasets/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard /home/sari/jgzj_yolo_finetune/logs'
+[2026-07-27 12:23:44] run: rsync -a -e 'ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no' /home/admin1/jgzj/.runtime/reliable_vehicle_yolo_20260704/train_reliable_yolo_finetune.py sari@192.168.80.49:/home/sari/jgzj_yolo_finetune/scripts/train_reliable_yolo_finetune.py
+[2026-07-27 12:23:45] run: rsync -a -e 'ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no' /home/admin1/jgzj/scripts/yolo_closed_loop_policy.py sari@192.168.80.49:/home/sari/jgzj_yolo_finetune/scripts/yolo_closed_loop_policy.py
+[2026-07-27 12:23:45] run: rsync -a -e 'ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no' /home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt sari@192.168.80.49:/home/sari/jgzj_yolo_finetune/weights/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard_fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt
+[2026-07-27 12:23:48] run: rsync -a -e 'ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no' /home/admin1/jgzj/.runtime/finetune/datasets/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard/fire_smoke_yolo_c0_1_fire_smoke_nohard_finetune/ sari@192.168.80.49:/home/sari/jgzj_yolo_finetune/datasets/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard/fire_smoke_yolo_c0_1_fire_smoke_nohard_finetune/
+[2026-07-27 12:24:22] run: rsync -a -e 'ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no' /home/admin1/jgzj/finetune/runs/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard.a100_finetune.sh sari@192.168.80.49:/home/sari/jgzj_yolo_finetune/logs/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard.a100_finetune.sh
+[2026-07-27 12:24:23] run: ssh -i /home/admin1/a100_tunnel/jgzj_qwen36_proxy_ed25519 -o ClearAllForwardings=yes -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=no sari@192.168.80.49 'tmux new-session -d -s yolo-finetune-gpu3-20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard '"'"'bash /home/sari/jgzj_yolo_finetune/logs/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard.a100_finetune.sh'"'"''
+{
+  "schema": "jgzj_yolo_target_finetune.v1",
+  "created_at": "2026-07-27T12:23:44.304436+08:00",
+  "resolved": {
+    "model": "fire_smoke_yolo",
+    "task_id": "fire_smoke_yolo",
+    "title": "火源烟雾",
+    "task": "detect",
+    "weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+    "data": "/home/admin1/datasets/fire_other_edge/data_fire_other_edge.yaml",
+    "data_source": "sha256_match:/home/admin1/jgzj/.runtime/yolo_loop/runs/fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713/weights/best.pt",
+    "class_id": 0,
+    "class_ids": [
+      0,
+      1
+    ],
+    "class_name": "fire_smoke_nohard",
+    "class_names": [
+      "fire",
+      "smoke"
+    ],
+    "qwen_class": "fire",
+    "qwen_classes": [
+      "fire",
+      "smoke"
+    ],
+    "run_tag": "20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard",
+    "run_dir": "/home/admin1/jgzj/finetune/runs/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard",
+    "qwen_no_root": "/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames",
+    "web_fire_smoke_dataset": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+    "external_hard_neg": 200,
+    "qwen_no_hard_neg": 100,
+    "web_hard_neg": 100,
+    "dataset_pool_mode": true,
+    "target_total": 0,
+    "positive_total": 311,
+    "negative_total": 263,
+    "primary_dataset": "loop:finetune_v2",
+    "secondary_dataset": "loop:fire_smoke_web_candidates_v3",
+    "pool_reviewed_only": true,
+    "manual_root": "/home/admin1/jgzj/.runtime/yolo_label_review/manual_annotations_v1"
+  },
+  "availability": {
+    "dataset_pool": {
+      "positive": 320,
+      "negative": 264
+    },
+    "selected_samples": 574
+  },
+  "thresholds": {
+    "predict_conf_floor": 0.001,
+    "predict_nms_iou": 0.7,
+    "pos_iou_threshold": 0.5,
+    "normal_pos_min_conf": 0.5,
+    "hard_neg_min_conf": 0.25
+  },
+  "requested": {
+    "original_normal_positive": 1000,
+    "original_hard_positive": 150,
+    "feedback_hard_positive": 150,
+    "original_normal_negative": 400,
+    "original_hard_negative": 100,
+    "external_hard_negative": 200,
+    "qwen_no_hard_negative": 100,
+    "web_qwen_hard_negative": 100,
+    "target_total": 0,
+    "positive_total": 311,
+    "negative_total": 263
+  },
+  "selection": {
+    "dataset_pool": {
+      "mode": "nohard_positive_negative",
+      "requested_positive": 311,
+      "requested_negative": 263,
+      "actual_positive": 311,
+      "actual_negative": 263,
+      "actual_total": 574,
+      "lowered_positive": false,
+      "lowered_negative": false,
+      "availability": {
+        "positive": 320,
+        "negative": 264
+      },
+      "sources": [
+        {
+          "role": "primary",
+          "input": "loop:finetune_v2",
+          "label": "finetune_v2",
+          "dataset_root": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/finetune_v2",
+          "data_yaml": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/finetune_v2/data.yaml",
+          "dataset_id": "loop:finetune_v2",
+          "reviewed_only": true,
+          "positive_images": 157,
+          "negative_images": 61,
+          "review": {
+            "dataset_id": "loop:finetune_v2",
+            "manual_annotations": 218,
+            "positive_images": 157,
+            "negative_images": 61,
+            "skipped_missing_image": 0,
+            "skipped_empty_pass": 0
+          }
+        },
+        {
+          "role": "secondary",
+          "input": "loop:fire_smoke_web_candidates_v3",
+          "label": "loop_fire_smoke_web_candidates_v3",
+          "dataset_root": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/fire_smoke_web_candidates_v3",
+          "data_yaml": "",
+          "dataset_id": "loop:fire_smoke_web_candidates_v3",
+          "reviewed_only": true,
+          "positive_images": 163,
+          "negative_images": 203,
+          "review": {
+            "dataset_id": "loop:fire_smoke_web_candidates_v3",
+            "manual_annotations": 366,
+            "positive_images": 163,
+            "negative_images": 203,
+            "skipped_missing_image": 0,
+            "skipped_empty_pass": 0
+          }
+        }
+      ],
+      "source_counts": [
+        {
+          "role": "primary",
+          "label": "finetune_v2",
+          "dataset_id": "loop:finetune_v2",
+          "positive_images": 157,
+          "negative_images": 61
+        },
+        {
+          "role": "secondary",
+          "label": "loop_fire_smoke_web_candidates_v3",
+          "dataset_id": "loop:fire_smoke_web_candidates_v3",
+          "positive_images": 163,
+          "negative_images": 203
+        }
+      ],
+      "selection": {
+        "positive": {
+          "requested": 311,
+          "selected": 311,
+          "shortfall": 0,
+          "selected_by_source": {
+            "secondary": 158,
+            "primary": 153
+          }
+        },
+        "negative": {
+          "requested": 263,
+          "selected": 263,
+          "shortfall": 0,
+          "selected_by_source": {
+            "secondary": 202,
+            "primary": 61
+          }
+        }
+      }
+    },
+    "original": {
+      "skipped": true,
+      "reason": "dataset_pool_mode"
+    },
+    "feedback_hard_positive": {
+      "skipped": true,
+      "reason": "dataset_pool_mode"
+    },
+    "external_hard_negative": {
+      "skipped": true,
+      "reason": "dataset_pool_mode"
+    },
+    "external_shortfall_fallback": {
+      "skipped": true,
+      "reason": "dataset_pool_mode"
+    }
+  },
+  "dataset": {
+    "dataset_dir": "/home/admin1/jgzj/.runtime/finetune/datasets/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard/fire_smoke_yolo_c0_1_fire_smoke_nohard_finetune",
+    "data_yaml": "/home/admin1/jgzj/.runtime/finetune/datasets/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard/fire_smoke_yolo_c0_1_fire_smoke_nohard_finetune/data.yaml",
+    "samples": 574,
+    "split_counts": {
+      "train": 487,
+      "val": 58,
+      "test": 29
+    },
+    "category_counts": {
+      "positive": 311,
+      "negative": 263
+    },
+    "source_counts": {
+      "primary_positive": 153,
+      "secondary_positive": 158,
+      "secondary_negative": 202,
+      "primary_negative": 61
+    },
+    "manifest": "/home/admin1/jgzj/.runtime/finetune/datasets/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard/fire_smoke_yolo_c0_1_fire_smoke_nohard_finetune/samples_manifest.jsonl"
+  },
+  "training": {
+    "session": "yolo-finetune-gpu3-20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard",
+    "remote_dataset": "/home/sari/jgzj_yolo_finetune/datasets/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard/fire_smoke_yolo_c0_1_fire_smoke_nohard_finetune",
+    "remote_weight": "/home/sari/jgzj_yolo_finetune/weights/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard_fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
+    "remote_job": "/home/sari/jgzj_yolo_finetune/logs/20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard.a100_finetune.sh",
+    "remote_log": "/home/sari/jgzj_yolo_finetune/logs/fire_smoke_yolo_fire_smoke_nohard_20260727_122343_fire_smoke_yolo_c0_1_fire_smoke_nohard.log"
+  }
+}

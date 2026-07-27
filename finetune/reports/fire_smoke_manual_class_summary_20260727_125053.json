@@ -1,0 +1,90 @@
+{
+  "schema": "jgzj_fire_smoke_manual_class_stats.v1",
+  "created_at": "2026-07-27T12:50:53.435246+08:00",
+  "manual_root": ".runtime/yolo_label_review/manual_annotations_v1",
+  "dataset_ids": [
+    "loop:finetune_v2",
+    "loop:fire_smoke_web_candidates_v3"
+  ],
+  "definition": {
+    "positive": "accepted human-reviewed detect sample with at least one manual label of that class",
+    "negative": "accepted human-reviewed detect sample with no manual label of that class",
+    "accepted_review_verdicts": [
+      "pass",
+      "negative"
+    ],
+    "excluded": [
+      "deleted",
+      "non-detect",
+      "pending/unusable/missing review_verdict"
+    ]
+  },
+  "accepted_reviewed_total": 653,
+  "skipped": {
+    "loop:finetune_v2": {},
+    "loop:fire_smoke_web_candidates_v3": {
+      "verdict_unusable": 58,
+      "verdict_missing": 36,
+      "deleted": 36,
+      "verdict_pending": 1
+    }
+  },
+  "classes": {
+    "fire": {
+      "class_id": 0,
+      "positive": 166,
+      "negative": 487,
+      "positive_boxes": 184,
+      "positive_csv": "/home/admin1/jgzj/finetune/reports/fire_manual_positive_20260727_125053.csv",
+      "negative_csv": "/home/admin1/jgzj/finetune/reports/fire_manual_negative_20260727_125053.csv",
+      "by_dataset": {
+        "loop:finetune_v2": {
+          "positive": 97,
+          "negative": 121,
+          "positive_boxes": 98,
+          "negative_reason": {
+            "manual_negative": 61,
+            "pass_other_class_or_empty": 60
+          }
+        },
+        "loop:fire_smoke_web_candidates_v3": {
+          "positive": 69,
+          "negative": 366,
+          "positive_boxes": 86,
+          "negative_reason": {
+            "manual_negative": 212,
+            "pass_other_class_or_empty": 154
+          }
+        }
+      }
+    },
+    "smoke": {
+      "class_id": 1,
+      "positive": 336,
+      "negative": 317,
+      "positive_boxes": 362,
+      "positive_csv": "/home/admin1/jgzj/finetune/reports/smoke_manual_positive_20260727_125053.csv",
+      "negative_csv": "/home/admin1/jgzj/finetune/reports/smoke_manual_negative_20260727_125053.csv",
+      "by_dataset": {
+        "loop:finetune_v2": {
+          "positive": 144,
+          "negative": 74,
+          "positive_boxes": 152,
+          "negative_reason": {
+            "manual_negative": 61,
+            "pass_other_class_or_empty": 13
+          }
+        },
+        "loop:fire_smoke_web_candidates_v3": {
+          "positive": 192,
+          "negative": 243,
+          "positive_boxes": 210,
+          "negative_reason": {
+            "manual_negative": 212,
+            "pass_other_class_or_empty": 31
+          }
+        }
+      }
+    }
+  }
+}
