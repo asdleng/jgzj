@@ -26,7 +26,6 @@
     hasBox: document.getElementById("yolo-review-has-box"),
     query: document.getElementById("yolo-review-query"),
     eventSelect: document.getElementById("yolo-review-event-select"),
-    eventButtons: [...document.querySelectorAll("[data-yolo-review-event]")],
     eventWrap: document.getElementById("yolo-review-event-wrap"),
     datasetWrap: document.getElementById("yolo-review-dataset-wrap"),
     sourceStatus: document.getElementById("yolo-review-source-status"),

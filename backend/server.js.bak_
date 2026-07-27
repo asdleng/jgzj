@@ -4429,23 +4429,6 @@ async function findFilesNamed(root, fileName, maxDepth = 4, depth = 0) {
   }
 
   const matches = [];
-  const skipLargeDatasetDirs = fileName === 'dataset_summary.json'
-    ? new Set([
-        'images',
-        'labels',
-        'qwen_labels',
-        'qwen_review',
-        'qwen_reviews',
-        'thumbs',
-        'crops',
-        'train',
-        'val',
-        'test',
-        'review',
-        'cache',
-        '.cache'
-      ])
-    : null;
   for (const entry of entries) {
     const entryPath = path.join(root, entry.name);
     if (entry.isFile() && entry.name === fileName) {
@@ -4453,9 +4436,6 @@ async function findFilesNamed(root, fileName, maxDepth = 4, depth = 0) {
       continue;
     }
     if (entry.isDirectory() && depth < maxDepth) {
-      if (skipLargeDatasetDirs?.has(entry.name)) {
-        continue;
-      }
       matches.push(...await findFilesNamed(entryPath, fileName, maxDepth, depth + 1));
     }
   }
