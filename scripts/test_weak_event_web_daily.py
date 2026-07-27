@@ -42,6 +42,8 @@ class WeakEventWebDailyTest(unittest.TestCase):
                 state=root / "state.json",
                 lock=root / "state.lock",
                 daily_limit=50,
+                total_target=100,
+                target="pet",
                 endpoint="http://127.0.0.1:1",
                 model="test",
                 api_key="",
@@ -114,6 +116,51 @@ class WeakEventWebDailyTest(unittest.TestCase):
         self.assertEqual(state["baseline_count"], 8000)
         self.assertEqual(state["target_count"], 8500)
         self.assertEqual(state["daily_limit"], 500)
+        self.assertEqual(state["attempts"], 2)
+
+    def test_total_target_caps_new_day_target(self):
+        state = plan_daily_state(
+            {},
+            "2026-07-25",
+            9800,
+            500,
+            "2026-07-25T04:40:00+08:00",
+            total_target=10000,
+        )
+        self.assertEqual(state["baseline_count"], 9800)
+        self.assertEqual(state["target_count"], 10000)
+        self.assertEqual(state["total_target"], 10000)
+
+    def test_total_target_keeps_existing_over_cap_count(self):
+        state = plan_daily_state(
+            {},
+            "2026-07-25",
+            10020,
+            500,
+            "2026-07-25T04:40:00+08:00",
+            total_target=10000,
+        )
+        self.assertEqual(state["baseline_count"], 10020)
+        self.assertEqual(state["target_count"], 10020)
+
+    def test_same_day_total_target_change_recomputes_target(self):
+        existing = plan_daily_state(
+            {},
+            "2026-07-25",
+            9800,
+            500,
+            "2026-07-25T04:40:00+08:00",
+        )
+        state = plan_daily_state(
+            existing,
+            "2026-07-25",
+            9800,
+            500,
+            "2026-07-25T05:40:00+08:00",
+            total_target=10000,
+        )
+        self.assertEqual(state["target_count"], 10000)
+        self.assertEqual(state["total_target"], 10000)
         self.assertEqual(state["attempts"], 2)
 
     def test_corrupt_same_day_target_is_rejected(self):

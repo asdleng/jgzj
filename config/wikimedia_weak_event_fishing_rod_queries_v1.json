@@ -1,0 +1,55 @@
+{
+  "api_url": "https://commons.wikimedia.org/w/api.php",
+  "download_width": 1600,
+  "exclude_title_regex": "\\b(?:painting|drawing|illustration|poster|pamphlet|map|diagram|logo|collage|screenshot|video|film|festival)\\b|Bundesarchiv|LCCN|NYPL",
+  "queries": [
+    {
+      "bucket": "fishing_rod_positive_category",
+      "category": "Fishing rods",
+      "limit": 507,
+      "max_accept": 169
+    },
+    {
+      "bucket": "fishing_rod_positive_pier",
+      "query": "angler fishing rod pier",
+      "limit": 423,
+      "max_accept": 141
+    },
+    {
+      "bucket": "fishing_rod_positive_waterfront",
+      "query": "person fishing rod waterfront",
+      "limit": 423,
+      "max_accept": 141
+    },
+    {
+      "bucket": "fishing_rod_positive_in_use",
+      "query": "fishing rod in use",
+      "limit": 339,
+      "max_accept": 113
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_walking_stick",
+      "category": "Walking sticks",
+      "limit": 204,
+      "max_accept": 68
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_trekking_pole",
+      "query": "trekking pole person outdoors",
+      "limit": 168,
+      "max_accept": 56
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_umbrella",
+      "query": "umbrella person waterfront",
+      "limit": 168,
+      "max_accept": 56
+    },
+    {
+      "bucket": "hard_negative_fishing_rod_railing",
+      "query": "metal railing waterfront",
+      "limit": 168,
+      "max_accept": 56
+    }
+  ]
+}

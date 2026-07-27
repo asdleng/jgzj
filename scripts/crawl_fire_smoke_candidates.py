@@ -184,6 +184,16 @@ def commons_thumb_url(api_url: str, title: str, width: int) -> str:
     return f"{parts.scheme}://{parts.netloc}/w/thumb.php?{query}"
 
 
+def source_error_candidate(provider: str, reason: object, query: object = "", bucket: object = "") -> dict:
+    return {
+        "_source_error": True,
+        "provider": provider,
+        "reason": str(reason)[:500],
+        "query": clean_text(query, 160),
+        "bucket": clean_text(bucket, 80),
+    }
+
+
 def commons_candidates(session: requests.Session, config_path: Path, timeout: Tuple[float, float]) -> Iterator[dict]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     api_url = str(config.get("api_url") or "https://commons.wikimedia.org/w/api.php")
@@ -231,9 +241,14 @@ def commons_candidates(session: requests.Session, config_path: Path, timeout: Tu
                     "gsrlimit": batch,
                 })
             params.update(continuation)
-            response = session.get(api_url, params=params, timeout=timeout)
-            response.raise_for_status()
-            payload = response.json()
+            source_query = query or f"category:{category}"
+            try:
+                response = session.get(api_url, params=params, timeout=timeout)
+                response.raise_for_status()
+                payload = response.json()
+            except (ValueError, requests.RequestException) as exc:
+                yield source_error_candidate("wikimedia_commons", exc, source_query, bucket)
+                break
             pages = ((payload.get("query") or {}).get("pages") or []) if isinstance(payload, dict) else []
             if not pages:
                 break
@@ -257,7 +272,7 @@ def commons_candidates(session: requests.Session, config_path: Path, timeout: Tu
                     "canonical_file_url": str(info.get("url") or ""),
                     "source_page_url": str(info.get("descriptionurl") or ""),
                     "title": title,
-                    "query": query or f"category:{category}",
+                    "query": source_query,
                     "category": category,
                     "bucket": bucket,
                     "max_accept": max(0, int(item.get("max_accept") or 0)),
@@ -319,9 +334,13 @@ def openverse_candidates(session: requests.Session, config_path: Path, timeout: 
             }
             if license_filter:
                 params["license"] = license_filter
-            response = session.get(api_url, params=params, timeout=timeout)
-            response.raise_for_status()
-            payload = response.json()
+            try:
+                response = session.get(api_url, params=params, timeout=timeout)
+                response.raise_for_status()
+                payload = response.json()
+            except (ValueError, requests.RequestException) as exc:
+                yield source_error_candidate("openverse", exc, query, bucket)
+                break
             results = payload.get("results") or [] if isinstance(payload, dict) else []
             if not results:
                 break
@@ -514,6 +533,20 @@ def crawl(args: argparse.Namespace) -> dict:
     for candidate in candidates():
         if existing_images + accepted >= args.max_images:
             break
+        if candidate.get("_source_error"):
+            provider = str(candidate.get("provider") or "unknown")
+            key = f"source_error:{provider}"
+            counts[key] = counts.get(key, 0) + 1
+            append_jsonl(log_path, {
+                "schema": args.dataset_schema,
+                "processed_at": now_iso(),
+                "provider": provider,
+                "query": candidate.get("query"),
+                "bucket": candidate.get("bucket"),
+                "status": "source_error",
+                "reason": candidate.get("reason"),
+            })
+            continue
         url = str(candidate.get("url") or "")
         canonical_url = str(candidate.get("canonical_file_url") or "")
         base_log = {

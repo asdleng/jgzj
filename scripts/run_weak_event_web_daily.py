@@ -19,6 +19,13 @@ import requests
 SCHEMA = "jgzj_weak_event_web_daily.v1"
 
 WEAK_EVENT_CLASSES = ("fishing_rod", "pet", "stall", "bottle", "box", "paper", "bag")
+TARGET_CLASSES = {
+    "all": WEAK_EVENT_CLASSES,
+    "fishing_rod": ("fishing_rod",),
+    "stall": ("stall",),
+    "pet": ("pet",),
+    "trash": ("bottle", "box", "paper", "bag"),
+}
 
 
 class DailyValidationError(RuntimeError):
@@ -83,6 +90,14 @@ def count_jsonl(path: Path) -> int:
     return sum(1 for _ in iter_jsonl(path))
 
 
+def capped_target_count(baseline_count: int, daily_limit: int, total_target: int = 0) -> int:
+    target_count = baseline_count + daily_limit
+    if total_target > 0:
+        target_count = min(target_count, total_target)
+        target_count = max(target_count, baseline_count)
+    return target_count
+
+
 def plan_daily_state(
     existing: dict,
     day: str,
@@ -90,35 +105,44 @@ def plan_daily_state(
     daily_limit: int,
     timestamp: str,
     baseline_count_floor: int = 0,
+    total_target: int = 0,
 ) -> dict:
     if daily_limit <= 0:
         raise ValueError("daily_limit must be positive")
     if baseline_count_floor < 0:
         raise ValueError("baseline_count_floor must be non-negative")
+    if total_target < 0:
+        raise ValueError("total_target must be non-negative")
     same_day = existing.get("schema") == SCHEMA and existing.get("day") == day
     if same_day:
         try:
             baseline_count = int(existing["baseline_count"])
             target_count = int(existing["target_count"])
             existing_daily_limit = int(existing.get("daily_limit", daily_limit))
+            existing_total_target = int(existing.get("total_target") or 0)
             attempts = int(existing.get("attempts") or 0) + 1
         except (KeyError, TypeError, ValueError) as exc:
             raise DailyValidationError("same_day_state_is_incomplete") from exc
-        if baseline_count < 0 or existing_daily_limit <= 0 or target_count != baseline_count + existing_daily_limit:
+        expected_target_count = capped_target_count(
+            baseline_count, existing_daily_limit, existing_total_target
+        )
+        if baseline_count < 0 or existing_daily_limit <= 0 or target_count != expected_target_count:
             raise DailyValidationError("same_day_state_target_is_invalid")
         state = dict(existing)
         baseline_changed = bool(baseline_count_floor and baseline_count < baseline_count_floor)
         limit_changed = existing_daily_limit != daily_limit
+        total_target_changed = existing_total_target != total_target
         if baseline_changed:
             baseline_count = baseline_count_floor
-        if baseline_changed or limit_changed:
-            target_count = baseline_count + daily_limit
+        if baseline_changed or limit_changed or total_target_changed:
+            target_count = capped_target_count(baseline_count, daily_limit, total_target)
             state["baseline_count"] = baseline_count
             state["target_count"] = target_count
             state["daily_limit"] = daily_limit
+            state["total_target"] = total_target
     else:
         baseline_count = max(current_count, baseline_count_floor)
-        target_count = baseline_count + daily_limit
+        target_count = capped_target_count(baseline_count, daily_limit, total_target)
         attempts = 1
         state = {
             "schema": SCHEMA,
@@ -126,6 +150,7 @@ def plan_daily_state(
             "baseline_count": baseline_count,
             "target_count": target_count,
             "daily_limit": daily_limit,
+            "total_target": total_target,
             "created_at": timestamp,
         }
     state.update({
@@ -223,6 +248,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--state", type=Path)
     parser.add_argument("--lock", type=Path)
     parser.add_argument("--daily-limit", type=int, default=500)
+    parser.add_argument("--total-target", type=int, default=0)
+    parser.add_argument("--target", choices=sorted(TARGET_CLASSES), default="all")
     parser.add_argument(
         "--baseline-count",
         type=int,
@@ -241,12 +268,29 @@ def parse_args() -> argparse.Namespace:
 def main(args: Optional[argparse.Namespace] = None) -> int:
     args = args or parse_args()
     repo_root = args.repo_root.resolve()
-    dataset = (args.dataset or repo_root / ".runtime/yolo_loop/datasets/weak_event_web_candidates_v1").resolve()
-    commons_config = (args.commons_config or repo_root / "config/wikimedia_weak_event_queries_v1.json").resolve()
+    target = getattr(args, "target", "all")
+    target_suffix = target if target != "all" else ""
+    default_dataset_name = (
+        f"weak_event_web_{target_suffix}_candidates_v1"
+        if target_suffix else "weak_event_web_candidates_v1"
+    )
+    default_config_name = (
+        f"wikimedia_weak_event_{target_suffix}_queries_v1.json"
+        if target_suffix else "wikimedia_weak_event_queries_v1.json"
+    )
+    default_state_dir = (
+        f"weak_event_web_{target_suffix}_daily"
+        if target_suffix else "weak_event_web_daily"
+    )
+    dataset = (
+        args.dataset or repo_root / ".runtime/yolo_loop/datasets" / default_dataset_name
+    ).resolve()
+    commons_config = (args.commons_config or repo_root / "config" / default_config_name).resolve()
     openverse_configs = [path.resolve() for path in getattr(args, "openverse_config", [])]
-    state_path = (args.state or repo_root / ".runtime/yolo_loop/weak_event_web_daily/state.json").resolve()
+    state_path = (args.state or repo_root / ".runtime/yolo_loop" / default_state_dir / "state.json").resolve()
     lock_path = (args.lock or state_path.with_suffix(".lock")).resolve()
     dedupe_manifests = [path.resolve() for path in args.dedupe_manifest]
+    class_names = TARGET_CLASSES[target]
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock_handle:
@@ -267,10 +311,12 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
             args.daily_limit,
             timestamp,
             getattr(args, "baseline_count", 0),
+            getattr(args, "total_target", 0),
         )
         plan = {
             "schema": SCHEMA,
             "dry_run": bool(args.dry_run),
+            "target": target,
             "dataset": str(dataset),
             "commons_config": str(commons_config),
             "openverse_configs": [str(path) for path in openverse_configs],
@@ -280,6 +326,7 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
             "current_count": current_count,
             "target_count": planned_state["target_count"],
             "daily_limit": args.daily_limit,
+            "total_target": getattr(args, "total_target", 0),
             "attempt": planned_state["attempts"],
             "qwen_endpoint": args.endpoint,
             "qwen_model": args.model,
@@ -300,11 +347,11 @@ def main(args: Optional[argparse.Namespace] = None) -> int:
                 "--commons-config", str(commons_config),
                 "--dataset-schema", "jgzj_weak_event_web_candidate.v1",
                 "--summary-schema", "jgzj_weak_event_web_candidate_summary.v1",
-                "--profile", "弱事件网络候选集",
+                "--profile", f"弱事件网络候选集:{target}",
                 "--max-images", str(planned_state["target_count"]),
                 "--max-per-series", "4",
             ]
-            for class_name in WEAK_EVENT_CLASSES:
+            for class_name in class_names:
                 crawler_command.extend(["--class-name", class_name])
             for path in openverse_configs:
                 crawler_command.extend(["--openverse-config", str(path)])
