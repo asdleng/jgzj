@@ -28,6 +28,9 @@ test('remote drive registers only authenticated control and WebRTC routes', () =
     },
     post(path, ...handlers) {
       routes.push({ method: 'POST', path, handlers });
+    },
+    delete(path, ...handlers) {
+      routes.push({ method: 'DELETE', path, handlers });
     }
   };
   const permissionMiddleware = () => {};
@@ -47,13 +50,15 @@ test('remote drive registers only authenticated control and WebRTC routes', () =
   assert.deepEqual(CONTROL_ENDPOINTS, new Set([
     'bootstrap', 'status', 'acquire', 'command', 'heartbeat', 'release', 'estop'
   ]));
-  assert.equal(routes.length, 12);
+  assert.equal(routes.length, 14);
   routes.forEach((route) => assert.equal(route.handlers[0], permissionMiddleware));
   assert.ok(routes.some((route) => route.method === 'GET' && route.path.endsWith('/bootstrap')));
   assert.ok(routes.some((route) => route.method === 'POST' && route.path.endsWith('/heartbeat')));
   assert.ok(routes.some((route) => route.method === 'GET' && route.path.endsWith('/task-routes')));
   assert.ok(routes.some((route) => route.method === 'POST' && route.path.endsWith('/task-plans')));
   assert.ok(routes.some((route) => route.method === 'POST' && route.path.includes('/task-plans/:planId/cancel')));
+  assert.ok(routes.some((route) => route.method === 'POST' && route.path.endsWith('/task-stop')));
+  assert.ok(routes.some((route) => route.method === 'DELETE' && route.path.endsWith('/task-plans/:planId')));
   assert.ok(routes.some((route) => route.method === 'POST' && route.path.includes('/webrtc/:route/play')));
   assert.match(WEBRTC_TARGETS.edge, /^http:\/\//);
   assert.match(WEBRTC_TARGETS.origin, /^http:\/\//);
@@ -245,6 +250,56 @@ test('task plan scheduler does not auto-repeat an uncertain dispatch', () => {
     });
     assert.equal(scheduler.list()[0].status, 'delivery_unknown');
     assert.match(scheduler.list()[0].error, /未自动重发/);
+    scheduler.close();
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('task plan scheduler stops active plans and removes non-dispatching records', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jgzj-task-plan-'));
+  const storePath = path.join(directory, 'task-plans.json');
+  let now = Date.parse('2026-07-27T10:55:00.000Z');
+  fs.writeFileSync(storePath, JSON.stringify({
+    version: 1,
+    plans: [
+      {
+        id: 'delivered-plan',
+        vehicle_id: 'BIT-0041',
+        status: 'delivered',
+        start_at: '2026-07-27T10:15:00.000Z',
+        end_at: '2026-07-27T12:19:00.000Z',
+        created_at: '2026-07-27T10:14:00.000Z'
+      },
+      {
+        id: 'due-plan',
+        vehicle_id: 'BIT-0041',
+        status: 'scheduled',
+        start_at: '2026-07-27T10:54:00.000Z',
+        end_at: '2026-07-27T12:19:00.000Z',
+        created_at: '2026-07-27T10:53:00.000Z'
+      },
+      {
+        id: 'future-plan',
+        vehicle_id: 'BIT-0041',
+        status: 'scheduled',
+        start_at: '2026-07-28T10:00:00.000Z',
+        end_at: '2026-07-28T12:00:00.000Z',
+        created_at: '2026-07-27T10:52:00.000Z'
+      }
+    ]
+  }));
+  try {
+    const scheduler = new TaskPlanScheduler({ start: false, now: () => now, storePath });
+    scheduler.beginStop('BIT-0041');
+    const stopped = scheduler.markStopped('BIT-0041', { business_ack: true, speed_zero: true });
+    scheduler.endStop();
+    assert.deepEqual(stopped.map((plan) => plan.id).sort(), ['delivered-plan', 'due-plan']);
+    assert.equal(scheduler.list('BIT-0041').find((plan) => plan.id === 'future-plan').status, 'scheduled');
+    const deleted = scheduler.remove('delivered-plan', 'BIT-0041');
+    assert.equal(deleted.previous_status, 'stopped');
+    assert.ok(!scheduler.list('BIT-0041').some((plan) => plan.id === 'delivered-plan'));
+    now += 1000;
     scheduler.close();
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });

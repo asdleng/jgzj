@@ -83,6 +83,8 @@ const taskPlanState = {
   routes: [],
   plans: [],
   loading: false,
+  stopping: false,
+  deleting: new Set(),
 };
 
 const elements = {
@@ -124,6 +126,7 @@ const elements = {
   transportStatusRow: document.querySelector(".transport-status"),
   taskPlanForm: document.getElementById("taskPlanForm"),
   taskPlannerStatus: document.getElementById("taskPlannerStatus"),
+  stopTaskButton: document.getElementById("stopTaskButton"),
   refreshTaskPlansButton: document.getElementById("refreshTaskPlansButton"),
   taskMainRoute: document.getElementById("taskMainRoute"),
   taskAuxiliaryRoute: document.getElementById("taskAuxiliaryRoute"),
@@ -582,6 +585,7 @@ function taskPlanStatus(plan) {
     scheduled: ["待发布", "scheduled"],
     dispatching: ["投递中", "dispatching"],
     delivered: ["已投递", "delivered"],
+    stopped: ["已停止", "stopped"],
     delivery_unknown: ["投递异常", "error"],
     cancelled: ["已取消", "muted"],
     expired: ["已过期", "muted"],
@@ -670,9 +674,18 @@ function renderTaskPlans() {
       cancel.appendChild(icon);
       cancel.addEventListener("click", () => void cancelTaskPlan(plan));
       actions.appendChild(cancel);
-    } else {
-      actions.textContent = "-";
     }
+    const remove = document.createElement("button");
+    remove.className = "tile-icon-button task-delete-button";
+    remove.type = "button";
+    remove.disabled = plan.status === "dispatching" || taskPlanState.deleting.has(plan.id);
+    remove.title = plan.status === "dispatching" ? "投递中的任务不能删除" : "删除任务记录";
+    remove.setAttribute("aria-label", remove.title);
+    const removeIcon = document.createElement("i");
+    removeIcon.setAttribute("data-lucide", "trash-2");
+    remove.appendChild(removeIcon);
+    remove.addEventListener("click", () => void deleteTaskPlan(plan));
+    actions.appendChild(remove);
     row.appendChild(actions);
     elements.taskPlanRows.appendChild(row);
   });
@@ -738,6 +751,61 @@ async function cancelTaskPlan(plan) {
   }
 }
 
+async function deleteTaskPlan(plan) {
+  const message = plan.status === "scheduled"
+    ? `删除 ${plan.vehicle_id} 的待发布计划？删除后该计划不会下发。`
+    : `删除 ${plan.vehicle_id} 的这条任务记录？\n只删除服务器记录，不会向车辆发送停止指令。`;
+  if (!window.confirm(message)) return;
+  taskPlanState.deleting.add(plan.id);
+  renderTaskPlans();
+  try {
+    await taskPlanApi(`/task-plans/${encodeURIComponent(plan.id)}`, {
+      method: "DELETE",
+      body: { vehicle_id: plan.vehicle_id },
+    });
+    showToast("任务记录已删除");
+    await loadTaskPlans();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    taskPlanState.deleting.delete(plan.id);
+    renderTaskPlans();
+  }
+}
+
+function setTaskStopPending(pending) {
+  taskPlanState.stopping = pending;
+  if (!elements.stopTaskButton) return;
+  elements.stopTaskButton.disabled = pending;
+  const label = elements.stopTaskButton.querySelector("span");
+  if (label) label.textContent = pending ? "正在停止" : "停止当前任务";
+}
+
+async function stopCurrentTask() {
+  if (taskPlanState.stopping) return;
+  const vehicleId = activeVehicleId;
+  if (!window.confirm(`立即停止 ${vehicleId} 当前导航任务？\n系统会等待车辆业务回执和车速归零。`)) return;
+  setTaskStopPending(true);
+  setTaskPlannerStatus("正在停止", "loading");
+  try {
+    const payload = await taskPlanApi("/task-stop", {
+      method: "POST",
+      body: { vehicle_id: vehicleId },
+    });
+    const speedKph = Number(payload.result?.vehicle_state?.speed_kph || 0);
+    showToast(`任务已停止，车速 ${speedKph.toFixed(1)} km/h`);
+    if (vehicleId === activeVehicleId) {
+      await loadTaskPlans();
+      setTaskPlannerStatus(`${taskPlanState.routes.length} 条路线`, "ready");
+    }
+  } catch (error) {
+    if (vehicleId === activeVehicleId) setTaskPlannerStatus("停止失败", "error");
+    showToast(error.message, true);
+  } finally {
+    setTaskStopPending(false);
+  }
+}
+
 async function submitTaskPlan(event) {
   event.preventDefault();
   if (!elements.taskPlanForm.reportValidity()) return;
@@ -782,6 +850,7 @@ function bindTaskPlanner() {
   resetTaskPlanTimes();
   elements.taskPlanForm.addEventListener("submit", submitTaskPlan);
   elements.taskStartAt.addEventListener("change", keepTaskPlanEndAfterStart);
+  elements.stopTaskButton?.addEventListener("click", () => void stopCurrentTask());
   elements.refreshTaskPlansButton.addEventListener("click", () => void loadTaskPlanner());
   taskPlanTimer = window.setInterval(() => void loadTaskPlans({ silent: true }), 10000);
 }

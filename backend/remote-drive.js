@@ -88,6 +88,7 @@ class TaskPlanScheduler {
     this.storePath = options.storePath;
     this.plans = [];
     this.dispatching = false;
+    this.stopInProgress = false;
     this.disabled = Boolean(options.disabled);
     this._load();
     this.timer = this.disabled || options.start === false
@@ -209,8 +210,65 @@ class TaskPlanScheduler {
     return { ...plan };
   }
 
+  remove(planId, vehicleId = '') {
+    const normalizedVehicleId = String(vehicleId || '').trim().toUpperCase();
+    const index = this.plans.findIndex((item) => item.id === String(planId || ''));
+    const plan = index >= 0 ? this.plans[index] : null;
+    if (!plan || (normalizedVehicleId && plan.vehicle_id !== normalizedVehicleId)) {
+      throw new Error('任务计划不存在');
+    }
+    if (plan.status === 'dispatching') throw new Error('任务正在投递，暂时不能删除');
+    this.plans.splice(index, 1);
+    this._persist();
+    return {
+      ...plan,
+      previous_status: plan.status,
+      deleted_at: new Date(this.now()).toISOString()
+    };
+  }
+
+  hasDispatching(vehicleId) {
+    const normalized = String(vehicleId || '').trim().toUpperCase();
+    return this.plans.some((plan) => (
+      plan.status === 'dispatching' && (!normalized || plan.vehicle_id === normalized)
+    ));
+  }
+
+  beginStop(vehicleId) {
+    if (this.stopInProgress) throw new Error('已有车辆停止请求正在处理');
+    if (this.hasDispatching(vehicleId)) throw new Error('任务正在投递，请稍后再停止');
+    this.stopInProgress = true;
+  }
+
+  endStop() {
+    this.stopInProgress = false;
+  }
+
+  markStopped(vehicleId, stopResult = null) {
+    const normalized = String(vehicleId || '').trim().toUpperCase();
+    const now = this.now();
+    const stoppedAt = new Date(now).toISOString();
+    const changed = [];
+    this.plans.forEach((plan) => {
+      if (
+        plan.vehicle_id === normalized
+        && ['delivered', 'scheduled'].includes(plan.status)
+        && (plan.status !== 'scheduled' || Date.parse(plan.start_at) <= now)
+        && Date.parse(plan.end_at) > now
+      ) {
+        plan.status = 'stopped';
+        plan.stopped_at = stoppedAt;
+        plan.stop_result = stopResult || null;
+        plan.error = null;
+        changed.push({ ...plan });
+      }
+    });
+    if (changed.length) this._persist();
+    return changed;
+  }
+
   async tick() {
-    if (this.disabled || this.dispatching || typeof this.publishPlan !== 'function') return;
+    if (this.disabled || this.dispatching || this.stopInProgress || typeof this.publishPlan !== 'function') return;
     const now = this.now();
     const due = this.plans
       .filter((plan) => plan.status === 'scheduled' && Date.parse(plan.start_at) <= now)
@@ -457,7 +515,15 @@ function startRemoteDriveSidecar(rootDir, options = {}) {
 }
 
 async function recordRemoteDriveAudit(operationAuditStore, req, action, status, detail = {}) {
-  if (!operationAuditStore || !['acquire', 'release', 'estop', 'task_plan_create', 'task_plan_cancel'].includes(action)) {
+  if (!operationAuditStore || ![
+    'acquire',
+    'release',
+    'estop',
+    'task_plan_create',
+    'task_plan_cancel',
+    'task_plan_stop',
+    'task_plan_delete'
+  ].includes(action)) {
     return;
   }
   try {
@@ -546,6 +612,46 @@ function registerRemoteDriveRoutes(app, options = {}) {
       }
       return payload;
     })
+  });
+  const stopVehicleTask = options.taskPlans?.stopVehicleTask || (async (vehicleId, vin) => {
+    if (sidecar.disabled) throw new Error('任务停止服务未启动');
+    const bootstrapResponse = await requestRemoteDriveSidecar(
+      upstreamBase,
+      'bootstrap',
+      'GET',
+      {},
+      '',
+      5000
+    );
+    let bootstrap = {};
+    try {
+      bootstrap = JSON.parse(bootstrapResponse.text);
+    } catch (_error) {
+      throw new Error('任务停止服务返回了无效认证信息');
+    }
+    if (bootstrapResponse.status < 200 || bootstrapResponse.status >= 300 || !bootstrap.token) {
+      throw new Error(bootstrap.error || '任务停止服务尚未就绪');
+    }
+    const response = await requestRemoteDriveSidecar(
+      upstreamBase,
+      'task-stop',
+      'POST',
+      { vehicle_id: vehicleId, vin },
+      bootstrap.token,
+      20000
+    );
+    let payload = {};
+    try {
+      payload = JSON.parse(response.text);
+    } catch (_error) {
+      throw new Error('任务停止服务返回了无效结果');
+    }
+    if (response.status < 200 || response.status >= 300 || payload.ok === false) {
+      const error = new Error(payload.error || `任务停止失败 (${response.status})`);
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
   });
   sidecar.taskPlanScheduler = taskPlanScheduler;
 
@@ -671,6 +777,54 @@ function registerRemoteDriveRoutes(app, options = {}) {
         plan_id: plan.id
       });
       return res.json({ ok: true, plan });
+    } catch (error) {
+      return res.status(409).json({ ok: false, error: error.message });
+    }
+  });
+  app.post('/api/remote-drive/task-stop', permission, async (req, res) => {
+    const vehicleId = String(req.body?.vehicle_id || '').trim().toUpperCase();
+    const vin = TASK_PLAN_VINS[vehicleId];
+    if (!vin) {
+      return res.status(400).json({ ok: false, error: '不支持该车辆的任务停止' });
+    }
+    let stopBegun = false;
+    const startedAt = Date.now();
+    try {
+      taskPlanScheduler.beginStop(vehicleId);
+      stopBegun = true;
+      const result = await stopVehicleTask(vehicleId, vin);
+      const stoppedPlans = taskPlanScheduler.markStopped(vehicleId, result);
+      await recordRemoteDriveAudit(options.operationAuditStore, req, 'task_plan_stop', 200, {
+        vehicle_id: vehicleId,
+        duration_ms: Date.now() - startedAt,
+        business_ack: result.business_ack,
+        response_code: result.response_code,
+        speed_kph: result.vehicle_state?.speed_kph,
+        stopped_plan_ids: stoppedPlans.map((plan) => plan.id)
+      });
+      return res.json({ ok: true, vehicle_id: vehicleId, result, stopped_plans: stoppedPlans });
+    } catch (error) {
+      const status = Number(error.status) || (stopBegun ? 502 : 409);
+      await recordRemoteDriveAudit(options.operationAuditStore, req, 'task_plan_stop', status, {
+        vehicle_id: vehicleId,
+        duration_ms: Date.now() - startedAt,
+        error: error.message
+      });
+      return res.status(status).json({ ok: false, error: error.message });
+    } finally {
+      if (stopBegun) taskPlanScheduler.endStop();
+    }
+  });
+  app.delete('/api/remote-drive/task-plans/:planId', permission, async (req, res) => {
+    try {
+      const vehicleId = String(req.body?.vehicle_id || '').trim().toUpperCase();
+      const plan = taskPlanScheduler.remove(req.params.planId, vehicleId);
+      await recordRemoteDriveAudit(options.operationAuditStore, req, 'task_plan_delete', 200, {
+        vehicle_id: plan.vehicle_id,
+        plan_id: plan.id,
+        previous_status: plan.previous_status
+      });
+      return res.json({ ok: true, deleted_plan: plan });
     } catch (error) {
       return res.status(409).json({ ok: false, error: error.message });
     }

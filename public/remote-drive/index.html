@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="dark">
   <title>车端远程驾驶台</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="./styles.css?v=20260727-fixed-rail">
+  <link rel="stylesheet" href="./styles.css?v=20260727-task-stop-delete">
   <script data-cfasync="false" src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script data-cfasync="false" src="./app.js?v=20260725-task-plan" defer></script>
+  <script data-cfasync="false" src="./app.js?v=20260727-task-stop-delete" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -357,6 +357,10 @@
             </div>
             <div class="task-planner-heading-actions">
               <span class="task-planner-status" id="taskPlannerStatus" data-state="loading">读取路线</span>
+              <button class="task-stop-button" id="stopTaskButton" type="button" title="停止当前导航任务">
+                <i data-lucide="square"></i>
+                <span>停止当前任务</span>
+              </button>
               <button class="icon-button" id="refreshTaskPlansButton" type="button" title="刷新任务计划" aria-label="刷新任务计划">
                 <i data-lucide="refresh-cw"></i>
               </button>

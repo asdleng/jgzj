@@ -30,9 +30,14 @@ MQTT_CONFIG_PATH = pathlib.Path(
 )
 MQTT_HOST = os.environ.get("VEHICLE_MQTT_HOST", "120.77.179.98")
 MQTT_PORT = int(os.environ.get("VEHICLE_MQTT_PORT", "1883"))
+STATUS_MQTT_HOST = os.environ.get("VEHICLE_STATUS_MQTT_HOST", "47.107.97.150")
+STATUS_MQTT_PORT = int(os.environ.get("VEHICLE_STATUS_MQTT_PORT", "1883"))
 CONTROL_VIN = "a001I3829202711775712260"
 CONTROL_TOPIC = f"/auto-rd/rdu/{CONTROL_VIN}"
 VEHICLE_STATE_TOPIC = f"/auto-rd/cloud/{CONTROL_VIN}"
+DEVICE_CONTROL_MESSAGE_ID = 0x0B05
+DEVICE_CONTROL_ACK_TIMEOUT_S = 7.0
+DEVICE_CONTROL_STOP_TIMEOUT_S = 10.0
 TRANSPORT_HEARTBEAT_S = 0.10
 MQTT_SEND_TIMEOUT_S = 0.50
 MQTT_KEEPALIVE_S = 10
@@ -183,6 +188,69 @@ def decode_base_message_id(payload: bytes) -> Optional[int]:
     """Return the host-order BaseMessage ID, or ``None`` for malformed data."""
 
     return decode_base_message(payload)[0]
+
+
+def encode_standard_base_message(
+    body: bytes,
+    sequence: int,
+    timestamp_ns: Optional[int] = None,
+    message_id: int = DEVICE_CONTROL_MESSAGE_ID,
+) -> bytes:
+    """Encode the normal BaseMessage used by ``mqtt_status`` commands."""
+
+    timestamp_ns = time.time_ns() if timestamp_ns is None else int(timestamp_ns)
+    return b"".join(
+        [
+            b"\x08" + _varint(int(message_id), 32),
+            b"\x10" + _varint(timestamp_ns, 64),
+            b"\x28" + _varint(int(sequence), 32),
+            b"\x3a" + _varint(len(body), 32) + body,
+        ]
+    )
+
+
+def decode_standard_base_message(payload: bytes) -> Optional[Dict[str, Any]]:
+    """Decode the normal host-order BaseMessage fields used for vehicle ACKs."""
+
+    offset = 0
+    result: Dict[str, Any] = {
+        "message_id": None,
+        "sequence": None,
+        "response_sequence": None,
+        "body": b"",
+    }
+    try:
+        while offset < len(payload):
+            tag, offset = _read_varint(payload, offset)
+            field_number = tag >> 3
+            wire_type = tag & 0x07
+            if wire_type == 0:
+                value, offset = _read_varint(payload, offset)
+                if field_number == 1:
+                    result["message_id"] = int(value)
+                elif field_number == 5:
+                    result["sequence"] = int(value)
+                elif field_number == 6:
+                    result["response_sequence"] = int(value)
+            elif wire_type == 2:
+                length, offset = _read_varint(payload, offset)
+                end = offset + length
+                if end > len(payload):
+                    raise ValueError("truncated protobuf field")
+                if field_number == 7:
+                    result["body"] = payload[offset:end]
+                offset = end
+            elif wire_type == 1:
+                offset += 8
+            elif wire_type == 5:
+                offset += 4
+            else:
+                raise ValueError("unsupported protobuf wire type")
+            if offset > len(payload):
+                raise ValueError("truncated protobuf field")
+    except (IndexError, OverflowError, ValueError):
+        return None
+    return result
 
 
 def _decode_int32_fields(payload: bytes) -> Dict[int, int]:
@@ -340,6 +408,14 @@ def _protobuf_int32(field_number: int, value: int) -> bytes:
     return _protobuf_key(field_number, 0) + _varint(int(value), 32)
 
 
+def _protobuf_uint64(field_number: int, value: int) -> bytes:
+    return _protobuf_key(field_number, 0) + _varint(int(value), 64)
+
+
+def _protobuf_message(field_number: int, value: bytes) -> bytes:
+    return _protobuf_key(field_number, 2) + _varint(len(value), 32) + value
+
+
 def _protobuf_float(field_number: int, value: float) -> bytes:
     return _protobuf_key(field_number, 5) + struct.pack("<f", float(value))
 
@@ -377,6 +453,33 @@ def encode_route_task_plan(
     )
 
 
+def encode_device_control(
+    vin: str,
+    way: str,
+    sequence: int,
+    message_uuid: str,
+    timestamp_ns: Optional[int] = None,
+) -> bytes:
+    """Encode ``deviceControl::MessageReq`` inside a normal BaseMessage."""
+
+    timestamp_ns = time.time_ns() if timestamp_ns is None else int(timestamp_ns)
+    command = _protobuf_string(1, way)
+    body = b"".join(
+        [
+            _protobuf_string(1, vin),
+            _protobuf_uint64(2, timestamp_ns),
+            _protobuf_string(3, message_uuid),
+            _protobuf_message(4, command),
+        ]
+    )
+    return encode_standard_base_message(
+        body,
+        sequence=sequence,
+        timestamp_ns=timestamp_ns,
+        message_id=DEVICE_CONTROL_MESSAGE_ID,
+    )
+
+
 class MqttWireClient:
     """Small MQTT v5 client sufficient for a guarded QoS-0 command stream."""
 
@@ -390,6 +493,9 @@ class MqttWireClient:
         state_topic: str = VEHICLE_STATE_TOPIC,
         on_vehicle_state: Optional[Callable[[Dict[str, Any]], None]] = None,
         on_control_message: Optional[Callable[[Dict[str, Any]], None]] = None,
+        additional_topics: Optional[Dict[str, Callable[[bytes], None]]] = None,
+        host: str = MQTT_HOST,
+        port: int = MQTT_PORT,
     ) -> None:
         self.username = username
         self.password = password
@@ -399,6 +505,9 @@ class MqttWireClient:
         self.on_fault = on_fault
         self.on_vehicle_state = on_vehicle_state
         self.on_control_message = on_control_message
+        self.additional_topics = dict(additional_topics or {})
+        self.host = str(host)
+        self.port = int(port)
         self.client_id = "vehicle-viewer-" + uuid.uuid4().hex[:16]
         self.sock: Optional[socket.socket] = None
         self._write_lock = threading.Lock()
@@ -440,7 +549,7 @@ class MqttWireClient:
 
     def connect(self) -> None:
         try:
-            sock = socket.create_connection((MQTT_HOST, MQTT_PORT), timeout=3.0)
+            sock = socket.create_connection((self.host, self.port), timeout=3.0)
             send_timeout_seconds = int(MQTT_SEND_TIMEOUT_S)
             send_timeout_microseconds = int((MQTT_SEND_TIMEOUT_S - send_timeout_seconds) * 1_000_000)
             sock.setsockopt(
@@ -478,6 +587,9 @@ class MqttWireClient:
             topics = [self.topic]
             if self.state_topic and self.state_topic != self.topic:
                 topics.append(self.state_topic)
+            for topic in self.additional_topics:
+                if topic and topic not in topics:
+                    topics.append(topic)
             subscribe = struct.pack("!H", 1) + b"\x00" + b"".join(
                 _mqtt_string(topic) + b"\x00" for topic in topics
             )
@@ -583,6 +695,10 @@ class MqttWireClient:
         if offset > len(packet):
             raise ConnectionError("invalid MQTT publish properties")
         payload = packet[offset:]
+        additional_handler = self.additional_topics.get(topic)
+        if additional_handler:
+            additional_handler(payload)
+            return
         if topic == self.state_topic:
             state = decode_vehicle_state(payload)
             if state and self.on_vehicle_state:
@@ -660,6 +776,124 @@ class MqttWireClient:
         for thread in (self._thread, self._keepalive_thread):
             if thread and thread is not current_thread:
                 thread.join(timeout=1.0)
+
+
+def publish_navigation_stop(vehicle_id: str, vin: str) -> Dict[str, Any]:
+    """Stop the active navigation task and require both vehicle ACK and zero speed."""
+
+    command_topic = f"dcu/client/{vin}/message/down"
+    response_topic = f"dcu/client/{vin}/message/up"
+    state_topic = f"/auto-rd/cloud/{vin}"
+    sequence = int(time.time_ns() & 0x7FFFFFFF)
+    message_uuid = uuid.uuid4().hex
+    ack_ready = threading.Event()
+    ack: Dict[str, Any] = {}
+    state_condition = threading.Condition()
+    latest_state: Dict[str, Any] = {}
+    latest_state_received_at = 0.0
+
+    def on_vehicle_state(state: Dict[str, Any]) -> None:
+        nonlocal latest_state_received_at
+        with state_condition:
+            latest_state.clear()
+            latest_state.update(state)
+            latest_state_received_at = time.monotonic()
+            state_condition.notify_all()
+
+    def on_response(payload: bytes) -> None:
+        decoded = decode_standard_base_message(payload)
+        if not decoded:
+            return
+        if decoded.get("message_id") != DEVICE_CONTROL_MESSAGE_ID:
+            return
+        if decoded.get("sequence") != sequence:
+            return
+        ack.clear()
+        ack.update(decoded)
+        ack_ready.set()
+
+    username, password = _read_mqtt_credentials()
+    state_client = MqttWireClient(
+        username,
+        password,
+        state_topic,
+        on_foreign_message=lambda _reason: None,
+        on_fault=lambda _reason: None,
+        state_topic=state_topic,
+        on_vehicle_state=on_vehicle_state,
+    )
+    command_client = MqttWireClient(
+        username,
+        password,
+        command_topic,
+        on_foreign_message=lambda _reason: None,
+        on_fault=lambda _reason: None,
+        state_topic="",
+        additional_topics={response_topic: on_response},
+        host=STATUS_MQTT_HOST,
+        port=STATUS_MQTT_PORT,
+    )
+    try:
+        state_client.connect()
+        command_client.connect()
+        payload = encode_device_control(
+            vin=vin,
+            way="stop",
+            sequence=sequence,
+            message_uuid=message_uuid,
+        )
+        published_at = time.monotonic()
+        command_client.publish(payload)
+        if not ack_ready.wait(DEVICE_CONTROL_ACK_TIMEOUT_S):
+            detail = f": {command_client.last_fault}" if command_client.last_fault else ""
+            raise TransportError(
+                f"停止指令已发送，但未收到车辆业务回执{detail}",
+                HTTPStatus.GATEWAY_TIMEOUT,
+            )
+
+        response_code = int(ack.get("response_sequence") or 0)
+        navigation_response_timeout = response_code == 101
+        if response_code not in {101, 200}:
+            raise TransportError(f"车辆拒绝停止任务，响应码 {response_code}", HTTPStatus.BAD_GATEWAY)
+
+        deadline = time.monotonic() + DEVICE_CONTROL_STOP_TIMEOUT_S
+        with state_condition:
+            while True:
+                speed_kph = latest_state.get("speed_kph")
+                state_after_command = latest_state_received_at >= published_at
+                if state_after_command and speed_kph is not None and abs(float(speed_kph)) <= 0.05:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    observed = "未知" if speed_kph is None else f"{float(speed_kph):.2f} km/h"
+                    raise TransportError(
+                        f"车辆已确认停止任务，但车速未在限时内归零（当前 {observed}）",
+                        HTTPStatus.GATEWAY_TIMEOUT,
+                    )
+                state_condition.wait(remaining)
+
+        return {
+            "ok": True,
+            "vehicle_id": vehicle_id,
+            "vin": vin,
+            "message_id": f"0x{DEVICE_CONTROL_MESSAGE_ID:04X}",
+            "sequence": sequence,
+            "message_uuid": message_uuid,
+            "business_ack": True,
+            "response_code": response_code,
+            "navigation_response_timeout": navigation_response_timeout,
+            "broker_echo": command_client.wait_for_own_echo(0),
+            "speed_zero": True,
+            "confirmed_by_speed_zero": True,
+            "vehicle_state": {
+                "ready": latest_state.get("ready"),
+                "speed_kph": latest_state.get("speed_kph"),
+                "gear": latest_state.get("gear"),
+            },
+        }
+    finally:
+        command_client.close()
+        state_client.close()
 
 
 def publish_route_task_plan(plan: Dict[str, Any]) -> Dict[str, Any]:

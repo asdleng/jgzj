@@ -4,6 +4,7 @@ import struct
 import sys
 import time
 import unittest
+from unittest import mock
 
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -14,7 +15,12 @@ from mqtt_remote_transport import (  # noqa: E402
     _mqtt_string,
     _read_varint,
     decode_base_message,
+    decode_standard_base_message,
+    encode_device_control,
     encode_route_task_plan,
+    publish_navigation_stop,
+    encode_standard_base_message,
+    _varint,
 )
 
 
@@ -90,6 +96,81 @@ class RouteTaskPlanEncodingTest(unittest.TestCase):
         client._handle_publish(0x30, _mqtt_string(topic) + b"\x00" + payload)
         self.assertTrue(client.wait_for_own_echo(0))
         self.assertEqual(foreign, [])
+
+    def test_device_control_stop_uses_normal_base_message_and_nested_way(self):
+        payload = encode_device_control(
+            vin="test-vin",
+            way="stop",
+            sequence=456,
+            message_uuid="request-uuid",
+            timestamp_ns=1785150000000000000,
+        )
+        base = decode_standard_base_message(payload)
+        self.assertIsNotNone(base)
+        self.assertEqual(base["message_id"], 0x0B05)
+        self.assertEqual(base["sequence"], 456)
+        body = decode_fields(base["body"])
+        self.assertEqual(body[1], b"test-vin")
+        self.assertEqual(body[2], 1785150000000000000)
+        self.assertEqual(body[3], b"request-uuid")
+        self.assertEqual(decode_fields(body[4])[1], b"stop")
+
+    def test_additional_topic_delivers_vehicle_business_ack(self):
+        topic = "dcu/client/test-vin/message/down"
+        response_topic = "dcu/client/test-vin/message/up"
+        responses = []
+        client = MqttWireClient(
+            "user",
+            "password",
+            topic,
+            on_foreign_message=lambda _reason: None,
+            on_fault=lambda _reason: None,
+            state_topic="",
+            additional_topics={response_topic: responses.append},
+        )
+        ack = b"\x08\x85\x16\x28\xC8\x03\x30\xC8\x01"
+        client._handle_publish(0x30, _mqtt_string(response_topic) + b"\x00" + ack)
+        self.assertEqual(responses, [ack])
+
+    @mock.patch("mqtt_remote_transport._read_mqtt_credentials", return_value=("user", "password"))
+    @mock.patch("mqtt_remote_transport.MqttWireClient")
+    def test_navigation_stop_requires_business_ack_and_zero_speed(self, client_class, _credentials):
+        class FakeClient:
+            last_fault = ""
+            state_callback = None
+
+            def __init__(self, *args, **kwargs):
+                if kwargs.get("on_vehicle_state"):
+                    FakeClient.state_callback = kwargs["on_vehicle_state"]
+                topics = kwargs.get("additional_topics") or {}
+                self.response = next(iter(topics.values())) if topics else None
+
+            def connect(self):
+                return None
+
+            def publish(self, payload):
+                base = decode_standard_base_message(payload)
+                ack = encode_standard_base_message(
+                    b"",
+                    sequence=base["sequence"],
+                    timestamp_ns=1,
+                    message_id=0x0B05,
+                ) + b"\x30" + _varint(200, 32)
+                self.response(ack)
+                FakeClient.state_callback({"ready": True, "speed_kph": 0.0, "gear": 0})
+
+            def wait_for_own_echo(self, _timeout):
+                return True
+
+            def close(self):
+                return None
+
+        client_class.side_effect = FakeClient
+        result = publish_navigation_stop("BIT-0041", "test-vin")
+        self.assertTrue(result["business_ack"])
+        self.assertTrue(result["speed_zero"])
+        self.assertEqual(result["response_code"], 200)
+        self.assertEqual(result["vehicle_state"]["speed_kph"], 0.0)
 
 
 if __name__ == "__main__":

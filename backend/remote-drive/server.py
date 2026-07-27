@@ -26,7 +26,12 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
 
-from mqtt_remote_transport import GuardedMqttTransport, TransportError, publish_route_task_plan
+from mqtt_remote_transport import (
+    GuardedMqttTransport,
+    TransportError,
+    publish_navigation_stop,
+    publish_route_task_plan,
+)
 
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -122,6 +127,14 @@ def validate_task_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
         "run_count": run_count,
         "recharge_power": recharge_power,
     }
+
+
+def validate_task_stop(payload: Dict[str, Any]) -> Dict[str, str]:
+    vehicle_id = str(payload.get("vehicle_id") or "").strip().upper()
+    vin = str(payload.get("vin") or "").strip()
+    if not vehicle_id or TASK_PLAN_VINS.get(vehicle_id) != vin:
+        raise GatewayError("任务车辆与 VIN 不匹配")
+    return {"vehicle_id": vehicle_id, "vin": vin}
 
 
 class CloudStatusClient:
@@ -961,6 +974,12 @@ class RequestHandler(SimpleHTTPRequestHandler):
                     if GATEWAY.session_id or GATEWAY.acquiring:
                         raise GatewayError("车辆正在远程接管，任务计划未投递", HTTPStatus.CONFLICT)
                 result = publish_route_task_plan(validate_task_plan(payload))
+            elif path == "/api/control/task-stop":
+                with GATEWAY.lock:
+                    if GATEWAY.session_id or GATEWAY.acquiring:
+                        raise GatewayError("车辆正在远程接管，请先退出远控后停止任务", HTTPStatus.CONFLICT)
+                task = validate_task_stop(payload)
+                result = publish_navigation_stop(task["vehicle_id"], task["vin"])
             else:
                 raise GatewayError("接口不存在", HTTPStatus.NOT_FOUND)
             self._json_response(HTTPStatus.OK, result)

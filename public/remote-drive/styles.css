@@ -1135,6 +1135,35 @@ label:has(+ input:focus-visible) {
   color: var(--red);
 }
 
+.task-stop-button {
+  display: inline-flex;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(239, 109, 101, 0.52);
+  border-radius: 5px;
+  background: rgba(105, 34, 31, 0.38);
+  color: #ff8f87;
+  padding: 0 9px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.task-stop-button:hover {
+  border-color: var(--red);
+  background: rgba(142, 43, 38, 0.5);
+  color: #ffd3d0;
+}
+
+.task-stop-button svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
 .task-plan-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1208,7 +1237,7 @@ label:has(+ input:focus-visible) {
 .task-plan-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: 72px minmax(0, 1fr) 34px;
+  grid-template-columns: 72px minmax(0, 1fr) 64px;
   align-items: center;
   gap: 4px 10px;
 }
@@ -1303,6 +1332,11 @@ label:has(+ input:focus-visible) {
   color: var(--green);
 }
 
+.task-plan-state[data-state="stopped"] {
+  border-color: rgba(239, 109, 101, 0.5);
+  color: var(--red);
+}
+
 .task-plan-state[data-state="error"] {
   border-color: rgba(239, 109, 101, 0.5);
   color: var(--red);
@@ -1316,6 +1350,7 @@ label:has(+ input:focus-visible) {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   color: var(--muted);
 }
 
@@ -1327,6 +1362,10 @@ label:has(+ input:focus-visible) {
 .task-plan-actions .tile-icon-button:hover {
   border-color: rgba(239, 109, 101, 0.5);
   color: var(--red);
+}
+
+.task-plan-actions .task-delete-button:hover {
+  background: rgba(105, 34, 31, 0.3);
 }
 
 .task-plan-empty {
@@ -1443,6 +1482,12 @@ label:has(+ input:focus-visible) {
     width: 32px;
     height: 32px;
     flex-basis: 32px;
+  }
+
+  .task-stop-button {
+    height: 30px;
+    padding-inline: 7px;
+    font-size: 9px;
   }
 
   .console-section {
@@ -1738,7 +1783,7 @@ label:has(+ input:focus-visible) {
 
   .task-plan-row {
     min-width: 0;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 64px;
     gap: 12px;
     padding: 12px 0;
   }
