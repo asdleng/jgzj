@@ -1,0 +1,73 @@
+{
+  "api_url": "https://api.openverse.org/v1/images/",
+  "page_size": 20,
+  "licenses": [
+    "cc0",
+    "pdm",
+    "by",
+    "by-sa"
+  ],
+  "exclude_title_regex": "\\b(?:illustration|drawing|painting|poster|logo|cartoon|comic|advertisement|sign)\\b",
+  "queries": [
+    {
+      "bucket": "smoking_positive_openverse_person_cigarette",
+      "query": "person smoking cigarette street",
+      "limit": 240,
+      "max_accept": 85
+    },
+    {
+      "bucket": "smoking_positive_openverse_outdoors",
+      "query": "people smoking outdoors",
+      "limit": 240,
+      "max_accept": 85
+    },
+    {
+      "bucket": "smoking_positive_openverse_sidewalk",
+      "query": "smoking cigarette sidewalk",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "smoking_positive_openverse_hand",
+      "query": "cigarette in hand person",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "smoking_positive_openverse_vaping",
+      "query": "person vaping outdoors",
+      "limit": 180,
+      "max_accept": 55
+    },
+    {
+      "bucket": "hard_negative_smoking_openverse_fog",
+      "query": "fog street people",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_smoking_openverse_steam",
+      "query": "steam street people",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_smoking_openverse_pack",
+      "query": "cigarette pack closeup",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_smoking_openverse_ashtray",
+      "query": "ashtray cigarette closeup",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_smoking_openverse_no_smoking_sign",
+      "query": "no smoking sign",
+      "limit": 140,
+      "max_accept": 25
+    }
+  ]
+}

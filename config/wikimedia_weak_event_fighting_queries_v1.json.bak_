@@ -1,0 +1,79 @@
+{
+  "api_url": "https://commons.wikimedia.org/w/api.php",
+  "download_width": 1600,
+  "exclude_title_regex": "\\b(?:painting|drawing|illustration|poster|pamphlet|map|diagram|logo|collage|screenshot|video|film|cartoon|comic|statue|sculpture|animation)\\b|Bundesarchiv|LCCN|NYPL",
+  "queries": [
+    {
+      "bucket": "fighting_positive_street_fight",
+      "query": "street fight people",
+      "limit": 420,
+      "max_accept": 120
+    },
+    {
+      "bucket": "fighting_positive_people_fighting",
+      "query": "people fighting street",
+      "limit": 420,
+      "max_accept": 120
+    },
+    {
+      "bucket": "fighting_positive_brawl",
+      "query": "brawl street people",
+      "limit": 360,
+      "max_accept": 100
+    },
+    {
+      "bucket": "fighting_positive_physical_fight",
+      "query": "physical fight people outdoor",
+      "limit": 320,
+      "max_accept": 90
+    },
+    {
+      "bucket": "fighting_positive_scuffle",
+      "query": "scuffle people street",
+      "limit": 300,
+      "max_accept": 80
+    },
+    {
+      "bucket": "fighting_positive_police_separating",
+      "query": "police separating fight people",
+      "limit": 260,
+      "max_accept": 70
+    },
+    {
+      "bucket": "hard_negative_fighting_crowd",
+      "query": "crowd people standing street",
+      "limit": 220,
+      "max_accept": 45
+    },
+    {
+      "bucket": "hard_negative_fighting_argument",
+      "query": "people arguing street no fight",
+      "limit": 220,
+      "max_accept": 45
+    },
+    {
+      "bucket": "hard_negative_fighting_martial_arts",
+      "query": "martial arts training outdoor",
+      "limit": 200,
+      "max_accept": 40
+    },
+    {
+      "bucket": "hard_negative_fighting_boxing",
+      "query": "boxing match people",
+      "limit": 200,
+      "max_accept": 40
+    },
+    {
+      "bucket": "hard_negative_fighting_hugging",
+      "query": "people hugging street",
+      "limit": 180,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_fighting_helping",
+      "query": "people helping person on ground",
+      "limit": 180,
+      "max_accept": 35
+    }
+  ]
+}

@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>车端远程驾驶台</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="./styles.css?v=20260725-task-plan">
+  <link rel="stylesheet" href="./styles.css?v=20260727-fixed-rail">
   <script data-cfasync="false" src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
   <script data-cfasync="false" src="./app.js?v=20260725-task-plan" defer></script>
 </head>
@@ -348,72 +348,72 @@
             </div>
           </section>
         </aside>
-      </section>
 
-      <section class="task-planner" aria-labelledby="taskPlannerTitle">
-        <header class="task-planner-header">
-          <div>
-            <span class="section-kicker">PATROL SCHEDULE</span>
-            <h2 id="taskPlannerTitle">巡逻任务计划</h2>
-          </div>
-          <div class="task-planner-heading-actions">
-            <span class="task-planner-status" id="taskPlannerStatus" data-state="loading">读取路线</span>
-            <button class="icon-button" id="refreshTaskPlansButton" type="button" title="刷新任务计划" aria-label="刷新任务计划">
-              <i data-lucide="refresh-cw"></i>
+        <section class="task-planner" aria-labelledby="taskPlannerTitle">
+          <header class="task-planner-header">
+            <div>
+              <span class="section-kicker">PATROL SCHEDULE</span>
+              <h2 id="taskPlannerTitle">巡逻任务计划</h2>
+            </div>
+            <div class="task-planner-heading-actions">
+              <span class="task-planner-status" id="taskPlannerStatus" data-state="loading">读取路线</span>
+              <button class="icon-button" id="refreshTaskPlansButton" type="button" title="刷新任务计划" aria-label="刷新任务计划">
+                <i data-lucide="refresh-cw"></i>
+              </button>
+            </div>
+          </header>
+
+          <form class="task-plan-form" id="taskPlanForm">
+            <label class="task-field task-field-route" for="taskMainRoute">
+              <span>巡逻主路线</span>
+              <select id="taskMainRoute" required disabled>
+                <option value="">读取中</option>
+              </select>
+            </label>
+            <label class="task-field task-field-route" for="taskAuxiliaryRoute">
+              <span>接驳 / 回充路线</span>
+              <select id="taskAuxiliaryRoute" required disabled>
+                <option value="">读取中</option>
+              </select>
+            </label>
+            <label class="task-field" for="taskStartAt">
+              <span>开始时间</span>
+              <input id="taskStartAt" type="datetime-local" step="1" required>
+            </label>
+            <label class="task-field" for="taskEndAt">
+              <span>结束时间</span>
+              <input id="taskEndAt" type="datetime-local" step="1" required>
+            </label>
+            <label class="task-field task-field-compact" for="taskSpeed">
+              <span>速度 km/h</span>
+              <input id="taskSpeed" type="number" min="0.5" max="8" step="0.5" value="2" required>
+            </label>
+            <label class="task-field task-field-compact" for="taskRunCount">
+              <span>循环次数</span>
+              <input id="taskRunCount" type="number" min="1" max="9999" step="1" value="55" required>
+            </label>
+            <label class="task-field task-field-compact" for="taskRechargePower">
+              <span>回充电量 %</span>
+              <input id="taskRechargePower" type="number" min="1" max="100" step="1" value="30" required>
+            </label>
+            <button class="primary-button task-submit-button" id="taskPlanSubmit" type="submit" disabled>
+              <i data-lucide="send"></i>
+              <span>发布计划</span>
             </button>
-          </div>
-        </header>
+          </form>
 
-        <form class="task-plan-form" id="taskPlanForm">
-          <label class="task-field task-field-route" for="taskMainRoute">
-            <span>巡逻主路线</span>
-            <select id="taskMainRoute" required disabled>
-              <option value="">读取中</option>
-            </select>
-          </label>
-          <label class="task-field task-field-route" for="taskAuxiliaryRoute">
-            <span>接驳 / 回充路线</span>
-            <select id="taskAuxiliaryRoute" required disabled>
-              <option value="">读取中</option>
-            </select>
-          </label>
-          <label class="task-field" for="taskStartAt">
-            <span>开始时间</span>
-            <input id="taskStartAt" type="datetime-local" step="1" required>
-          </label>
-          <label class="task-field" for="taskEndAt">
-            <span>结束时间</span>
-            <input id="taskEndAt" type="datetime-local" step="1" required>
-          </label>
-          <label class="task-field task-field-compact" for="taskSpeed">
-            <span>速度 km/h</span>
-            <input id="taskSpeed" type="number" min="0.5" max="8" step="0.5" value="2" required>
-          </label>
-          <label class="task-field task-field-compact" for="taskRunCount">
-            <span>循环次数</span>
-            <input id="taskRunCount" type="number" min="1" max="9999" step="1" value="55" required>
-          </label>
-          <label class="task-field task-field-compact" for="taskRechargePower">
-            <span>回充电量 %</span>
-            <input id="taskRechargePower" type="number" min="1" max="100" step="1" value="30" required>
-          </label>
-          <button class="primary-button task-submit-button" id="taskPlanSubmit" type="submit" disabled>
-            <i data-lucide="send"></i>
-            <span>发布计划</span>
-          </button>
-        </form>
-
-        <div class="task-plan-list" aria-live="polite">
-          <div class="task-plan-list-head" aria-hidden="true">
-            <span>状态</span>
-            <span>执行时间</span>
-            <span>路线</span>
-            <span>参数</span>
-            <span>操作</span>
+          <div class="task-plan-list" aria-live="polite">
+            <div class="task-plan-list-head" aria-hidden="true">
+              <span>状态</span>
+              <span>执行时间</span>
+              <span>路线</span>
+              <span>参数</span>
+              <span>操作</span>
+            </div>
+            <div id="taskPlanRows"></div>
+            <div class="task-plan-empty" id="taskPlanEmpty">暂无任务计划</div>
           </div>
-          <div id="taskPlanRows"></div>
-          <div class="task-plan-empty" id="taskPlanEmpty">暂无任务计划</div>
-        </div>
+        </section>
       </section>
     </main>
   </div>

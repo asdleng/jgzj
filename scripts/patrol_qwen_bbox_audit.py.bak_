@@ -82,7 +82,7 @@ Hard class definitions:
 - nonmotor: a real bicycle, electric bicycle, scooter, tricycle, or cart. Railings, racks, covers without a visible vehicle, and printed images are NOT nonmotor vehicles.
 - license_plate: a visible real license plate physically mounted on a real vehicle, such as a car, truck, bus, van, motorcycle, e-bike, or scooter. The box must cover the plate only. Standalone plates, road signs, shop signs, door numbers, wall numbers, parking space numbers, advertisements, whole vehicles, bumpers, headlights, tail lights, logos, stickers, and decorative rectangles are NOT license_plate.
 - lying: a real person clearly lying down or strongly reclined horizontally. Standing, walking, sitting upright, squatting, bending, posters, statues, and reflections are NOT lying.
-- fighting: a clear real-person physical fight between humans, such as punching, kicking, grappling, wrestling, or aggressive body contact. Animal fighting, toy/model scenes, animations, games, ordinary crowds, playing, hugging, helping, queueing, performances, martial-arts/sports training, or standing close are NOT fighting.
+- fighting: a clear physical fight between people, such as punching, kicking, grappling, wrestling, or aggressive body contact. Ordinary crowds, playing, hugging, helping, queueing, or standing close are NOT fighting.
 - falldown: a real person fallen/collapsed on the ground or in an abnormal fallen posture. Ordinary resting, sleeping, sitting, squatting, bending, posters, statues, and shadows are NOT falldown.
 
 Be strict. When evidence is weak, flag suspect instead of passing. Use short snake_case reasons.
@@ -132,10 +132,8 @@ REJECT_PATTERNS = {
         re.I,
     ),
     "fighting": re.compile(
-        r"animal|dog|cat|bird|bull|horse|cockfight|toy|model|animation|cartoon|game|statue|sculpture|"
         r"crowd|standing|walking|hugging|helping|playing|queue|close[_ -]?people|unclear|"
-        r"performance|stage|sport|martial|boxing[_ -]?match|wrestling[_ -]?match|training|"
-        r"动物|狗|猫|鸟|斗牛|斗鸡|玩具|模型|动画|卡通|游戏|雕像|人群|站立|行走|拥抱|搀扶|玩耍|排队|靠近|不清楚|表演|比赛|训练",
+        r"人群|站立|行走|拥抱|搀扶|玩耍|排队|靠近|不清楚",
         re.I,
     ),
     "falldown": re.compile(
@@ -169,7 +167,7 @@ ACCEPT_PATTERNS = {
         re.I,
     ),
     "fighting": re.compile(
-        r"human|person|people|man|woman|fighting|physical[_ -]?fight|punch|kick|grappling|wrestling|aggressive[_ -]?contact|people[_ -]?fighting|打架|斗殴|拳打|脚踢|真人|人员|人类",
+        r"fighting|physical[_ -]?fight|punch|kick|grappling|wrestling|aggressive[_ -]?contact|people[_ -]?fighting|打架|斗殴|拳打|脚踢",
         re.I,
     ),
     "falldown": re.compile(

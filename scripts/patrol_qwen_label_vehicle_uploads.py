@@ -61,7 +61,7 @@ Positive class rules:
 - smoking: visible cigarette/cigar/vape OR clear smoke from a person's mouth/hand. Box the cigarette/hand-mouth evidence tightly. Do not label a whole person only because a hand is near the mouth.
 - license_plate: visible real license plate physically mounted on a real vehicle, such as a car, truck, bus, van, motorcycle, e-bike, or scooter. Box only the plate. Do not label standalone plates, road signs, shop signs, door numbers, wall numbers, parking space numbers, advertisements, the whole vehicle, bumper, logo, headlight, tail light, sticker, or decorative rectangle.
 - lying: real person clearly lying down or strongly reclined horizontally on the ground, bench, chair, or similar surface. Box the visible full body. Do not label standing, walking, sitting upright, squatting, bending, posters, statues, or reflections.
-- fighting: clear physical fight between people, such as punching, kicking, grappling, wrestling, or aggressive body contact. Box the involved people as one tight group if they overlap. Do not label ordinary crowds, playing, hugging, helping, queueing, or people merely standing close.
+- fighting: clear real-person physical fight between humans, such as punching, kicking, grappling, wrestling, or aggressive body contact. Box only the involved people as one tight group if they overlap. Do not label animal fighting, toy/model scenes, animations, games, ordinary crowds, playing, hugging, helping, queueing, performances, martial-arts/sports training, or people merely standing close.
 - falldown: real person fallen/collapsed on the ground or in an abnormal fallen posture. Box the visible fallen person. Do not label ordinary lying/resting, sitting, squatting, bending, shadows, posters, or statues.
 
 High-risk classes, use only when visual evidence is very strong:
@@ -156,12 +156,14 @@ LYING_ACCEPT_NOTE_RE = re.compile(
 )
 
 FIGHTING_REJECT_NOTE_RE = re.compile(
+    r"animal|dog|cat|bird|bull|horse|cockfight|toy|model|animation|cartoon|game|statue|sculpture|"
     r"crowd|standing|walking|hugging|helping|playing|queue|close[_ -]?people|unclear|"
-    r"人群|站立|行走|拥抱|搀扶|玩耍|排队|靠近|不清楚",
+    r"performance|stage|sport|martial|boxing[_ -]?match|wrestling[_ -]?match|training|"
+    r"动物|狗|猫|鸟|斗牛|斗鸡|玩具|模型|动画|卡通|游戏|雕像|人群|站立|行走|拥抱|搀扶|玩耍|排队|靠近|不清楚|表演|比赛|训练",
     re.I,
 )
 FIGHTING_ACCEPT_NOTE_RE = re.compile(
-    r"fighting|physical[_ -]?fight|punch|kick|grappling|wrestling|aggressive[_ -]?contact|people[_ -]?fighting|打架|斗殴|拳打|脚踢",
+    r"human|person|people|man|woman|fighting|physical[_ -]?fight|punch|kick|grappling|wrestling|aggressive[_ -]?contact|people[_ -]?fighting|打架|斗殴|拳打|脚踢|真人|人员|人类",
     re.I,
 )
 

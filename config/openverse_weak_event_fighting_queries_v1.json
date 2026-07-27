@@ -1,0 +1,73 @@
+{
+  "api_url": "https://api.openverse.org/v1/images/",
+  "page_size": 20,
+  "licenses": [
+    "cc0",
+    "pdm",
+    "by",
+    "by-sa"
+  ],
+  "exclude_title_regex": "\\b(?:illustration|drawing|painting|poster|logo|cartoon|comic|statue|sculpture|animation|animal|dog|cat|bird|bull|horse|cockfight|toy|game)\\b",
+  "queries": [
+    {
+      "bucket": "fighting_positive_openverse_street_fight",
+      "query": "street fight people",
+      "limit": 240,
+      "max_accept": 85
+    },
+    {
+      "bucket": "fighting_positive_openverse_brawl",
+      "query": "people brawl street",
+      "limit": 240,
+      "max_accept": 85
+    },
+    {
+      "bucket": "fighting_positive_openverse_scuffle",
+      "query": "people scuffle outdoor",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "fighting_positive_openverse_physical_contact",
+      "query": "people fighting physical contact",
+      "limit": 220,
+      "max_accept": 75
+    },
+    {
+      "bucket": "fighting_positive_openverse_police_separating",
+      "query": "police separating fight",
+      "limit": 200,
+      "max_accept": 65
+    },
+    {
+      "bucket": "hard_negative_fighting_openverse_crowd",
+      "query": "crowd standing street people",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_fighting_openverse_argument",
+      "query": "people arguing street",
+      "limit": 160,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_fighting_openverse_boxing",
+      "query": "boxing match people",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_fighting_openverse_martial_arts",
+      "query": "martial arts sparring",
+      "limit": 150,
+      "max_accept": 30
+    },
+    {
+      "bucket": "hard_negative_fighting_openverse_hugging",
+      "query": "people hugging street",
+      "limit": 140,
+      "max_accept": 25
+    }
+  ]
+}

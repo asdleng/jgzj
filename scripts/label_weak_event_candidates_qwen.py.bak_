@@ -62,11 +62,11 @@ TARGETS = {
     },
     "fighting": {
         "classes": ("fighting",),
-        "definition": "a clear real-person physical fight between humans, such as punching, kicking, grappling, wrestling, or aggressive body contact",
+        "definition": "a clear physical fight between people, such as punching, kicking, grappling, wrestling, or aggressive body contact",
         "threshold": 0.90,
-        "accept": re.compile(r"human|person|people|man|woman|fight|fighting|brawl|punch|kick|grappl|wrestl|aggressive|striking|physical_contact|people_grappling", re.I),
-        "reject": re.compile(r"animal|dog|cat|bird|bull|horse|cockfight|crowd|queue|hug|helping|playing|dance|sport_match|martial_arts_training|performance|stage|poster|cartoon|animation|game|toy|statue|sculpture", re.I),
-        "example_evidence": "two_people_grappling_in_physical_fight",
+        "accept": re.compile(r"fight|fighting|brawl|punch|kick|grappl|wrestl|aggressive|striking|physical_contact|people_grappling", re.I),
+        "reject": re.compile(r"crowd|queue|hug|helping|playing|dance|sport_match|martial_arts_training|performance|stage|poster", re.I),
+        "example_evidence": "people_grappling_in_physical_fight",
     },
     "smoking": {
         "classes": ("smoking",),
@@ -129,7 +129,7 @@ def task_rules(target: str) -> str:
         "pet": "Only live dogs and cats count. Statues, sculptures, plush toys, posters, reflections, and other animals do not count.",
         "stall": "Fixed kiosks, vending machines, permanent booths, security checkpoints, and bus shelters are not stalls.",
         "trash": "Only use bottle, box, paper, or bag. The object must visibly be discarded litter; bins, stored/stacked boxes, road paint, signs, and utility boxes are negatives.",
-        "fighting": "Only real human-vs-human physical fighting counts. Animal fighting, toy/model scenes, animations, games, ordinary crowds, arguments without contact, hugging, helping, dancing, sports training, stage performances, and people merely standing close are negatives.",
+        "fighting": "Only clear physical fighting counts. Ordinary crowds, arguments without contact, hugging, helping, dancing, sports training, stage performances, and people merely standing close are negatives.",
         "smoking": "Box only the visible smoking evidence, such as the cigarette, cigar, vape, hand-mouth evidence, or person-mouth smoke evidence. Do not label fog, steam, smoke without a person, cigarette packs, ashtrays, signs, posters, or a whole person without visible smoking evidence.",
     }[target]
     return f"Allowed classes: {classes}. Positive definition: {spec['definition']}. {extra}"

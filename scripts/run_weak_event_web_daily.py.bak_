@@ -18,15 +18,13 @@ import requests
 
 SCHEMA = "jgzj_weak_event_web_daily.v1"
 
-WEAK_EVENT_CLASSES = ("fishing_rod", "pet", "stall", "bottle", "box", "paper", "bag", "fighting", "smoking")
+WEAK_EVENT_CLASSES = ("fishing_rod", "pet", "stall", "bottle", "box", "paper", "bag")
 TARGET_CLASSES = {
     "all": WEAK_EVENT_CLASSES,
     "fishing_rod": ("fishing_rod",),
     "stall": ("stall",),
     "pet": ("pet",),
     "trash": ("bottle", "box", "paper", "bag"),
-    "fighting": ("fighting",),
-    "smoking": ("smoking",),
 }
 
 

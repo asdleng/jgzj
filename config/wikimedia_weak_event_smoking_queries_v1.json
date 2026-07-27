@@ -1,0 +1,79 @@
+{
+  "api_url": "https://commons.wikimedia.org/w/api.php",
+  "download_width": 1600,
+  "exclude_title_regex": "\\b(?:painting|drawing|illustration|poster|pamphlet|map|diagram|logo|collage|screenshot|video|film|cartoon|comic|advertisement|sign)\\b|Bundesarchiv|LCCN|NYPL",
+  "queries": [
+    {
+      "bucket": "smoking_positive_person_cigarette",
+      "query": "person smoking cigarette street",
+      "limit": 420,
+      "max_accept": 120
+    },
+    {
+      "bucket": "smoking_positive_people_outdoors",
+      "query": "people smoking outdoors",
+      "limit": 420,
+      "max_accept": 120
+    },
+    {
+      "bucket": "smoking_positive_sidewalk",
+      "query": "smoking cigarette sidewalk",
+      "limit": 360,
+      "max_accept": 100
+    },
+    {
+      "bucket": "smoking_positive_hand_cigarette",
+      "query": "cigarette in hand person",
+      "limit": 320,
+      "max_accept": 90
+    },
+    {
+      "bucket": "smoking_positive_vaping",
+      "query": "person vaping outdoors",
+      "limit": 260,
+      "max_accept": 70
+    },
+    {
+      "bucket": "smoking_positive_cigar",
+      "query": "person smoking cigar outdoors",
+      "limit": 220,
+      "max_accept": 60
+    },
+    {
+      "bucket": "hard_negative_smoking_fog",
+      "query": "fog street people",
+      "limit": 220,
+      "max_accept": 45
+    },
+    {
+      "bucket": "hard_negative_smoking_steam",
+      "query": "steam street people",
+      "limit": 220,
+      "max_accept": 45
+    },
+    {
+      "bucket": "hard_negative_smoking_fire_smoke",
+      "query": "smoke plume fire no person",
+      "limit": 200,
+      "max_accept": 40
+    },
+    {
+      "bucket": "hard_negative_smoking_pack",
+      "query": "cigarette pack closeup",
+      "limit": 180,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_smoking_ashtray",
+      "query": "ashtray cigarette closeup",
+      "limit": 180,
+      "max_accept": 35
+    },
+    {
+      "bucket": "hard_negative_smoking_no_smoking_sign",
+      "query": "no smoking sign",
+      "limit": 180,
+      "max_accept": 35
+    }
+  ]
+}
