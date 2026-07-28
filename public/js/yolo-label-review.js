@@ -39,7 +39,11 @@
     detail: document.getElementById("yolo-review-detail"),
     prev: document.getElementById("yolo-review-prev"),
     next: document.getElementById("yolo-review-next"),
-    page: document.getElementById("yolo-review-page")
+    page: document.getElementById("yolo-review-page"),
+    pagination: panel.querySelector(".yolo-review-pagination"),
+    pageJump: document.getElementById("yolo-review-page-jump"),
+    pageJumpButton: document.getElementById("yolo-review-page-jump-button"),
+    pageJumpForm: document.getElementById("yolo-review-page-jump-form")
   };
 
   const state = {
@@ -50,6 +54,7 @@
     page: 1,
     pageSize: 24,
     totalPages: 1,
+    total: 0,
     selectedItemKey: "",
     activeEvent: "all",
     dailyStats: null,
@@ -305,6 +310,159 @@
     const num = Number(value || 0);
     if (!Number.isFinite(num)) return "0";
     return new Intl.NumberFormat("zh-CN").format(num);
+  }
+
+  function ensurePaginationJumpStyles() {
+    if (document.getElementById("yolo-review-page-jump-style")) return;
+    const style = document.createElement("style");
+    style.id = "yolo-review-page-jump-style";
+    style.textContent = `
+      .yolo-review-pagination { flex-wrap: wrap; }
+      .yolo-review-page-jump {
+        min-width: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .yolo-review-page-jump-label {
+        min-width: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: #cbd5e1;
+        font-size: .82rem;
+        white-space: nowrap;
+      }
+      .yolo-review-page-jump-input {
+        width: 72px;
+        min-height: 34px;
+        padding: 6px 9px;
+        border: 1px solid rgba(71, 85, 105, .72);
+        border-radius: 8px;
+        background: rgba(2, 6, 23, .78);
+        color: #e2e8f0;
+        font: inherit;
+        font-weight: 800;
+        text-align: center;
+        outline: none;
+      }
+      .yolo-review-page-jump-input:focus {
+        border-color: rgba(103, 232, 249, .82);
+        box-shadow: 0 0 0 3px rgba(34, 211, 238, .14);
+      }
+      .yolo-review-page-jump-input:disabled {
+        cursor: not-allowed;
+        opacity: .55;
+      }
+      .yolo-review-page-jump-button {
+        min-height: 34px;
+        padding: 6px 10px;
+      }
+      @media (max-width: 640px) {
+        .yolo-review-page-jump {
+          flex: 1 1 100%;
+          justify-content: center;
+        }
+        .yolo-review-page-jump-input { width: 88px; }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function ensurePaginationJumpControl() {
+    if (!refs.pagination) return;
+    ensurePaginationJumpStyles();
+    if (!refs.pageJump) {
+      const form = createNode("form", "yolo-review-page-jump");
+      form.id = "yolo-review-page-jump-form";
+      form.noValidate = true;
+      form.setAttribute("aria-label", "跳转页码");
+
+      const label = createNode("label", "yolo-review-page-jump-label");
+      label.setAttribute("for", "yolo-review-page-jump");
+      label.appendChild(createNode("span", "", "跳到"));
+
+      const input = document.createElement("input");
+      input.id = "yolo-review-page-jump";
+      input.className = "yolo-review-page-jump-input";
+      input.type = "number";
+      input.inputMode = "numeric";
+      input.min = "1";
+      input.step = "1";
+      input.autocomplete = "off";
+      input.placeholder = "页码";
+      input.setAttribute("aria-label", "输入页码");
+      label.appendChild(input);
+      label.appendChild(createNode("span", "", "页"));
+
+      const button = createNode("button", "cloud-chat-close yolo-review-page-jump-button", "跳转");
+      button.id = "yolo-review-page-jump-button";
+      button.type = "submit";
+
+      form.appendChild(label);
+      form.appendChild(button);
+      refs.pagination.appendChild(form);
+      refs.pageJump = input;
+      refs.pageJumpButton = button;
+      refs.pageJumpForm = form;
+    } else {
+      refs.pageJump.classList.add("yolo-review-page-jump-input");
+      refs.pageJumpForm = refs.pageJumpForm || refs.pageJump.closest("form") || refs.pageJump.closest(".yolo-review-page-jump");
+      if (refs.pageJumpForm && "noValidate" in refs.pageJumpForm) refs.pageJumpForm.noValidate = true;
+      refs.pageJumpButton = refs.pageJumpButton || document.getElementById("yolo-review-page-jump-button");
+    }
+  }
+
+  function updatePaginationControls() {
+    ensurePaginationJumpControl();
+    state.totalPages = Math.max(1, Number(state.totalPages) || 1);
+    state.page = Math.min(Math.max(1, Number(state.page) || 1), state.totalPages);
+    if (refs.page) {
+      refs.page.textContent = `第 ${state.page} / ${state.totalPages} 页 · ${compactNumber(state.total)} 条`;
+    }
+    if (refs.prev) refs.prev.disabled = state.page <= 1;
+    if (refs.next) refs.next.disabled = state.page >= state.totalPages;
+    if (refs.pageJump) {
+      refs.pageJump.setCustomValidity("");
+      refs.pageJump.min = "1";
+      refs.pageJump.max = String(state.totalPages);
+      refs.pageJump.value = String(state.page);
+      refs.pageJump.disabled = !state.datasetId || state.totalPages <= 1;
+    }
+    if (refs.pageJumpButton) {
+      refs.pageJumpButton.disabled = !state.datasetId || state.totalPages <= 1;
+    }
+  }
+
+  function setPaginationBusy(isBusy) {
+    ensurePaginationJumpControl();
+    if (refs.prev) refs.prev.disabled = isBusy || state.page <= 1;
+    if (refs.next) refs.next.disabled = isBusy || state.page >= state.totalPages;
+    if (refs.pageJump) refs.pageJump.disabled = isBusy || !state.datasetId || state.totalPages <= 1;
+    if (refs.pageJumpButton) refs.pageJumpButton.disabled = isBusy || !state.datasetId || state.totalPages <= 1;
+  }
+
+  function jumpToPageFromInput() {
+    ensurePaginationJumpControl();
+    if (!refs.pageJump) return;
+    const raw = String(refs.pageJump.value || "").trim();
+    const page = Number.parseInt(raw, 10);
+    if (!raw || !Number.isFinite(page)) {
+      refs.pageJump.setCustomValidity("请输入有效页码");
+      refs.pageJump.reportValidity?.();
+      setStatus("请输入有效页码", "error");
+      return;
+    }
+    refs.pageJump.setCustomValidity("");
+    const safePage = Math.min(Math.max(1, page), Math.max(1, state.totalPages || 1));
+    refs.pageJump.value = String(safePage);
+    if (safePage === state.page) {
+      updatePaginationControls();
+      return;
+    }
+    state.page = safePage;
+    state.selectedItemKey = "";
+    loadItems().catch(() => {});
   }
 
   function formatDate(value) {
@@ -2059,9 +2217,10 @@
       refs.list.classList.remove("is-loading");
       refs.list.innerHTML = "";
       refs.list.appendChild(createNode("p", "yolo-review-empty", "暂无数据集。"));
-      if (refs.page) refs.page.textContent = "第 1 / 1 页 · 0 条";
-      if (refs.prev) refs.prev.disabled = true;
-      if (refs.next) refs.next.disabled = true;
+      state.page = 1;
+      state.totalPages = 1;
+      state.total = 0;
+      updatePaginationControls();
       setStatus("当前来源暂无数据集", "ok");
       resetDetail("暂无样本。");
       return;
@@ -2072,6 +2231,7 @@
     const requestSource = refs.source?.value || "";
     const requestEventName = refs.eventName?.value || "";
     setStatus("加载样本...", "loading");
+    setPaginationBusy(true);
     refs.list.classList.add("is-loading");
     refs.list.innerHTML = "";
     const loading = createNode("div", "yolo-review-loading");
@@ -2091,12 +2251,11 @@
       refs.list.classList.remove("is-loading");
       state.page = data.page || 1;
       state.totalPages = data.total_pages || 1;
+      state.total = Number(data.total || 0);
       updateSplitOptions(data.available_splits || []);
       updateEventNameOptions(data.available_events || []);
       renderList(data.items || []);
-      refs.page.textContent = `第 ${state.page} / ${state.totalPages} 页 · ${compactNumber(data.total)} 条`;
-      refs.prev.disabled = state.page <= 1;
-      refs.next.disabled = state.page >= state.totalPages;
+      updatePaginationControls();
       setStatus("样本就绪", "ok");
       if (!state.selectedItemKey) {
         resetDetail("点击左侧样本后加载原图和标注框。");
@@ -2111,6 +2270,7 @@
         return;
       }
       refs.list.classList.remove("is-loading");
+      updatePaginationControls();
       setStatus(`样本加载失败：${error?.message || "未知错误"}`, "error");
       refs.list.innerHTML = "";
       refs.list.appendChild(createNode("p", "yolo-review-empty", "样本加载失败。"));
@@ -3339,6 +3499,14 @@
   refs.refresh?.addEventListener("click", () => loadDatasets().catch(() => {}));
   refs.eventButtons.forEach((button) => {
     button.addEventListener("click", () => applyReviewEvent(button.dataset.yoloReviewEvent || "all"));
+  });
+  ensurePaginationJumpControl();
+  refs.pageJumpForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    jumpToPageFromInput();
+  });
+  refs.pageJump?.addEventListener("input", () => {
+    refs.pageJump.setCustomValidity("");
   });
   refs.prev?.addEventListener("click", () => {
     if (state.page <= 1) return;
