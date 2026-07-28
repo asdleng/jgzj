@@ -113,21 +113,21 @@ CLASS_RULES = {
     },
     "smoking": {
         "threshold": 0.92,
-        "min_area": 0.0010,
-        "max_area": 0.45,
+        "min_area": 0.00020,
+        "max_area": 0.08,
         "positive": (
-            "Only label a visible person who contains smoking evidence: cigarette/cigar/vape at mouth or in fingers, "
-            "or smoke clearly coming from mouth/hand. Box the visible person, and make sure the smoking evidence is inside the box."
+            "Only label visible smoking evidence: cigarette/cigar/vape at mouth or in fingers, or smoke clearly coming from mouth/hand. "
+            "Use a tight box around the cigarette/vape/smoking evidence, not the whole person."
         ),
         "negative": (
             "Do NOT label eating, drinking, hand near mouth without visible cigarette/vape, phone near mouth, mask, toothpick, "
             "or unclear hand/object near face."
         ),
-        "evidence": "person_with_visible_cigarette, person_with_visible_vape, smoking_person_with_cigarette, person_with_smoke_from_mouth_or_hand",
+        "evidence": "visible_cigarette, cigarette_at_mouth, cigarette_in_fingers, visible_vape, smoke_from_mouth_or_hand",
         "teacher": (
-            "Teacher feedback: hand-to-mouth is not enough. A valid box must cover the person and contain visible cigarette/vape or visible smoke from mouth/hand."
+            "Teacher feedback: hand-to-mouth is not enough. A valid box must contain visible cigarette/vape or visible smoke from mouth/hand."
         ),
-        "accept_re": r"person_with_visible_(cigarette|vape|smoke)|smoking_person|cigarette_at_mouth|cigarette_in_fingers|visible_vape|smoke_from_mouth|smoke_from_hand",
+        "accept_re": r"visible_cigarette|cigarette_at_mouth|cigarette_in_fingers|visible_vape|smoke_from_mouth|smoke_from_hand",
         "reject_re": r"eat|eating|drink|drinking|hand_only|hand_to_mouth|phone|mask|toothpick|unclear|uncertain|no_cigarette|not_smoking|clear_evidence",
     },
 }

@@ -73,7 +73,7 @@ Hard class definitions:
 - fire: actual visible flame with flame shape and orange/yellow luminous core. Red fire boxes, extinguishers, hydrants,消防箱, red signs, warning boards, lamps, reflections, taillights, cones, and red/orange equipment are NOT fire.
 - smoke: real smoke plume/cloud from burning or exhaust. Fog, mist, steam, haze, glare, clouds, dust, blur, water spray, and overexposure are NOT smoke.
 - pet: LIVE dog/cat only. Statues, sculptures, toys, mascots, animal pictures, signs, decorations, white stone/resin animals, birds, ducks, geese, chickens, and livestock sculptures are NOT pet.
-- smoking: the box should cover the visible person who contains a visible cigarette/cigar/vape or clear smoke from the person's mouth/hand. A person with only hand near mouth and no visible smoking evidence is NOT enough.
+- smoking: visible cigarette/cigar/vape OR clear smoke from a person's mouth/hand. A whole person with hand near mouth is NOT enough.
 - phone: visible handheld mobile phone or clear hand-phone interaction. Wall screens, signs, dashboards, mirrors, bags, and black rectangles are NOT phone.
 - trash: loose discarded waste on ground/road/path. Trash bins, recycling boxes, planters, cones, leaves, stones, fixed facilities, storage boxes, and construction materials are NOT trash.
 - stall: temporary vendor selling setup with table/canopy/goods/operator. Fixed kiosks, guard booths, bus shelters, building entrances, pavilions, fences, ordinary tents, umbrellas, and storage piles are NOT stall.
@@ -156,10 +156,7 @@ ACCEPT_PATTERNS = {
     "trash": re.compile(r"loose|discarded|ground|road|bottle|paper|plastic|bag|cardboard|wrapper|litter|waste", re.I),
     "stall": re.compile(r"vendor|stall|booth|selling|goods|table|canopy|market|cart", re.I),
     "phone": re.compile(r"handheld|phone|mobile|smartphone|hand_phone|screen_in_hand", re.I),
-    "smoking": re.compile(
-        r"person_with_visible_(?:cigarette|cigar|vape|smoke)|smoking_person|cigarette|cigar|vape|smoke_from_mouth|smoking|lit_tip",
-        re.I,
-    ),
+    "smoking": re.compile(r"cigarette|cigar|vape|smoke_from_mouth|smoking|lit_tip", re.I),
     "license_plate": re.compile(
         r"vehicle[_ -]?license[_ -]?plate|vehicle[_ -]?licence[_ -]?plate|vehicle[_ -]?number[_ -]?plate|"
         r"front[_ -]?plate[_ -]?on[_ -]?vehicle|rear[_ -]?plate[_ -]?on[_ -]?vehicle|"
@@ -438,13 +435,13 @@ def heuristic_findings(labels):
                 "severity": "medium",
                 "source": "heuristic",
             })
-        if class_name == "smoking" and (h > 0.70 or w > 0.55) and not ACCEPT_PATTERNS["smoking"].search(note):
+        if class_name == "smoking" and (h > 0.28 or w > 0.18) and not ACCEPT_PATTERNS["smoking"].search(note):
             findings.append({
                 "index": label["i"],
                 "class_name": class_name,
-                "issue": "box_too_large_for_smoking_person",
+                "issue": "box_too_large_for_smoking_evidence",
                 "should": "review",
-                "reason": "smoking_person_box_too_large_or_unclear",
+                "reason": "smoking_whole_person_or_unclear",
                 "severity": "medium",
                 "source": "heuristic",
             })

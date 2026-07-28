@@ -70,11 +70,11 @@ TARGETS = {
     },
     "smoking": {
         "classes": ("smoking",),
-        "definition": "a visible person with a visible cigarette, cigar, vape, or clear smoke from the person's mouth or hand",
+        "definition": "visible cigarette, cigar, vape, or clear smoke from a person's mouth or hand",
         "threshold": 0.88,
-        "accept": re.compile(r"person_with_visible_(?:cigarette|cigar|vape|smoke)|smoking_person|smoking|cigarette|cigar|vape|e_cigarette|mouth_smoke|visible_smoke_from_person", re.I),
+        "accept": re.compile(r"smoking|cigarette|cigar|vape|e_cigarette|hand_mouth|mouth_smoke|visible_smoke_from_person", re.I),
         "reject": re.compile(r"fog|steam|chimney|fire|smoke_plume_without_person|ashtray|cigarette_pack|advertisement|sign|poster|drawing", re.I),
-        "example_evidence": "person_with_visible_cigarette",
+        "example_evidence": "visible_cigarette_in_hand",
     },
 }
 
@@ -130,7 +130,7 @@ def task_rules(target: str) -> str:
         "stall": "Fixed kiosks, vending machines, permanent booths, security checkpoints, and bus shelters are not stalls.",
         "trash": "Only use bottle, box, paper, or bag. The object must visibly be discarded litter; bins, stored/stacked boxes, road paint, signs, and utility boxes are negatives.",
         "fighting": "Only real human-vs-human physical fighting counts. Animal fighting, toy/model scenes, animations, games, ordinary crowds, arguments without contact, hugging, helping, dancing, sports training, stage performances, and people merely standing close are negatives.",
-        "smoking": "Box the visible person who contains the cigarette, cigar, vape, or person-mouth smoke evidence. The smoking evidence must be visible inside the person box. Do not output a tiny cigarette/hand-mouth evidence-only box. Do not label fog, steam, smoke without a person, cigarette packs, ashtrays, signs, posters, or a person without visible smoking evidence.",
+        "smoking": "Box only the visible smoking evidence, such as the cigarette, cigar, vape, hand-mouth evidence, or person-mouth smoke evidence. Do not label fog, steam, smoke without a person, cigarette packs, ashtrays, signs, posters, or a whole person without visible smoking evidence.",
     }[target]
     return f"Allowed classes: {classes}. Positive definition: {spec['definition']}. {extra}"
 

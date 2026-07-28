@@ -58,7 +58,7 @@ Positive class rules:
 - vehicle: real car/truck/bus/van/parked vehicle. Do not label signs, toy models, vehicle pictures, or reflections.
 - nonmotor: real bicycle/e-bike/scooter/wheelchair/hand cart/stroller. Do not label road markings, sign icons, or distant ambiguous rails.
 - phone: visible handheld mobile phone or clear hand-phone interaction. Do not label black rectangles, dashboards, bags, screens on walls, traffic signs, or car mirrors.
-- smoking: visible cigarette/cigar/vape OR clear smoke from a person's mouth/hand. Box the visible person who contains the cigarette/cigar/vape/smoke evidence, not only the small smoking evidence. Do not label a person only because a hand is near the mouth.
+- smoking: visible cigarette/cigar/vape OR clear smoke from a person's mouth/hand. Box the cigarette/hand-mouth evidence tightly. Do not label a whole person only because a hand is near the mouth.
 - license_plate: visible real license plate physically mounted on a real vehicle, such as a car, truck, bus, van, motorcycle, e-bike, or scooter. Box only the plate. Do not label standalone plates, road signs, shop signs, door numbers, wall numbers, parking space numbers, advertisements, the whole vehicle, bumper, logo, headlight, tail light, sticker, or decorative rectangle.
 - lying: real person clearly lying down or strongly reclined horizontally on the ground, bench, chair, or similar surface. Box the visible full body. Do not label standing, walking, sitting upright, squatting, bending, posters, statues, or reflections.
 - fighting: clear real-person physical fight between humans, such as punching, kicking, grappling, wrestling, or aggressive body contact. Box only the involved people as one tight group if they overlap. Do not label animal fighting, toy/model scenes, animations, games, ordinary crowds, playing, hugging, helping, queueing, performances, martial-arts/sports training, or people merely standing close.
@@ -73,7 +73,7 @@ High-risk classes, use only when visual evidence is very strong:
 
 Rules:
 - Do not invent boxes. If uncertain, omit. Prefer false negatives over false positives.
-- For fire/smoke/pet/trash/stall/phone/smoking/license_plate/lying/fighting/falldown, always include numeric score and a double-quoted evidence string that names the visible proof, e.g. "actual_flame", "rising_smoke_plume", "live_dog_leash", "loose_plastic_bottle_on_ground", "vendor_table_goods", "handheld_phone", "person_with_visible_cigarette", "plate_characters", "horizontal_lying_body", "people_grappling", "fallen_person_on_ground". Boxes without numeric score are invalid.
+- For fire/smoke/pet/trash/stall/phone/smoking/license_plate/lying/fighting/falldown, always include numeric score and a double-quoted evidence string that names the visible proof, e.g. "actual_flame", "rising_smoke_plume", "live_dog_leash", "loose_plastic_bottle_on_ground", "vendor_table_goods", "handheld_phone", "visible_cigarette", "plate_characters", "horizontal_lying_body", "people_grappling", "fallen_person_on_ground". Boxes without numeric score are invalid.
 - For dark/blurred/blocked frames, do not label pet/trash/stall/phone/smoking/license_plate/lying/fighting/falldown unless the target is large and unmistakable.
 - Never use evidence phrases like red_box, red_sign, fire_box, extinguisher, trash_bin, fog, mist, haze, statue, sculpture, fixed_kiosk, standing_person, sitting_person, vehicle_logo, headlight, traffic_sign, or unknown_object as a positive target.
 - Ignore sky, trees, buildings, road, shadows, reflections, traffic lights, and text unless part of a target.
@@ -128,10 +128,7 @@ PHONE_REJECT_NOTE_RE = re.compile(r"sign|screen_on_wall|dashboard|mirror|black_r
 PHONE_ACCEPT_NOTE_RE = re.compile(r"handheld|phone|mobile|smartphone|hand_phone|screen_in_hand", re.I)
 
 SMOKING_REJECT_NOTE_RE = re.compile(r"hand_near_mouth_only|unclear|food|drink|microphone|mask|shadow", re.I)
-SMOKING_ACCEPT_NOTE_RE = re.compile(
-    r"person_with_visible_(?:cigarette|cigar|vape|smoke)|smoking_person|cigarette|cigar|vape|smoke_from_mouth|smoking|lit_tip",
-    re.I,
-)
+SMOKING_ACCEPT_NOTE_RE = re.compile(r"cigarette|cigar|vape|smoke_from_mouth|smoking|lit_tip", re.I)
 
 LICENSE_PLATE_REJECT_NOTE_RE = re.compile(
     r"road[_ -]?sign|traffic[_ -]?sign|logo|sticker|bumper|headlight|tail[_ -]?light|taillight|"
