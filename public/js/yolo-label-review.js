@@ -923,6 +923,64 @@
       .sort((left, right) => (right.count - left.count) || left.name.localeCompare(right.name, "zh-CN"));
   }
 
+  function positiveCountRows(counts, labelFor = (name) => name) {
+    return Object.entries(counts || {})
+      .map(([name, count]) => {
+        const rawName = String(name || "").trim();
+        return {
+          name: rawName,
+          label: labelFor(rawName),
+          count: Number(count || 0)
+        };
+      })
+      .filter((item) => item.name && Number.isFinite(item.count) && item.count > 0)
+      .sort((left, right) => (right.count - left.count) || left.label.localeCompare(right.label, "zh-CN"));
+  }
+
+  function vehicleClassLabel(name) {
+    const rawName = String(name || "").trim();
+    const token = normalizeClassToken(rawName);
+    const eventLabel = feedbackEventLabel(token);
+    if (eventLabel && eventLabel !== token) return eventLabel;
+    const qwenLabel = qwenLabelText(token);
+    return qwenLabel && qwenLabel !== token ? qwenLabel : rawName;
+  }
+
+  function firstPositiveCountSource(sources) {
+    return sources.find((source) => positiveCountRows(source.counts).length > 0) || null;
+  }
+
+  function vehicleCollectionClassBreakdown(dataset) {
+    if (datasetSourceGroup(dataset) !== "vehicle_collection") return null;
+    const qwenBbox = dataset?.qwen_bbox || dataset?.summary?.qwen_bbox || {};
+    const qwenLabel = dataset?.qwen_label || dataset?.summary?.qwen_label || {};
+    const source = firstPositiveCountSource([
+      { counts: qwenBbox.boxes_by_class, title: "按类别（框数）" },
+      { counts: qwenBbox.verified_sensitive?.boxes_by_class, title: "按类别（框数）" },
+      { counts: dataset?.boxes || dataset?.summary?.boxes, title: "按类别（框数）" },
+      { counts: qwenBbox.images_by_class, title: "按类别（样本数）" },
+      { counts: qwenLabel.images_by_class, title: "按类别（样本数）" },
+      { counts: qwenLabel.counts_by_class, title: "按类别（样本数）" }
+    ]);
+    if (!source) return null;
+    const rows = positiveCountRows(source.counts, vehicleClassLabel);
+    return rows.length ? { title: source.title, rows } : null;
+  }
+
+  function datasetCountBreakdown(dataset) {
+    const feedbackCounts = feedbackEventCountRows(dataset);
+    if (feedbackCounts.length) {
+      return {
+        title: isReviewQueueEvent() ? "按事件类型（待校核数）" : "按事件类型（YES候选数）",
+        rows: feedbackCounts.map((item) => ({
+          ...item,
+          label: feedbackEventLabel(item.name)
+        }))
+      };
+    }
+    return vehicleCollectionClassBreakdown(dataset);
+  }
+
   function normalizeEventNameOptions(source) {
     const rawItems = Array.isArray(source)
       ? source
@@ -1657,22 +1715,21 @@
       const classes = createNode("p", "yolo-review-dataset-classes", datasetClassSummary(dataset));
       button.appendChild(classes);
 
-      const feedbackCounts = feedbackEventCountRows(dataset);
-      if (feedbackCounts.length) {
+      const countBreakdown = datasetCountBreakdown(dataset);
+      if (countBreakdown?.rows?.length) {
         const breakdown = createNode("div", "yolo-review-feedback-breakdown");
         const breakdownHead = createNode("div", "yolo-review-feedback-breakdown-head");
         breakdownHead.appendChild(createNode(
           "strong",
           "",
-          isReviewQueueEvent() ? "按事件类型（待校核数）" : "按事件类型（YES候选数）"
+          countBreakdown.title
         ));
-        breakdownHead.appendChild(createNode("span", "", `${compactNumber(feedbackCounts.length)} 种`));
+        breakdownHead.appendChild(createNode("span", "", `${compactNumber(countBreakdown.rows.length)} 种`));
         breakdown.appendChild(breakdownHead);
 
         const countGrid = createNode("div", "yolo-review-feedback-count-grid");
-        feedbackCounts.forEach(({ name, count }) => {
+        countBreakdown.rows.forEach(({ name, label, count }) => {
           const item = createNode("span", "yolo-review-feedback-count");
-          const label = feedbackEventLabel(name);
           item.title = label === name ? name : `${label} (${name})`;
           item.appendChild(createNode("span", "", label));
           item.appendChild(createNode("strong", "", compactNumber(count)));
