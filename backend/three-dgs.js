@@ -6755,7 +6755,10 @@ if __name__ == "__main__":
   app.get('/api/three-dgs/dataset/init-pointcloud', requireThreeDgsAuth, async (req, res) => {
     try {
       const maxPoints = Math.max(5000, Math.min(160000, Number(req.query.max_points || 80000)));
-      const preview = await buildDatasetInitPointcloudPreview(maxPoints, req.query.source || 'recolored');
+      const preview = await buildDatasetInitPointcloudPreview(
+        maxPoints,
+        req.query.source || state.init_pointcloud?.selected_source || 'recolored'
+      );
       return res.json({ ok: true, preview });
     } catch (error) {
       return res.status(error.status || 500).json({
