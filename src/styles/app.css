@@ -11850,6 +11850,7 @@ body.yolo-review-is-panning {
 .cloud-ops-param-unavailable label input,
 .cloud-ops-param-time-control input[type="time"],
 .cloud-ops-param-schedule-control input[type="time"],
+.cloud-ops-param-schedule-editor input[type="time"],
 .cloud-ops-param-coordinate-control input[type="number"] {
   width: 100%;
   min-width: 0;
@@ -11914,6 +11915,30 @@ body.yolo-review-is-panning {
 .cloud-ops-param-schedule-control span,
 .cloud-ops-param-schedule-control b { color: #64748b; font-size: 0.64rem; }
 .cloud-ops-param-schedule-control b { text-align: center; }
+
+.cloud-ops-param-schedule-editor {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.8fr) repeat(2, minmax(92px, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.cloud-ops-param-schedule-editor > label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.cloud-ops-param-schedule-editor > label > span,
+.cloud-ops-param-schedule-editor > label > small {
+  color: #64748b;
+  font-size: 0.61rem;
+  font-weight: 800;
+}
+
+.cloud-ops-param-schedule-editor .cloud-ops-param-choice {
+  align-self: center;
+}
 
 .cloud-ops-param-coordinate-control {
   grid-template-columns: 70px repeat(2, minmax(0, 1fr));
@@ -12070,6 +12095,7 @@ body.yolo-review-is-panning {
   .cloud-ops-param-row { grid-template-columns: 1fr; padding: 11px 13px; }
   .cloud-ops-param-row > * { padding: 7px 0; border-left: 0 !important; }
   .cloud-ops-param-time-control,
+  .cloud-ops-param-schedule-editor,
   .cloud-ops-param-coordinate-control,
   .cloud-ops-param-inline-control { grid-template-columns: 1fr; }
   .cloud-ops-param-schedule-control > div { grid-template-columns: 1fr 1fr; }

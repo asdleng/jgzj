@@ -505,16 +505,16 @@ const agentRules = [
             <strong role="columnheader">设置值</strong>
           </div>
 
-          <div class="cloud-ops-param-node" role="row"><strong>控制节点</strong><span>即时控制</span><em>4 项已接入 · 3 项待车端接入</em></div>
+          <div class="cloud-ops-param-node" role="row"><strong>控制节点</strong><span>控制模式</span><em>广告机与灯光支持条件控制</em></div>
           <div class="cloud-ops-param-row is-unavailable" role="row">
             <div role="cell"><strong>超声波开启关闭</strong><span>车端未接入</span></div>
             <p role="cell">控制底盘控制指令中的超声波功能开关</p>
             <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" disabled>开启</button><button type="button" disabled>关闭</button></div><small>缺少安全写入与回读工具</small></div>
           </div>
           <div class="cloud-ops-param-row" role="row" data-param-row="body.ad_screen">
-            <div role="cell"><strong>广告机上下电</strong><span data-param-current="body.ad_screen">当前：--</span></div>
-            <p role="cell">控制车载广告屏供电状态</p>
-            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="广告机上下电设置值" data-param-input data-param-kind="mode" data-param-group="body" data-param-key="body.ad_screen" data-param-label="广告机上下电" data-original="" disabled><option value="0">关闭 0</option><option value="1">开启 1</option></select></div>
+            <div role="cell"><strong>广告机控制模式</strong><span data-param-current="body.ad_screen">当前：--</span></div>
+            <p role="cell">设置关闭、常开或按强制关闭时段控制</p>
+            <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="广告机控制模式设置值" data-param-input data-param-kind="mode" data-param-group="body" data-param-key="body.ad_screen" data-param-label="广告机控制模式" data-original="" disabled><option value="0">关闭 0</option><option value="1">开启 1</option></select></div>
           </div>
           <div class="cloud-ops-param-row" role="row" data-param-row="body.steer_lamp">
             <div role="cell"><strong>转向灯控制</strong><span data-param-current="body.steer_lamp">当前：--</span></div>
@@ -542,26 +542,38 @@ const agentRules = [
             <div role="cell" class="cloud-ops-param-unavailable"><button class="cloud-ops-param-danger-control" type="button" disabled>系统下电</button><small>车端尚未提供带确认和回读的安全工具</small></div>
           </div>
 
-          <div class="cloud-ops-param-node" role="row"><strong>Planning 节点</strong><span>策略与阈值</span><em>车端参数写入工具待接入</em></div>
+          <div class="cloud-ops-param-node" role="row"><strong>Planning 节点</strong><span>定时策略</span><em>3 组时段已接入</em></div>
           <div class="cloud-ops-param-row is-unavailable" role="row">
             <div role="cell"><strong>绕障总开关</strong><span>车端未接入</span></div>
             <p role="cell">控制 Planning 是否启用绕障动作</p>
             <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" disabled>开启</button><button type="button" disabled>关闭</button></div><small>对应 enable_avoid_action，缺少运行时写入工具</small></div>
           </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>定时强制绕障</strong><span>车端未接入</span></div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="planning.forced_avoidance">
+            <div role="cell"><strong>定时强制绕障</strong><span data-param-current="planning.enable_time_based_avoid">当前：--</span></div>
             <p role="cell">指定时段强制开启绕障；非绕障区域规则仍优先</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-time-control"><label><input type="checkbox" disabled><span>启用</span></label><label><span>开始</span><input type="time" value="08:00" disabled></label><label><span>结束</span><input type="time" value="20:00" disabled></label></div>
+            <div role="cell" class="cloud-ops-param-schedule-editor">
+              <div class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="planning" data-param-key="planning.enable_time_based_avoid" data-param-label="定时强制绕障" data-param-value="" data-original=""><button type="button" data-action="param-choice" data-param-value="true" disabled>启用</button><button type="button" data-action="param-choice" data-param-value="false" disabled>停用</button></div>
+              <label><span>开始</span><input type="time" step="1" data-param-input data-param-kind="time" data-param-group="planning" data-param-key="planning.avoidance_on_begin_time" data-param-label="强制绕障开始时间" data-original="" disabled><small data-param-current="planning.avoidance_on_begin_time">当前：--</small></label>
+              <label><span>结束</span><input type="time" step="1" data-param-input data-param-kind="time" data-param-group="planning" data-param-key="planning.avoidance_on_end_time" data-param-label="强制绕障结束时间" data-original="" disabled><small data-param-current="planning.avoidance_on_end_time">当前：--</small></label>
+            </div>
           </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>定时强制关闭广告机</strong><span>车端未接入</span></div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="planning.ad_screen_force_off">
+            <div role="cell"><strong>定时强制关闭广告机</strong><span data-param-current="planning.enable_ad_compulsory_off">当前：--</span></div>
             <p role="cell">指定时段强制关闭广告机，支持跨午夜</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-time-control"><label><input type="checkbox" disabled><span>启用</span></label><label><span>开始</span><input type="time" value="22:00" disabled></label><label><span>结束</span><input type="time" value="07:00" disabled></label></div>
+            <div role="cell" class="cloud-ops-param-schedule-editor">
+              <div class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="planning" data-param-key="planning.enable_ad_compulsory_off" data-param-label="广告机强制关闭时段" data-param-value="" data-original=""><button type="button" data-action="param-choice" data-param-value="true" disabled>启用</button><button type="button" data-action="param-choice" data-param-value="false" disabled>停用</button></div>
+              <label><span>开始</span><input type="time" step="1" data-param-input data-param-kind="time" data-param-group="planning" data-param-key="planning.ad_compulsory_off_begin_time" data-param-label="广告机强制关闭开始时间" data-original="" disabled><small data-param-current="planning.ad_compulsory_off_begin_time">当前：--</small></label>
+              <label><span>结束</span><input type="time" step="1" data-param-input data-param-kind="time" data-param-group="planning" data-param-key="planning.ad_compulsory_off_end_time" data-param-label="广告机强制关闭结束时间" data-original="" disabled><small data-param-current="planning.ad_compulsory_off_end_time">当前：--</small></label>
+            </div>
           </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>前照灯氛围灯时间</strong><span>车端未接入</span></div>
-            <p role="cell">分别设置前照灯和氛围灯的启用时间范围</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-schedule-control"><div><span>前照灯</span><input type="time" value="18:00" disabled><b>至</b><input type="time" value="06:30" disabled></div><div><span>氛围灯</span><input type="time" value="18:00" disabled><b>至</b><input type="time" value="22:00" disabled></div></div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="planning.shared_lamp_schedule">
+            <div role="cell"><strong>前照灯与氛围灯时间</strong><span data-param-current="planning.enable_mood_lamp_on">当前：--</span></div>
+            <p role="cell">两种灯在模式 2 下共用同一启用时段</p>
+            <div role="cell" class="cloud-ops-param-schedule-editor">
+              <div class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="planning" data-param-key="planning.enable_mood_lamp_on" data-param-label="前照灯与氛围灯定时" data-param-value="" data-original=""><button type="button" data-action="param-choice" data-param-value="true" disabled>启用</button><button type="button" data-action="param-choice" data-param-value="false" disabled>停用</button></div>
+              <label><span>开始</span><input type="time" step="1" data-param-input data-param-kind="time" data-param-group="planning" data-param-key="planning.mood_lamp_on_begin_time" data-param-label="灯光启用开始时间" data-original="" disabled><small data-param-current="planning.mood_lamp_on_begin_time">当前：--</small></label>
+              <label><span>结束</span><input type="time" step="1" data-param-input data-param-kind="time" data-param-group="planning" data-param-key="planning.mood_lamp_on_end_time" data-param-label="灯光启用结束时间" data-original="" disabled><small data-param-current="planning.mood_lamp_on_end_time">当前：--</small></label>
+            </div>
           </div>
           <div class="cloud-ops-param-row is-unavailable" role="row">
             <div role="cell"><strong>回充标定值</strong><span>参数定义待确认</span></div>
@@ -712,7 +724,7 @@ const agentRules = [
 
                 <div class="cloud-ops-param-two-col">
                   <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>广告机强制关闭时段</h4><p>支持跨午夜时间段表达</p></div><span class="is-low">低风险</span></div><label class="cloud-ops-param-switch"><input id="param-ad-schedule" type="checkbox" data-param-input data-param-key="planning.ad_screen_off_schedule_enabled" data-param-label="广告机强制关闭时段" data-original="false"><span></span><b>启用规则</b></label><div class="cloud-ops-param-time-row"><label>开始<input type="time" value="22:00" data-param-input data-param-parent="param-ad-schedule" data-param-key="planning.ad_screen_off_start" data-param-label="广告机关闭开始时间" data-original="22:00"></label><i>至</i><label>结束<input type="time" value="07:00" data-param-input data-param-parent="param-ad-schedule" data-param-key="planning.ad_screen_off_end" data-param-label="广告机关闭结束时间" data-original="07:00"></label></div><small>结束时间早于开始时间时按跨午夜展示；后端能力待确认</small></article>
-                  <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>灯光启用时间</h4><p>前照灯与氛围灯独立配置</p></div><span class="is-low">低风险</span></div><div class="cloud-ops-param-schedule-list"><div><strong>前照灯</strong><input type="time" value="18:00" data-param-input data-param-key="planning.headlight_start" data-param-label="前照灯启用时间" data-original="18:00"><span>—</span><input type="time" value="06:30" data-param-input data-param-key="planning.headlight_end" data-param-label="前照灯停用时间" data-original="06:30"></div><div><strong>氛围灯</strong><input type="time" value="18:00" data-param-input data-param-key="planning.ambient_start" data-param-label="氛围灯启用时间" data-original="18:00"><span>—</span><input type="time" value="22:00" data-param-input data-param-key="planning.ambient_end" data-param-label="氛围灯停用时间" data-original="22:00"></div></div></article>
+                  <article class="cloud-ops-param-card"><div class="cloud-ops-param-card-title"><div><h4>灯光启用时间</h4><p>前照灯与氛围灯共用时段</p></div><span class="is-low">低风险</span></div><div class="cloud-ops-param-schedule-list"><div><strong>共享时段</strong><input type="time" value="18:00" data-param-input data-param-key="planning.shared_lamp_start" data-param-label="灯光启用时间" data-original="18:00"><span>—</span><input type="time" value="06:30" data-param-input data-param-key="planning.shared_lamp_end" data-param-label="灯光停用时间" data-original="06:30"></div></div></article>
                 </div>
 
                 <div class="cloud-ops-param-three-col">
@@ -964,6 +976,7 @@ const agentRules = [
       "status.audio_alsa",
       "status.body_control",
       "status.body_control_config",
+      "status.planning_config",
       "status.control",
       "status.camera",
       "camera.capture",
@@ -986,6 +999,8 @@ const agentRules = [
       "controller.reboot_media",
       "vehicle.clear_collision_stop",
       "vehicle.body_control",
+      "vehicle.body_control_mode.set",
+      "planning.config.set",
       "audio.system_volume.set",
       "audio.microphone_gain.set",
       "task.resume_previous"
@@ -1143,7 +1158,7 @@ const agentRules = [
     let paramLoadInFlight = false;
     let paramApplyInFlight = false;
     let vehicleToolListState = { vehicleId: "", tools: [], byName: new Map(), status: "idle", error: "", requestId: 0 };
-    let lastParamReadback = { vehicleId: "", values: new Map(), readableKeys: new Set(), errors: [] };
+    let lastParamReadback = { vehicleId: "", values: new Map(), readableKeys: new Set(), revisions: {}, errors: [] };
     let vehicles = [];
     let vehicleLoadInFlight = false;
     let vehicleDangerAlertPollTimer = 0;
@@ -1191,9 +1206,13 @@ const agentRules = [
     let agentConversationPollTimer = 0;
     let agentConversationPollInFlight = false;
 
+    const normalizeParamTime = (value) => {
+      const raw = String(value || "").trim();
+      return /^\d{2}:\d{2}$/.test(raw) ? `${raw}:00` : raw;
+    };
     const paramInputValue = (input) => input.dataset.paramKind === "boolean"
       ? String(input.dataset.paramValue || "")
-      : String(input.value || "");
+      : input.dataset.paramKind === "time" ? normalizeParamTime(input.value) : String(input.value || "");
     const paramValueText = (input, value) => {
       const normalized = String(value ?? "");
       if (!normalized) return "--";
@@ -1201,6 +1220,7 @@ const agentRules = [
       if (input.dataset.paramKind === "mode") return ({ 0: "关闭 0", 1: "开启 1", 2: "条件控制 2" })[normalized] || normalized;
       if (input.dataset.paramKind === "steer") return ({ 0: "关闭", 1: "左转", 2: "右转", 3: "双闪" })[normalized] || normalized;
       if (input.dataset.paramKind === "percent") return `${normalized}%`;
+      if (input.dataset.paramKind === "time") return normalizeParamTime(normalized);
       return normalized;
     };
     const setParamInputEnabled = (input, enabled) => {
@@ -1220,7 +1240,7 @@ const agentRules = [
           button.setAttribute("aria-pressed", button.dataset.paramValue === normalized ? "true" : "false");
         });
       } else {
-        input.value = normalized;
+        input.value = input.dataset.paramKind === "time" ? normalizeParamTime(normalized) : normalized;
       }
       if (options.original) input.dataset.original = normalized;
       const current = paramPage?.querySelector(`[data-param-current="${input.dataset.paramKey}"]`);
@@ -1277,6 +1297,14 @@ const agentRules = [
     };
     const toolAvailable = (toolName, state = vehicleToolListState) => state?.status === "ready" && state.byName?.has(toolName);
     const bodyControlTool = (state = vehicleToolListState) => state?.byName?.get("vehicle.body_control") || null;
+    const bodyControlModeTool = (state = vehicleToolListState) => state?.byName?.get("vehicle.body_control_mode.set") || null;
+    const planningConfigTool = (state = vehicleToolListState) => state?.byName?.get("planning.config.set") || null;
+    const planningFieldSupported = (tool, field) => {
+      if (!tool) return false;
+      const changesSchema = toolFieldSchema(tool, "changes");
+      const properties = changesSchema?.properties;
+      return !properties || typeof properties !== "object" || Boolean(properties[field]);
+    };
     const audioStatusTool = (state = vehicleToolListState) => toolAvailable("status.audio", state)
       ? "status.audio"
       : toolAvailable("status.audio_alsa", state) ? "status.audio_alsa" : "";
@@ -1289,7 +1317,7 @@ const agentRules = [
       row?.classList.toggle("is-capability-pending", capability === "pending");
       if (input.dataset.paramKind === "mode") {
         const field = String(input.dataset.paramKey || "").replace("body.", "");
-        const conditional = bodyFieldSupportsConditionalMode(bodyControlTool(), field);
+        const conditional = bodyFieldSupportsConditionalMode(bodyControlModeTool(), field);
         setAccessoryConditionalModeOption(input, conditional);
       }
       if (!current) return;
@@ -1301,6 +1329,8 @@ const agentRules = [
     };
     const updateVehicleToolCapabilities = (state = vehicleToolListState) => {
       const bodyTool = bodyControlTool(state);
+      const bodyModeTool = bodyControlModeTool(state);
+      const planningTool = planningConfigTool(state);
       paramDraftInputs.forEach((input) => {
         if (state.status === "loading" || state.status === "idle") {
           setParamCapability(input, "pending");
@@ -1312,7 +1342,13 @@ const agentRules = [
         }
         if (input.dataset.paramGroup === "body") {
           const field = String(input.dataset.paramKey || "").replace("body.", "");
-          setParamCapability(input, !bodyTool ? "unavailable" : bodyFieldSupported(bodyTool, field) ? "available" : "unsupported");
+          const tool = input.dataset.paramKind === "mode" ? bodyModeTool : bodyTool;
+          setParamCapability(input, !tool ? "unavailable" : bodyFieldSupported(tool, field) ? "available" : "unsupported");
+          return;
+        }
+        if (input.dataset.paramGroup === "planning") {
+          const field = String(input.dataset.paramKey || "").replace("planning.", "");
+          setParamCapability(input, !planningTool ? "unavailable" : planningFieldSupported(planningTool, field) ? "available" : "unsupported");
           return;
         }
         const writeTool = input.dataset.paramKey === "audio.system_volume" ? "audio.system_volume.set" : "audio.microphone_gain.set";
@@ -1373,7 +1409,15 @@ const agentRules = [
           const value = Number(change.value);
           if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error(`${change.label}必须是 0–100 的整数`);
         }
+        if (change.input.dataset.paramKind === "time" && !/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(change.value)) {
+          throw new Error(`${change.label}必须是有效时间`);
+        }
       });
+      const changesPlanningSchedule = changes.some((change) => change.group === "planning");
+      const enablesConditionalMode = changes.some((change) => change.group === "body" && change.input.dataset.paramKind === "mode" && change.value === "2");
+      if (changesPlanningSchedule && enablesConditionalMode) {
+        throw new Error("请先保存定时时段并在 Planning 重启生效后，再单独切换条件控制模式");
+      }
     };
     const renderParamDraft = () => {
       const changes = paramChanges();
@@ -1436,7 +1480,7 @@ const agentRules = [
       const generation = ++paramLoadGeneration;
       paramLoadInFlight = true;
       paramLoadedVehicleId = "";
-      lastParamReadback = { vehicleId, values: new Map(), readableKeys: new Set(), errors: [] };
+      lastParamReadback = { vehicleId, values: new Map(), readableKeys: new Set(), revisions: {}, errors: [] };
       paramDraftInputs.forEach((input) => setParamInputValue(input, "", { original: true }));
       if (paramReadState) paramReadState.textContent = "读取工具能力";
       renderParamDraft();
@@ -1457,19 +1501,26 @@ const agentRules = [
       const bodyPromise = toolAvailable("status.body_control", capability)
         ? requestReadOnlyToolPayload(vehicleId, "status.body_control", {}, 25, "parameter-read-body")
         : Promise.resolve(null);
+      const planningPromise = toolAvailable("status.planning_config", capability)
+        ? requestReadOnlyToolPayload(vehicleId, "status.planning_config", {}, 25, "parameter-read-planning-config")
+        : Promise.resolve(null);
       const audioReadTool = audioStatusTool(capability);
       const audioPromise = audioReadTool
         ? requestReadOnlyToolPayload(vehicleId, audioReadTool, { preferred_keywords: ["Yundea", "Jabra"], speaker_min_percent: 0, include_controls: true }, 25, "parameter-read-audio")
         : Promise.resolve(null);
-      const [bodyConfigResponse, bodyResponse, audioResponse] = await Promise.allSettled([bodyConfigPromise, bodyPromise, audioPromise]);
+      const [bodyConfigResponse, bodyResponse, planningResponse, audioResponse] = await Promise.allSettled([bodyConfigPromise, bodyPromise, planningPromise, audioPromise]);
       if (generation !== paramLoadGeneration || vehicleId !== selectedVehicleId()) return lastParamReadback;
       const errors = [];
       if (bodyConfigResponse.status === "rejected") errors.push(`车身配置：${bodyConfigResponse.reason?.message || "读取失败"}`);
       if (bodyResponse.status === "rejected") errors.push(`车身状态：${bodyResponse.reason?.message || "读取失败"}`);
+      if (planningResponse.status === "rejected") errors.push(`Planning 配置：${planningResponse.reason?.message || "读取失败"}`);
       if (audioResponse.status === "rejected") errors.push(`音频状态：${audioResponse.reason?.message || "读取失败"}`);
       const bodyConfig = bodyConfigResponse.status === "fulfilled" && bodyConfigResponse.value ? toolResultOfPayload(bodyConfigResponse.value) || {} : {};
       const bodyStatus = bodyResponse.status === "fulfilled" && bodyResponse.value ? toolResultOfPayload(bodyResponse.value) || {} : {};
+      const planningConfig = planningResponse.status === "fulfilled" && planningResponse.value ? toolResultOfPayload(planningResponse.value) || {} : {};
       const audio = audioResponse.status === "fulfilled" && audioResponse.value ? toolResultOfPayload(audioResponse.value) || {} : {};
+      lastParamReadback.revisions.body = String(bodyConfig?.revision || "");
+      lastParamReadback.revisions.planning = String(planningConfig?.revision || "");
       let loadedCount = 0;
       paramDraftInputs.forEach((input) => {
         if (input.dataset.paramCapability !== "available") return;
@@ -1480,6 +1531,12 @@ const agentRules = [
           value = input.dataset.paramKind === "steer"
             ? bodyStatusValue(bodyStatus, field)
             : bodyConfigMode(bodyConfig, field) || bodyStatusValue(bodyStatus, field);
+        } else if (input.dataset.paramGroup === "planning") {
+          const field = key.replace("planning.", "");
+          const raw = planningConfig?.config?.[field];
+          value = input.dataset.paramKind === "boolean"
+            ? (raw === true ? "true" : raw === false ? "false" : "")
+            : input.dataset.paramKind === "time" ? normalizeParamTime(raw) : String(raw ?? "");
         } else if (key === "audio.system_volume") {
           const raw = audio?.system_volume?.percent ?? audio?.speaker?.percent;
           value = Number.isFinite(Number(raw)) && Number(raw) >= 0 && Number(raw) <= 100 ? String(Math.round(Number(raw))) : "";
@@ -1527,12 +1584,43 @@ const agentRules = [
       if (!vehicleId || vehicleId !== paramLoadedVehicleId || !changes.length || paramApplyInFlight) return;
       try { validateParamChanges(changes); } catch (error) { setStatus(error?.message || "参数值无效", "error"); return; }
       const operations = [];
-      const bodyChanges = changes.filter((change) => change.group === "body");
+      const planningChanges = changes.filter((change) => change.group === "planning");
+      if (planningChanges.length) {
+        const expectedRevision = String(lastParamReadback?.revisions?.planning || "");
+        if (!expectedRevision) {
+          setStatus("Planning 配置版本未读取，拒绝覆盖现场配置，请刷新后重试", "error");
+          return;
+        }
+        const requestedChanges = {};
+        planningChanges.forEach((change) => {
+          const key = change.key.replace("planning.", "");
+          requestedChanges[key] = change.input.dataset.paramKind === "boolean" ? change.value === "true" : change.value;
+        });
+        operations.push({
+          label: "Planning 定时策略",
+          tool: "planning.config.set",
+          args: { changes: requestedChanges, expected_revision: expectedRevision, dry_run: false, verify: true },
+          timeout: 35,
+          keys: planningChanges.map((change) => change.key)
+        });
+      }
+      const bodyModeChanges = changes.filter((change) => change.group === "body" && change.input.dataset.paramKind === "mode");
+      if (bodyModeChanges.length) {
+        const expectedRevision = String(lastParamReadback?.revisions?.body || "");
+        if (!expectedRevision) {
+          setStatus("车身模式配置版本未读取，拒绝覆盖现场配置，请刷新后重试", "error");
+          return;
+        }
+        const args = { expected_revision: expectedRevision, dry_run: false, verify: true };
+        bodyModeChanges.forEach((change) => { args[change.key.replace("body.", "")] = Number(change.value); });
+        operations.push({ label: "车身控制模式", tool: "vehicle.body_control_mode.set", args, timeout: 35, keys: bodyModeChanges.map((change) => change.key) });
+      }
+      const bodyChanges = changes.filter((change) => change.group === "body" && change.input.dataset.paramKind !== "mode");
       if (bodyChanges.length) {
         const args = { dry_run: false, persistent: true, require_stationary: false };
         bodyChanges.forEach((change) => {
           const key = change.key.replace("body.", "");
-          args[key] = change.input.dataset.paramKind === "mode" ? Number(change.value) : change.value;
+          args[key] = change.value;
         });
         operations.push({ label: "车身参数", tool: "vehicle.body_control", args, timeout: 35, keys: bodyChanges.map((change) => change.key) });
       }
@@ -1544,12 +1632,18 @@ const agentRules = [
       setStatus(`正在写入 ${vehicleId} 的 ${changes.length} 项参数...`, "loading");
       const failedKeys = new Set();
       const errors = [];
+      const warnings = [];
       for (const operation of operations) {
         try {
           const payload = await requestToolPayload(vehicleId, operation.tool, operation.args, operation.timeout, "parameter-apply");
           const result = toolResultOfPayload(payload) || {};
           const resultStatus = String(result.status || "").toLowerCase();
           if (resultStatus === "error" || resultStatus === "partial") throw new Error(result.error || result.message || `${operation.label}写入未确认`);
+          if (result.restart_required) warnings.push(`${operation.label}需重启 Planning 后生效`);
+          if (
+            result.schedule_scope === "shared_front_and_mood" &&
+            operation.keys.some((key) => key.includes("front_lamp") || key.includes("mood_lamp"))
+          ) warnings.push("前照灯与氛围灯共用同一时段");
         } catch (error) {
           operation.keys.forEach((key) => failedKeys.add(key));
           errors.push(`${operation.label}：${error?.message || "写入失败"}`);
@@ -1577,7 +1671,8 @@ const agentRules = [
       } else if (unverified.length) {
         setStatus(`${vehicleId} 的 ${changes.length} 项参数已写入，回读未完整：${unverified.map((change) => change.label).join("、")}`, "error");
       } else {
-        setStatus(`${vehicleId} 的 ${changes.length} 项参数已写入并完成回读。`, "ok");
+        const warningText = [...new Set(warnings)].length ? `；${[...new Set(warnings)].join("；")}` : "";
+        setStatus(`${vehicleId} 的 ${changes.length} 项参数已写入并完成回读${warningText}。`, "ok");
       }
     };
 

@@ -13355,13 +13355,8 @@ async function executeCloudOpsAction(plan, vehicles = []) {
         };
       }
       if (
-        [
-          'vehicle.clear_collision_stop',
-          'vehicle.body_control',
-          'audio.system_volume.set',
-          'audio.microphone_gain.set'
-        ].includes(toolName) &&
-        ['error', 'failed'].includes(toolStatus)
+        (cloudOpsVehicleControlToolNames.has(toolName) || toolName.startsWith('audio.')) &&
+        ['error', 'failed', 'partial'].includes(toolStatus)
       ) {
         return {
           ok: false,
@@ -15580,6 +15575,21 @@ function renderEmailVerificationPage({ ok, title, detail }) {
 </html>`;
 }
 
+const cloudOpsVehicleControlToolNames = new Set([
+  'route.start_patrol',
+  'route.stop_patrol',
+  'task.resume_previous',
+  'vehicle.body_control',
+  'vehicle.body_control_mode.set',
+  'vehicle.ultrasonic.set',
+  'vehicle.motor_power.set',
+  'vehicle.system_poweroff',
+  'vehicle.clear_collision_stop',
+  'planning.config.set',
+  'controller.reboot_master',
+  'controller.reboot_media'
+]);
+
 function cloudOpsPermissionForTool(toolName) {
   const name = String(toolName || '').trim();
   if (!name) {
@@ -15598,16 +15608,7 @@ function cloudOpsPermissionForTool(toolName) {
   ) {
     return 'vehicle:path:write';
   }
-  if (
-    name === 'route.start_patrol' ||
-    name === 'route.stop_patrol' ||
-    name === 'task.resume_previous' ||
-    name === 'vehicle.body_control' ||
-    name === 'vehicle.clear_collision_stop' ||
-    name === 'controller.reboot_master' ||
-    name === 'controller.reboot_media' ||
-    name.startsWith('audio.')
-  ) {
+  if (cloudOpsVehicleControlToolNames.has(name) || name.startsWith('audio.')) {
     return 'vehicle:control';
   }
   if (name === 'ai_detection.images') {
