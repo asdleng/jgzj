@@ -29,7 +29,6 @@
     eventButtons: [...document.querySelectorAll("[data-yolo-review-event]")],
     eventWrap: document.getElementById("yolo-review-event-wrap"),
     datasetWrap: document.getElementById("yolo-review-dataset-wrap"),
-    datasetTitle: document.getElementById("yolo-review-dataset-title"),
     sourceStatus: document.getElementById("yolo-review-source-status"),
     datasetStatus: document.getElementById("yolo-review-dataset-status"),
     sourceCards: document.getElementById("yolo-review-source-cards"),
@@ -1378,12 +1377,6 @@
     return currentSourceGroups().find((item) => item.value === value)?.label || sourceGroupLabel(value);
   }
 
-  function updateDatasetSourceTitle() {
-    if (!refs.datasetTitle) return;
-    const selectedSource = refs.source?.value || "";
-    refs.datasetTitle.textContent = selectedSource ? sourceGroupLabel(selectedSource) : "全部来源";
-  }
-
   function datasetClassSummary(dataset) {
     const classes = Array.isArray(dataset?.classes) ? dataset.classes.filter(Boolean) : [];
     if (!classes.length) return "无类别";
@@ -1604,7 +1597,6 @@
   function renderDatasetCards() {
     renderSourceCards();
     if (!refs.datasetCards) return;
-    updateDatasetSourceTitle();
     refs.datasetCards.innerHTML = "";
     const visible = state.datasets;
     const total = state.eventDatasets.length;

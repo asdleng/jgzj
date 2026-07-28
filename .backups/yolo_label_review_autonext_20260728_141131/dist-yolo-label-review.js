@@ -29,7 +29,6 @@
     eventButtons: [...document.querySelectorAll("[data-yolo-review-event]")],
     eventWrap: document.getElementById("yolo-review-event-wrap"),
     datasetWrap: document.getElementById("yolo-review-dataset-wrap"),
-    datasetTitle: document.getElementById("yolo-review-dataset-title"),
     sourceStatus: document.getElementById("yolo-review-source-status"),
     datasetStatus: document.getElementById("yolo-review-dataset-status"),
     sourceCards: document.getElementById("yolo-review-source-cards"),
@@ -51,7 +50,6 @@
     allDatasets: [],
     eventDatasets: [],
     datasets: [],
-    items: [],
     datasetId: "",
     page: 1,
     pageSize: 24,
@@ -978,7 +976,6 @@
   function datasetSourceGroup(dataset) {
     if (dataset?.source_type === "vehicle_collection") return "vehicle_collection";
     if (dataset?.source_type === "web_crawler" || dataset?.web_crawler || dataset?.summary?.web_crawler) return "web_crawler";
-    if (isEventFeedbackDataset(dataset)) return "checker_archive";
     if (dataset?.source_type === "finetune_dataset" || dataset?.finetune || dataset?.summary?.finetune) return "finetune_dataset";
     if (dataset?.source_type === "public_dataset" || dataset?.summary?.public_dataset === true) return "public_dataset";
     const text = datasetSearchText(dataset);
@@ -1378,12 +1375,6 @@
     return currentSourceGroups().find((item) => item.value === value)?.label || sourceGroupLabel(value);
   }
 
-  function updateDatasetSourceTitle() {
-    if (!refs.datasetTitle) return;
-    const selectedSource = refs.source?.value || "";
-    refs.datasetTitle.textContent = selectedSource ? sourceGroupLabel(selectedSource) : "全部来源";
-  }
-
   function datasetClassSummary(dataset) {
     const classes = Array.isArray(dataset?.classes) ? dataset.classes.filter(Boolean) : [];
     if (!classes.length) return "无类别";
@@ -1604,7 +1595,6 @@
   function renderDatasetCards() {
     renderSourceCards();
     if (!refs.datasetCards) return;
-    updateDatasetSourceTitle();
     refs.datasetCards.innerHTML = "";
     const visible = state.datasets;
     const total = state.eventDatasets.length;
@@ -2230,7 +2220,6 @@
       state.page = 1;
       state.totalPages = 1;
       state.total = 0;
-      state.items = [];
       updatePaginationControls();
       setStatus("当前来源暂无数据集", "ok");
       resetDetail("暂无样本。");
@@ -2265,9 +2254,7 @@
       state.total = Number(data.total || 0);
       updateSplitOptions(data.available_splits || []);
       updateEventNameOptions(data.available_events || []);
-      const items = Array.isArray(data.items) ? data.items : [];
-      state.items = items;
-      renderList(items);
+      renderList(data.items || []);
       updatePaginationControls();
       setStatus("样本就绪", "ok");
       if (!state.selectedItemKey) {
@@ -2283,7 +2270,6 @@
         return;
       }
       refs.list.classList.remove("is-loading");
-      state.items = [];
       updatePaginationControls();
       setStatus(`样本加载失败：${error?.message || "未知错误"}`, "error");
       refs.list.innerHTML = "";
@@ -2373,46 +2359,6 @@
       button.appendChild(body);
       refs.list.appendChild(button);
     });
-  }
-
-  async function loadNextItemAfterSave(currentItemKey, savedData, options = {}) {
-    const currentItems = Array.isArray(state.items) ? state.items : [];
-    const currentIndex = currentItems.findIndex((entry) => entry.item_key === currentItemKey);
-    const expectedNextKey = currentIndex >= 0 ? currentItems[currentIndex + 1]?.item_key : "";
-    const targetIndex = currentIndex >= 0 ? currentIndex + (options.currentLeavesList ? 0 : 1) : 0;
-    const originalPage = state.page;
-
-    await loadItems({ resetPage: false });
-
-    let targetItem = expectedNextKey
-      ? state.items.find((entry) => entry.item_key === expectedNextKey)
-      : null;
-    if (!targetItem) {
-      targetItem = targetIndex >= 0 ? state.items[targetIndex] : null;
-    }
-    if (targetItem?.item_key === currentItemKey) {
-      targetItem = state.items[targetIndex + 1] || null;
-    }
-    if (!targetItem && originalPage < state.totalPages) {
-      state.page = originalPage + 1;
-      state.selectedItemKey = "";
-      await loadItems({ resetPage: false });
-      targetItem = state.items[0] || null;
-    }
-
-    if (targetItem?.item_key) {
-      await loadDetail(targetItem.item_key);
-      return true;
-    }
-
-    if (!options.currentLeavesList && savedData?.dataset && savedData?.item) {
-      state.selectedItemKey = currentItemKey;
-      renderDetail(savedData.dataset, savedData.item);
-      renderListActive(currentItemKey);
-    } else {
-      resetDetail("已保存，当前筛选条件下没有下一张样本。");
-    }
-    return false;
   }
 
   function metaItem(label, value) {
@@ -3098,25 +3044,16 @@
           }))
         };
         const data = await postJson(endpoints.annotation, payload);
-        const currentLeavesList = isReviewQueueEvent() && manualReviewVerdictResolved(editor.reviewVerdict);
-        if (currentLeavesList) {
+        if (isReviewQueueEvent() && manualReviewVerdictResolved(editor.reviewVerdict)) {
           decrementResolvedReviewItem(selectedDataset() || dataset, item);
-        }
-        const advanced = await loadNextItemAfterSave(item.item_key, data, { currentLeavesList });
-        if (currentLeavesList) {
-          setStatus(
-            advanced
-              ? `已完成审核：${manualReviewVerdictText(editor.reviewVerdict)}，已自动切到下一张`
-              : `已完成审核：${manualReviewVerdictText(editor.reviewVerdict)}，当前筛选条件下没有下一张`,
-            "ok"
-          );
+          resetDetail(`审核结论已保存：${manualReviewVerdictText(editor.reviewVerdict)}。`);
+          await loadItems({ resetPage: false });
+          setStatus(`已完成审核：${manualReviewVerdictText(editor.reviewVerdict)}`, "ok");
         } else {
-          setStatus(
-            advanced
-              ? "人工标注与审核结论已保存，已自动切到下一张"
-              : "人工标注与审核结论已保存，当前筛选条件下没有下一张",
-            "ok"
-          );
+          renderDetail(data.dataset, data.item);
+          await loadItems();
+          renderListActive(item.item_key);
+          setStatus("人工标注与审核结论已保存", "ok");
         }
       } catch (error) {
         saveButton.disabled = false;

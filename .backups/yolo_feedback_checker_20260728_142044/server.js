@@ -3201,9 +3201,6 @@ function yoloDatasetSourceTypeForSummary(summary, stats = {}) {
   if (stats.web_crawler) {
     return 'web_crawler';
   }
-  if (isYoloEventFeedbackSummary(summary)) {
-    return 'checker_archive';
-  }
   if (isYoloFinetuneReviewSummary(summary)) {
     return 'finetune_dataset';
   }
