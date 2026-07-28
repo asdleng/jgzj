@@ -545,17 +545,19 @@ const agentRules = [
             <div role="cell" class="cloud-ops-param-unavailable"><button class="cloud-ops-param-danger-control" type="button" data-action="control-open" data-control-kind="system-poweroff" data-tool="vehicle.system_poweroff" data-timeout-s="45" data-control-label="一键系统下电" data-control-desc="车辆静止、无任务、P 挡且 EPB 生效后延时发送系统下电指令" disabled>系统下电</button><small>独立确认、延时执行、受理状态回读和完整审计</small></div>
           </div>
 
-          <div class="cloud-ops-param-node" role="row"><strong>Planning 节点</strong><span>定时策略</span><em>3 组时段已接入</em></div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>绕障总开关</strong><span>车端未接入</span></div>
-            <p role="cell">控制 Planning 是否启用绕障动作</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" disabled>开启</button><button type="button" disabled>关闭</button></div><small>对应 enable_avoid_action，缺少运行时写入工具</small></div>
+          <div class="cloud-ops-param-node" role="row"><strong>Planning 节点</strong><span>模式与定时策略</span><em>绕障、广告机与灯光已接入</em></div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="planning.avoidance_mode">
+            <div role="cell"><strong>绕障总开关</strong><span data-param-current="planning.avoidance_mode">当前：--</span></div>
+            <p role="cell">0 关闭，1 始终开启，2 按条件时段开启</p>
+            <div role="cell" class="cloud-ops-param-select-wrap">
+              <select aria-label="绕障总开关设置值" data-param-input data-param-kind="mode" data-param-group="planning" data-param-key="planning.avoidance_mode" data-param-label="绕障总开关" data-original="" disabled><option value="0">关闭 0</option><option value="1">开启 1</option><option value="2">条件控制 2</option></select>
+              <small>非绕障区域规则仍优先；修改后需重启 Planning 生效</small>
+            </div>
           </div>
           <div class="cloud-ops-param-row" role="row" data-param-row="planning.forced_avoidance">
-            <div role="cell"><strong>定时强制绕障</strong><span data-param-current="planning.enable_time_based_avoid">当前：--</span></div>
-            <p role="cell">指定时段强制开启绕障；非绕障区域规则仍优先</p>
+            <div role="cell"><strong>绕障条件时段</strong><span>模式 2 使用</span></div>
+            <p role="cell">绕障总开关设为条件控制时，在指定时段内开启绕障</p>
             <div role="cell" class="cloud-ops-param-schedule-editor">
-              <div class="cloud-ops-param-choice" data-param-input data-param-kind="boolean" data-param-group="planning" data-param-key="planning.enable_time_based_avoid" data-param-label="定时强制绕障" data-param-value="" data-original=""><button type="button" data-action="param-choice" data-param-value="true" disabled>启用</button><button type="button" data-action="param-choice" data-param-value="false" disabled>停用</button></div>
               <label><span>开始</span><input type="time" step="1" data-param-input data-param-kind="time" data-param-group="planning" data-param-key="planning.avoidance_on_begin_time" data-param-label="强制绕障开始时间" data-original="" disabled><small data-param-current="planning.avoidance_on_begin_time">当前：--</small></label>
               <label><span>结束</span><input type="time" step="1" data-param-input data-param-kind="time" data-param-group="planning" data-param-key="planning.avoidance_on_end_time" data-param-label="强制绕障结束时间" data-original="" disabled><small data-param-current="planning.avoidance_on_end_time">当前：--</small></label>
             </div>
@@ -1436,6 +1438,9 @@ const agentRules = [
     const validateParamChanges = (changes) => {
       changes.forEach((change) => {
         if (change.value === "") throw new Error(`${change.label}没有有效设置值`);
+        if (change.input.dataset.paramKind === "mode" && ![0, 1, 2].includes(Number(change.value))) {
+          throw new Error(`${change.label}必须是 0、1 或 2`);
+        }
         if (change.input.dataset.paramKind === "percent") {
           const value = Number(change.value);
           if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error(`${change.label}必须是 0–100 的整数`);
@@ -1625,10 +1630,12 @@ const agentRules = [
         const requestedChanges = {};
         planningChanges.forEach((change) => {
           const key = change.key.replace("planning.", "");
-          requestedChanges[key] = change.input.dataset.paramKind === "boolean" ? change.value === "true" : change.value;
+          requestedChanges[key] = change.input.dataset.paramKind === "boolean"
+            ? change.value === "true"
+            : change.input.dataset.paramKind === "mode" ? Number(change.value) : change.value;
         });
         operations.push({
-          label: "Planning 定时策略",
+          label: "Planning 配置",
           tool: "planning.config.set",
           args: { changes: requestedChanges, expected_revision: expectedRevision, dry_run: false, verify: true },
           timeout: 35,
