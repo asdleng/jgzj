@@ -896,7 +896,7 @@ def main() -> int:
         type=Path,
         default=Path("/home/admin1/jgzj/.runtime/yolo_loop/datasets/yolo_event_feedback_v1"),
     )
-    parser.add_argument("--days", type=int, default=30, help="Keep the latest N Shanghai calendar days; 0 keeps all history.")
+    parser.add_argument("--days", type=int, default=10, help="Keep the latest N Shanghai calendar days; 0 keeps all history.")
     parser.set_defaults(dedupe_exact=True, dedupe_near=True)
     parser.add_argument("--dedupe-exact", dest="dedupe_exact", action="store_true", help="Remove exact duplicate image_sha256 rows.")
     parser.add_argument("--no-dedupe-exact", dest="dedupe_exact", action="store_false", help="Keep exact duplicate image_sha256 rows.")

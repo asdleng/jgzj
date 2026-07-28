@@ -9,7 +9,7 @@ mkdir -p "$RUNTIME"
 
 LOCK="$RUNTIME/sync.lock"
 LOG="$RUNTIME/sync.log"
-DAYS="${YOLO_EVENT_FEEDBACK_DAYS:-30}"
+DAYS="${YOLO_EVENT_FEEDBACK_DAYS:-10}"
 PERMANENT_ROOT="${QWEN_PERMANENT_YES_ROOT:-/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/permanent_yes_frames}"
 LABEL_ROOT="${QWEN_PERMANENT_YES_LABEL_OUTPUT_ROOT:-$ROOT/.runtime/yolo_label_review/qwen_permanent_yes_bbox_labels_v1}"
 AUDIT_ROOT="${QWEN_PERMANENT_YES_AUDIT_OUTPUT_ROOT:-$ROOT/.runtime/yolo_label_review/qwen_permanent_yes_bbox_audits_v1}"

@@ -161,15 +161,15 @@ AUDIT_ROOT=/home/admin1/jgzj/.runtime/yolo_label_review/qwen_permanent_yes_bbox_
 .runtime/yolo_loop/datasets/yolo_event_feedback_v1/training_guard.json
 ```
 
-同步默认每次重建最近 30 个上海自然日的滚动窗口：
+同步默认每次重建最近 10 个上海自然日的滚动窗口：
 
 ```text
-YOLO_EVENT_FEEDBACK_DAYS=30
+YOLO_EVENT_FEEDBACK_DAYS=10
 YOLO_EVENT_FEEDBACK_DEDUPE_EXACT=1
 YOLO_EVENT_FEEDBACK_DEDUPE_NEAR=0
 ```
 
-这里的 30 天不是为了每小时重复训练，也不会导致 finetune 重复追加。它的作用是让候选集成为一个可恢复的滚动物化视图：Qwen 自动标注、二次审核、NO 后全图补捞、服务中断后的补归档都可能晚于原始事件到达。每次重建近 30 天可以把这些晚到结果补进 manifest 和页面统计。若后续数据量明显增大，可以把小时级任务的 `YOLO_EVENT_FEEDBACK_DAYS` 缩到 3 到 7 天，再保留一个每日或手动的 30 天回填任务。
+这里的 10 天不是为了每小时重复训练，也不会导致 finetune 重复追加。它的作用是让候选集成为一个可恢复的滚动物化视图：Qwen 自动标注、二次审核、NO 后全图补捞、服务中断后的补归档都可能晚于原始事件到达。10 天覆盖当前永久归档 7 天保留期并多留 3 天缓冲。需要长周期回填时，可以手动带 `YOLO_EVENT_FEEDBACK_DAYS=30` 跑一次同步。
 
 图片物化策略：
 
@@ -321,7 +321,7 @@ dataset_summary.json
 追加脚本先读取目标 finetune 数据集已有 manifest_selected_images.jsonl 中的 source_image_sha256/image_sha256；
 再扫描 images/train、images/val、images/test 文件名末尾的 16 位 SHA 前缀；
 如果候选图完整 SHA 已存在，或 SHA 前缀已存在，就跳过并计入 skipped_existing；
-因此即使 yolo_event_feedback_v1 每小时重建 30 天窗口，同一张图也不会被重复拷贝到同一个 finetune 数据集。
+因此即使 yolo_event_feedback_v1 每小时重建滚动窗口，同一张图也不会被重复拷贝到同一个 finetune 数据集。
 ```
 
 当前实现不直接读取 `/app/yolo-label-review` 的人工标注覆盖来追加训练样本；人工复核主要用于页面复核队列状态、人工修正和后续人工导出决策。每日自动追加只依赖候选集 manifest、Qwen 自动标注/审核缓存、候选集 label txt 和车端任务框。
@@ -498,10 +498,10 @@ QWEN_PERMANENT_YES_AUDIT_CLASS_FILTER= 表示不限制审核类别；
 
 ```text
 每小时第 20 和 50 分钟构建 .runtime/yolo_loop/datasets/yolo_event_feedback_v1；
-默认每次重建最近 30 个上海自然日的滚动窗口；
+默认每次重建最近 10 个上海自然日的滚动窗口；
 这样可以补进异步晚到的自动标注、二次审核、NO 后补捞和服务恢复后的归档数据；
 下游每日 finetune 追加只读取前一天数据，并按目标 finetune 数据集中已有 SHA 去重；
-小时级 30 天窗口是为候选集页面和恢复回填服务，不会让同一张图重复进入同一个 finetune 数据集；
+小时级 10 天窗口是为候选集页面和恢复回填服务，不会让同一张图重复进入同一个 finetune 数据集；
 读取 permanent_yes_frames、qwen_permanent_yes_bbox_labels_v1、qwen_permanent_yes_bbox_audits_v1；
 输出 manifest、dataset_summary、training_guard 和 review 图片/标签。
 ```
