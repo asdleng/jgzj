@@ -77,6 +77,9 @@ const controlActions = [
   { label: "重启主控接口", tool: "controller.reboot_master", kind: "reboot-master", desc: "中断主控服务并重新启动", risk: "高风险 · 输入车辆编号确认", timeout: 25 },
   { label: "重启 Media 接口", tool: "controller.reboot_media", kind: "reboot-media", desc: "中断 Media 服务并重新启动", risk: "高风险 · 输入车辆编号确认", timeout: 25 },
   { label: "碰撞停复位", tool: "vehicle.clear_collision_stop", kind: "collision-reset", desc: "静止校验后执行安全复位", risk: "高风险 · 输入车辆编号确认", timeout: 45 },
+  { label: "超声波停障控制", tool: "vehicle.ultrasonic.set", kind: "ultrasonic", desc: "启用或停用超声波停障参与", risk: "高风险 · 默认仅预演", timeout: 45 },
+  { label: "电机上下电", tool: "vehicle.motor_power.set", kind: "motor-power", desc: "控制车辆动力电机上电或下电", risk: "高风险 · 默认仅预演", timeout: 45 },
+  { label: "一键系统下电", tool: "vehicle.system_poweroff", kind: "system-poweroff", desc: "延时发送整车系统下电指令", risk: "极高风险 · 默认仅预演", timeout: 45 },
   { label: "广告屏/灯光控制", tool: "vehicle.body_control", kind: "body-control", desc: "设置屏幕、灯光和转向灯", risk: "逐项选择目标状态", timeout: 35 },
   { label: "系统音量", tool: "audio.system_volume.set", kind: "system-volume", desc: "调节 Ubuntu 扬声器音量", risk: "写入后立即回读", timeout: 25 },
   { label: "麦克风收音", tool: "audio.microphone_gain.set", kind: "microphone-gain", desc: "调节 USB 麦克风采集增益", risk: "写入后立即回读", timeout: 25 },
@@ -506,10 +509,10 @@ const agentRules = [
           </div>
 
           <div class="cloud-ops-param-node" role="row"><strong>控制节点</strong><span>控制模式</span><em>广告机与灯光支持条件控制</em></div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>超声波开启关闭</strong><span>车端未接入</span></div>
+          <div class="cloud-ops-param-row is-capability-pending" role="row" data-control-capability-row data-control-tool="vehicle.ultrasonic.set">
+            <div role="cell"><strong>超声波开启关闭</strong><span data-control-capability-status>正在读取车端能力</span></div>
             <p role="cell">控制底盘控制指令中的超声波功能开关</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" disabled>开启</button><button type="button" disabled>关闭</button></div><small>缺少安全写入与回读工具</small></div>
+            <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" data-action="control-open" data-control-kind="ultrasonic" data-tool="vehicle.ultrasonic.set" data-control-enabled="true" data-timeout-s="45" data-control-label="开启超声波停障" data-control-desc="启用超声波障碍停参与，不切换探头硬件电源" disabled>开启</button><button type="button" data-action="control-open" data-control-kind="ultrasonic" data-tool="vehicle.ultrasonic.set" data-control-enabled="false" data-timeout-s="45" data-control-label="关闭超声波停障" data-control-desc="停用超声波障碍停参与，不切换探头硬件电源" disabled>关闭</button></div><small>执行前校验车辆静止，写入后回读控制指令</small></div>
           </div>
           <div class="cloud-ops-param-row" role="row" data-param-row="body.ad_screen">
             <div role="cell"><strong>广告机控制模式</strong><span data-param-current="body.ad_screen">当前：--</span></div>
@@ -531,15 +534,15 @@ const agentRules = [
             <p role="cell">控制车内氛围灯开关</p>
             <div role="cell" class="cloud-ops-param-select-wrap"><select aria-label="氛围灯设置值" data-param-input data-param-kind="mode" data-param-group="body" data-param-key="body.mood_lamp" data-param-label="氛围灯控制" data-original="" disabled><option value="0">关闭 0</option><option value="1">开启 1</option></select></div>
           </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>电机上下电控制</strong><span>车端未接入</span></div>
+          <div class="cloud-ops-param-row is-capability-pending" role="row" data-control-capability-row data-control-tool="vehicle.motor_power.set">
+            <div role="cell"><strong>电机上下电控制</strong><span data-control-capability-status>正在读取车端能力</span></div>
             <p role="cell">控制车辆动力电机上电或下电</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" disabled>电机上电</button><button type="button" disabled>电机下电</button></div><small>需静止校验、现场安全确认和写后回读</small></div>
+            <div role="cell" class="cloud-ops-param-unavailable"><div class="cloud-ops-param-choice"><button type="button" data-action="control-open" data-control-kind="motor-power" data-tool="vehicle.motor_power.set" data-control-enabled="true" data-timeout-s="45" data-control-label="电机上电" data-control-desc="车辆静止、无任务、P 挡且 EPB 生效后请求动力电机上电" disabled>电机上电</button><button type="button" data-action="control-open" data-control-kind="motor-power" data-tool="vehicle.motor_power.set" data-control-enabled="false" data-timeout-s="45" data-control-label="电机下电" data-control-desc="车辆静止、无任务、P 挡且 EPB 生效后请求动力电机下电" disabled>电机下电</button></div><small>需静止、无活动任务、P 挡、EPB 和硬件反馈确认</small></div>
           </div>
-          <div class="cloud-ops-param-row is-unavailable is-critical" role="row">
-            <div role="cell"><strong>一键系统下电</strong><span>关键动作 · 未接入</span></div>
+          <div class="cloud-ops-param-row is-capability-pending is-critical" role="row" data-control-capability-row data-control-tool="vehicle.system_poweroff">
+            <div role="cell"><strong>一键系统下电</strong><span data-control-capability-status>正在读取车端能力</span></div>
             <p role="cell">关闭车辆系统电源，必须使用独立高风险控制流程</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><button class="cloud-ops-param-danger-control" type="button" disabled>系统下电</button><small>车端尚未提供带确认和回读的安全工具</small></div>
+            <div role="cell" class="cloud-ops-param-unavailable"><button class="cloud-ops-param-danger-control" type="button" data-action="control-open" data-control-kind="system-poweroff" data-tool="vehicle.system_poweroff" data-timeout-s="45" data-control-label="一键系统下电" data-control-desc="车辆静止、无任务、P 挡且 EPB 生效后延时发送系统下电指令" disabled>系统下电</button><small>独立确认、延时执行、受理状态回读和完整审计</small></div>
           </div>
 
           <div class="cloud-ops-param-node" role="row"><strong>Planning 节点</strong><span>定时策略</span><em>3 组时段已接入</em></div>
@@ -976,6 +979,9 @@ const agentRules = [
       "status.audio_alsa",
       "status.body_control",
       "status.body_control_config",
+      "status.ultrasonic",
+      "status.motor_power",
+      "status.system_poweroff",
       "status.planning_config",
       "status.control",
       "status.camera",
@@ -998,6 +1004,9 @@ const agentRules = [
       "controller.reboot_master",
       "controller.reboot_media",
       "vehicle.clear_collision_stop",
+      "vehicle.ultrasonic.set",
+      "vehicle.motor_power.set",
+      "vehicle.system_poweroff",
       "vehicle.body_control",
       "vehicle.body_control_mode.set",
       "planning.config.set",
@@ -1009,6 +1018,9 @@ const agentRules = [
       "reboot-master",
       "reboot-media",
       "collision-reset",
+      "ultrasonic",
+      "motor-power",
+      "system-poweroff",
       "resume-previous"
     ]);
     const MEDIA_EXPECTED_TOOLS = new Set([
@@ -1152,6 +1164,7 @@ const agentRules = [
     const paramConfirmSubmit = paramDialog?.querySelector('[data-role="param-confirm-submit"]');
     const paramDraftInputs = [...(paramPage?.querySelectorAll('[data-param-input]') || [])];
     const controlActionButtons = [...shell.querySelectorAll('[data-action="control-open"]')];
+    const powerControlCapabilityRows = [...(paramPage?.querySelectorAll('[data-control-capability-row]') || [])];
     let lastParamVehicleId = "";
     let paramLoadedVehicleId = "";
     let paramLoadGeneration = 0;
@@ -1360,6 +1373,24 @@ const agentRules = [
         button.disabled = !available;
         button.dataset.toolAvailability = available ? "available" : state.status === "ready" ? "unavailable" : state.status === "error" ? "error" : "pending";
         button.title = available ? "" : state.status === "ready" ? "当前车辆未提供此控制工具" : state.status === "error" ? "工具清单读取失败，暂不能确认可用性" : "正在读取当前车辆工具清单";
+      });
+      powerControlCapabilityRows.forEach((row) => {
+        const toolName = String(row.dataset.controlTool || "").trim();
+        const available = toolAvailable(toolName, state);
+        const pending = state.status === "loading" || state.status === "idle";
+        const status = row.querySelector('[data-control-capability-status]');
+        row.classList.toggle("is-capability-pending", pending);
+        row.classList.toggle("is-unavailable", !available && !pending);
+        row.dataset.controlAvailability = available ? "available" : pending ? "pending" : state.status === "error" ? "error" : "unavailable";
+        if (status) {
+          status.textContent = available
+            ? "车端工具已接入"
+            : pending
+              ? "正在读取车端能力"
+              : state.status === "error"
+                ? `能力读取失败：${state.error || "未知错误"}`
+                : "当前车辆未提供此工具";
+        }
       });
       renderParamDraft();
     };
@@ -5026,6 +5057,62 @@ const agentRules = [
           ]
         };
       }
+      if (normalizedTool === "vehicle.ultrasonic.set" || normalizedTool === "vehicle.motor_power.set") {
+        const isUltrasonic = normalizedTool === "vehicle.ultrasonic.set";
+        const readback = toolResultOfPayload(payload?.control_readback) || result?.after || {};
+        const summary = readback?.summary || {};
+        const requestedEnabled = result?.request?.enabled;
+        const resultStatus = String(result?.status || "").toLowerCase();
+        const blockers = Array.isArray(result?.preflight?.blockers) ? result.preflight.blockers : [];
+        const gateBlockers = Array.isArray(result?.real_action_gate?.blockers) ? result.real_action_gate.blockers : [];
+        const currentState = isUltrasonic
+          ? summary?.control_command_enabled
+          : summary?.vehicle_mcu_state;
+        return {
+          title: isUltrasonic ? "超声波停障控制结果" : "电机上下电结果",
+          tone: ok && !payload?.control_readback_error && !["error", "partial", "unconfirmed"].includes(resultStatus) ? "ok" : "warn",
+          kv: [
+            ["车辆", vehicleId],
+            ["执行方式", result?.dry_run ? "安全预演" : "正式执行"],
+            ["目标状态", requestedEnabled === undefined ? "未返回" : requestedEnabled ? "开启" : "关闭"],
+            ["执行状态", result?.status || "已返回"],
+            ["写后回读", currentState === undefined || currentState === null ? "未返回" : Number(currentState) === 1 || currentState === true ? "开启" : "关闭"],
+            ["反馈确认", result?.verified === undefined ? (result?.dry_run ? "预演不写入" : "未返回") : result.verified ? "已确认" : "未确认"]
+          ],
+          lines: [
+            ...(blockers.length ? [`安全检查阻断：${blockers.join("、")}`] : []),
+            ...(gateBlockers.length ? [`正式控制锁定：${gateBlockers.join("、")}`] : []),
+            ...(result?.error ? [result.error] : []),
+            ...(result?.warning ? [result.warning] : []),
+            ...(payload?.control_readback_error ? [`写后回读失败：${payload.control_readback_error}`] : [])
+          ]
+        };
+      }
+      if (normalizedTool === "vehicle.system_poweroff") {
+        const readback = toolResultOfPayload(payload?.control_readback) || {};
+        const resultStatus = String(result?.status || "").toLowerCase();
+        const blockers = Array.isArray(result?.preflight?.blockers) ? result.preflight.blockers : [];
+        const gateBlockers = Array.isArray(result?.real_action_gate?.blockers) ? result.real_action_gate.blockers : [];
+        const actionStatus = readback?.action?.status || result?.action?.status;
+        return {
+          title: result?.dry_run ? "系统下电安全预演结果" : "系统下电受理结果",
+          tone: ok && !payload?.control_readback_error && resultStatus !== "error" ? "ok" : "warn",
+          kv: [
+            ["车辆", vehicleId],
+            ["执行方式", result?.dry_run ? "安全预演" : "正式执行"],
+            ["执行状态", result?.status || "已返回"],
+            ["请求编号", result?.request_id || "未返回"],
+            ["延时", result?.command_preview?.delay_s != null ? `${result.command_preview.delay_s} 秒` : "未返回"],
+            ["动作回读", actionStatus || (result?.dry_run ? "预演不发送" : "未返回")]
+          ],
+          lines: [
+            ...(blockers.length ? [`安全检查阻断：${blockers.join("、")}`] : []),
+            ...(gateBlockers.length ? [`正式控制锁定：${gateBlockers.join("、")}`] : []),
+            ...(result?.error ? [result.error] : []),
+            ...(payload?.control_readback_error ? [`动作回读失败：${payload.control_readback_error}`] : [])
+          ]
+        };
+      }
       if (normalizedTool === "task.resume_previous") {
         const before = result?.before || {};
         const task = before?.task || {};
@@ -5331,7 +5418,7 @@ const agentRules = [
       const conditional = bodyFieldSupportsConditionalMode(bodyControlTool(), field);
       return `<option value="">保持不变</option><option value="0">关闭 0</option><option value="1">开启 1</option>${conditional ? '<option value="2">条件控制 2</option>' : ""}`;
     };
-    const controlFieldsMarkup = (kind) => {
+    const controlFieldsMarkup = (kind, action = null) => {
       if (kind === "body-control") {
         const bodyTool = bodyControlTool();
         const fieldMarkup = [
@@ -5365,6 +5452,29 @@ const agentRules = [
       }
       if (kind === "collision-reset") {
         return '<p class="cloud-ops-test-control-safety">系统会先停止巡逻、确认车辆静止，再执行碰撞停复位并补发 STOP。</p>';
+      }
+      if (kind === "ultrasonic" || kind === "motor-power") {
+        const isUltrasonic = kind === "ultrasonic";
+        const hasPreset = typeof action?.presetEnabled === "boolean";
+        const enabled = hasPreset ? action.presetEnabled : true;
+        const targetLabel = isUltrasonic
+          ? enabled ? "开启超声波停障参与" : "关闭超声波停障参与"
+          : enabled ? "动力电机上电" : "动力电机下电";
+        const targetMarkup = hasPreset
+          ? `<p class="cloud-ops-test-control-safety"><strong>目标状态：</strong>${targetLabel}</p>`
+          : `<label class="cloud-ops-test-control-check"><input type="checkbox" data-control-arg="enabled" checked /><span>${isUltrasonic ? "勾选开启超声波停障参与，取消勾选则关闭" : "勾选执行电机上电，取消勾选则执行电机下电"}</span></label>`;
+        return `
+          ${targetMarkup}
+          <label class="cloud-ops-test-control-check"><input type="checkbox" data-control-arg="dry_run" checked /><span>仅执行安全预演，不写入车辆</span></label>
+          <p class="cloud-ops-test-control-safety">${isUltrasonic
+            ? "车端将确认车辆静止、任务停止及安全停状态；正式写入后回读超声波控制指令。"
+            : "车端将确认车辆静止、无活动任务、P 挡和 EPB；正式写入后必须获得 MCU 与电机状态反馈。"}</p>`;
+      }
+      if (kind === "system-poweroff") {
+        return `
+          <label class="cloud-ops-test-control-check"><input type="checkbox" data-control-arg="dry_run" checked /><span>仅执行安全预演，不发送系统下电指令</span></label>
+          <label class="cloud-ops-test-control-number"><span>受理后延时</span><div><input type="number" min="1" max="30" step="1" value="5" data-control-arg="delay_s" /><b>秒</b></div></label>
+          <p class="cloud-ops-test-control-safety">正式执行会在受理后再次检查车辆静止、无任务、P 挡和 EPB，然后发送一次系统下电指令。车辆连接随后可能中断。</p>`;
       }
       if (kind === "resume-previous") {
         return '<p class="cloud-ops-test-control-safety">系统只会继续当前仍加载且进度未完成的任务。发送前会核验车辆静止、急停/碰撞停已解除、定位可靠，以及 Routing 和 Planning 在线；不会重新写入路线参数或重置任务进度。</p>';
@@ -5411,13 +5521,19 @@ const agentRules = [
         kind,
         label: String(button?.dataset?.controlLabel || toolName),
         description: String(button?.dataset?.controlDesc || ""),
-        timeoutS: Number.parseInt(button?.dataset?.timeoutS || "30", 10) || 30
+        timeoutS: Number.parseInt(button?.dataset?.timeoutS || "30", 10) || 30,
+        presetEnabled: button?.dataset?.controlEnabled === "true"
+          ? true
+          : button?.dataset?.controlEnabled === "false" ? false : undefined,
+        expectedRevision: "",
+        statusReadbackReady: false,
+        realActionReady: false
       };
       if (controlTitle) controlTitle.textContent = activeControlAction.label;
       if (controlDescription) controlDescription.textContent = activeControlAction.description;
       if (controlVehicle) controlVehicle.textContent = vehicleId;
       if (controlTool) controlTool.textContent = toolName;
-      if (controlFields) controlFields.innerHTML = controlFieldsMarkup(kind);
+      if (controlFields) controlFields.innerHTML = controlFieldsMarkup(kind, activeControlAction);
       const needsTypedConfirm = CONTROL_TYPED_CONFIRM_KINDS.has(kind);
       if (controlConfirm) controlConfirm.hidden = !needsTypedConfirm;
       if (controlConfirmInput) {
@@ -5433,6 +5549,46 @@ const agentRules = [
         controlSubmit.classList.toggle("is-danger", needsTypedConfirm);
       }
       controlDialog.showModal();
+
+      if (kind === "ultrasonic" || kind === "motor-power" || kind === "system-poweroff") {
+        const statusTool = controlReadbackTool(kind);
+        if (!toolAvailable(statusTool, capability)) {
+          if (controlWarning) controlWarning.textContent = `当前车辆未提供 ${statusTool} 回读工具，拒绝正式执行；仍可使用默认预演。`;
+          return;
+        }
+        if (controlWarning) controlWarning.textContent = "正在读取当前控制状态与安全能力...";
+        try {
+          const statusPayload = await requestReadOnlyToolPayload(
+            vehicleId,
+            statusTool,
+            {},
+            25,
+            "control-power-status"
+          );
+          if (!activeControlAction || activeControlAction.vehicleId !== vehicleId || activeControlAction.kind !== kind) return;
+          const statusResult = toolResultOfPayload(statusPayload) || {};
+          activeControlAction.expectedRevision = String(statusResult?.config?.revision || "");
+          activeControlAction.statusReadbackReady = true;
+          const realActionReady = kind === "system-poweroff"
+            ? statusResult?.real_action_capability?.ready
+            : statusResult?.summary?.real_action_capability?.ready;
+          activeControlAction.realActionReady = realActionReady === true;
+          const capabilityLabel = realActionReady === true ? "正式控制已授权" : realActionReady === false ? "正式控制锁定" : "正式控制授权状态未知";
+          let currentLabel = "当前状态已读取";
+          if (kind === "ultrasonic") {
+            const mode = Number(statusResult?.summary?.configured_mode);
+            currentLabel = `当前配置：${mode === 1 ? "开启" : mode === 0 ? "关闭" : mode === 2 ? "条件控制" : "未知"}`;
+          } else if (kind === "motor-power") {
+            const state = Number(statusResult?.summary?.vehicle_mcu_state);
+            currentLabel = `当前 MCU：${state === 1 ? "上电" : state === 0 ? "下电" : "未知"}`;
+          } else {
+            currentLabel = statusResult?.action?.status ? `最近下电动作：${statusResult.action.status}` : "当前没有待执行的系统下电动作";
+          }
+          if (controlWarning) controlWarning.textContent = `${currentLabel}；${capabilityLabel}。默认仅进行安全预演。`;
+        } catch (error) {
+          if (controlWarning) controlWarning.textContent = `状态回读失败：${error?.message || "未知错误"}。拒绝正式执行；仍可使用默认预演。`;
+        }
+      }
 
       if (kind === "system-volume" || kind === "microphone-gain") {
         const readTool = audioStatusTool(capability);
@@ -5479,6 +5635,48 @@ const agentRules = [
       if (action.kind === "resume-previous") {
         return { dry_run: false, cmd_timeout_s: 3, post_check_delay_s: 0.8 };
       }
+      if (action.kind === "ultrasonic" || action.kind === "motor-power") {
+        const dryRun = Boolean(controlFields?.querySelector('input[data-control-arg="dry_run"]')?.checked);
+        if (!dryRun && !action.statusReadbackReady) {
+          throw new Error("当前状态与安全能力未成功回读，只允许安全预演");
+        }
+        if (!dryRun && !action.realActionReady) {
+          throw new Error("车端正式控制尚未授权，只允许安全预演");
+        }
+        const targetInput = controlFields?.querySelector('input[data-control-arg="enabled"]');
+        const enabled = typeof action.presetEnabled === "boolean" ? action.presetEnabled : Boolean(targetInput?.checked);
+        return {
+          enabled,
+          dry_run: dryRun,
+          confirm_vehicle_id: action.vehicleId,
+          ...(action.expectedRevision ? { expected_revision: action.expectedRevision } : {}),
+          verify: true,
+          post_check_timeout_s: 5,
+          stationary_speed_max_kph: 0.1
+        };
+      }
+      if (action.kind === "system-poweroff") {
+        const dryRun = Boolean(controlFields?.querySelector('input[data-control-arg="dry_run"]')?.checked);
+        if (!dryRun && !action.statusReadbackReady) {
+          throw new Error("当前状态与安全能力未成功回读，只允许安全预演");
+        }
+        if (!dryRun && !action.realActionReady) {
+          throw new Error("车端正式系统下电尚未授权，只允许安全预演");
+        }
+        const delaySeconds = Number(controlFields?.querySelector('input[data-control-arg="delay_s"]')?.value);
+        if (!Number.isFinite(delaySeconds) || delaySeconds < 1 || delaySeconds > 30) {
+          throw new Error("系统下电延时必须在 1–30 秒之间");
+        }
+        return {
+          dry_run: dryRun,
+          confirm_vehicle_id: action.vehicleId,
+          request_id: `cloud-ops-poweroff-${action.vehicleId}-${Date.now()}`,
+          delay_s: delaySeconds,
+          publish_duration_s: 1,
+          brake_hold_percent: 20,
+          stationary_speed_max_kph: 0.1
+        };
+      }
       if (action.kind === "body-control") {
         const args = { dry_run: false, persistent: true, require_stationary: false };
         controlFields?.querySelectorAll("select[data-control-arg]").forEach((select) => {
@@ -5511,6 +5709,9 @@ const agentRules = [
     const controlReadbackTool = (kind) => {
       if (kind === "body-control") return "status.body_control";
       if (kind === "collision-reset") return "status.can";
+      if (kind === "ultrasonic") return "status.ultrasonic";
+      if (kind === "motor-power") return "status.motor_power";
+      if (kind === "system-poweroff") return "status.system_poweroff";
       if (kind === "system-volume" || kind === "microphone-gain") return audioStatusTool();
       return "";
     };
@@ -5583,13 +5784,19 @@ const agentRules = [
         const returnedStatus = String(returnedResult?.status || "").toLowerCase();
         const returnedError = returnedResult?.error || returnedResult?.message || "车端拒绝执行";
         const operationFailed = returnedStatus === "error";
-        const operationPartial = returnedStatus === "partial";
+        const operationPartial = returnedStatus === "partial" || returnedStatus === "unconfirmed";
+        const operationDryRun = returnedResult?.dry_run === true;
+        const operationAccepted = returnedStatus === "accepted";
         setStatus(
           operationFailed
             ? `${action.label}未执行：${returnedError}`
             : operationPartial
               ? `${action.label}已发送，但结果未确认：${returnedError}`
-              : `${action.label}已执行${readbackTool ? (readbackError ? ` · 回读失败：${readbackError}` : " · 写后回读完成") : ""}`,
+              : operationDryRun
+                ? `${action.label}安全预演完成，没有写入车辆`
+                : operationAccepted
+                  ? `${action.label}已受理${readbackTool ? (readbackError ? ` · 回读失败：${readbackError}` : " · 受理状态已回读") : ""}`
+                  : `${action.label}已执行${readbackTool ? (readbackError ? ` · 回读失败：${readbackError}` : " · 写后回读完成") : ""}`,
           operationFailed || operationPartial || readbackError ? "error" : "ok"
         );
         controlActionInFlight = false;

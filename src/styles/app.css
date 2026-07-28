@@ -9490,7 +9490,8 @@ body.yolo-review-is-panning {
 
 .cloud-ops-test-control-field-grid label,
 .cloud-ops-test-control-confirm,
-.cloud-ops-test-control-volume {
+.cloud-ops-test-control-volume,
+.cloud-ops-test-control-number {
   display: grid;
   gap: 7px;
   min-width: 0;
@@ -9505,7 +9506,8 @@ body.yolo-review-is-panning {
 
 .cloud-ops-test-control-field-grid select,
 .cloud-ops-test-control-confirm input,
-.cloud-ops-test-control-volume input[type="number"] {
+.cloud-ops-test-control-volume input[type="number"],
+.cloud-ops-test-control-number input[type="number"] {
   width: 100%;
   min-width: 0;
   min-height: 40px;
@@ -9537,6 +9539,18 @@ body.yolo-review-is-panning {
   grid-template-columns: minmax(120px, 1fr) 82px 18px;
   align-items: center;
   gap: 10px;
+}
+
+.cloud-ops-test-control-number > div {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+}
+
+.cloud-ops-test-control-number b {
+  color: #94a3b8;
+  font-size: 0.76rem;
 }
 
 .cloud-ops-test-control-volume input[type="range"] {
@@ -11825,6 +11839,17 @@ body.yolo-review-is-panning {
 
 #cloud-ops-test-params .cloud-ops-param-row.is-capability-pending > div[role="cell"]:first-child span {
   color: #67e8f9;
+}
+
+#cloud-ops-test-params .cloud-ops-param-row[data-control-availability="available"] > div[role="cell"]:first-child span {
+  color: #86efac;
+}
+
+#cloud-ops-test-params .cloud-ops-param-row[data-control-availability="available"] .cloud-ops-param-choice button:not(:disabled):hover,
+#cloud-ops-test-params .cloud-ops-param-row[data-control-availability="available"] .cloud-ops-param-danger-control:not(:disabled):hover {
+  border-color: #22d3ee !important;
+  color: #ecfeff !important;
+  background: rgba(8, 145, 178, 0.2) !important;
 }
 
 .cloud-ops-test-command-button--control[data-tool-availability="pending"] {
