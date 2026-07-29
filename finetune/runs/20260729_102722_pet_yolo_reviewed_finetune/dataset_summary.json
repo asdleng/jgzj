@@ -1,0 +1,39 @@
+{
+  "schema": "jgzj_pet_reviewed_stratified_finetune_dataset.v1",
+  "created_at": "2026-07-29T10:27:24.894667+08:00",
+  "run_tag": "20260729_102722_pet_yolo_reviewed_finetune",
+  "dataset_id": "loop:finetune_pet",
+  "source_dataset": "/home/admin1/jgzj/.runtime/yolo_loop/datasets/finetune_pet",
+  "dataset_dir": "/home/admin1/jgzj/.runtime/finetune/datasets/20260729_102722_pet_yolo_reviewed_finetune/pet_yolo_reviewed_stratified",
+  "data_yaml": "/home/admin1/jgzj/.runtime/finetune/datasets/20260729_102722_pet_yolo_reviewed_finetune/pet_yolo_reviewed_stratified/data.yaml",
+  "base_weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/pet_yolo_best.pt",
+  "seed": 20260729,
+  "split_policy": "positive and negative sampled independently with train/val/test = 80/10/10",
+  "manual_annotations": 473,
+  "positive_images": 453,
+  "negative_images": 20,
+  "total_images": 473,
+  "total_boxes": 460,
+  "split_counts": {
+    "train": {
+      "positive": 363,
+      "negative": 16,
+      "images": 379,
+      "boxes": 370
+    },
+    "val": {
+      "positive": 45,
+      "negative": 2,
+      "images": 47,
+      "boxes": 45
+    },
+    "test": {
+      "positive": 45,
+      "negative": 2,
+      "images": 47,
+      "boxes": 45
+    }
+  },
+  "skipped": {},
+  "manifest": "/home/admin1/jgzj/.runtime/finetune/datasets/20260729_102722_pet_yolo_reviewed_finetune/pet_yolo_reviewed_stratified/manifest_selected_images.jsonl"
+}

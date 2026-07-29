@@ -1,0 +1,15 @@
+{
+  "run_tag": "20260729_102722_pet_yolo_reviewed_finetune",
+  "session": "pet-ft-gpu3-20260729_102722",
+  "backend": "a100",
+  "gpu": 3,
+  "local_dataset": "/home/admin1/jgzj/.runtime/finetune/datasets/20260729_102722_pet_yolo_reviewed_finetune/pet_yolo_reviewed_stratified",
+  "local_weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/pet_yolo_best.pt",
+  "local_job": "/home/admin1/jgzj/finetune/runs/20260729_102722_pet_yolo_reviewed_finetune/20260729_102722_pet_yolo_reviewed_finetune.a100_pet_finetune.sh",
+  "remote_dataset": "/home/sari/jgzj_yolo_finetune/datasets/20260729_102722_pet_yolo_reviewed_finetune/pet_yolo_reviewed_stratified",
+  "remote_weight": "/home/sari/jgzj_yolo_finetune/weights/20260729_102722_pet_yolo_reviewed_finetune_pet_yolo_best.pt",
+  "remote_job": "/home/sari/jgzj_yolo_finetune/logs/20260729_102722_pet_yolo_reviewed_finetune.a100_pet_finetune.sh",
+  "remote_log": "/home/sari/jgzj_yolo_finetune/logs/pet_yolo_reviewed_20260729_102722_pet_yolo_reviewed_finetune.log",
+  "remote_out": "/home/sari/jgzj_yolo_finetune/results/pet_yolo_reviewed_20260729_102722_pet_yolo_reviewed_finetune",
+  "remote_project": "/home/sari/jgzj_yolo_finetune/runs/pet_yolo"
+}

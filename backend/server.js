@@ -15586,6 +15586,7 @@ const cloudOpsVehicleControlToolNames = new Set([
   'vehicle.system_poweroff',
   'vehicle.clear_collision_stop',
   'planning.config.set',
+  'planning.point_broadcast.set',
   'controller.reboot_master',
   'controller.reboot_media'
 ]);

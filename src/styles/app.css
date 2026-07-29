@@ -11966,9 +11966,17 @@ body.yolo-review-is-panning {
 }
 
 .cloud-ops-param-coordinate-control {
-  grid-template-columns: 70px repeat(2, minmax(0, 1fr));
+  grid-template-columns: 72px repeat(2, minmax(92px, 1fr));
+  gap: 8px;
   align-items: center;
 }
+
+.cloud-ops-param-row:not(.is-unavailable) .cloud-ops-param-coordinate-control input[type="number"] {
+  color: #f8fafc;
+  border-color: rgba(100, 116, 139, 0.52);
+}
+
+.cloud-ops-param-coordinate-control input[type="checkbox"] { accent-color: #0891b2; }
 
 .cloud-ops-param-inline-control {
   grid-template-columns: minmax(130px, 1fr) minmax(90px, 0.65fr);

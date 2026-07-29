@@ -590,20 +590,24 @@ const agentRules = [
             <p role="cell">Planning 中 AI 相关功能阈值，当前语义不明确</p>
             <div role="cell" class="cloud-ops-param-unavailable"><input type="number" inputmode="decimal" placeholder="参数定义确认后开放" disabled><small>避免把多个算法阈值合并为一项</small></div>
           </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>定点播报经纬度</strong><span>车端未接入</span></div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="point_broadcast.coordinate">
+            <div role="cell"><strong>定点播报经纬度</strong><span data-param-current="point_broadcast.enabled">当前：--</span></div>
             <p role="cell">启用定点播报并设置触发点经度、纬度</p>
-            <div role="cell" class="cloud-ops-param-unavailable cloud-ops-param-coordinate-control"><label><input type="checkbox" disabled><span>启用</span></label><input type="number" min="-180" max="180" step="0.000001" placeholder="经度" disabled><input type="number" min="-90" max="90" step="0.000001" placeholder="纬度" disabled></div>
+            <div role="cell" class="cloud-ops-param-coordinate-control">
+              <label><input type="checkbox" data-param-input data-param-kind="checkbox" data-param-group="point_broadcast" data-param-key="point_broadcast.enabled" data-param-label="定点播报" data-original="" disabled><span>启用</span></label>
+              <label><span>经度</span><input type="number" min="-180" max="180" step="0.000001" inputmode="decimal" aria-label="定点播报经度" placeholder="-180 至 180" data-param-input data-param-kind="number" data-param-group="point_broadcast" data-param-key="point_broadcast.longitude" data-param-label="定点播报经度" data-original="" disabled></label>
+              <label><span>纬度</span><input type="number" min="-90" max="90" step="0.000001" inputmode="decimal" aria-label="定点播报纬度" placeholder="-90 至 90" data-param-input data-param-kind="number" data-param-group="point_broadcast" data-param-key="point_broadcast.latitude" data-param-label="定点播报纬度" data-original="" disabled></label>
+            </div>
           </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>车身膨胀距离</strong><span>车端未接入</span></div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="planning.body_inflation_distance_m">
+            <div role="cell"><strong>车身膨胀距离</strong><span data-param-current="planning.body_inflation_distance_m">当前：--</span></div>
             <p role="cell">设置 Planning 规划安全边界的车身膨胀距离</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><label class="cloud-ops-param-number"><input type="number" min="0" step="0.01" inputmode="decimal" placeholder="上下限待车端 Schema" disabled><span>m</span></label><small>单位已确定为米；最大值尚未确认</small></div>
+            <div role="cell" class="cloud-ops-param-unavailable"><label class="cloud-ops-param-number"><input type="number" min="0" max="1.5" step="0.01" inputmode="decimal" aria-label="车身膨胀距离设置值" placeholder="0.00 至 1.50" data-param-input data-param-kind="number" data-param-group="planning" data-param-key="planning.body_inflation_distance_m" data-param-label="车身膨胀距离" data-param-unit="m" data-original="" disabled><span>m</span></label><small>允许范围由当前车辆 Schema 下发；修改后需重启 Planning 生效</small></div>
           </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>绕障车辆 Z 轴阈值</strong><span>车端未接入</span></div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="planning.avoidance_z_corrdinate_threshold">
+            <div role="cell"><strong>绕障车辆 Z 轴阈值</strong><span data-param-current="planning.avoidance_z_corrdinate_threshold">当前：--</span></div>
             <p role="cell">过滤参与绕障判断的车辆目标高度</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><label class="cloud-ops-param-number"><input type="number" step="0.01" inputmode="decimal" placeholder="范围待确认" disabled><span>m</span></label><small>对应 avoidance_z_corrdinate_threshold</small></div>
+            <div role="cell" class="cloud-ops-param-unavailable"><label class="cloud-ops-param-number"><input type="number" min="-10" max="0" step="0.01" inputmode="decimal" aria-label="绕障车辆 Z 轴阈值设置值" placeholder="-10.00 至 0.00" data-param-input data-param-kind="number" data-param-group="planning" data-param-key="planning.avoidance_z_corrdinate_threshold" data-param-label="绕障车辆 Z 轴阈值" data-param-unit="m" data-original="" disabled><span>m</span></label><small>单位为米；字段名保持车端现有拼写，修改后需重启 Planning 生效</small></div>
           </div>
 
           <div class="cloud-ops-param-node" role="row"><strong>语音节点</strong><span>播报与静音</span><em>音量 2 项已接入 · 策略待接入</em></div>
@@ -985,6 +989,7 @@ const agentRules = [
       "status.motor_power",
       "status.system_poweroff",
       "status.planning_config",
+      "status.point_broadcast",
       "status.control",
       "status.camera",
       "camera.capture",
@@ -1227,15 +1232,18 @@ const agentRules = [
     };
     const paramInputValue = (input) => input.dataset.paramKind === "boolean"
       ? String(input.dataset.paramValue || "")
-      : input.dataset.paramKind === "time" ? normalizeParamTime(input.value) : String(input.value || "");
+      : input.dataset.paramKind === "checkbox"
+        ? (input.checked ? "true" : "false")
+        : input.dataset.paramKind === "time" ? normalizeParamTime(input.value) : String(input.value || "");
     const paramValueText = (input, value) => {
       const normalized = String(value ?? "");
       if (!normalized) return "--";
-      if (input.dataset.paramKind === "boolean") return normalized === "true" ? "开启" : "关闭";
+      if (input.dataset.paramKind === "boolean" || input.dataset.paramKind === "checkbox") return normalized === "true" ? "开启" : "关闭";
       if (input.dataset.paramKind === "mode") return ({ 0: "关闭 0", 1: "开启 1", 2: "条件控制 2" })[normalized] || normalized;
       if (input.dataset.paramKind === "steer") return ({ 0: "关闭", 1: "左转", 2: "右转", 3: "双闪" })[normalized] || normalized;
       if (input.dataset.paramKind === "percent") return `${normalized}%`;
       if (input.dataset.paramKind === "time") return normalizeParamTime(normalized);
+      if (input.dataset.paramKind === "number" && input.dataset.paramUnit) return `${normalized} ${input.dataset.paramUnit}`;
       return normalized;
     };
     const setParamInputEnabled = (input, enabled) => {
@@ -1254,6 +1262,8 @@ const agentRules = [
           button.classList.toggle("is-active", button.dataset.paramValue === normalized);
           button.setAttribute("aria-pressed", button.dataset.paramValue === normalized ? "true" : "false");
         });
+      } else if (input.dataset.paramKind === "checkbox") {
+        input.checked = normalized === "true";
       } else {
         input.value = input.dataset.paramKind === "time" ? normalizeParamTime(normalized) : normalized;
       }
@@ -1314,11 +1324,23 @@ const agentRules = [
     const bodyControlTool = (state = vehicleToolListState) => state?.byName?.get("vehicle.body_control") || null;
     const bodyControlModeTool = (state = vehicleToolListState) => state?.byName?.get("vehicle.body_control_mode.set") || null;
     const planningConfigTool = (state = vehicleToolListState) => state?.byName?.get("planning.config.set") || null;
+    const pointBroadcastTool = (state = vehicleToolListState) => state?.byName?.get("planning.point_broadcast.set") || null;
+    const planningFieldSchema = (tool, field) => toolFieldSchema(tool, "changes")?.properties?.[field] || null;
     const planningFieldSupported = (tool, field) => {
       if (!tool) return false;
       const changesSchema = toolFieldSchema(tool, "changes");
       const properties = changesSchema?.properties;
       return !properties || typeof properties !== "object" || Boolean(properties[field]);
+    };
+    const pointBroadcastFieldSupported = (tool, field) => Boolean(tool) && (!toolHasDeclaredProperties(tool) || Boolean(toolFieldSchema(tool, field)));
+    const applyParamNumberSchema = (input, fieldSchema) => {
+      if (input.dataset.paramKind !== "number" || !fieldSchema) return;
+      const minimum = Number(fieldSchema.minimum);
+      const maximum = Number(fieldSchema.maximum);
+      if (Number.isFinite(minimum)) input.min = String(minimum);
+      if (Number.isFinite(maximum)) input.max = String(maximum);
+      const step = Number(fieldSchema.multipleOf ?? fieldSchema.step);
+      if (Number.isFinite(step) && step > 0) input.step = String(step);
     };
     const audioStatusTool = (state = vehicleToolListState) => toolAvailable("status.audio", state)
       ? "status.audio"
@@ -1346,6 +1368,7 @@ const agentRules = [
       const bodyTool = bodyControlTool(state);
       const bodyModeTool = bodyControlModeTool(state);
       const planningTool = planningConfigTool(state);
+      const broadcastTool = pointBroadcastTool(state);
       paramDraftInputs.forEach((input) => {
         if (state.status === "loading" || state.status === "idle") {
           setParamCapability(input, "pending");
@@ -1363,7 +1386,14 @@ const agentRules = [
         }
         if (input.dataset.paramGroup === "planning") {
           const field = String(input.dataset.paramKey || "").replace("planning.", "");
+          applyParamNumberSchema(input, planningFieldSchema(planningTool, field));
           setParamCapability(input, !planningTool ? "unavailable" : planningFieldSupported(planningTool, field) ? "available" : "unsupported");
+          return;
+        }
+        if (input.dataset.paramGroup === "point_broadcast") {
+          const field = String(input.dataset.paramKey || "").replace("point_broadcast.", "");
+          applyParamNumberSchema(input, toolFieldSchema(broadcastTool, field));
+          setParamCapability(input, !broadcastTool ? "unavailable" : pointBroadcastFieldSupported(broadcastTool, field) ? "available" : "unsupported");
           return;
         }
         const writeTool = input.dataset.paramKey === "audio.system_volume" ? "audio.system_volume.set" : "audio.microphone_gain.set";
@@ -1448,8 +1478,35 @@ const agentRules = [
         if (change.input.dataset.paramKind === "time" && !/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(change.value)) {
           throw new Error(`${change.label}必须是有效时间`);
         }
+        if (change.input.dataset.paramKind === "number") {
+          const value = Number(change.value);
+          const minimum = Number(change.input.min);
+          const maximum = Number(change.input.max);
+          if (!Number.isFinite(value)) throw new Error(`${change.label}必须是有效数字`);
+          if (change.input.min !== "" && Number.isFinite(minimum) && value < minimum) throw new Error(`${change.label}不能小于 ${minimum}`);
+          if (change.input.max !== "" && Number.isFinite(maximum) && value > maximum) throw new Error(`${change.label}不能大于 ${maximum}`);
+        }
       });
-      const changesPlanningSchedule = changes.some((change) => change.group === "planning");
+      const pointEnabledInput = paramDraftInputs.find((input) => input.dataset.paramKey === "point_broadcast.enabled");
+      if (pointEnabledInput && paramInputValue(pointEnabledInput) === "true") {
+        const longitude = paramDraftInputs.find((input) => input.dataset.paramKey === "point_broadcast.longitude");
+        const latitude = paramDraftInputs.find((input) => input.dataset.paramKey === "point_broadcast.latitude");
+        if (!longitude || !latitude || paramInputValue(longitude) === "" || paramInputValue(latitude) === "") {
+          throw new Error("启用定点播报前必须填写经度和纬度");
+        }
+      }
+      const scheduleFields = new Set([
+        "planning.enable_time_based_avoid",
+        "planning.avoidance_on_begin_time",
+        "planning.avoidance_on_end_time",
+        "planning.enable_ad_compulsory_off",
+        "planning.ad_compulsory_off_begin_time",
+        "planning.ad_compulsory_off_end_time",
+        "planning.enable_mood_lamp_on",
+        "planning.mood_lamp_on_begin_time",
+        "planning.mood_lamp_on_end_time"
+      ]);
+      const changesPlanningSchedule = changes.some((change) => scheduleFields.has(change.key));
       const enablesConditionalMode = changes.some((change) => change.group === "body" && change.input.dataset.paramKind === "mode" && change.value === "2");
       if (changesPlanningSchedule && enablesConditionalMode) {
         throw new Error("请先保存定时时段并在 Planning 重启生效后，再单独切换条件控制模式");
@@ -1540,28 +1597,35 @@ const agentRules = [
       const planningPromise = toolAvailable("status.planning_config", capability)
         ? requestReadOnlyToolPayload(vehicleId, "status.planning_config", {}, 25, "parameter-read-planning-config")
         : Promise.resolve(null);
+      const pointBroadcastPromise = toolAvailable("status.point_broadcast", capability)
+        ? requestReadOnlyToolPayload(vehicleId, "status.point_broadcast", {}, 25, "parameter-read-point-broadcast")
+        : Promise.resolve(null);
       const audioReadTool = audioStatusTool(capability);
       const audioPromise = audioReadTool
         ? requestReadOnlyToolPayload(vehicleId, audioReadTool, { preferred_keywords: ["Yundea", "Jabra"], speaker_min_percent: 0, include_controls: true }, 25, "parameter-read-audio")
         : Promise.resolve(null);
-      const [bodyConfigResponse, bodyResponse, planningResponse, audioResponse] = await Promise.allSettled([bodyConfigPromise, bodyPromise, planningPromise, audioPromise]);
+      const [bodyConfigResponse, bodyResponse, planningResponse, pointBroadcastResponse, audioResponse] = await Promise.allSettled([bodyConfigPromise, bodyPromise, planningPromise, pointBroadcastPromise, audioPromise]);
       if (generation !== paramLoadGeneration || vehicleId !== selectedVehicleId()) return lastParamReadback;
       const errors = [];
       if (bodyConfigResponse.status === "rejected") errors.push(`车身配置：${bodyConfigResponse.reason?.message || "读取失败"}`);
       if (bodyResponse.status === "rejected") errors.push(`车身状态：${bodyResponse.reason?.message || "读取失败"}`);
       if (planningResponse.status === "rejected") errors.push(`Planning 配置：${planningResponse.reason?.message || "读取失败"}`);
+      if (pointBroadcastResponse.status === "rejected") errors.push(`定点播报：${pointBroadcastResponse.reason?.message || "读取失败"}`);
       if (audioResponse.status === "rejected") errors.push(`音频状态：${audioResponse.reason?.message || "读取失败"}`);
       const bodyConfig = bodyConfigResponse.status === "fulfilled" && bodyConfigResponse.value ? toolResultOfPayload(bodyConfigResponse.value) || {} : {};
       const bodyStatus = bodyResponse.status === "fulfilled" && bodyResponse.value ? toolResultOfPayload(bodyResponse.value) || {} : {};
       const planningConfig = planningResponse.status === "fulfilled" && planningResponse.value ? toolResultOfPayload(planningResponse.value) || {} : {};
+      const pointBroadcast = pointBroadcastResponse.status === "fulfilled" && pointBroadcastResponse.value ? toolResultOfPayload(pointBroadcastResponse.value) || {} : {};
       const audio = audioResponse.status === "fulfilled" && audioResponse.value ? toolResultOfPayload(audioResponse.value) || {} : {};
       lastParamReadback.revisions.body = String(bodyConfig?.revision || "");
       lastParamReadback.revisions.planning = String(planningConfig?.revision || "");
+      lastParamReadback.revisions.pointBroadcast = String(pointBroadcast?.revision || "");
       let loadedCount = 0;
       paramDraftInputs.forEach((input) => {
         if (input.dataset.paramCapability !== "available") return;
         const key = String(input.dataset.paramKey || "");
         let value = "";
+        let readable = false;
         if (input.dataset.paramGroup === "body") {
           const field = key.replace("body.", "");
           value = input.dataset.paramKind === "steer"
@@ -1573,6 +1637,13 @@ const agentRules = [
           value = input.dataset.paramKind === "boolean"
             ? (raw === true ? "true" : raw === false ? "false" : "")
             : input.dataset.paramKind === "time" ? normalizeParamTime(raw) : String(raw ?? "");
+        } else if (input.dataset.paramGroup === "point_broadcast") {
+          const field = key.replace("point_broadcast.", "");
+          readable = Object.prototype.hasOwnProperty.call(pointBroadcast?.config || {}, field);
+          const raw = pointBroadcast?.config?.[field];
+          value = input.dataset.paramKind === "checkbox"
+            ? (raw === true ? "true" : raw === false ? "false" : "")
+            : String(raw ?? "");
         } else if (key === "audio.system_volume") {
           const raw = audio?.system_volume?.percent ?? audio?.speaker?.percent;
           value = Number.isFinite(Number(raw)) && Number(raw) >= 0 && Number(raw) <= 100 ? String(Math.round(Number(raw))) : "";
@@ -1581,7 +1652,7 @@ const agentRules = [
           value = Number.isFinite(Number(raw)) && Number(raw) >= 0 && Number(raw) <= 100 ? String(Math.round(Number(raw))) : "";
         }
         setParamInputValue(input, value, { original: true });
-        if (value !== "") {
+        if (value !== "" || readable) {
           loadedCount += 1;
           lastParamReadback.values.set(key, value);
           lastParamReadback.readableKeys.add(key);
@@ -1632,7 +1703,7 @@ const agentRules = [
           const key = change.key.replace("planning.", "");
           requestedChanges[key] = change.input.dataset.paramKind === "boolean"
             ? change.value === "true"
-            : change.input.dataset.paramKind === "mode" ? Number(change.value) : change.value;
+            : ["mode", "number"].includes(change.input.dataset.paramKind) ? Number(change.value) : change.value;
         });
         operations.push({
           label: "Planning 配置",
@@ -1640,6 +1711,28 @@ const agentRules = [
           args: { changes: requestedChanges, expected_revision: expectedRevision, dry_run: false, verify: true },
           timeout: 35,
           keys: planningChanges.map((change) => change.key)
+        });
+      }
+      const pointBroadcastChanges = changes.filter((change) => change.group === "point_broadcast");
+      if (pointBroadcastChanges.length) {
+        const expectedRevision = String(lastParamReadback?.revisions?.pointBroadcast || "");
+        if (!expectedRevision) {
+          setStatus("定点播报配置版本未读取，拒绝覆盖现场配置，请刷新后重试", "error");
+          return;
+        }
+        const args = { expected_revision: expectedRevision, dry_run: false, verify: true };
+        pointBroadcastChanges.forEach((change) => {
+          const key = change.key.replace("point_broadcast.", "");
+          args[key] = change.input.dataset.paramKind === "checkbox"
+            ? change.value === "true"
+            : Number(change.value);
+        });
+        operations.push({
+          label: "定点播报",
+          tool: "planning.point_broadcast.set",
+          args,
+          timeout: 35,
+          keys: pointBroadcastChanges.map((change) => change.key)
         });
       }
       const bodyModeChanges = changes.filter((change) => change.group === "body" && change.input.dataset.paramKind === "mode");

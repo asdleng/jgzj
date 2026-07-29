@@ -1,0 +1,22 @@
+{
+  "run_tag": "20260729_102722_pet_yolo_reviewed_finetune",
+  "result_root": "/home/admin1/jgzj/.runtime/finetune/results/20260729_102722_pet_yolo_reviewed_finetune",
+  "local_best_weight": "/home/admin1/jgzj/.runtime/finetune/results/20260729_102722_pet_yolo_reviewed_finetune/pet_yolo_reviewed_finetune_20260729_102722_pet_yolo_reviewed_finetune_best.pt",
+  "local_last_weight": "/home/admin1/jgzj/.runtime/finetune/results/20260729_102722_pet_yolo_reviewed_finetune/pet_yolo_reviewed_finetune_20260729_102722_pet_yolo_reviewed_finetune_last.pt",
+  "local_best_sha256": "e7c462393eea1f497b37986d41a2ad7998390add9ffbe35d13074bdfa653c13d",
+  "local_last_sha256": "c499c6978d2622274ccae61f00508c980b14d3bde19f2677430892022dd6dc7b",
+  "a100_run_dir": "/home/sari/jgzj_yolo_finetune/runs/pet_yolo/pet_yolo_reviewed_finetune_20260729_102722_pet_yolo_reviewed_finetune_pet_yolo_best_20260729_102722_pet_yolo_reviewed_finetune_20260729_023448",
+  "a100_best_weight": "/home/sari/jgzj_yolo_finetune/runs/pet_yolo/pet_yolo_reviewed_finetune_20260729_102722_pet_yolo_reviewed_finetune_pet_yolo_best_20260729_102722_pet_yolo_reviewed_finetune_20260729_023448/weights/best.pt",
+  "train_seconds": 63.82,
+  "status": "ok",
+  "metrics": {
+    "val_precision": 0.9538221631014725,
+    "val_recall": 0.918128139866511,
+    "val_map50": 0.9725110856721798,
+    "val_map50_95": 0.7305968695011533,
+    "test_precision": 0.9774507626661848,
+    "test_recall": 0.8666666666666667,
+    "test_map50": 0.9613694432001413,
+    "test_map50_95": 0.7309942013744376
+  }
+}
