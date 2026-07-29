@@ -1,6 +1,6 @@
 {
   "schema": "jgzj_yolo_training_trends.v1",
-  "updated_at": "2026-07-29T15:57:31.733626+08:00",
+  "updated_at": "2026-07-29T17:06:31.800073+08:00",
   "training_trends": {
     "person_yolo": [
       {
@@ -678,6 +678,29 @@
         "source_run": "/home/admin1/jgzj/.runtime/finetune/results/20260729_102722_pet_yolo_reviewed_finetune",
         "best_weight": "/home/admin1/jgzj/.runtime/finetune/results/20260729_102722_pet_yolo_reviewed_finetune/pet_yolo_reviewed_finetune_20260729_102722_pet_yolo_reviewed_finetune_best.pt",
         "run_count": 1
+      },
+      {
+        "day": "2026-07-29",
+        "task_id": "pet_yolo",
+        "model_family": "balancedneg_full20_20260729_161945",
+        "status": "completed",
+        "metric_source": "finetune_pet_best_test",
+        "score": 0.7904537004194098,
+        "test_precision": 0.9123116083206606,
+        "test_recall": 0.8888888888888888,
+        "test_map50": 0.9207728350626094,
+        "test_map50_95": 0.7904537004194098,
+        "val_precision": 0.9384007334870578,
+        "val_recall": 0.9936125011707229,
+        "val_map50": 0.9929059449866904,
+        "val_map50_95": 0.836986866263681,
+        "best_epoch": 7,
+        "epochs": 20,
+        "started_at": "2026-07-29T08:30:41.556955",
+        "finished_at": "2026-07-29T08:32:16.172183",
+        "source_run": "/home/admin1/jgzj/.runtime/finetune/results/20260729_161945_pet_yolo_finetune_pet_balancedneg_full20",
+        "best_weight": "/home/admin1/jgzj/.runtime/finetune/results/20260729_161945_pet_yolo_finetune_pet_balancedneg_full20/weights/best.pt",
+        "run_count": 1
       }
     ],
     "phone_yolo": [
@@ -977,7 +1000,7 @@
   },
   "monitor_status": {
     "a100_host": "192.168.80.49",
-    "collected_at": 1785311886.5700703,
+    "collected_at": 1785316030.3597014,
     "tmux": [
       "qwen36-labeler-gpu4: 1 windows (created Thu Jun 25 09:16:46 2026)",
       "qwen36mmvllm: 1 windows (created Fri Jun 19 11:03:38 2026)",
@@ -985,10 +1008,10 @@
     ],
     "gpus": [
       "0, 75915, 81920, 0, 25",
-      "1, 72751, 81920, 99, 49",
-      "2, 21715, 81920, 0, 24",
+      "1, 72751, 81920, 100, 47",
+      "2, 21715, 81920, 0, 25",
       "3, 0, 81920, 0, 24",
-      "4, 74509, 81920, 100, 54",
+      "4, 74509, 81920, 100, 55",
       "5, 0, 81920, 0, 23"
     ]
   },
@@ -1016,8 +1039,8 @@
       "download_file": "person_yolo_best.pt",
       "weight_sha256": "a771a222a19a53508f472dcdc630270b3c672f9a9f40682bfa877ca7b4f05483",
       "weight_size_bytes": 20282309,
-      "deployed_at": "2026-07-29T15:57:27.242169+08:00",
-      "updated_at": "2026-07-29T15:57:27.242202+08:00",
+      "deployed_at": "2026-07-29T17:06:31.048951+08:00",
+      "updated_at": "2026-07-29T17:06:31.048984+08:00",
       "training_trends": [
         {
           "day": "2026-07-11",
@@ -1338,7 +1361,7 @@
       "download_file": "vehicle_yolo_best.pt",
       "weight_sha256": "6caf43815a8db66f24d2dc34cb25563bbe5aae9305749fdd375ba0d73ca5eac8",
       "weight_size_bytes": 19149786,
-      "updated_at": "2026-07-29T15:57:27.376087+08:00",
+      "updated_at": "2026-07-29T17:06:31.098962+08:00",
       "note": "车辆识别闭环候选 20260719_150443：训练使用 20260714-20260717 replay 与 20260718 新数据，正/负样本图 3766/5649。闭环 test 上 P/R/mAP50/mAP50-95=0.677/0.680/0.707/0.456；同一 test 重跑旧权重为 0.500/0.271/0.264/0.157，分别提升 17.73/40.85/44.31/29.84 个百分点。该指标不可与历史 different-dataset 指标直接比较。",
       "training_trends": [
         {
@@ -1641,27 +1664,27 @@
       "task_id": "pet_yolo",
       "title": "宠物识别",
       "status": "deployed",
-      "model_family": "yolo12s",
-      "metric_source": "test",
+      "model_family": "balancedneg_full20_20260729_161945",
+      "metric_source": "finetune_pet_best_test",
       "metrics": {
-        "test_precision": 0.9574269591261204,
-        "test_recall": 0.9489882048254836,
-        "test_map50": 0.9718167398169846,
-        "test_map50_95": 0.8706323374835281,
-        "val_precision": 0.959709425748542,
-        "val_recall": 0.9544755159425857,
-        "val_map50": 0.9736489930052966,
-        "val_map50_95": 0.864699952338475
+        "test_precision": 0.9123116083206606,
+        "test_recall": 0.8888888888888888,
+        "test_map50": 0.9207728350626094,
+        "test_map50_95": 0.7904537004194098,
+        "val_precision": 0.9384007334870578,
+        "val_recall": 0.9936125011707229,
+        "val_map50": 0.9929059449866904,
+        "val_map50_95": 0.836986866263681
       },
       "train_progress": null,
-      "source_run": "/home/sari/jgzj_yolo_runs_pet_public/pet_public_yolo12s_gpu3_yolo12s_20260627_023939",
-      "best_weight": "/home/sari/jgzj_yolo_runs_pet_public/pet_public_yolo12s_gpu3_yolo12s_20260627_023939/weights/best.pt",
+      "source_run": "/home/admin1/jgzj/.runtime/finetune/results/20260729_161945_pet_yolo_finetune_pet_balancedneg_full20",
+      "best_weight": "/home/admin1/jgzj/.runtime/finetune/results/20260729_161945_pet_yolo_finetune_pet_balancedneg_full20/weights/best.pt",
       "local_weight": "/home/admin1/jgzj/.runtime/yolo_model_service/weights/pet_yolo_best.pt",
       "download_file": "pet_yolo_best.pt",
-      "weight_sha256": "60e57fd4e89815dfea297aa683a520bd31b7af15e47bfea67a8b4b8e670a8fbe",
-      "weight_size_bytes": 18909978,
-      "deployed_at": "2026-07-29T15:57:31.150130+08:00",
-      "updated_at": "2026-07-29T15:57:31.150163+08:00",
+      "weight_sha256": "7e1254b29c7b78b59cd93a12242e9d1ddc311af823a0624d57d026b3a81a88d5",
+      "weight_size_bytes": 18904538,
+      "updated_at": "2026-07-29T17:06:31.238286+08:00",
+      "note": "finetune_pet 二次整合数据集，负样本按 7/7/6 平均放入 train/val/test；完整训练 20 epoch，best.pt 来自第 7 轮。",
       "training_trends": [
         {
           "day": "2026-06-23",
@@ -1746,6 +1769,29 @@
           "source_run": "/home/admin1/jgzj/.runtime/finetune/results/20260729_102722_pet_yolo_reviewed_finetune",
           "best_weight": "/home/admin1/jgzj/.runtime/finetune/results/20260729_102722_pet_yolo_reviewed_finetune/pet_yolo_reviewed_finetune_20260729_102722_pet_yolo_reviewed_finetune_best.pt",
           "run_count": 1
+        },
+        {
+          "day": "2026-07-29",
+          "task_id": "pet_yolo",
+          "model_family": "balancedneg_full20_20260729_161945",
+          "status": "completed",
+          "metric_source": "finetune_pet_best_test",
+          "score": 0.7904537004194098,
+          "test_precision": 0.9123116083206606,
+          "test_recall": 0.8888888888888888,
+          "test_map50": 0.9207728350626094,
+          "test_map50_95": 0.7904537004194098,
+          "val_precision": 0.9384007334870578,
+          "val_recall": 0.9936125011707229,
+          "val_map50": 0.9929059449866904,
+          "val_map50_95": 0.836986866263681,
+          "best_epoch": 7,
+          "epochs": 20,
+          "started_at": "2026-07-29T08:30:41.556955",
+          "finished_at": "2026-07-29T08:32:16.172183",
+          "source_run": "/home/admin1/jgzj/.runtime/finetune/results/20260729_161945_pet_yolo_finetune_pet_balancedneg_full20",
+          "best_weight": "/home/admin1/jgzj/.runtime/finetune/results/20260729_161945_pet_yolo_finetune_pet_balancedneg_full20/weights/best.pt",
+          "run_count": 1
         }
       ]
     },
@@ -1763,7 +1809,7 @@
       "download_file": "phone_yolo_best.pt",
       "weight_sha256": "ac674ecddb3e55acf84a8b09e2c3d0041a607550cbed9df8edf867ef331ba3b6",
       "weight_size_bytes": 6240874,
-      "updated_at": "2026-07-29T15:57:31.435466+08:00",
+      "updated_at": "2026-07-29T17:06:31.265646+08:00",
       "note": "手机识别当前作为拆分模型使用；public-data 微调结果只进入每日指标，不自动覆盖线上权重。",
       "training_trends": [
         {
@@ -1833,7 +1879,7 @@
       "download_file": "trash_yolo_best.pt",
       "weight_sha256": "ac93669d6e9905e3034b52a51282c57fbb5e89ecba828c3ca681ed2444bdbb7c",
       "weight_size_bytes": 6230435,
-      "updated_at": "2026-07-29T15:57:31.456735+08:00",
+      "updated_at": "2026-07-29T17:06:31.301097+08:00",
       "note": "小垃圾细类：bottle / box / paper / bag；2026-06-27 server-proxy GPU2 重训，按独立 test 稳定性选用 yolov8n。",
       "training_trends": [
         {
@@ -1873,7 +1919,7 @@
       "download_file": "stall_yolo_best.pt",
       "weight_sha256": "cd6b6a93f1ac3bbe752df8639c3701b3149fc94e419a85d0980b72045c076378",
       "weight_size_bytes": 6255658,
-      "updated_at": "2026-07-29T15:57:31.521048+08:00",
+      "updated_at": "2026-07-29T17:06:31.358574+08:00",
       "note": "摆摊识别当前作为拆分模型使用；public-data 微调结果只进入每日指标，不自动覆盖线上权重。",
       "training_trends": [
         {
@@ -1939,7 +1985,7 @@
       "download_file": "fire_smoke_yolo_fire_other_edge_full_continue3_gpu2_20260713.pt",
       "weight_sha256": "9558a3cd88faaa785e52e54c568331adbfedd2f945518d8bd1b6ca0eeb28d436",
       "weight_size_bytes": 18903699,
-      "updated_at": "2026-07-29T15:57:31.595683+08:00",
+      "updated_at": "2026-07-29T17:06:31.606951+08:00",
       "note": "2026-07-13 基于当前 yolo12s 火源烟雾权重，先用 fire_other_edge 固定抽样 12000 条微调 3 epoch，再用剩余 47914 条续训 1 epoch，随后用完整 fire_other_edge train 低学习率续训 3 epoch；指标为原始 fire_other_edge test split。",
       "training_trends": [
         {
@@ -2144,7 +2190,7 @@
       "download_file": "person_behavior_cls_best.pt",
       "weight_sha256": "f76af5d93f784d694ee89e7a040b9e26943cdcc2722a1d7b353b2ed1c60b94ac",
       "weight_size_bytes": 2967041,
-      "updated_at": "2026-07-29T15:57:31.612239+08:00",
+      "updated_at": "2026-07-29T17:06:31.633886+08:00",
       "note": "二阶段人员行为分类：other / phone_use / smoking；用于人员ROI分类。",
       "training_trends": []
     },
@@ -2171,7 +2217,7 @@
       "download_file": "license_plate_yolo_best.pt",
       "weight_sha256": "cefdd65e6a44e2490a146f6897d55491e38085ee9b4f9aa410a09b02a56106c3",
       "weight_size_bytes": 6229859,
-      "updated_at": "2026-07-29T15:57:31.657661+08:00",
+      "updated_at": "2026-07-29T17:06:31.704729+08:00",
       "note": "中国车牌检测：CCPD2020 绿牌数据训练；工作台车牌识别链路为车辆YOLO -> 车牌YOLO -> OCR。",
       "training_trends": []
     },
@@ -2198,7 +2244,7 @@
       "download_file": "fishing_rod_yolo_best.pt",
       "weight_sha256": "14bdee0fc98f24e15f76159d1da535a00a8be0782e22f9205c65a4b8081933e2",
       "weight_size_bytes": 19245523,
-      "updated_at": "2026-07-29T15:57:31.733550+08:00",
+      "updated_at": "2026-07-29T17:06:31.799962+08:00",
       "note": "钓鱼杆种子模型：Objects365/LVIS公开鱼竿框 + 现场钓鱼NO负样本；需结合人员检测与水边ROI规则使用。",
       "training_trends": []
     }
