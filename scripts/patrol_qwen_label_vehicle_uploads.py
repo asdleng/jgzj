@@ -16,7 +16,7 @@ from PIL import Image
 
 SCHEMA = "jgzj_vehicle_upload_qwen_bbox_label.v1"
 MODEL = "Qwen3.6-27B-Labeler"
-MODEL_BUNDLE = "qwen_bbox_v5_precision_pet_parse"
+MODEL_BUNDLE = "qwen_bbox_v6_precision_pet_trash_parse"
 CLASSES = (
     "person",
     "fire",
@@ -67,15 +67,15 @@ Positive class rules:
 High-risk classes, use only when visual evidence is very strong:
 - fire: actual visible flame with flame shape and orange/yellow luminous core. Do NOT label red fire extinguisher boxes, hydrants,消防箱, red signs, warning boards, lamps, reflections, taillights, traffic lights, red clothes, cones, or red/orange equipment as fire.
 - smoke: real smoke plume/cloud from burning or exhaust, with semi-transparent rising/flowing shape. Do NOT label fog, mist, steam, water spray, lens haze, glare, clouds, dust, shadows, blur, low-light noise, or bright overexposure as smoke.
-- trash: loose discarded waste lying on the ground/road/path, such as bottle, paper, plastic bag, cardboard, food wrapper. Do NOT label trash bins, garbage cans, recycling boxes, storage boxes, planters, cones, leaves, stones, signs, fixed facilities, parked objects, or construction materials as trash.
+- trash: loose discarded waste lying on the ground/road/path only. Accept clear bottles, flat paper/wrappers, cardboard cartons/boxes, or flexible plastic/trash bags. Do NOT label umbrellas, folded umbrellas, parasols, umbrella fabric/ribs/handles, raincoats, tarps, tents/canopies/awnings, cloth, bags carried by people, trash bins, garbage cans, recycling boxes, storage boxes, planters, cones, leaves, stones, signs, fixed facilities, parked objects, or construction materials as trash. For trash evidence, name the visible material/type, such as loose_plastic_bottle_on_ground, discarded_cardboard_box_on_ground, flat_paper_litter_on_ground, or crumpled_plastic_bag_litter.
 - pet: LIVE pet animal only, mainly dog/cat. Must show live-animal evidence from multiple biological cues such as visible head/muzzle/ears/eyes plus body/legs/tail/fur, natural posture, leash, or person interaction. A single animal-like silhouette is not enough. Do NOT label black ground spotlights/lawn lights/garden lights, camera/sensor boxes, black equipment or fixtures on grass, yellow rocks/stones/boulders, landscaping stones, roots, leaves, bags, cloth, shadows, statues, sculptures, toys, dolls, mascots, mannequins, animal pictures, signs, decorations, white stone/resin animals, repeated fixed animal-shaped objects, low blurry blobs, birds, ducks, geese, chickens, wild animals, or livestock sculptures. In dark/night frames, omit pet unless the dog/cat is close, large, and unmistakable.
 - stall: temporary vendor stall/booth with selling setup, canopy/table/goods/person operating it. Do NOT label fixed kiosks, guard booths, bus shelters, building entrances, permanent pavilions, ordinary tents, umbrellas, fences, or storage piles as stall.
 
 Rules:
 - Do not invent boxes. If uncertain, omit. Prefer false negatives over false positives.
-- For fire/smoke/pet/trash/stall/phone/smoking/license_plate/lying/fighting/falldown, always include numeric score and a double-quoted evidence string that names the visible proof, e.g. "actual_flame", "rising_smoke_plume", "live_dog_leash", "loose_plastic_bottle_on_ground", "vendor_table_goods", "handheld_phone", "person_with_visible_cigarette", "plate_characters", "horizontal_lying_body", "people_grappling", "fallen_person_on_ground". Boxes without numeric score are invalid.
+- For fire/smoke/pet/trash/stall/phone/smoking/license_plate/lying/fighting/falldown, always include numeric score and a double-quoted evidence string that names the visible proof, e.g. "actual_flame", "rising_smoke_plume", "live_dog_leash", "loose_plastic_bottle_on_ground", "crumpled_plastic_bag_litter", "vendor_table_goods", "handheld_phone", "person_with_visible_cigarette", "plate_characters", "horizontal_lying_body", "people_grappling", "fallen_person_on_ground". Boxes without numeric score are invalid.
 - For dark/blurred/blocked frames, do not label pet/trash/stall/phone/smoking/license_plate/lying/fighting/falldown unless the target is large and unmistakable.
-- Never use evidence phrases like red_box, red_sign, fire_box, extinguisher, trash_bin, fog, mist, haze, statue, sculpture, spotlight, lawn_light, ground_light, garden_light, lamp, fixture, equipment, stone, rock, yellow_stone, black_blob, yellow_blob, cat_like, dog_like, fixed_kiosk, standing_person, sitting_person, vehicle_logo, headlight, traffic_sign, or unknown_object as a positive target.
+- Never use evidence phrases like red_box, red_sign, fire_box, extinguisher, trash_bin, umbrella, folded_umbrella, parasol, raincoat, tarp, canopy, awning, carried_bag, fog, mist, haze, statue, sculpture, spotlight, lawn_light, ground_light, garden_light, lamp, fixture, equipment, stone, rock, yellow_stone, black_blob, yellow_blob, cat_like, dog_like, fixed_kiosk, standing_person, sitting_person, vehicle_logo, headlight, traffic_sign, or unknown_object as a positive target.
 - Ignore sky, trees, buildings, road, shadows, reflections, traffic lights, and text unless part of a target.
 - Prefer fewer precise boxes. In crowded scenes keep the 20 largest/clearest targets.
 - For small/distant ambiguous objects, omit unless the target class is visually clear.
@@ -118,12 +118,23 @@ PET_ACCEPT_NOTE_RE = re.compile(
 )
 
 TRASH_REJECT_NOTE_RE = re.compile(
+    r"umbrella|folded[_ -]?umbrella|parasol|rain[_ -]?umbrella|umbrella[_ -]?(?:fabric|rib|ribs|handle)|"
+    r"raincoat|tarp|tarpaulin|tent|canopy|awning|cloth|fabric|carried[_ -]?bag|handbag|backpack|"
+    r"bag[_ -]?(?:carried|held|in[_ -]?use)|shopping[_ -]?bag[_ -]?in[_ -]?use|"
     r"bin|trash_can|garbage_can|waste_bin|dustbin|recycling|box_fixture|storage|container|cabinet|"
     r"sign|poster|leaf|leaves|stone|rock|cone|planter|fixed|facility|construction|bucket|"
+    r"雨伞|伞|遮阳伞|折叠伞|伞面|伞骨|伞柄|雨衣|篷布|帐篷|雨棚|遮雨棚|布料|衣物|随身包|背包|"
     r"垃圾桶|果皮箱|回收箱|箱体|标识|树叶|石头|路锥|花箱|固定设施|施工",
     re.I,
 )
-TRASH_ACCEPT_NOTE_RE = re.compile(r"loose|discarded|ground|road|bottle|paper|plastic|bag|cardboard|wrapper|litter|waste", re.I)
+TRASH_ACCEPT_NOTE_RE = re.compile(
+    r"discarded[_ -]?(?:plastic[_ -]?)?bottle|loose[_ -]?(?:plastic[_ -]?)?bottle|plastic[_ -]?bottle|glass[_ -]?bottle|"
+    r"discarded[_ -]?(?:cardboard[_ -]?)?box|cardboard[_ -]?box|carton|corrugated[_ -]?box|packaging[_ -]?box|"
+    r"discarded[_ -]?paper|paper[_ -]?litter|flat[_ -]?paper|paper[_ -]?wrapper|food[_ -]?wrapper|"
+    r"plastic[_ -]?bag|trash[_ -]?bag|garbage[_ -]?bag|shopping[_ -]?bag|crumpled[_ -]?bag|loose[_ -]?bag|"
+    r"loose[_ -]?litter|discarded[_ -]?litter|discarded[_ -]?waste",
+    re.I,
+)
 
 STALL_REJECT_NOTE_RE = re.compile(
     r"fixed|permanent|kiosk|guard[_ -]?booth|bus[_ -]?shelter|building|entrance|pavilion|fence|storage|pile|"

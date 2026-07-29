@@ -66,10 +66,15 @@ TARGETS = {
     },
     "trash": {
         "classes": ("bottle", "box", "paper", "bag"),
-        "definition": "discarded bottle, cardboard box, loose paper, or plastic bag lying as litter on the ground or curb",
-        "threshold": 0.88,
-        "accept": re.compile(r"discarded|litter|ground|curb|loose|waste|bottle|cardboard|paper|plastic_bag", re.I),
-        "reject": re.compile(r"storage|stacked|trash_bin|waste_bin|container|utility|road_marking|arrow|traffic_sign|in_use", re.I),
+        "definition": "discarded bottle, cardboard/carton box, loose flat paper/wrapper, or flexible plastic/trash bag lying as litter on the ground or curb",
+        "threshold": 0.90,
+        "accept": re.compile(r"discarded|litter|ground|curb|loose|waste|bottle|cardboard|carton|paper|wrapper|plastic[_ -]?bag|trash[_ -]?bag|garbage[_ -]?bag", re.I),
+        "reject": re.compile(
+            r"umbrella|folded[_ -]?umbrella|parasol|rain[_ -]?umbrella|umbrella[_ -]?(?:fabric|rib|ribs|handle)|"
+            r"raincoat|tarp|tarpaulin|tent|canopy|awning|cloth|fabric|storage|stacked|trash_bin|waste_bin|container|utility|road_marking|arrow|traffic_sign|in_use|"
+            r"雨伞|伞|遮阳伞|折叠伞|伞面|伞骨|伞柄|雨衣|篷布|帐篷|雨棚|遮雨棚|布料|衣物|收纳|堆放|垃圾桶|回收箱|路标|标线",
+            re.I,
+        ),
         "example_evidence": "discarded_bottle_on_ground",
     },
     "fighting": {
@@ -94,6 +99,27 @@ GLOBAL_REJECT = re.compile(
     r"illustration|drawing|painting|poster|screenshot|collage|diagram|logo|blur_only|reflection_only",
     re.I,
 )
+
+TRASH_CLASS_ACCEPT = {
+    "bottle": re.compile(r"bottle|plastic[_ -]?bottle|glass[_ -]?bottle|drink[_ -]?bottle|discarded[_ -]?bottle|loose[_ -]?bottle", re.I),
+    "box": re.compile(r"cardboard[_ -]?box|carton|corrugated[_ -]?box|packaging[_ -]?box|discarded[_ -]?(?:cardboard[_ -]?)?box|box[_ -]?(?:litter|on[_ -]?ground)", re.I),
+    "paper": re.compile(r"paper|paper[_ -]?litter|flat[_ -]?paper|loose[_ -]?paper|discarded[_ -]?paper|paper[_ -]?wrapper|food[_ -]?wrapper|sheet|tissue|napkin|cardboard[_ -]?piece", re.I),
+    "bag": re.compile(r"plastic[_ -]?bag|trash[_ -]?bag|garbage[_ -]?bag|shopping[_ -]?bag|paper[_ -]?bag|crumpled[_ -]?bag|loose[_ -]?bag|discarded[_ -]?(?:plastic[_ -]?)?bag", re.I),
+}
+TRASH_CLASS_REJECT = {
+    "bottle": re.compile(r"umbrella|bag|box|carton|paper|wrapper|雨伞|伞|袋|箱|盒|纸", re.I),
+    "box": re.compile(r"umbrella|plastic[_ -]?bag|trash[_ -]?bag|garbage[_ -]?bag|shopping[_ -]?bag|crumpled[_ -]?bag|paper[_ -]?litter|bottle|雨伞|伞|塑料袋|垃圾袋|袋|纸片|瓶", re.I),
+    "paper": re.compile(r"umbrella|plastic[_ -]?bag|trash[_ -]?bag|garbage[_ -]?bag|shopping[_ -]?bag|cardboard[_ -]?box|carton|bottle|雨伞|伞|塑料袋|垃圾袋|箱|盒|瓶", re.I),
+    "bag": re.compile(r"umbrella|folded[_ -]?umbrella|parasol|raincoat|tarp|tent|canopy|awning|cardboard[_ -]?box|carton|bottle|paper[_ -]?litter|雨伞|伞|遮阳伞|雨衣|篷布|帐篷|雨棚|箱|盒|瓶|纸片", re.I),
+}
+
+
+def trash_class_consistent(class_name: str, evidence: str) -> bool:
+    accept = TRASH_CLASS_ACCEPT.get(class_name)
+    reject = TRASH_CLASS_REJECT.get(class_name)
+    if reject and reject.search(evidence):
+        return False
+    return bool(accept and accept.search(evidence))
 
 
 def now_iso() -> str:
@@ -140,7 +166,7 @@ def task_rules(target: str) -> str:
         ),
         "pet": "Only live dogs and cats count. Require strong biological cues: visible head/muzzle/ears/eyes plus body/legs/tail/fur, natural posture, leash, or person interaction. Do not label animal-shaped silhouettes alone. Black ground spotlights, lawn/garden lights, camera or sensor fixtures, black equipment on grass, yellow rocks/stones/boulders, landscaping stones, roots, leaves, bags, cloth, shadows, statues, sculptures, plush toys, posters, reflections, and other animals are hard negatives. If the target is a small dark/yellow blob in grass or lacks clear live-animal body parts, return b=[] and scene=hard_negative.",
         "stall": "Fixed kiosks, vending machines, permanent booths, security checkpoints, and bus shelters are not stalls.",
-        "trash": "Only use bottle, box, paper, or bag. The object must visibly be discarded litter; bins, stored/stacked boxes, road paint, signs, and utility boxes are negatives.",
+        "trash": "Only use bottle, box, paper, or bag, and the evidence must match the chosen class. bottle = rigid visible bottle only. box = cardboard/carton box with box shape, flat faces, corners, or flaps; never use box for plastic/trash bags. paper = flat loose paper, tissue, wrapper, flyer, or flattened cardboard piece; never use paper for boxes or bags. bag = flexible plastic/trash/shopping/paper bag with thin film, wrinkles, handles, or sack shape; never use bag for umbrellas. Umbrellas, folded umbrellas, parasols, umbrella fabric/ribs/handles, raincoats, tarps, tents/canopies/awnings, cloth, bins, stored/stacked boxes, road paint, signs, and utility boxes are hard negatives. If class and evidence disagree, omit the box.",
         "fighting": "Only real human-vs-human physical fighting counts. Animal fighting, toy/model scenes, animations, games, ordinary crowds, arguments without contact, hugging, helping, dancing, sports training, stage performances, and people merely standing close are negatives.",
         "smoking": "Box the visible person who contains the cigarette, cigar, vape, or person-mouth smoke evidence. The smoking evidence must be visible inside the person box. Do not output a tiny cigarette/hand-mouth evidence-only box. Do not label fog, steam, smoke without a person, cigarette packs, ashtrays, signs, posters, or a person without visible smoking evidence.",
     }[target]
@@ -212,6 +238,8 @@ def normalize_boxes(raw_boxes: object, target: str) -> List[dict]:
         if x2 <= x1 or y2 <= y1 or score < float(spec["threshold"]):
             continue
         if GLOBAL_REJECT.search(evidence) or spec["reject"].search(evidence) or not spec["accept"].search(evidence):
+            continue
+        if target == "trash" and not trash_class_consistent(class_name, evidence):
             continue
         labels.append({
             "class_name": class_name,

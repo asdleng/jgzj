@@ -18,7 +18,7 @@ SCHEMA = "jgzj_vehicle_upload_qwen_bbox_audit.v1"
 LABEL_SCHEMA = "jgzj_vehicle_upload_qwen_bbox_label.v1"
 MODEL = "Qwen3.6-27B-Labeler"
 MODEL_BUNDLE = "qwen_bbox_audit_v1_human_review_queue"
-PROMPT_VERSION = "qwen_bbox_audit_prompt_v2_training_all_classes"
+PROMPT_VERSION = "qwen_bbox_audit_prompt_v3_trash_umbrella_guard"
 CLASSES = (
     "person",
     "fire",
@@ -75,7 +75,7 @@ Hard class definitions:
 - pet: LIVE dog/cat only, with clear biological cues such as head/muzzle/ears/eyes plus body/legs/tail/fur, natural posture, leash, or person interaction. Black ground spotlights/lawn lights/garden lights, camera/sensor boxes, black equipment or fixtures on grass, yellow rocks/stones/boulders, landscaping stones, roots, leaves, bags, cloth, shadows, statues, sculptures, toys, mascots, animal pictures, signs, decorations, white stone/resin animals, birds, ducks, geese, chickens, and livestock sculptures are NOT pet. Animal-like silhouettes or small dark/yellow blobs in grass are suspect or false positives.
 - smoking: the box should cover the visible person who contains a visible cigarette/cigar/vape or clear smoke from the person's mouth/hand. A person with only hand near mouth and no visible smoking evidence is NOT enough.
 - phone: visible handheld mobile phone or clear hand-phone interaction. Wall screens, signs, dashboards, mirrors, bags, and black rectangles are NOT phone.
-- trash: loose discarded waste on ground/road/path. Trash bins, recycling boxes, planters, cones, leaves, stones, fixed facilities, storage boxes, and construction materials are NOT trash.
+- trash: loose discarded waste on ground/road/path only, such as clear bottles, flat paper/wrappers, cardboard cartons/boxes, or flexible plastic/trash bags. Umbrellas, folded umbrellas, parasols, umbrella fabric/ribs/handles, raincoats, tarps, tents/canopies/awnings, cloth, bags carried by people, trash bins, recycling boxes, planters, cones, leaves, stones, fixed facilities, storage boxes, and construction materials are NOT trash.
 - stall: temporary vendor selling setup with table/canopy/goods/operator. Fixed kiosks, guard booths, bus shelters, building entrances, pavilions, fences, ordinary tents, umbrellas, and storage piles are NOT stall.
 - person: a real visible human. Posters, advertising portraits, mannequins, traffic cones, poles, covers, and vehicle accessories are NOT people.
 - vehicle: a real car, truck, bus, or van. Fences, buildings, signs, covers without a visible vehicle, and printed vehicle images are NOT vehicles.
@@ -113,8 +113,12 @@ REJECT_PATTERNS = {
         re.I,
     ),
     "trash": re.compile(
+        r"umbrella|folded[_ -]?umbrella|parasol|rain[_ -]?umbrella|umbrella[_ -]?(?:fabric|rib|ribs|handle)|"
+        r"raincoat|tarp|tarpaulin|tent|canopy|awning|cloth|fabric|carried[_ -]?bag|handbag|backpack|"
+        r"bag[_ -]?(?:carried|held|in[_ -]?use)|shopping[_ -]?bag[_ -]?in[_ -]?use|"
         r"bin|trash_can|garbage_can|waste_bin|dustbin|recycling|box_fixture|storage|container|cabinet|"
         r"sign|poster|leaf|leaves|stone|rock|cone|planter|fixed|facility|construction|bucket|"
+        r"雨伞|伞|遮阳伞|折叠伞|伞面|伞骨|伞柄|雨衣|篷布|帐篷|雨棚|遮雨棚|布料|衣物|随身包|背包|"
         r"垃圾桶|果皮箱|回收箱|箱体|标识|树叶|石头|路锥|花箱|固定设施|施工",
         re.I,
     ),
@@ -161,7 +165,14 @@ ACCEPT_PATTERNS = {
         r"(?:^|_)(?:dog|cat)_body_legs(?:_|$)|(?:^|_)clear_(?:dog|cat)_(?:head|body|legs|tail|fur)(?:_|$)",
         re.I,
     ),
-    "trash": re.compile(r"loose|discarded|ground|road|bottle|paper|plastic|bag|cardboard|wrapper|litter|waste", re.I),
+    "trash": re.compile(
+        r"discarded[_ -]?(?:plastic[_ -]?)?bottle|loose[_ -]?(?:plastic[_ -]?)?bottle|plastic[_ -]?bottle|glass[_ -]?bottle|"
+        r"discarded[_ -]?(?:cardboard[_ -]?)?box|cardboard[_ -]?box|carton|corrugated[_ -]?box|packaging[_ -]?box|"
+        r"discarded[_ -]?paper|paper[_ -]?litter|flat[_ -]?paper|paper[_ -]?wrapper|food[_ -]?wrapper|"
+        r"plastic[_ -]?bag|trash[_ -]?bag|garbage[_ -]?bag|shopping[_ -]?bag|crumpled[_ -]?bag|loose[_ -]?bag|"
+        r"loose[_ -]?litter|discarded[_ -]?litter|discarded[_ -]?waste",
+        re.I,
+    ),
     "stall": re.compile(r"vendor|stall|booth|selling|goods|table|canopy|market|cart", re.I),
     "phone": re.compile(r"handheld|phone|mobile|smartphone|hand_phone|screen_in_hand", re.I),
     "smoking": re.compile(
