@@ -560,15 +560,12 @@
     return title;
   }
 
-  function yoloStartDayForRecentHistory() {
-    const date = new Date();
-    date.setDate(date.getDate() - 1);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  function yoloRecentHistoryLimit() {
+    return 2;
   }
 
   function yoloRecentRowsForEntry(entry) {
-    const startDay = yoloStartDayForRecentHistory();
-    return trendRowsForEntry(entry).filter((row) => String(row.day || "") >= startDay);
+    return trendRowsForEntry(entry).slice(-yoloRecentHistoryLimit());
   }
 
   function trendRowsForEntry(entry) {
@@ -587,7 +584,7 @@
     if (!row) return "最近";
     const sameWeight = yoloSameArtifact(entry?.best_weight, row.best_weight);
     const sameRun = yoloSameArtifact(entry?.source_run, row.source_run);
-    if (entry?.status === "deployed" && !sameWeight && !sameRun) return "最新候选";
+    if (entry?.status === "deployed" && !sameWeight && !sameRun) return "最新一次训练";
     return "最近";
   }
 
@@ -1884,7 +1881,7 @@
     const title = createNode("div", "yolo-review-model-title");
     title.appendChild(createNode("strong", "", "模型候选效果"));
     const updated = payload?.updated_at ? `更新 ${formatDate(payload.updated_at)}` : "等待训练指标";
-    title.appendChild(createNode("span", "", `${updated} · 按任务查看昨日以来训练记录`));
+    title.appendChild(createNode("span", "", `${updated} · 按任务查看最后两次训练性能`));
     head.appendChild(title);
     section.appendChild(head);
 
@@ -1949,7 +1946,7 @@
     detailTitle.appendChild(createNode("strong", "", `${yoloTaskTitle(selected.task_id, selected)}模型详情`));
     detailTitle.appendChild(createNode("span", "", [selected.model_family || "", yoloEntryProgressText(selected), selected.metric_source || ""].filter(Boolean).join(" · ")));
     detailTop.appendChild(detailTitle);
-    detailTop.appendChild(createNode("span", "ai-history-chip tone-idle", `从 ${formatDay(yoloStartDayForRecentHistory())} 开始`));
+    detailTop.appendChild(createNode("span", "ai-history-chip tone-idle", `最后 ${yoloRecentHistoryLimit()} 次训练`));
     detail.appendChild(detailTop);
 
     const compare = createNode("div", "yolo-review-model-compare");
@@ -1959,12 +1956,12 @@
     compare.appendChild(currentPanel);
     const latestRecent = yoloRecentRowsForEntry(selected).slice(-1)[0];
     const candidatePanel = createNode("div", "yolo-review-model-panel");
-    candidatePanel.appendChild(createNode("p", "yolo-review-model-panel-title", "最新候选"));
+    candidatePanel.appendChild(createNode("p", "yolo-review-model-panel-title", "最新一次训练"));
     if (latestRecent) {
       candidatePanel.appendChild(yoloMetricGrid(yoloMetricItemsFromSource(latestRecent, true)));
       candidatePanel.appendChild(createNode("p", "yolo-review-model-meta", yoloRowSummary(latestRecent, selected)));
     } else {
-      candidatePanel.appendChild(createNode("p", "yolo-review-empty", "昨日以来暂无新训练候选。"));
+      candidatePanel.appendChild(createNode("p", "yolo-review-empty", `暂无训练记录。`));
     }
     compare.appendChild(candidatePanel);
     detail.appendChild(compare);
@@ -2002,7 +1999,7 @@
       tableWrap.appendChild(table);
       detail.appendChild(tableWrap);
     } else {
-      detail.appendChild(createNode("p", "yolo-review-empty", "没有昨日以来的训练记录；旧记录因数据集口径不一致，不放入这块趋势里。"));
+      detail.appendChild(createNode("p", "yolo-review-empty", `暂无训练记录。`));
     }
     section.appendChild(detail);
     return section;
