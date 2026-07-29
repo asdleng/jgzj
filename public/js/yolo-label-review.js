@@ -758,6 +758,7 @@
     vehicle: "车辆",
     nonmotor: "非机动车",
     empty_scene: "空场景",
+    hard_positive: "困难正样本",
     hard_negative: "困难负样本",
     fire_smoke_candidate: "烟火候选",
     positive: "正样本",
@@ -902,6 +903,10 @@
     );
   }
 
+  function datasetSupportsEventNameFilter(dataset) {
+    return isEventFeedbackDataset(dataset) || datasetSourceGroup(dataset) === "finetune_dataset";
+  }
+
   function feedbackEventCounts(dataset) {
     const feedback = datasetFeedback(dataset);
     return feedback?.event_counts && typeof feedback.event_counts === "object" && !Array.isArray(feedback.event_counts)
@@ -999,7 +1004,7 @@
       } else {
         byValue.set(value, {
           value,
-          label: label || value,
+          label: feedbackEventLabel(label || value),
           count: Number.isFinite(count) ? count : 0
         });
       }
@@ -1020,7 +1025,7 @@
 
   function updateEventNameOptions(availableEvents = null) {
     const dataset = selectedDataset();
-    if (!isEventFeedbackDataset(dataset)) {
+    if (!datasetSupportsEventNameFilter(dataset)) {
       setSelectOptions(refs.eventName, [], { allLabel: "全部事件" });
       if (refs.eventName) refs.eventName.value = "";
       setEventNameVisibility(false);
@@ -2261,7 +2266,7 @@
     params.set("page", String(state.page));
     params.set("page_size", String(state.pageSize));
     if (refs.split.value) params.set("split", refs.split.value);
-    if (refs.eventName?.value && isEventFeedbackDataset(dataset)) params.set("event_name", refs.eventName.value);
+    if (refs.eventName?.value && datasetSupportsEventNameFilter(dataset)) params.set("event_name", refs.eventName.value);
     const eventClassTokens = eventClassFilterTokensForDataset(dataset, preset);
     const selectedClass = normalizeClassToken(refs.className?.value || "");
     const eventClassFilter = eventClassTokens.length

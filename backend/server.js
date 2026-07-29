@@ -5416,6 +5416,10 @@ function yoloItemEventNames(item) {
     }
   };
   addName(item?.event_name);
+  const category = normalizeClassToken(item?.category || item?.manifest?.category || '');
+  if (category === 'hard_positive' || category === 'hard_negative') {
+    addName(category);
+  }
   if (Array.isArray(item?.manifest?.tasks)) {
     for (const task of item.manifest.tasks) {
       addName(task?.event_name);
