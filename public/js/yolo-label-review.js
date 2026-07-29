@@ -3669,6 +3669,9 @@
   refs.source?.addEventListener("change", () => {
     applySourceSelection(refs.source?.value || "");
   });
+  refs.eventSelect?.addEventListener("change", () => {
+    applyReviewEvent(refs.eventSelect?.value || "all");
+  });
   refs.split?.addEventListener("change", () => {
     markCustomEventFilter();
     scheduleReload();
