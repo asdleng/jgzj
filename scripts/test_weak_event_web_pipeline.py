@@ -59,6 +59,15 @@ class WeakEventWebPipelineTest(unittest.TestCase):
         ], "pet")
         self.assertEqual(len(labels), 1)
 
+    def test_pet_filter_rejects_lawn_equipment_and_stones(self):
+        labels = normalize_boxes([
+            ["pet", 100, 100, 500, 700, 0.96, "live_cat_head_body_legs"],
+            ["pet", 500, 100, 800, 700, 0.99, "black_spotlight_on_grass"],
+            ["pet", 300, 300, 600, 600, 0.99, "yellow_stone_on_grass"],
+            ["pet", 200, 200, 650, 650, 0.99, "cat_like_yellow_rock"],
+        ], "pet")
+        self.assertEqual([item["evidence"] for item in labels], ["live_cat_head_body_legs"])
+
     def test_stall_filter_rejects_fixed_kiosk(self):
         labels = normalize_boxes([
             ["stall", 100, 100, 700, 900, 0.96, "temporary_vendor_table_with_goods"],

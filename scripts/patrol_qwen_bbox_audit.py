@@ -72,7 +72,7 @@ Audit rules:
 Hard class definitions:
 - fire: actual visible flame with flame shape and orange/yellow luminous core. Red fire boxes, extinguishers, hydrants,消防箱, red signs, warning boards, lamps, reflections, taillights, cones, and red/orange equipment are NOT fire.
 - smoke: real smoke plume/cloud from burning or exhaust. Fog, mist, steam, haze, glare, clouds, dust, blur, water spray, and overexposure are NOT smoke.
-- pet: LIVE dog/cat only. Statues, sculptures, toys, mascots, animal pictures, signs, decorations, white stone/resin animals, birds, ducks, geese, chickens, and livestock sculptures are NOT pet.
+- pet: LIVE dog/cat only, with clear biological cues such as head/muzzle/ears/eyes plus body/legs/tail/fur, natural posture, leash, or person interaction. Black ground spotlights/lawn lights/garden lights, camera/sensor boxes, black equipment or fixtures on grass, yellow rocks/stones/boulders, landscaping stones, roots, leaves, bags, cloth, shadows, statues, sculptures, toys, mascots, animal pictures, signs, decorations, white stone/resin animals, birds, ducks, geese, chickens, and livestock sculptures are NOT pet. Animal-like silhouettes or small dark/yellow blobs in grass are suspect or false positives.
 - smoking: the box should cover the visible person who contains a visible cigarette/cigar/vape or clear smoke from the person's mouth/hand. A person with only hand near mouth and no visible smoking evidence is NOT enough.
 - phone: visible handheld mobile phone or clear hand-phone interaction. Wall screens, signs, dashboards, mirrors, bags, and black rectangles are NOT phone.
 - trash: loose discarded waste on ground/road/path. Trash bins, recycling boxes, planters, cones, leaves, stones, fixed facilities, storage boxes, and construction materials are NOT trash.
@@ -101,9 +101,15 @@ REJECT_PATTERNS = {
         re.I,
     ),
     "pet": re.compile(
-        r"statue|sculpture|toy|doll|mascot|mannequin|picture|poster|sign|decoration|stone|resin|fake|"
-        r"white_goat|white_sheep|goat_statue|sheep_statue|dog_statue|fixed|ornament|bird|goose|duck|chicken|livestock|"
-        r"雕塑|雕像|玩具|装饰|石头|树脂|假|鸟|鸭|鹅|鸡",
+        r"statue|sculpture|toy|doll|mascot|mannequin|picture|poster|sign|decoration|"
+        r"stone|rock|boulder|pebble|landscape[_ -]?stone|yellow[_ -]?stone|resin|fake|"
+        r"white_goat|white_sheep|goat_statue|sheep_statue|dog_statue|"
+        r"spotlight|ground[_ -]?light|lawn[_ -]?light|garden[_ -]?light|lamp|light[_ -]?fixture|fixture|"
+        r"equipment|device|sensor|camera|black[_ -]?(?:spotlight|fixture|device|equipment|object|blob)|"
+        r"yellow[_ -]?(?:stone|rock|object|blob)|(?:cat|dog|animal)[_ -]?like|grass[_ -]?blob|"
+        r"root|leaf|leaves|bag|cloth|shadow|fixed|ornament|bird|goose|duck|chicken|livestock|"
+        r"雕塑|雕像|玩具|装饰|石头|石块|石子|黄石|景观石|树脂|假|射灯|草坪灯|地灯|灯具|"
+        r"设备|黑色物体|黄色物体|草丛色块|阴影|树根|树叶|鸟|鸭|鹅|鸡",
         re.I,
     ),
     "trash": re.compile(
@@ -149,8 +155,10 @@ ACCEPT_PATTERNS = {
     "fire": re.compile(r"flame|actual_flame|burning|orange_flame|yellow_flame|visible_flame", re.I),
     "smoke": re.compile(r"smoke|smoke_plume|rising_smoke|exhaust_smoke|burning_smoke", re.I),
     "pet": re.compile(
-        r"live_(?:dog|cat)|dog_(?:with_)?(?:leash|head|legs|tail|body|fur)|cat_(?:head|legs|tail|body|fur)|"
-        r"pet_(?:dog|cat)|leashed_dog|clear_dog|clear_cat",
+        r"(?:^|_)live_(?:dog|cat)(?:_|$)|"
+        r"(?:^|_)(?:dog|cat)_(?:with_)?(?:leash|head|legs|tail|body|fur|muzzle|ears|eyes|paws)(?:_|$)|"
+        r"(?:^|_)pet_(?:dog|cat)(?:_|$)|(?:^|_)leashed_dog(?:_|$)|"
+        r"(?:^|_)(?:dog|cat)_body_legs(?:_|$)|(?:^|_)clear_(?:dog|cat)_(?:head|body|legs|tail|fur)(?:_|$)",
         re.I,
     ),
     "trash": re.compile(r"loose|discarded|ground|road|bottle|paper|plastic|bag|cardboard|wrapper|litter|waste", re.I),

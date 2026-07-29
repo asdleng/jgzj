@@ -68,14 +68,14 @@ High-risk classes, use only when visual evidence is very strong:
 - fire: actual visible flame with flame shape and orange/yellow luminous core. Do NOT label red fire extinguisher boxes, hydrants,消防箱, red signs, warning boards, lamps, reflections, taillights, traffic lights, red clothes, cones, or red/orange equipment as fire.
 - smoke: real smoke plume/cloud from burning or exhaust, with semi-transparent rising/flowing shape. Do NOT label fog, mist, steam, water spray, lens haze, glare, clouds, dust, shadows, blur, low-light noise, or bright overexposure as smoke.
 - trash: loose discarded waste lying on the ground/road/path, such as bottle, paper, plastic bag, cardboard, food wrapper. Do NOT label trash bins, garbage cans, recycling boxes, storage boxes, planters, cones, leaves, stones, signs, fixed facilities, parked objects, or construction materials as trash.
-- pet: LIVE pet animal only, mainly dog/cat. Must show live-animal evidence such as head/body/legs/fur/tail/posture/leash/person interaction. Require separately visible animal body parts, e.g. head plus legs/tail/body contour. Do NOT label statues, sculptures, toys, dolls, mascots, mannequins, animal pictures, signs, decorations, white stone/resin animals, repeated fixed animal-shaped objects, low white blurry blobs, birds, ducks, geese, chickens, wild animals, or livestock sculptures. In dark/night frames, omit pet unless the dog/cat is close, large, and unmistakable.
+- pet: LIVE pet animal only, mainly dog/cat. Must show live-animal evidence from multiple biological cues such as visible head/muzzle/ears/eyes plus body/legs/tail/fur, natural posture, leash, or person interaction. A single animal-like silhouette is not enough. Do NOT label black ground spotlights/lawn lights/garden lights, camera/sensor boxes, black equipment or fixtures on grass, yellow rocks/stones/boulders, landscaping stones, roots, leaves, bags, cloth, shadows, statues, sculptures, toys, dolls, mascots, mannequins, animal pictures, signs, decorations, white stone/resin animals, repeated fixed animal-shaped objects, low blurry blobs, birds, ducks, geese, chickens, wild animals, or livestock sculptures. In dark/night frames, omit pet unless the dog/cat is close, large, and unmistakable.
 - stall: temporary vendor stall/booth with selling setup, canopy/table/goods/person operating it. Do NOT label fixed kiosks, guard booths, bus shelters, building entrances, permanent pavilions, ordinary tents, umbrellas, fences, or storage piles as stall.
 
 Rules:
 - Do not invent boxes. If uncertain, omit. Prefer false negatives over false positives.
 - For fire/smoke/pet/trash/stall/phone/smoking/license_plate/lying/fighting/falldown, always include numeric score and a double-quoted evidence string that names the visible proof, e.g. "actual_flame", "rising_smoke_plume", "live_dog_leash", "loose_plastic_bottle_on_ground", "vendor_table_goods", "handheld_phone", "person_with_visible_cigarette", "plate_characters", "horizontal_lying_body", "people_grappling", "fallen_person_on_ground". Boxes without numeric score are invalid.
 - For dark/blurred/blocked frames, do not label pet/trash/stall/phone/smoking/license_plate/lying/fighting/falldown unless the target is large and unmistakable.
-- Never use evidence phrases like red_box, red_sign, fire_box, extinguisher, trash_bin, fog, mist, haze, statue, sculpture, fixed_kiosk, standing_person, sitting_person, vehicle_logo, headlight, traffic_sign, or unknown_object as a positive target.
+- Never use evidence phrases like red_box, red_sign, fire_box, extinguisher, trash_bin, fog, mist, haze, statue, sculpture, spotlight, lawn_light, ground_light, garden_light, lamp, fixture, equipment, stone, rock, yellow_stone, black_blob, yellow_blob, cat_like, dog_like, fixed_kiosk, standing_person, sitting_person, vehicle_logo, headlight, traffic_sign, or unknown_object as a positive target.
 - Ignore sky, trees, buildings, road, shadows, reflections, traffic lights, and text unless part of a target.
 - Prefer fewer precise boxes. In crowded scenes keep the 20 largest/clearest targets.
 - For small/distant ambiguous objects, omit unless the target class is visually clear.
@@ -99,13 +99,21 @@ SMOKE_ACCEPT_NOTE_RE = re.compile(r"smoke|smoke_plume|rising_smoke|exhaust_smoke
 
 PET_REJECT_NOTE_RE = re.compile(
     r"statue|sculpture|toy|doll|mascot|mannequin|picture|poster|sign|decoration|"
-    r"stone|resin|fake|white_goat|white_sheep|goat_statue|sheep_statue|dog_statue|"
-    r"fixed|ornament|bird|goose|duck|chicken|livestock|雕塑|雕像|玩具|装饰|石头|树脂|假|鸟|鸭|鹅|鸡",
+    r"stone|rock|boulder|pebble|landscape[_ -]?stone|yellow[_ -]?stone|resin|fake|"
+    r"white_goat|white_sheep|goat_statue|sheep_statue|dog_statue|"
+    r"spotlight|ground[_ -]?light|lawn[_ -]?light|garden[_ -]?light|lamp|light[_ -]?fixture|fixture|"
+    r"equipment|device|sensor|camera|black[_ -]?(?:spotlight|fixture|device|equipment|object|blob)|"
+    r"yellow[_ -]?(?:stone|rock|object|blob)|(?:cat|dog|animal)[_ -]?like|grass[_ -]?blob|"
+    r"root|leaf|leaves|bag|cloth|shadow|fixed|ornament|bird|goose|duck|chicken|livestock|"
+    r"雕塑|雕像|玩具|装饰|石头|石块|石子|黄石|景观石|树脂|假|射灯|草坪灯|地灯|灯具|"
+    r"设备|黑色物体|黄色物体|草丛色块|阴影|树根|树叶|鸟|鸭|鹅|鸡",
     re.I,
 )
 PET_ACCEPT_NOTE_RE = re.compile(
-    r"live_(?:dog|cat)|dog_(?:with_)?(?:leash|head|legs|tail|body|fur)|cat_(?:head|legs|tail|body|fur)|"
-    r"pet_(?:dog|cat)|leashed_dog|clear_dog|clear_cat",
+    r"(?:^|_)live_(?:dog|cat)(?:_|$)|"
+    r"(?:^|_)(?:dog|cat)_(?:with_)?(?:leash|head|legs|tail|body|fur|muzzle|ears|eyes|paws)(?:_|$)|"
+    r"(?:^|_)pet_(?:dog|cat)(?:_|$)|(?:^|_)leashed_dog(?:_|$)|"
+    r"(?:^|_)(?:dog|cat)_body_legs(?:_|$)|(?:^|_)clear_(?:dog|cat)_(?:head|body|legs|tail|fur)(?:_|$)",
     re.I,
 )
 
@@ -443,7 +451,7 @@ def normalize_box(item, index):
             return None
         if PET_REJECT_NOTE_RE.search(note):
             return None
-        if note and not PET_ACCEPT_NOTE_RE.search(note):
+        if not note or not PET_ACCEPT_NOTE_RE.search(note):
             return None
     if class_name == "trash":
         if score is not None and score < 0.80:

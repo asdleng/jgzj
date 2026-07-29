@@ -38,10 +38,22 @@ TARGETS = {
     },
     "pet": {
         "classes": ("pet",),
-        "definition": "a live domestic dog or cat, preferably small or distant in a street, park, or patrol view",
-        "threshold": 0.90,
-        "accept": re.compile(r"live|dog|cat|canine|feline", re.I),
-        "reject": re.compile(r"statue|sculpture|plush|toy|poster|reflection|painting", re.I),
+        "definition": "a live domestic dog or cat with clear biological body parts, preferably small or distant in a street, park, or patrol view",
+        "threshold": 0.94,
+        "accept": re.compile(
+            r"live_(?:dog|cat)|"
+            r"(?:dog|cat)_(?:with_)?(?:leash|head|legs|tail|body|fur|muzzle|ears|eyes|paws)|"
+            r"pet_(?:dog|cat)|leashed_dog|dog_body_legs|cat_body_legs|clear_(?:dog|cat)_(?:head|body|legs|tail|fur)",
+            re.I,
+        ),
+        "reject": re.compile(
+            r"statue|sculpture|plush|toy|poster|reflection|painting|"
+            r"spotlight|ground[_ -]?light|lawn[_ -]?light|garden[_ -]?light|lamp|fixture|equipment|device|sensor|camera|"
+            r"stone|rock|boulder|pebble|landscape[_ -]?stone|yellow[_ -]?stone|"
+            r"black[_ -]?(?:spotlight|fixture|device|object|blob)|yellow[_ -]?(?:rock|stone|object|blob)|"
+            r"(?:cat|dog|animal)[_ -]?like|grass[_ -]?blob|shadow|root|leaf|leaves|bag|cloth",
+            re.I,
+        ),
         "example_evidence": "live_dog_body_legs_and_tail",
     },
     "stall": {
@@ -126,7 +138,7 @@ def task_rules(target: str) -> str:
             "A clearly visible fishing rod mounted or propped for fishing counts even when the angler is outside the frame. "
             "Do not label walking sticks, trekking poles, umbrellas, railings, branches, masts, antennas, or paddles."
         ),
-        "pet": "Only live dogs and cats count. Statues, sculptures, plush toys, posters, reflections, and other animals do not count.",
+        "pet": "Only live dogs and cats count. Require strong biological cues: visible head/muzzle/ears/eyes plus body/legs/tail/fur, natural posture, leash, or person interaction. Do not label animal-shaped silhouettes alone. Black ground spotlights, lawn/garden lights, camera or sensor fixtures, black equipment on grass, yellow rocks/stones/boulders, landscaping stones, roots, leaves, bags, cloth, shadows, statues, sculptures, plush toys, posters, reflections, and other animals are hard negatives. If the target is a small dark/yellow blob in grass or lacks clear live-animal body parts, return b=[] and scene=hard_negative.",
         "stall": "Fixed kiosks, vending machines, permanent booths, security checkpoints, and bus shelters are not stalls.",
         "trash": "Only use bottle, box, paper, or bag. The object must visibly be discarded litter; bins, stored/stacked boxes, road paint, signs, and utility boxes are negatives.",
         "fighting": "Only real human-vs-human physical fighting counts. Animal fighting, toy/model scenes, animations, games, ordinary crowds, arguments without contact, hugging, helping, dancing, sports training, stage performances, and people merely standing close are negatives.",
