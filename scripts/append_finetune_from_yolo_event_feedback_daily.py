@@ -6,6 +6,7 @@ import collections
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import tempfile
@@ -18,6 +19,8 @@ from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 SHANGHAI_TZ = timezone(timedelta(hours=8))
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 SPLITS = ("train", "val", "test")
+TEMPORARY_NO_SCHEMA = "qwen_ws_checker_temporary_no_frame.v1"
+DEFAULT_TEMPORARY_NO_ROOT = Path("/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames")
 SOURCE_CLASSES = (
     "person",
     "vehicle",
@@ -43,6 +46,16 @@ class Profile:
     event_map: Dict[str, str]
     source_map: Dict[str, str]
     source_group_class: str = ""
+
+
+@dataclass(frozen=True)
+class TemporaryNoCandidate:
+    sha: str
+    image_path: Path
+    meta_path: Path
+    meta: dict
+    tasks: Tuple[dict, ...]
+    targets: Tuple[str, ...]
 
 
 def nkey(value: object) -> str:
@@ -261,6 +274,73 @@ def event_targets(profile: Profile, row: dict) -> List[str]:
         if target and target not in targets:
             targets.append(target)
     return targets
+
+
+def millisecond_day(value: object) -> Optional[str]:
+    try:
+        millis = float(value)
+    except (TypeError, ValueError):
+        return None
+    if millis <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(millis / 1000.0, SHANGHAI_TZ).strftime("%Y%m%d")
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def temporary_no_meta_day(meta: dict, meta_path: Path) -> Optional[str]:
+    for key in ("received_at_ms", "created_at_ms", "edge_ts"):
+        day = millisecond_day(meta.get(key))
+        if day:
+            return day
+    for value in (meta.get("temporary_image_path"), meta_path.as_posix()):
+        match = re.search(r"(20\d{6})", str(value or ""))
+        if match:
+            return match.group(1)
+    return None
+
+
+def temporary_no_image_path(root: Path, meta_path: Path, meta: dict) -> Optional[Path]:
+    candidates: List[Path] = []
+    for key in ("temporary_image_path", "image_path", "source_image"):
+        value = str(meta.get(key) or "").strip()
+        if not value:
+            continue
+        candidate = Path(value)
+        candidates.append(candidate if candidate.is_absolute() else root / candidate)
+    if meta_path.suffix == ".json":
+        candidates.append(meta_path.with_suffix(""))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def matching_temporary_no_tasks(profile: Profile, meta: dict) -> Tuple[Tuple[dict, ...], Tuple[str, ...]]:
+    tasks = []
+    targets = []
+    raw_tasks = meta.get("no_tasks") if isinstance(meta.get("no_tasks"), list) else []
+    for task in raw_tasks:
+        if not isinstance(task, dict):
+            continue
+        if str(task.get("answer") or "").upper() != "NO":
+            continue
+        target = profile.event_map.get(nkey(task.get("event_name")))
+        if not target:
+            continue
+        tasks.append(dict(task))
+        if target not in targets:
+            targets.append(target)
+    targets.sort(key=profile.classes.index)
+    return tuple(tasks), tuple(targets)
+
+
+def temporary_no_class_part(profile: Profile, targets: Sequence[str]) -> str:
+    names = [name for name in profile.classes if name in set(targets)]
+    if not names:
+        return profile.name.replace("finetune_", "")
+    return "_".join(names[:3])
 
 
 def class_id(profile: Profile, name: str) -> int:
@@ -738,7 +818,7 @@ def update_summary(profile: Profile, dataset_dir: Path, source_dir: Path, day: s
             "name": profile.name,
             "source_dataset": source_dir.as_posix(),
             "source_profile": "YOLO event original feedback candidates",
-            "label_policy": "daily append previous-day rows; prefer audited Qwen boxes, then Qwen boxes, then source YOLO label txt, then vehicle uploaded task boxes; copy images",
+            "label_policy": "daily append previous-day rows; prefer audited Qwen boxes, then Qwen boxes, then source YOLO label txt, then vehicle uploaded task boxes; after positive sync, append same-day Qwen checker temporary NO negatives capped by positive count with empty labels; copy images",
         },
         "review": {
             "source_group": "finetune_dataset",
@@ -805,6 +885,89 @@ def collect_candidates(profile: Profile, source_dir: Path, target_day: str, data
         group["labels"] = dedupe_labels(group["labels"])
         group["label_sources"] = collections.Counter(label["label_source"] for label in group["labels"])
     return groups
+
+
+def collect_temporary_no_negative_candidates(
+    profile: Profile,
+    temporary_no_root: Path,
+    target_day: str,
+    dataset_dir: Path,
+    limit: int,
+    exclude_shas: Iterable[str],
+    stats: collections.Counter,
+) -> List[TemporaryNoCandidate]:
+    if limit <= 0:
+        stats["temporary_no_skipped_positive_limit_zero"] += 1
+        return []
+    if not temporary_no_root.is_dir():
+        stats["temporary_no_root_missing"] += 1
+        return []
+
+    full_existing, prefix_existing = existing_sha_keys(dataset_dir)
+    excluded_full = {str(sha).lower() for sha in exclude_shas if re.fullmatch(r"[0-9a-f]{64}", str(sha).lower())}
+    excluded_prefixes = {sha[:16] for sha in excluded_full}
+    selected_full = set()
+    selected_prefixes = set()
+    candidates: List[TemporaryNoCandidate] = []
+
+    day_dir = temporary_no_root / target_day
+    if day_dir.is_dir():
+        meta_paths = sorted(day_dir.glob("*.json"))
+    else:
+        meta_paths = sorted(temporary_no_root.rglob("*.json"))
+
+    for meta_path in meta_paths:
+        stats["temporary_no_meta_files"] += 1
+        meta = load_json(meta_path)
+        if not isinstance(meta, dict):
+            stats["temporary_no_skipped_bad_meta"] += 1
+            continue
+        if meta.get("schema") != TEMPORARY_NO_SCHEMA:
+            stats["temporary_no_skipped_schema"] += 1
+            continue
+        if temporary_no_meta_day(meta, meta_path) != target_day:
+            stats["temporary_no_skipped_day"] += 1
+            continue
+        tasks, targets = matching_temporary_no_tasks(profile, meta)
+        if not tasks:
+            stats["temporary_no_skipped_event"] += 1
+            continue
+        image_path = temporary_no_image_path(temporary_no_root, meta_path, meta)
+        if image_path is None:
+            stats["temporary_no_skipped_missing_image"] += 1
+            continue
+        sha = str(meta.get("image_sha256") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", sha):
+            sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
+        if (
+            sha in full_existing
+            or sha[:16] in prefix_existing
+            or sha in excluded_full
+            or sha[:16] in excluded_prefixes
+            or sha in selected_full
+            or sha[:16] in selected_prefixes
+        ):
+            stats["temporary_no_skipped_existing"] += 1
+            continue
+        selected_full.add(sha)
+        selected_prefixes.add(sha[:16])
+        candidates.append(TemporaryNoCandidate(
+            sha=sha,
+            image_path=image_path,
+            meta_path=meta_path,
+            meta=meta,
+            tasks=tasks,
+            targets=targets,
+        ))
+
+    stats["temporary_no_candidates"] += len(candidates)
+    rng = random.Random(f"{profile.name}:{target_day}:temporary_no_negative")
+    rng.shuffle(candidates)
+    selected_count = min(len(candidates), limit)
+    stats["temporary_no_selected"] += selected_count
+    if len(candidates) > limit:
+        stats["temporary_no_sampled_down"] += len(candidates) - limit
+    return candidates[:limit]
 
 
 def append_rows(profile: Profile, source_dir: Path, dataset_dir: Path, day: str, groups: Dict[str, dict], dry_run: bool) -> dict:
@@ -877,6 +1040,108 @@ def append_rows(profile: Profile, source_dir: Path, dataset_dir: Path, day: str,
         "boxes": dict(box_counts),
         "label_source_counts": dict(label_source_counts),
         "manifest_rows": len(manifest_rows),
+        "next_index": start_index + added,
+    }
+
+
+def append_temporary_no_negative_rows(
+    profile: Profile,
+    temporary_no_root: Path,
+    dataset_dir: Path,
+    day: str,
+    candidates: Sequence[TemporaryNoCandidate],
+    start_index: int,
+    dry_run: bool,
+) -> dict:
+    if candidates and not dry_run:
+        write_class_files(profile, dataset_dir)
+    manifest_rows = []
+    split_counts = collections.Counter()
+    label_source_counts = collections.Counter()
+    source_name = "qwen_ws_checker_temporary_no_negative"
+    for offset, candidate in enumerate(candidates):
+        sha = candidate.sha
+        split = deterministic_split(sha)
+        image_path = candidate.image_path
+        suffix = image_path.suffix.lower() if image_path.suffix.lower() in IMAGE_EXTENSIONS else ".jpg"
+        class_name = temporary_no_class_part(profile, candidate.targets)
+        stem = f"event_feedback_{start_index + offset:06d}_{class_name}_negative_{sha[:16]}"
+        image_rel = f"images/{split}/{stem}{suffix}"
+        label_rel = f"labels/{split}/{stem}.txt"
+        if not dry_run:
+            image_dst = dataset_dir / image_rel
+            label_dst = dataset_dir / label_rel
+            image_dst.parent.mkdir(parents=True, exist_ok=True)
+            label_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(image_path, image_dst)
+            write_text_atomic(label_dst, "")
+        label_source_counts[source_name] += 1
+        meta = candidate.meta
+        manifest_rows.append({
+            "schema": f"jgzj_{profile.name}_manifest.v2",
+            "image": image_rel,
+            "label": label_rel,
+            "split": split,
+            "source": "qwen_ws_checker_temporary_no",
+            "source_dataset": temporary_no_root.as_posix(),
+            "source_image": str(image_path),
+            "source_meta": str(candidate.meta_path),
+            "source_image_sha256": sha,
+            "source_day": day,
+            "source_request_id": meta.get("request_id"),
+            "source_device_id": meta.get("device_id"),
+            "source_camera_id": meta.get("camera_id"),
+            "source_edge_ts": meta.get("edge_ts"),
+            "source_received_at_ms": meta.get("received_at_ms"),
+            "source_created_at_ms": meta.get("created_at_ms"),
+            "source_temporary_image_path": meta.get("temporary_image_path"),
+            "source_no_tasks": list(candidate.tasks),
+            "negative_for_classes": list(candidate.targets),
+            "box_count": 0,
+            "label_count": 0,
+            "classes": [],
+            "label_classes": [],
+            "label_source": source_name,
+            "label_source_counts": {source_name: 1},
+            "is_positive": False,
+            "training_eligible": True,
+        })
+        split_counts[split] += 1
+    if not dry_run:
+        append_manifest(dataset_dir, manifest_rows)
+        refresh_split_lists(dataset_dir)
+    return {
+        "added_images": len(manifest_rows),
+        "added_boxes": 0,
+        "images": dict(split_counts),
+        "boxes": {},
+        "label_source_counts": dict(label_source_counts),
+        "manifest_rows": len(manifest_rows),
+        "next_index": start_index + len(manifest_rows),
+        "source_dataset": temporary_no_root.as_posix(),
+        "source": "qwen_ws_checker_temporary_no",
+    }
+
+
+def merge_append_results(positive: dict, negative: dict) -> dict:
+    images = collections.Counter(positive.get("images") or {})
+    images.update(negative.get("images") or {})
+    boxes = collections.Counter(positive.get("boxes") or {})
+    boxes.update(negative.get("boxes") or {})
+    label_source_counts = collections.Counter(positive.get("label_source_counts") or {})
+    label_source_counts.update(negative.get("label_source_counts") or {})
+    return {
+        "added_images": int(positive.get("added_images") or 0) + int(negative.get("added_images") or 0),
+        "added_boxes": int(positive.get("added_boxes") or 0) + int(negative.get("added_boxes") or 0),
+        "images": dict(images),
+        "boxes": dict(boxes),
+        "label_source_counts": dict(label_source_counts),
+        "manifest_rows": int(positive.get("manifest_rows") or 0) + int(negative.get("manifest_rows") or 0),
+        "positive_added_images": int(positive.get("added_images") or 0),
+        "positive_added_boxes": int(positive.get("added_boxes") or 0),
+        "negative_added_images": int(negative.get("added_images") or 0),
+        "positive_append": positive,
+        "temporary_no_negative_append": negative,
     }
 
 
@@ -885,6 +1150,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", choices=sorted(PROFILES), required=True)
     parser.add_argument("--source", type=Path, default=Path("/home/admin1/jgzj/.runtime/yolo_loop/datasets/yolo_event_feedback_v1"))
     parser.add_argument("--datasets-root", type=Path, default=Path("/home/admin1/jgzj/.runtime/yolo_loop/datasets"))
+    parser.add_argument("--temporary-no-root", type=Path, default=Path(os.environ.get("QWEN_WS_TEMPORARY_NO_ROOT", DEFAULT_TEMPORARY_NO_ROOT.as_posix())))
     parser.add_argument("--day", default=default_day(), help="Shanghai calendar day in YYYYMMDD; defaults to yesterday.")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -903,13 +1169,34 @@ def main() -> int:
 
     stats: collections.Counter = collections.Counter()
     groups = collect_candidates(profile, source_dir, args.day, dataset_dir, stats)
-    append_result = append_rows(profile, source_dir, dataset_dir, args.day, groups, bool(args.dry_run))
+    positive_result = append_rows(profile, source_dir, dataset_dir, args.day, groups, bool(args.dry_run))
+    temporary_no_root = args.temporary_no_root.resolve()
+    negative_candidates = collect_temporary_no_negative_candidates(
+        profile,
+        temporary_no_root,
+        args.day,
+        dataset_dir,
+        int(positive_result.get("added_images") or 0),
+        groups.keys(),
+        stats,
+    )
+    negative_result = append_temporary_no_negative_rows(
+        profile,
+        temporary_no_root,
+        dataset_dir,
+        args.day,
+        negative_candidates,
+        int(positive_result.get("next_index") or next_output_index(dataset_dir)),
+        bool(args.dry_run),
+    )
+    append_result = merge_append_results(positive_result, negative_result)
     ingest = {
         "schema": "jgzj_yolo_event_feedback_finetune_daily_ingest.v1",
         "profile": profile.name,
         "day": args.day,
         "created_at": now_iso(),
         "source_dataset": source_dir.as_posix(),
+        "temporary_no_source_dataset": temporary_no_root.as_posix(),
         "dataset_dir": dataset_dir.as_posix(),
         "dry_run": bool(args.dry_run),
         **append_result,
