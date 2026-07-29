@@ -4768,6 +4768,7 @@ async function buildYoloDatasetList() {
         total_images: stats.total_images,
         web_crawler: stats.web_crawler || null,
         finetune: summary.finetune || null,
+        hard_example_mining: summary.hard_example_mining || null,
         feedback,
         training_eligible: stats.web_crawler ? stats.web_crawler.training_eligible : null
       });
@@ -4899,6 +4900,7 @@ async function resolveYoloDataset(datasetId) {
     root: spec.root,
     dir: datasetDir,
     data_dir: dataDir,
+    hard_example_mining: summary.hard_example_mining || null,
     name: path.basename(datasetDir),
     profile: summary.profile || path.basename(datasetDir),
     kind,
@@ -5779,6 +5781,7 @@ async function listYoloReviewItems(datasetId, query = {}) {
       qwen_bbox_audit: dataset.summary?.qwen_bbox_audit || null,
       qwen_label: dataset.summary?.qwen_label || null,
       web_crawler: dataset.web_crawler || dataset.summary?.web_crawler || null,
+      hard_example_mining: dataset.hard_example_mining || dataset.summary?.hard_example_mining || null,
       summary: dataset.summary
     },
     page: safePage,

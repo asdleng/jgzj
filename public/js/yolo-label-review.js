@@ -1436,7 +1436,7 @@
   }
 
   function hardExampleMiningSummary(dataset) {
-    return dataset?.hard_example_mining || dataset?.summary?.hard_example_mining || null;
+    return dataset?.hard_example_mining || dataset?.summary?.hard_example_mining || dataset?.finetune?.hard_example_mining || null;
   }
 
   function hardExampleCountForDataset(dataset, label) {
