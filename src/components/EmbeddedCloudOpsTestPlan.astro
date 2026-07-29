@@ -580,10 +580,10 @@ const agentRules = [
               <label><span>结束</span><input type="time" step="1" data-param-input data-param-kind="time" data-param-group="planning" data-param-key="planning.mood_lamp_on_end_time" data-param-label="灯光启用结束时间" data-original="" disabled><small data-param-current="planning.mood_lamp_on_end_time">当前：--</small></label>
             </div>
           </div>
-          <div class="cloud-ops-param-row is-unavailable" role="row">
-            <div role="cell"><strong>回充标定值</strong><span>参数定义待确认</span></div>
-            <p role="cell">设置车辆回充过程使用的标定值</p>
-            <div role="cell" class="cloud-ops-param-unavailable"><input type="number" inputmode="decimal" placeholder="标定项、单位和范围待确认" disabled><small>需明确具体标定字段及安全范围</small></div>
+          <div class="cloud-ops-param-row" role="row" data-param-row="planning.charge_brake_trigger_distance_m">
+            <div role="cell"><strong>回充标定值</strong><span data-param-current="planning.charge_brake_trigger_distance_m">当前：--</span></div>
+            <p role="cell">设置回充时距总路线终点剩余多少米开始进入减速制动</p>
+            <div role="cell" class="cloud-ops-param-unavailable"><label class="cloud-ops-param-number"><input type="number" min="0.5" max="30" step="0.1" inputmode="decimal" aria-label="回充标定值设置值" placeholder="0.5 至 30.0" data-param-input data-param-kind="number" data-param-group="planning" data-param-key="planning.charge_brake_trigger_distance_m" data-param-label="回充标定值" data-param-unit="m" data-original="" disabled><span>m</span></label><small>需满足倒车回充、路线末段和充电区重叠条件；修改后需重启 Planning 生效</small></div>
           </div>
           <div class="cloud-ops-param-row is-unavailable" role="row">
             <div role="cell"><strong>AI 功能阈值</strong><span>暂不开放</span></div>
