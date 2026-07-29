@@ -824,6 +824,19 @@
     return qwenLabelNames[value] || value;
   }
 
+  function hardExampleLabelToken(item) {
+    return normalizeClassToken(item?.hard_example_label || item?.manifest?.hard_example_label || "");
+  }
+
+  function hardExampleLabelText(item) {
+    const token = hardExampleLabelToken(item);
+    return token ? qwenLabelText(token) : "";
+  }
+
+  function hardExampleLabelTone(item) {
+    return hardExampleLabelToken(item) === "hard_negative" ? "tone-error" : "tone-yes";
+  }
+
   function feedbackEventLabel(value) {
     const names = {
       bicycle: "自行车",
@@ -2456,6 +2469,10 @@
       const chips = createNode("div", "yolo-review-item-chips");
       chips.appendChild(createNode("span", "ai-history-chip tone-idle", datasetSourceText(dataset || item)));
       chips.appendChild(createNode("span", "ai-history-chip tone-idle", `${item.label_count || 0} 框`));
+      const hardExampleText = hardExampleLabelText(item);
+      if (hardExampleText) {
+        chips.appendChild(createNode("span", `ai-history-chip ${hardExampleLabelTone(item)}`, hardExampleText));
+      }
       const matchedEventClassText = itemMatchedEventClassSummary(item, dataset);
       if (matchedEventClassText) {
         chips.appendChild(createNode("span", "ai-history-chip tone-yes", matchedEventClassText));
@@ -3589,6 +3606,10 @@
     labelTitle.appendChild(createNode("h3", "", "YOLO 带框标签"));
     const labelBadge = labelSourceText(item.label_source) || (item.auto_label_status === "pending" ? "待预标注" : dataset.kind === "classify" ? "分类样本" : item.label_rel_path || "无 label");
     labelTitle.appendChild(createNode("span", `ai-history-chip ${labelSourceTone(item.label_source)}`, labelBadge));
+    const hardExampleBadge = hardExampleLabelText(item);
+    if (hardExampleBadge) {
+      labelTitle.appendChild(createNode("span", `ai-history-chip ${hardExampleLabelTone(item)}`, hardExampleBadge));
+    }
     labels.appendChild(labelTitle);
     if (kind === "classify" && dataset.kind === "classify") {
       labels.appendChild(createNode("p", "yolo-review-label-line", `默认结果: ${answerDisplay(item.ai_answer)}`));
