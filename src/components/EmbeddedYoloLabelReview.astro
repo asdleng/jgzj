@@ -69,6 +69,8 @@
       <select id="yolo-review-event-select" class="yolo-review-event-select">
         <option value="all">全部</option>
         <option value="qwen_suspect">可疑标注</option>
+        <option value="hard_positive">难例正样本</option>
+        <option value="hard_negative">难例负样本</option>
         <option value="person">人员</option>
         <option value="vehicle">车辆</option>
         <option value="phone">手机</option>
@@ -175,7 +177,7 @@
   </div>
 </section>
 
-<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260729-model-history-last2-1" defer></script>
+<script is:inline data-cfasync="false" src="/js/yolo-label-review.js?v=20260729-hard-examples-1" defer></script>
 
 <style is:global>
   .yolo-review-dataset-cards {

@@ -5351,6 +5351,8 @@ function buildYoloBaseItem(dataset, rel, manifestItem = null, webReview = null) 
   const manifestLabelClassInfo = yoloManifestLabelClassInfo(manifestItem, dataset);
   const manifestLabelClasses = manifestLabelClassInfo.classes;
   const manifestPrimaryClass = manifestLabelClasses[0] || '';
+  const hardExampleLabel = normalizeClassToken(manifestItem?.hard_example_label || '');
+  const hardExample = manifestItem?.hard_example === true || hardExampleLabel === 'hard_positive' || hardExampleLabel === 'hard_negative';
   const itemClass = yoloClassFromRelPath(dataset.kind, rel, {
     event_name: metadata.event_name || task?.event_name || manifestPrimaryClass || ''
   });
@@ -5377,6 +5379,9 @@ function buildYoloBaseItem(dataset, rel, manifestItem = null, webReview = null) 
     label_classes: manifestLabelClasses,
     label_classes_indexed: manifestLabelClassInfo.indexed,
     label_count: effectiveLabelCount,
+    hard_example: hardExample,
+    hard_example_label: hardExampleLabel,
+    hard_example_reason: manifestItem?.hard_example_reason || '',
     manifest: manifestItem || null,
     web_review: normalizedWebReview,
     web_title: normalizedWebReview?.title || '',
@@ -5416,6 +5421,10 @@ function yoloItemEventNames(item) {
     }
   };
   addName(item?.event_name);
+  const hardExampleLabel = normalizeClassToken(item?.hard_example_label || item?.manifest?.hard_example_label || '');
+  if (hardExampleLabel === 'hard_positive' || hardExampleLabel === 'hard_negative') {
+    addName(hardExampleLabel);
+  }
   const category = normalizeClassToken(item?.category || item?.manifest?.category || '');
   if (category === 'hard_positive' || category === 'hard_negative') {
     addName(category);

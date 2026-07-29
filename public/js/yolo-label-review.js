@@ -91,6 +91,34 @@
       qwenAudit: "suspect",
       autoClassFilter: false
     },
+    hard_positive: {
+      label: "难例正样本 · 二次整合数据集",
+      tokens: ["hard_positive", "难例正样本"],
+      eventName: "hard_positive",
+      qwenLabel: "",
+      className: "",
+      classNames: [],
+      answer: "",
+      query: "",
+      hasBox: false,
+      taskKind: "detect",
+      preferredSource: "finetune_dataset",
+      autoClassFilter: false
+    },
+    hard_negative: {
+      label: "难例负样本 · 二次整合数据集",
+      tokens: ["hard_negative", "难例负样本"],
+      eventName: "hard_negative",
+      qwenLabel: "",
+      className: "",
+      classNames: [],
+      answer: "",
+      query: "",
+      hasBox: false,
+      taskKind: "detect",
+      preferredSource: "finetune_dataset",
+      autoClassFilter: false
+    },
     person: {
       label: "人员事件 · 全部来源 · 默认显示框",
       tokens: ["person", "pedestrian", "人员"],
@@ -755,8 +783,8 @@
     vehicle: "车辆",
     nonmotor: "非机动车",
     empty_scene: "空场景",
-    hard_positive: "困难正样本",
-    hard_negative: "困难负样本",
+    hard_positive: "难例正样本",
+    hard_negative: "难例负样本",
     fire_smoke_candidate: "烟火候选",
     positive: "正样本",
     unusable: "不可用",
@@ -802,6 +830,8 @@
       truck: "卡车",
       linger: "徘徊",
       license_plate: "车牌",
+      hard_positive: "难例正样本",
+      hard_negative: "难例负样本",
       paper: "纸类垃圾",
       box: "箱盒",
       bag: "袋子",
@@ -1032,6 +1062,9 @@
       Array.isArray(availableEvents) ? availableEvents : feedbackEventCounts(dataset)
     );
     setSelectOptions(refs.eventName, options, { allLabel: "全部事件" });
+    if (eventPresets[state.activeEvent]?.eventName) {
+      setSelectValueIfPresent(refs.eventName, eventPresets[state.activeEvent].eventName);
+    }
     setEventNameVisibility(options.length > 0);
   }
 
@@ -1086,6 +1119,9 @@
     if (!preset) return true;
     if (preset.qwenAudit) {
       return datasetReviewQueueCount(dataset) > 0;
+    }
+    if (isHardExampleEvent(eventKey)) {
+      return hardExampleCountForDataset(dataset, preset.eventName) > 0;
     }
     const sourceGroup = datasetSourceGroup(dataset);
     const text = datasetEventText(dataset);
@@ -1256,6 +1292,9 @@
       }
       return Number(audit?.verdict_counts?.[preset.qwenAudit] || 0);
     }
+    if (isHardExampleEvent() && preset.eventName) {
+      return hardExampleCountForDataset(dataset, preset.eventName);
+    }
     const classTokens = datasetEventClassTokens(preset);
     if (!classTokens.length) {
       return datasetTotalImages(dataset);
@@ -1273,7 +1312,7 @@
 
   function estimatedEventBoxCount(dataset, preset = eventPresets[state.activeEvent] || eventPresets.all) {
     if (!dataset || !preset || preset === eventPresets.all) return datasetTotalBoxes(dataset);
-    if (preset.qwenAudit) return 0;
+    if (preset.qwenAudit || isHardExampleEvent()) return 0;
     if (dataset.kind === "classify" || preset.taskKind === "classify") return 0;
     const classTokens = datasetEventClassTokens(preset);
     if (!classTokens.length) return datasetTotalBoxes(dataset);
@@ -1381,6 +1420,24 @@
 
   function datasetQwenAudit(dataset) {
     return dataset?.qwen_bbox_audit || dataset?.summary?.qwen_bbox_audit || null;
+  }
+
+  function hardExampleMiningSummary(dataset) {
+    return dataset?.hard_example_mining || dataset?.summary?.hard_example_mining || null;
+  }
+
+  function hardExampleCountForDataset(dataset, label) {
+    const summary = hardExampleMiningSummary(dataset);
+    const normalizedLabel = normalizeClassToken(label || "");
+    if (!summary || !normalizedLabel) return 0;
+    if (normalizedLabel === "hard_positive") return Number(summary.hard_positive || 0);
+    if (normalizedLabel === "hard_negative") return Number(summary.hard_negative || 0);
+    if (normalizedLabel === "hard_example") return Number(summary.hard_examples || 0);
+    return 0;
+  }
+
+  function isHardExampleEvent(eventKey = state.activeEvent) {
+    return eventKey === "hard_positive" || eventKey === "hard_negative";
   }
 
   function isReviewQueueEvent() {
@@ -1643,13 +1700,13 @@
       button.appendChild(title);
 
       const metrics = createNode("div", "yolo-review-source-card-metrics");
-      const sampleLabel = isReviewQueueEvent() ? "待校核" : (state.activeEvent === "all" ? "样本" : "事件样本");
+      const sampleLabel = isReviewQueueEvent() ? "待校核" : (isHardExampleEvent() ? "难例" : (state.activeEvent === "all" ? "样本" : "事件样本"));
       const boxLabel = state.activeEvent === "all" ? "框" : "事件框";
       const metricRows = [
         ["数据集", compactNumber(stats.datasetCount)],
         [sampleLabel, compactNumber(stats.imageCount)]
       ];
-      if (!isReviewQueueEvent()) {
+      if (!isReviewQueueEvent() && !isHardExampleEvent()) {
         metricRows.push([boxLabel, compactNumber(stats.boxCount)]);
       }
       metricRows.forEach(([label, value]) => {
@@ -2105,14 +2162,16 @@
 
     const eventMetrics = datasetEventMetrics(dataset);
     const reviewQueue = isReviewQueueEvent();
+    const hardExampleEvent = isHardExampleEvent();
+    const hardExampleLabel = qwenLabelText(eventPresets[state.activeEvent]?.eventName || "");
     const cells = [
       ["来源", datasetSourceText(dataset)],
       ["Profile", dataset.profile || dataset.name || "-"],
       ["类型", dataset.kind === "classify" ? "分类" : "检测"],
-      [reviewQueue ? "待人工校核" : (state.activeEvent === "all" ? "样本" : "事件样本"), compactNumber(eventMetrics.imageCount)],
-      [reviewQueue ? "队列来源" : (state.activeEvent === "all" ? "框" : "事件框"), reviewQueue
+      [reviewQueue ? "待人工校核" : (hardExampleEvent ? "难例" : (state.activeEvent === "all" ? "样本" : "事件样本")), compactNumber(eventMetrics.imageCount)],
+      [reviewQueue ? "队列来源" : (hardExampleEvent ? "难例标签" : (state.activeEvent === "all" ? "框" : "事件框")), reviewQueue
         ? currentSourceGroupLabel(datasetSourceGroup(dataset))
-        : (dataset.boxes || eventMetrics.boxCount ? compactNumber(eventMetrics.boxCount) : "-")],
+        : (hardExampleEvent ? hardExampleLabel : (dataset.boxes || eventMetrics.boxCount ? compactNumber(eventMetrics.boxCount) : "-"))],
       ["AI YES", dataset.answers?.YES != null ? compactNumber(dataset.answers.YES) : "-"],
       ["AI NO", dataset.answers?.NO != null ? compactNumber(dataset.answers.NO) : "-"]
     ];
@@ -2263,7 +2322,9 @@
     params.set("page", String(state.page));
     params.set("page_size", String(state.pageSize));
     if (refs.split.value) params.set("split", refs.split.value);
-    if (refs.eventName?.value && datasetSupportsEventNameFilter(dataset)) params.set("event_name", refs.eventName.value);
+    const presetEventName = String(preset.eventName || "").trim();
+    const eventNameFilter = refs.eventName?.value || presetEventName;
+    if (eventNameFilter && datasetSupportsEventNameFilter(dataset)) params.set("event_name", eventNameFilter);
     const eventClassTokens = eventClassFilterTokensForDataset(dataset, preset);
     const selectedClass = normalizeClassToken(refs.className?.value || "");
     const eventClassFilter = eventClassTokens.length
@@ -3482,6 +3543,7 @@
     meta.appendChild(metaItem("样本", item.item_key));
     meta.appendChild(metaItem("来源", datasetSourceText(selectedDataset() || dataset || item)));
     meta.appendChild(metaItem("命中事件框", itemMatchedEventClassSummary(item, dataset)));
+    meta.appendChild(metaItem("难例标签", item.hard_example_label ? qwenLabelText(item.hard_example_label) : ""));
     meta.appendChild(metaItem("AI标类别", item.ai_class || item.event_name));
     meta.appendChild(metaItem("AI答案", answerDisplay(item.ai_answer)));
     meta.appendChild(metaItem("YOLO框数", item.label_count));
