@@ -1,6 +1,6 @@
 # YOLO 事件原图反馈候选集上下游链路
 
-更新日期：2026-07-28
+更新日期：2026-07-29
 
 本文说明当前 `YOLO事件原图反馈候选集` 的完整上下游链路、关键目录、定时任务、页面入口和运维检查方式。仓库路径以 `/home/admin1/jgzj` 为基准；Qwen WebSocket 校核服务路径以 `/home/admin1/qwen-vl-infer` 为基准。
 
@@ -14,7 +14,7 @@
    - Qwen 判定为 NO 的帧先进入 `temporary_no_frames`；如果全图自动标注发现目标框，则提升到 `permanent_yes_frames`，source 记为 `qwen_no_labeler_positive_frame`。
 3. `jgzj` 里的 Qwen 自动标注和二次校核定时任务，对永久归档帧补全全图框和审核结果。
 4. `run_yolo_event_feedback_sync.sh` 每小时两次构建 `yolo_event_feedback_v1` 候选集。
-5. 每天凌晨 00:31 到 00:36，6 个 finetune 追加任务从候选集中选前一天有目标框的数据，拷贝图片和标签到对应 `finetune_*` 数据集。
+5. 每天凌晨 00:31 到 00:36，6 个 finetune 追加任务从候选集中选前一天有目标框的数据，拷贝图片和标签到对应 `finetune_*` 数据集；随后从 Qwen `temporary_no_frames` 同一天的 NO 暂存中按 profile 事件类别随机补充负样本，数量不超过本次正样本新增数。
 
 候选集本身是审核候选，不直接用于训练，`training_guard.json` 固定为不可训练。下游 `finetune_*` 数据集是二次整合后的训练候选数据集，会出现在 `/app/yolo-label-review` 的“二次整合数据集”来源下面。
 
@@ -255,6 +255,7 @@ scripts/append_finetune_from_yolo_event_feedback_daily.py
 FINETUNE_DAY 默认为前一个上海自然日
 SOURCE=.runtime/yolo_loop/datasets/yolo_event_feedback_v1
 DATASETS_ROOT=.runtime/yolo_loop/datasets
+QWEN_WS_TEMPORARY_NO_ROOT=/home/admin1/qwen-vl-infer/data/qwen_ws_checker_archive/temporary_no_frames
 ```
 
 6 个 profile 和目标类别：
@@ -301,14 +302,18 @@ dataset_summary.json
 
 1. 只读取目标日期在 `manifest_selected_images.jsonl` 里的候选行。
 2. 按图片 SHA 去重；已进入目标 finetune 数据集的图不会重复追加。
-3. 只追加能取到目标类别框的图片。
-4. 框来源优先级：
+3. 先追加能取到目标类别框的正样本图片。
+4. 正样本框来源优先级：
    - 二次校核结果里的可用框，跳过审核判为错误或可疑删除的框。
    - Qwen 自动标注框。
    - 候选集里的 YOLO label txt。
    - 车端上传任务里的 `merged_box` 或 `crop_box`。
-5. train/val/test 由图片 SHA 确定，比例约为 80/10/10。
-6. 每次运行写入报告：
+5. 正样本追加完成后，从 Qwen `temporary_no_frames/{YYYYMMDD}` 抽取同一天的 NO 暂存帧作为负样本；如果日目录不存在，仍会按元信息里的 `received_at_ms`/`created_at_ms`/`edge_ts` 或路径日期过滤，不能跨天抽样。
+6. 负样本只使用 `schema=qwen_ws_checker_temporary_no_frame.v1` 且 `no_tasks[].answer=NO` 的元信息，并按当前 profile 的 `event_name` 映射匹配类别。
+7. 负样本数量上限等于本次正样本新增图片数；可用 NO 候选不足时只追加实际可用数量；正样本新增为 0 时不追加负样本。
+8. 负样本同样按 SHA 去重，写入空 YOLO label，manifest 中 `is_positive=false`、`box_count=0`，并记录 `source_no_tasks`、`negative_for_classes` 和来源 meta。
+9. train/val/test 由图片 SHA 确定，比例约为 80/10/10。
+10. 每次运行写入报告：
 
 ```text
 .runtime/yolo_event_feedback_finetune_daily/reports/{profile}_{YYYYMMDD}.json
@@ -324,7 +329,20 @@ dataset_summary.json
 因此即使 yolo_event_feedback_v1 每小时重建滚动窗口，同一张图也不会被重复拷贝到同一个 finetune 数据集。
 ```
 
-当前实现不直接读取 `/app/yolo-label-review` 的人工标注覆盖来追加训练样本；人工复核主要用于页面复核队列状态、人工修正和后续人工导出决策。每日自动追加只依赖候选集 manifest、Qwen 自动标注/审核缓存、候选集 label txt 和车端任务框。
+当前实现不直接读取 `/app/yolo-label-review` 的人工标注覆盖来追加训练样本；人工复核主要用于页面复核队列状态、人工修正和后续人工导出决策。每日自动追加正样本依赖候选集 manifest、Qwen 自动标注/审核缓存、候选集 label txt 和车端任务框；负样本依赖 Qwen temporary NO 暂存元信息。
+
+日报关键字段：
+
+```text
+positive_added_images                 本次从 YOLO 事件原图反馈候选集追加的正样本图片数
+negative_added_images                 本次从 Qwen temporary NO 暂存追加的负样本图片数
+temporary_no_negative_append          负样本追加结果
+scan.temporary_no_candidates          目标日、目标 profile 下可用 NO 候选数
+scan.temporary_no_selected            实际抽中的 NO 负样本数
+scan.temporary_no_sampled_down        可用 NO 候选超过正样本上限时被随机截断的数量
+scan.temporary_no_skipped_day         因日期不是目标日而跳过的 NO 元信息数
+scan.temporary_no_skipped_event       因 no_tasks 事件名不匹配当前 profile 而跳过的 NO 元信息数
+```
 
 ## 6. 页面入口和后端接口
 
@@ -522,7 +540,9 @@ QWEN_PERMANENT_YES_AUDIT_CLASS_FILTER= 表示不限制审核类别；
 
 ```text
 每天凌晨按 profile 追加前一个上海自然日的数据；
-只追加有目标类别框且未重复进入目标数据集的图片；
+先追加有目标类别框且未重复进入目标数据集的正样本图片；
+再从 Qwen temporary_no_frames 同一天、同事件类别的 NO 暂存中随机补充负样本；
+负样本数量不超过本次正样本新增数量，写入空 YOLO label；
 拷贝图片和 YOLO label 到对应 finetune_* 数据集；
 写入 daily ingest 报告和 dataset_summary。
 ```
@@ -586,7 +606,7 @@ FINETUNE_PROFILE=finetune_pet FINETUNE_DAY=20260728 FINETUNE_DRY_RUN=1 /usr/bin/
 ```bash
 cd /home/admin1/jgzj
 ls -ltr .runtime/yolo_event_feedback_finetune_daily/reports
-jq '.added_images, .added_boxes, .label_source_counts, .scan' .runtime/yolo_event_feedback_finetune_daily/reports/finetune_pet_20260728.json
+jq '.positive_added_images, .negative_added_images, .added_images, .added_boxes, .label_source_counts, .scan' .runtime/yolo_event_feedback_finetune_daily/reports/finetune_pet_20260728.json
 ```
 
 ## 9. 故障判断
@@ -599,7 +619,7 @@ jq '.added_images, .added_boxes, .label_source_counts, .scan' .runtime/yolo_even
 4. `.runtime/yolo_label_review/qwen_permanent_yes_bbox_audits_v1` 是否有审核缓存。
 5. `.runtime/yolo_event_feedback/sync.log` 是否有 `lock_busy`、异常或 total_images 不增长。
 6. `dataset_summary.json` 的 `feedback.day_counts` 是否包含目标日期。
-7. finetune 追加报告里 `scan.day_rows` 和 `added_images` 是否为 0；如果 `day_rows=0`，说明候选集当天没有数据；如果 `day_rows>0` 但 `added_images=0`，通常是无目标类别框或已去重。
+7. finetune 追加报告里 `scan.day_rows`、`positive_added_images` 和 `negative_added_images` 是否为 0；如果 `day_rows=0`，说明候选集当天没有数据；如果 `day_rows>0` 但 `positive_added_images=0`，通常是无目标类别框或已去重；如果 `scan.temporary_no_candidates=0`，说明 Qwen NO 暂存中没有目标日、目标 profile 的可用负样本。
 
 如果 `/app/yolo-label-review` 页面看不到新数据：
 
